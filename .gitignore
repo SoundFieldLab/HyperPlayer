@@ -1,2 +1,24 @@
-# 调研文档不入库
+# 调研与规划文档不入库
 docs/
+
+# 第三方参考代码（网易云逆向参考，Cleanroom 用，永不入库）
+temp/
+
+# Node / Tauri 前端构建
+node_modules/
+dist/
+out/
+
+# Rust
+crates/target/
+src-tauri/target/
+
+# 原生模块产物
+*.node
+
+# 本地环境与工具缓存
+.env
+.zcode/
+.playwright-mcp/
+.DS_Store
+Thumbs.db
