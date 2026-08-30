@@ -22,7 +22,7 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 
 ## 工作流程约束
 
-- 当前只允许**详细设计、环境部署和依赖清单维护**；在用户明确解除前，不运行 `tauri init/create`，不创建 `src-tauri`、Tauri commands、capabilities、React UI 或网易云 Rust 实现
+- 当前只允许**详细设计、环境部署、依赖清单维护和经用户明确批准的独立高保真 UI 原型**；在用户明确解除前，不创建正式 Tauri 应用源码、commands、capabilities 或网易云 Rust 实现
 - 所有规划文件写入 `docs/`（已 gitignore）：需求、决策记录、ADR、术语表和协议规范
 - 每轮定调产生的新约束同步更新本文件与持久记忆
 
@@ -40,7 +40,11 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 - **桌面壳**：Tauri 2 Rust 应用层 —— 窗口、托盘、生命周期、capabilities、更新和 Windows 集成；无领域逻辑
 - **音频/曲库核心**：`hyperplayer-engine` Rust crate —— symphonia 解码 + DSP 管线 + cpal/miniaudio（WASAPI）输出 + lofty + rusqlite；独立线程，框架无关
 - **桥**：短请求/响应用 Tauri commands；播放状态、扫描进度等连续数据用 events/channel；显式 serde DTO
-- **UI 体系**：Tailwind CSS + shadcn/ui（D17 默认，可推翻）；zustand + TanStack Query
+- **UI 设计基线已完成（UI-D1~UI-D79）**：现行规则见 `docs/UI设计基线.md`，决策过程见 `docs/UI定调决策记录.md`；不得回退成默认 shadcn、移动端底部 Tab、营销页布局或遍地玻璃卡片
+- **UI 体系**：Tailwind CSS 4 + 深度定制 shadcn/ui（Radix）+ Phosphor Regular/Fill；zustand + TanStack Query；Motion 管产品过渡，GSAP 仅限封面氛围、歌词复杂过渡和未来 DSP 可视化
+- **视觉方向**：明亮柔和消费产品 + 克制 Apple/Liquid Glass 近似；默认明亮、完整深石墨主题；`#3F55F9` 管交互、`#FF761C` 管播放；得意黑展示、思源黑体内容/歌词、Cascadia Mono 数据
+- **核心结构**：双内容域默认网易云、完全自绘标题栏、可展开三段式播放坞、42/58 封面+歌词播放层、有限槽位停靠/浮动窗口、完整桌面键盘与上下文菜单
+- **原型要求**：正式 UI 前先做独立 React 高保真原型。第一轮核心聆听路径提供 A 明亮纯净 / B 封面氛围两套完整变体；第二轮覆盖剩余关键页面；DSP 等产品-D16 后第三轮。Computer Use + 多尺寸截图 + 设计 skills 先验收，最后由用户逐页确认
 - **系统集成**：优先 Tauri 2 官方/维护良好的插件，SMTC 等长尾能力用 Rust `windows-rs`
 - **打包更新**：Tauri bundler + updater plugin + GitHub Releases；签名方案待 M6 定稿
 - 决策依据：`docs/定调决策记录.md`（D21）、`docs/adr/0005-tauri2-react-rust.md`；Rust 曲库边界见 ADR-0004
