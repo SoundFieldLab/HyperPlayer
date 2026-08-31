@@ -6,10 +6,15 @@ HyperPlayer Rust 引擎自有代码采用 Apache-2.0 许可证。下列生产依
 
 ## Rust MPL-2.0 依赖
 
-HyperPlayer 使用下列 Symphonia 0.6.1 包，仅启用 MP3 解码能力：
+HyperPlayer 使用下列 MPL-2.0 包：
 
 | 包 | 许可证 | 用途 |
 |---|---|---|
+| `cssparser` | MPL-2.0 | Tauri 内部 HTML/CSS 解析 |
+| `cssparser-macros` | MPL-2.0 | `cssparser` 的过程宏 |
+| `dtoa-short` | MPL-2.0 | `cssparser` 的浮点数格式化 |
+| `option-ext` | MPL-2.0 | Tauri 目录解析依赖 |
+| `selectors` | MPL-2.0 | Tauri 内部 CSS 选择器解析 |
 | `symphonia` | MPL-2.0 | MP3 探测与解码入口 |
 | `symphonia-bundle-mp3` | MPL-2.0 | MPEG Audio Layer III 格式读取与解码 |
 | `symphonia-core` | MPL-2.0 | 媒体流、音频缓冲与解码接口 |

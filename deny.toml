@@ -1,6 +1,11 @@
 [advisories]
 ignore = [
   { id = "RUSTSEC-2024-0436", reason = "Unmaintained transitive paste dependency from lofty 0.25.1; the advisory has no safe upgrade and reports no vulnerability." },
+  { id = "RUSTSEC-2025-0075", reason = "Unmaintained unic-char-range 0.9 is transitively pinned by Tauri 2.11 through selectors; the advisory reports no vulnerability." },
+  { id = "RUSTSEC-2025-0080", reason = "Unmaintained unic-common 0.9 is transitively pinned by Tauri 2.11 through selectors; the advisory reports no vulnerability." },
+  { id = "RUSTSEC-2025-0081", reason = "Unmaintained unic-char-property 0.9 is transitively pinned by Tauri 2.11 through selectors; the advisory reports no vulnerability." },
+  { id = "RUSTSEC-2025-0098", reason = "Unmaintained unic-ucd-version 0.9 is transitively pinned by Tauri 2.11 through selectors; the advisory reports no vulnerability." },
+  { id = "RUSTSEC-2025-0100", reason = "Unmaintained unic-ucd-ident 0.9 is transitively pinned by Tauri 2.11 through selectors; the advisory reports no vulnerability." },
 ]
 
 [licenses]
@@ -16,6 +21,11 @@ allow = [
   "Zlib",
 ]
 exceptions = [
+  { allow = ["MPL-2.0"], crate = "cssparser" },
+  { allow = ["MPL-2.0"], crate = "cssparser-macros" },
+  { allow = ["MPL-2.0"], crate = "dtoa-short" },
+  { allow = ["MPL-2.0"], crate = "option-ext" },
+  { allow = ["MPL-2.0"], crate = "selectors" },
   { allow = ["MPL-2.0"], crate = "symphonia" },
   { allow = ["MPL-2.0"], crate = "symphonia-bundle-mp3" },
   { allow = ["MPL-2.0"], crate = "symphonia-core" },
