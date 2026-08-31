@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use qrcode::{render::svg, QrCode};
 use rand::{rngs::OsRng, RngCore};
 use serde_json::{json, Value};
 use std::{
@@ -21,6 +22,26 @@ use crate::{
     Error, Result,
 };
 
+/// 匿名发现页的公共内容。各分区独立降级，不包含日推或私人 FM 等登录态数据。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicExplore {
+    pub playlists: Vec<PlaylistSummary>,
+    pub new_songs: Vec<Track>,
+    pub charts: Vec<ChartSummary>,
+    pub popular_artists: Vec<ArtistSummary>,
+    pub unavailable_sections: Vec<PublicExploreSection>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PublicExploreSection {
+    Playlists,
+    NewSongs,
+    Charts,
+    PopularArtists,
+}
+
 #[async_trait]
 pub trait Sleeper: Send + Sync {
     async fn sleep(&self, duration: Duration);
@@ -38,6 +59,8 @@ pub struct NeteaseService<T: Transport, S: Sleeper = StdSleeper> {
     sleeper: Arc<S>,
     session: Mutex<Session>,
     enabled: AtomicBool,
+    xeapi_bootstrapped: AtomicBool,
+    xeapi_bootstrap_lock: tokio::sync::Mutex<()>,
     anti_cheat_token: Mutex<Option<String>>,
 }
 impl<T: Transport> NeteaseService<T, StdSleeper> {
@@ -67,11 +90,14 @@ impl NeteaseService<ReqwestTransport, StdSleeper> {
 }
 impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
     pub fn with_sleeper(transport: T, session: Session, sleeper: S) -> Self {
+        let has_xeapi_key = session.xeapi_key().is_ok();
         Self {
             transport: Arc::new(transport),
             sleeper: Arc::new(sleeper),
             session: Mutex::new(session),
             enabled: AtomicBool::new(true),
+            xeapi_bootstrapped: AtomicBool::new(has_xeapi_key),
+            xeapi_bootstrap_lock: tokio::sync::Mutex::new(()),
             anti_cheat_token: Mutex::new(None),
         }
     }
@@ -86,7 +112,10 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         self.enabled.load(Ordering::Acquire)
     }
     pub fn update_session(&self, session: Session) {
-        *self.session() = session
+        let has_xeapi_key = session.xeapi_key().is_ok();
+        *self.session() = session;
+        self.xeapi_bootstrapped
+            .store(has_xeapi_key, Ordering::Release);
     }
     pub fn set_user_cookie(&self, cookie: &str) {
         self.session().set_user_cookie(cookie)
@@ -98,9 +127,20 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         if key.trim().is_empty() {
             return Err(Error::Validation("二维码 key 不能为空".into()));
         }
-        Ok(format!(
+        let payload = format!(
             "https://music.163.com/login?codekey={}",
             percent_encode(key)
+        );
+        let svg = QrCode::new(payload.as_bytes())
+            .map_err(|error| Error::Validation(format!("二维码内容无效：{error}")))?
+            .render::<svg::Color>()
+            .min_dimensions(256, 256)
+            .dark_color(svg::Color("#000000"))
+            .light_color(svg::Color("#ffffff"))
+            .build();
+        Ok(format!(
+            "data:image/svg+xml;base64,{}",
+            BASE64.encode(svg.as_bytes())
         ))
     }
     pub fn quality_candidates(preference: QualityPreference, is_vip: bool) -> Vec<QualityLevel> {
@@ -277,6 +317,10 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         timeout: Duration,
     ) -> Result<Value> {
         self.ensure_enabled()?;
+        self.ensure_xeapi_bootstrapped().await?;
+        self.xeapi_ready(path, payload, timeout).await
+    }
+    async fn xeapi_ready(&self, path: &str, payload: Value, timeout: Duration) -> Result<Value> {
         let map = payload
             .as_object()
             .ok_or_else(|| Error::Validation("payload 必须是对象".into()))?;
@@ -358,6 +402,18 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
     /// 初始化 xeapi 公钥，并尽力注册匿名会话。匿名注册失败不影响公开读取接口。
     pub async fn bootstrap_network(&self) -> Result<()> {
         self.ensure_enabled()?;
+        self.ensure_xeapi_bootstrapped().await
+    }
+
+    async fn ensure_xeapi_bootstrapped(&self) -> Result<()> {
+        if self.xeapi_bootstrapped.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let _guard = self.xeapi_bootstrap_lock.lock().await;
+        if self.xeapi_bootstrapped.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
         let mut nonce_bytes = [0u8; 16];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = nonce_bytes
@@ -370,7 +426,8 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             .as_millis()
             .to_string();
         self.fetch_xeapi_public_key(&timestamp, &nonce).await?;
-        let _ = self.register_anonymous().await;
+        let _ = self.register_anonymous_ready().await;
+        self.xeapi_bootstrapped.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -483,10 +540,10 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         Ok(())
     }
 
-    async fn register_anonymous(&self) -> Result<bool> {
+    async fn register_anonymous_ready(&self) -> Result<bool> {
         let username = self.session().encoded_anonymous_username();
         let value = self
-            .xeapi(
+            .xeapi_ready(
                 "/api/register/anonimous",
                 json!({"username":username}),
                 Duration::from_secs(12),
@@ -919,6 +976,18 @@ mod tests {
         )
     }
     #[test]
+    fn qr_image_is_an_embeddable_svg_data_url() {
+        let data_url = NeteaseService::<Fake, NoSleep>::qr_image_url("login-key").unwrap();
+        let encoded = data_url
+            .strip_prefix("data:image/svg+xml;base64,")
+            .expect("QR helper must return an SVG data URL");
+        let svg = String::from_utf8(BASE64.decode(encoded).unwrap()).unwrap();
+
+        assert!(svg.starts_with("<?xml"));
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("<path"));
+    }
+    #[test]
     fn authorized_qr_cookie_stays_in_session() {
         let svc = service(vec![response(
             json!({"code":803,"cookie":["MUSIC_U=secret","__csrf=x"]}),
@@ -1114,6 +1183,94 @@ mod tests {
             "3"
         );
         assert_eq!(svc.transport.requests.lock().unwrap().len(), 2);
+        block_on(svc.bootstrap_network()).unwrap();
+        assert_eq!(svc.transport.requests.lock().unwrap().len(), 2);
+    }
+
+    struct LazyBootstrapFake {
+        encrypted: String,
+        key_attempts: std::sync::atomic::AtomicUsize,
+        xeapi_requests: std::sync::atomic::AtomicUsize,
+        fail_first_key: bool,
+    }
+    #[async_trait]
+    impl Transport for LazyBootstrapFake {
+        async fn execute(&self, request: HttpRequest) -> Result<crate::HttpResponse> {
+            if request.url.contains("security/key/get") {
+                let attempt = self.key_attempts.fetch_add(1, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                if self.fail_first_key && attempt == 0 {
+                    return Err(Error::Transport("首次初始化失败".into()));
+                }
+                let form = String::from_utf8(request.body).unwrap();
+                let nonce = form
+                    .split('&')
+                    .find_map(|part| part.strip_prefix("nonce="))
+                    .unwrap();
+                let timestamp = "1700000000000";
+                return response(json!({
+                    "code": 200,
+                    "data": {
+                        "encryptedData": self.encrypted,
+                        "timestamp": timestamp,
+                        "signature": crypto::xeapi_sign(timestamp, nonce)
+                    }
+                }));
+            }
+            self.xeapi_requests.fetch_add(1, Ordering::SeqCst);
+            encrypted_xeapi_response(
+                json!({"code": 200, "data": [{"id": 7, "url": "https://cdn.example/song.mp3"}]}),
+            )
+        }
+    }
+    fn lazy_bootstrap_service(fail_first_key: bool) -> NeteaseService<LazyBootstrapFake, NoSleep> {
+        let encrypted = crypto::encrypt_xeapi_public_key_fixture(&json!({
+            "publicKey": BASE64.encode([7u8; 32]),
+            "sk": "fixture-sk",
+            "version": "3"
+        }));
+        let mut rng = StdRng::seed_from_u64(10);
+        NeteaseService::with_sleeper(
+            LazyBootstrapFake {
+                encrypted,
+                key_attempts: std::sync::atomic::AtomicUsize::new(0),
+                xeapi_requests: std::sync::atomic::AtomicUsize::new(0),
+                fail_first_key,
+            },
+            Session::new(&mut rng),
+            NoSleep,
+        )
+    }
+
+    #[tokio::test]
+    async fn concurrent_xeapi_calls_share_one_lazy_bootstrap() {
+        let svc = lazy_bootstrap_service(false);
+        let (first, second) = tokio::join!(
+            svc.song_play_info(7, QualityLevel::Standard, Duration::from_secs(1)),
+            svc.song_play_info(7, QualityLevel::Standard, Duration::from_secs(1))
+        );
+
+        assert!(first.unwrap().url.is_some());
+        assert!(second.unwrap().url.is_some());
+        assert_eq!(svc.transport.key_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(svc.transport.xeapi_requests.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn failed_lazy_bootstrap_is_retried_by_next_xeapi_call() {
+        let svc = lazy_bootstrap_service(true);
+
+        assert!(svc
+            .song_play_info(7, QualityLevel::Standard, Duration::from_secs(1))
+            .await
+            .is_err());
+        assert!(svc
+            .song_play_info(7, QualityLevel::Standard, Duration::from_secs(1))
+            .await
+            .unwrap()
+            .url
+            .is_some());
+        assert_eq!(svc.transport.key_attempts.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -1121,9 +1278,20 @@ mod tests {
         let encrypted = crypto::encrypt_xeapi_public_key_fixture(&json!({
             "publicKey": BASE64.encode([7u8; 32]), "sk":"x", "version":"1"
         }));
-        let svc = service(vec![response(json!({
-            "code":200,"data":{"encryptedData":encrypted,"timestamp":"1","signature":"bad"}
-        }))]);
+        let mut rng = StdRng::seed_from_u64(11);
+        let svc = NeteaseService::with_sleeper(
+            Fake {
+                responses: Mutex::new(
+                    vec![response(json!({
+                        "code":200,"data":{"encryptedData":encrypted,"timestamp":"1","signature":"bad"}
+                    }))]
+                    .into(),
+                ),
+                requests: Mutex::new(vec![]),
+            },
+            Session::new(&mut rng),
+            NoSleep,
+        );
         assert!(matches!(
             block_on(svc.bootstrap_network()),
             Err(Error::Crypto(_))
@@ -1168,7 +1336,7 @@ mod tests {
         let svc = service(vec![encrypted_xeapi_response(json!({
             "code":200,"cookie":["MUSIC_A=anonymous-secret; Path=/"]
         }))]);
-        assert!(block_on(svc.register_anonymous()).unwrap());
+        assert!(block_on(svc.register_anonymous_ready()).unwrap());
         assert_eq!(
             svc.session
                 .lock()
@@ -1303,6 +1471,155 @@ mod tests {
         assert_eq!(block_on(svc.charts()).unwrap()[0].preview_tracks[0].id, 21);
         assert_eq!(block_on(svc.new_songs(96)).unwrap()[0].id, 22);
         assert!(block_on(svc.new_songs(999)).is_err());
+    }
+
+    #[tokio::test]
+    async fn artist_overview_enriches_public_detail_description_and_fans() {
+        struct ArtistFake;
+        #[async_trait]
+        impl Transport for ArtistFake {
+            async fn execute(&self, request: HttpRequest) -> Result<crate::HttpResponse> {
+                let body = if request.url.contains("artist/42") {
+                    json!({"code":200,"artist":{"id":42,"name":"Artist"},"hotSongs":[]})
+                } else if request.url.contains("artist/head/info/get") {
+                    json!({"code":200,"data":{"briefDesc":"Brief"}})
+                } else if request.url.contains("artist/introduction") {
+                    json!({"code":200,"introduction":[{"txt":"First"},{"txt":"Second"}]})
+                } else if request.url.contains("artist/follow/count/get") {
+                    json!({"code":200,"data":{"fansCnt":1234}})
+                } else {
+                    panic!("unexpected artist request: {}", request.url);
+                };
+                response(body)
+            }
+        }
+        let mut rng = StdRng::seed_from_u64(21);
+        let service = NeteaseService::with_sleeper(ArtistFake, Session::new(&mut rng), NoSleep);
+
+        let overview = service.artist_overview(42).await.unwrap();
+
+        assert_eq!(overview.artist.brief_description.as_deref(), Some("Brief"));
+        assert_eq!(overview.introduction.as_deref(), Some("First\nSecond"));
+        assert_eq!(overview.fans_count, Some(1234));
+    }
+
+    #[tokio::test]
+    async fn artist_overview_keeps_base_when_optional_enrichment_fails() {
+        struct ArtistFallbackFake;
+        #[async_trait]
+        impl Transport for ArtistFallbackFake {
+            async fn execute(&self, request: HttpRequest) -> Result<crate::HttpResponse> {
+                if request.url.contains("artist/head/info/get")
+                    || request.url.contains("artist/introduction")
+                    || request.url.contains("artist/follow/count/get")
+                {
+                    Err(Error::Timeout)
+                } else {
+                    response(
+                        json!({"code":200,"artist":{"id":42,"name":"Artist","briefDesc":"Base"},"hotSongs":[]}),
+                    )
+                }
+            }
+        }
+        let mut rng = StdRng::seed_from_u64(22);
+        let service =
+            NeteaseService::with_sleeper(ArtistFallbackFake, Session::new(&mut rng), NoSleep);
+
+        let overview = service.artist_overview(42).await.unwrap();
+
+        assert_eq!(overview.artist.brief_description.as_deref(), Some("Base"));
+        assert!(overview.introduction.is_none());
+        assert!(overview.fans_count.is_none());
+    }
+
+    #[tokio::test]
+    async fn public_explore_uses_only_anonymous_public_sources() {
+        struct PublicExploreFake {
+            requests: Mutex<Vec<HttpRequest>>,
+        }
+        #[async_trait]
+        impl Transport for PublicExploreFake {
+            async fn execute(&self, request: HttpRequest) -> Result<crate::HttpResponse> {
+                self.requests.lock().unwrap().push(request.clone());
+                let body = if request.url.contains("personalized/playlist") {
+                    json!({"code":200,"result":[{"id":1,"name":"Public playlist"}]})
+                } else if request.url.contains("discovery/new/songs") {
+                    json!({"code":200,"data":[{"id":2,"name":"New song","ar":[],"al":{"id":0,"name":""}}]})
+                } else if request.url.contains("toplist/detail") {
+                    json!({"code":200,"list":[{"id":3,"name":"Chart"}]})
+                } else if request.url.contains("artist/top") {
+                    json!({"code":200,"artists":[{"id":4,"name":"Popular artist"}]})
+                } else {
+                    panic!("unexpected public explore request: {}", request.url);
+                };
+                response(body)
+            }
+        }
+        let mut rng = StdRng::seed_from_u64(20);
+        let svc = NeteaseService::with_sleeper(
+            PublicExploreFake {
+                requests: Mutex::new(Vec::new()),
+            },
+            Session::new(&mut rng),
+            NoSleep,
+        );
+
+        let explore = svc.public_explore().await.unwrap();
+
+        assert_eq!(explore.playlists[0].id, 1);
+        assert_eq!(explore.new_songs[0].id, 2);
+        assert_eq!(explore.charts[0].id, 3);
+        assert_eq!(explore.popular_artists[0].id, 4);
+        assert!(explore.unavailable_sections.is_empty());
+        let requests = svc.transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests.iter().all(|request| {
+            !request.url.contains("discovery/recommend/songs")
+                && !request.url.contains("discovery/recommend/resource")
+                && !request.url.contains("radio/get")
+        }));
+    }
+
+    #[test]
+    fn public_explore_degrades_failed_sections_and_reports_them() {
+        let svc = service(vec![
+            Err(Error::Timeout),
+            response(
+                json!({"code":200,"data":[{"id":2,"name":"New song","ar":[],"al":{"id":0,"name":""}}]}),
+            ),
+            response(json!({"code":502,"message":"chart unavailable"})),
+            response(json!({"code":200,"artists":[{"id":4,"name":"Popular artist"}]})),
+        ]);
+
+        let explore = block_on(svc.public_explore()).unwrap();
+
+        assert!(explore.playlists.is_empty());
+        assert_eq!(explore.new_songs[0].id, 2);
+        assert!(explore.charts.is_empty());
+        assert_eq!(explore.popular_artists[0].id, 4);
+        assert_eq!(
+            explore.unavailable_sections,
+            vec![
+                PublicExploreSection::Playlists,
+                PublicExploreSection::Charts,
+            ]
+        );
+    }
+
+    #[test]
+    fn public_explore_errors_when_every_public_source_fails() {
+        let svc = service(vec![
+            Err(Error::Timeout),
+            Err(Error::Timeout),
+            Err(Error::Timeout),
+            Err(Error::Timeout),
+        ]);
+
+        assert_eq!(
+            block_on(svc.public_explore()),
+            Err(Error::Transport("网易云公共发现内容暂不可用".into()))
+        );
+        assert_eq!(svc.transport.requests.lock().unwrap().len(), 4);
     }
 
     #[test]

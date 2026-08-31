@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,14 +335,42 @@ pub fn parse_embedded_lyrics(input: &str) -> Option<LyricsDocument> {
     })
 }
 
-pub fn load_local_lyrics(audio_path: &Path, embedded: Option<&str>) -> io::Result<LocalLyrics> {
+const MAX_LYRICS_BYTES: u64 = 1024 * 1024;
+
+pub fn load_local_lyrics(
+    audio_path: &Path,
+    library_root: &Path,
+    embedded: Option<&str>,
+) -> io::Result<LocalLyrics> {
+    let library_root = library_root.canonicalize()?;
     for extension in ["yrc", "lrc", "ttml"] {
         let path = audio_path.with_extension(extension);
-        let raw = match fs::read_to_string(&path) {
-            Ok(raw) => raw,
+        let canonical = match path.canonicalize() {
+            Ok(path) => path,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
         };
+        if !canonical.starts_with(&library_root) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "lyrics sidecar is outside the registered library root",
+            ));
+        }
+        let file = fs::File::open(&canonical)?;
+        if file.metadata()?.len() > MAX_LYRICS_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "lyrics sidecar exceeds the size limit",
+            ));
+        }
+        let mut raw = String::new();
+        file.take(MAX_LYRICS_BYTES + 1).read_to_string(&mut raw)?;
+        if raw.len() as u64 > MAX_LYRICS_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "lyrics sidecar exceeds the size limit",
+            ));
+        }
         let document = match extension {
             "yrc" => parse_yrc(&raw),
             "lrc" => parse_lrc(&raw),
@@ -969,7 +997,7 @@ mod tests {
         fs::write(&audio, b"not needed by lyric resolver").unwrap();
         fs::write(root.path().join("song.lrc"), "[00:01]sidecar").unwrap();
 
-        let sidecar = load_local_lyrics(&audio, Some("[00:02]embedded")).unwrap();
+        let sidecar = load_local_lyrics(&audio, root.path(), Some("[00:02]embedded")).unwrap();
         assert_eq!(
             sidecar.origin,
             LocalLyricsOrigin::Sidecar(root.path().join("song.lrc"))
@@ -978,14 +1006,26 @@ mod tests {
 
         fs::remove_file(root.path().join("song.lrc")).unwrap();
         fs::write(root.path().join("song.yrc"), "broken").unwrap();
-        let embedded = load_local_lyrics(&audio, Some("[00:02]embedded")).unwrap();
+        let embedded = load_local_lyrics(&audio, root.path(), Some("[00:02]embedded")).unwrap();
         assert_eq!(embedded.origin, LocalLyricsOrigin::Embedded);
         assert_eq!(embedded.document.source, LyricsSource::Embedded);
         assert_eq!(embedded.document.lines[0].text, "embedded");
 
-        let missing = load_local_lyrics(&audio, Some("  ")).unwrap();
+        let missing = load_local_lyrics(&audio, root.path(), Some("  ")).unwrap();
         assert_eq!(missing.origin, LocalLyricsOrigin::None);
         assert_eq!(missing.document.source, LyricsSource::Unknown);
         assert!(missing.document.lines.is_empty());
+
+        fs::write(
+            root.path().join("song.lrc"),
+            vec![b'x'; MAX_LYRICS_BYTES as usize + 1],
+        )
+        .unwrap();
+        assert_eq!(
+            load_local_lyrics(&audio, root.path(), None)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 }

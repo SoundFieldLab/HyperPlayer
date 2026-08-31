@@ -2,9 +2,12 @@ use crate::{
     dto::{FileAssociationRequestDto, IntegrationCapabilityDto, WindowsIntegrationStatusDto},
     error::{AppError, CommandResult},
     events,
-    ports::AppState,
+    ports::{AppState, PlaybackTransition},
 };
-use std::sync::{Mutex, OnceLock};
+use std::{
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 fn require_main(window: &WebviewWindow) -> CommandResult<()> {
@@ -20,6 +23,135 @@ const SMTC_NOT_INITIALIZED: &str =
     "SMTC is not initialized; call windows_enable_media_controls from the main window";
 const FILE_ASSOCIATIONS_UNAVAILABLE: &str =
     "file associations are not declared in the signed installer configuration";
+
+pub(crate) fn move_file_to_recycle_bin(path: &Path) -> Result<(), AppError> {
+    validate_recycle_bin_file(path)?;
+    move_validated_file_to_recycle_bin(path)
+}
+
+fn validate_recycle_bin_file(path: &Path) -> Result<(), AppError> {
+    if !path.is_absolute() {
+        return Err(AppError::InvalidArgument(
+            "Recycle Bin path must be absolute".into(),
+        ));
+    }
+
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AppError::InvalidArgument("Recycle Bin path does not exist".into())
+        } else {
+            AppError::Io(error)
+        }
+    })?;
+    if !metadata.is_file() {
+        return Err(AppError::InvalidArgument(
+            "Recycle Bin path must identify a file".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn move_validated_file_to_recycle_bin(path: &Path) -> Result<(), AppError> {
+    use windows::{
+        core::{GUID, PCWSTR},
+        Win32::{
+            Foundation::RPC_E_CHANGED_MODE,
+            System::Com::{
+                CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+                COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+            },
+            UI::Shell::{
+                IFileOperation, IShellItem, SHCreateItemFromParsingName, FOFX_RECYCLEONDELETE,
+                FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
+            },
+        },
+    };
+
+    const CLSID_FILE_OPERATION: GUID = GUID::from_u128(0x3ad05575_8857_4850_9277_11b85bdb8e09);
+
+    struct ComInitialization(bool);
+    impl Drop for ComInitialization {
+        fn drop(&mut self) {
+            if self.0 {
+                // SAFETY: this balances the successful CoInitializeEx call on this thread.
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    // SAFETY: COM is initialized for this thread and balanced by `ComInitialization`.
+    // RPC_E_CHANGED_MODE means the caller already initialized a different apartment,
+    // in which case COM remains usable and must not be uninitialized here.
+    let initialized =
+        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
+    if initialized.is_err() && initialized != RPC_E_CHANGED_MODE {
+        return Err(recycle_bin_unavailable(
+            "initialize COM",
+            initialized.into(),
+        ));
+    }
+    let _com = ComInitialization(initialized.is_ok());
+
+    let path_list = recycle_bin_path_list(path)?;
+    // SAFETY: the path buffer remains live and NUL-terminated for this call.
+    let item: IShellItem = unsafe {
+        SHCreateItemFromParsingName(PCWSTR(path_list.as_ptr()), None)
+            .map_err(|error| recycle_bin_unavailable("resolve the file", error))?
+    };
+    // SAFETY: CLSID_FILE_OPERATION identifies the in-process FileOperation COM class.
+    let operation: IFileOperation = unsafe {
+        CoCreateInstance(&CLSID_FILE_OPERATION, None, CLSCTX_INPROC_SERVER)
+            .map_err(|error| recycle_bin_unavailable("create the file operation", error))?
+    };
+    let flags = FOFX_RECYCLEONDELETE | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
+    // SAFETY: all COM interfaces are valid for the current initialized apartment.
+    unsafe {
+        operation
+            .SetOperationFlags(flags)
+            .and_then(|_| operation.DeleteItem(&item, None))
+            .and_then(|_| operation.PerformOperations())
+            .map_err(|error| recycle_bin_unavailable("move the file", error))?;
+        if operation
+            .GetAnyOperationsAborted()
+            .map_err(|error| recycle_bin_unavailable("read the operation result", error))?
+            .as_bool()
+        {
+            return Err(AppError::Unavailable(
+                "the Recycle Bin operation was aborted; the file was not moved".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn recycle_bin_unavailable(operation: &str, error: windows::core::Error) -> AppError {
+    AppError::Unavailable(format!(
+        "could not {operation} for the Recycle Bin: {error}"
+    ))
+}
+
+#[cfg(windows)]
+fn recycle_bin_path_list(path: &Path) -> Result<Vec<u16>, AppError> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let mut encoded: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if encoded.contains(&0) {
+        return Err(AppError::InvalidArgument(
+            "Recycle Bin path contains a NUL character".into(),
+        ));
+    }
+    encoded.extend_from_slice(&[0, 0]);
+    Ok(encoded)
+}
+
+#[cfg(not(windows))]
+fn move_validated_file_to_recycle_bin(_path: &Path) -> Result<(), AppError> {
+    Err(AppError::Unavailable(platform_reason(
+        "the Recycle Bin requires Windows",
+    )))
+}
 
 #[cfg(windows)]
 struct SmtcRegistration {
@@ -133,15 +265,26 @@ fn handle_media_button(
 
     let state = app.state::<AppState>();
     let result = if button == Button::Play {
-        state.services.playback.play_resolved(None)
+        tauri::async_runtime::block_on(crate::commands::playback::resume_resolved(
+            state.services.playback.as_ref(),
+            state.services.tracks.as_ref(),
+        ))
     } else if button == Button::Pause {
         state.services.playback.pause()
     } else if button == Button::Stop {
         state.services.playback.stop()
     } else if button == Button::Next {
-        state.services.playback.next()
+        tauri::async_runtime::block_on(crate::commands::playback::transition_resolved(
+            state.services.playback.as_ref(),
+            state.services.tracks.as_ref(),
+            PlaybackTransition::Next { automatic: false },
+        ))
     } else if button == Button::Previous {
-        state.services.playback.previous()
+        tauri::async_runtime::block_on(crate::commands::playback::transition_resolved(
+            state.services.playback.as_ref(),
+            state.services.tracks.as_ref(),
+            PlaybackTransition::Previous,
+        ))
     } else {
         return;
     };
@@ -249,5 +392,74 @@ mod tests {
                 reason: None
             }
         );
+    }
+
+    #[test]
+    fn recycle_bin_validation_rejects_relative_paths() {
+        let error = validate_recycle_bin_file(Path::new("track.flac")).unwrap_err();
+        assert!(matches!(error, AppError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn recycle_bin_validation_rejects_missing_absolute_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = validate_recycle_bin_file(&directory.path().join("missing.flac")).unwrap_err();
+        assert!(matches!(error, AppError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn recycle_bin_validation_rejects_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = validate_recycle_bin_file(directory.path()).unwrap_err();
+        assert!(matches!(error, AppError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn recycle_bin_validation_accepts_existing_absolute_files() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        assert!(validate_recycle_bin_file(file.path()).is_ok());
+        assert!(file.path().exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recycle_bin_path_list_is_utf16_with_exactly_two_trailing_nuls() {
+        use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+
+        let expected = vec![
+            b'C' as u16,
+            b':' as u16,
+            b'\\' as u16,
+            0xD83C,
+            0xDFB5,
+            b'.' as u16,
+            b'f' as u16,
+            b'l' as u16,
+            b'a' as u16,
+            b'c' as u16,
+        ];
+        let path = OsString::from_wide(&expected);
+        let encoded = recycle_bin_path_list(Path::new(&path)).unwrap();
+
+        assert_eq!(&encoded[..expected.len()], expected);
+        assert_eq!(&encoded[expected.len()..], &[0, 0]);
+        assert!(!expected.contains(&0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recycle_bin_path_list_rejects_embedded_nuls() {
+        use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+
+        let path = OsString::from_wide(&[
+            b'C' as u16,
+            b':' as u16,
+            b'\\' as u16,
+            b'a' as u16,
+            0,
+            b'b' as u16,
+        ]);
+        let error = recycle_bin_path_list(Path::new(&path)).unwrap_err();
+        assert!(matches!(error, AppError::InvalidArgument(_)));
     }
 }

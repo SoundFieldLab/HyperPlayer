@@ -2,7 +2,7 @@
 
 更新时间：2026-08-31
 
-> 最近一次本地验证：前端 16 项、engine 56 项、网易云 Rust 33 项、Tauri 49 项测试通过；IPC 清单 65 个 command / 12 个 event 匹配；`cargo deny` advisories/licenses 通过；`pnpm build` 成功生成 x64 NSIS 与 MSI。验证后已清除 `node_modules`、`dist` 和全部 Rust `target` 缓存，因此复验需先恢复依赖。
+> 最近一次本地验证：前端 53 项、engine 69 项、网易云 Rust 49 项、Tauri 85 项测试通过；IPC 清单 79 个 command / 12 个 event 匹配；三个 Rust manifest 的 Rust 1.98 fmt/clippy/test 与 `cargo deny --offline` advisories/licenses 均通过；网易云 TypeScript oracle、JavaScript 许可证和前端生产构建通过。最新完整 Tauri 构建已成功生成 x64 NSIS 与 MSI。真实 Tauri/WebView2 已确认播放器主窗口、匿名公共首页、播放列表空态、设置和 updater fail-closed；Discover、恢复队列连续水合、双域历史和缓存多质量聚合已有自动化覆盖，仍需继续做完整页面/硬件/账号外部验收。
 
 ## 自动化门禁
 
@@ -21,11 +21,11 @@
 
 | 领域 | 当前状态 | 合并/发布门槛 |
 |---|---|---|
-| DSP | 暂空，等待 D16 | 只验收稳定插入点、逐样本透明旁路和 UI 禁用入口；不得虚构算法、效果、参数或预设。D16 定稿后再增加 TS/Rust 对照向量、误差容限与性能测试 |
-| D25 缓存策略 | 未决 | 缓存总容量、最近 100 首淘汰、断网行为和后台资源阈值必须通过显式策略接口隔离；定案前默认 fail closed，不得把临时数值固化为契约 |
+| DSP | D29 已定调，正在实施 | 按 HSE v1.5.1 专项授权接入完整 22 阶段 Rust/TS 核心、参数、预设和一致性测试；Rust 为播放权威，不复用 HSE UI。HRTF 第三方 SOFA 数据须单独审计 |
+| D25 缓存策略 | D30 已定调，待实现 | 默认 10 GiB、最近 100 个不同远程曲目保护、Public 7 天离线证明、AccountEntitled 离线拒绝、整专补齐受 AC/非计费网络/磁盘保留条件约束 |
 | VIP 缓存权益 | D23 硬门禁 | 离线测试必须覆盖未登录、非 VIP、过期、切号、服务端校验失败均拒绝；仅同一 `AccountEntitled(userId)` 且实时权益有效时放行 |
 | 专辑缓存晋升 | D24 硬门禁 | 离线测试覆盖专辑上下文、完整一首或累计 5 分钟、每日最多计一次、5 次晋升、空闲低优先级补齐及权益门禁 |
-| 网易云 Rust 迁移 | 独立 workspace 已落地 | 每个迁移端点须以行为规范和 TS oracle 的固定输入/输出 fixture 验证成功、错误码、退避、音质降级、付费内容拦截与歌词等价；独立 workspace 必须通过 fmt/clippy/test 与许可证门禁 |
+| 网易云 Rust 迁移 | 最小在线闭环已接通，扩展能力持续补齐 | XEAPI 首次调用会执行并发安全、失败可重试的网络初始化；扫码登录返回本地 SVG data URL；官方图片通过主窗口专用 command 按域名、DNS、公网地址、MIME、体积和重定向校验。每个迁移端点仍须以行为规范和 TS oracle 的固定输入/输出 fixture 验证成功、错误码、退避、音质降级、付费内容拦截与歌词等价 |
 | Tauri DTO/capabilities | 已落地，契约覆盖持续补齐 | command/event/channel DTO 需序列化契约测试；capabilities 需最小权限检查，禁止通用网络代理、任意 URL、任意文件系统或 Cookie 读写接口 |
 
 ## 外部测试门槛
@@ -42,7 +42,7 @@
 
 ## 当前已知阻断
 
-- DSP 具体效果、参数和工作台继续受 D16 阻塞；当前只允许透明旁路与禁用入口。
-- D25 尚未确定缓存总容量、最近 100 首淘汰、断网和后台资源阈值，因此整专后台补齐默认关闭。
+- D29 已解除 DSP 规格阻塞；完整 HSE DSP 核心、HyperPlayer 原生工作台、parity/性能/硬件验收仍待实施。
+- D30 已确定缓存默认策略；schema v7、淘汰器、Windows 资源探针和整专补齐 worker 仍待实施。
 - 登录/VIP、网易云写操作、Windows 音频/SMTC 与安装升级仍需要受控账号、Windows 实机或签名材料完成外部验收。
 - UI 最终设计令牌仍需按定调文件在真实 Tauri 窗口中逐页确认。浏览器截图或浏览器 mock 不得作为通过依据。

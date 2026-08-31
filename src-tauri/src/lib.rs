@@ -62,6 +62,12 @@ pub fn run() {
             library::library_query_folders,
             library::library_query_recent,
             library::library_query_playlists,
+            library::library_create_playlist,
+            library::library_rename_playlist,
+            library::library_delete_playlist,
+            library::library_add_playlist_track,
+            library::library_remove_playlist_track,
+            library::library_reorder_playlist_track,
             library::library_album_tracks,
             library::library_artist_tracks,
             library::library_folder_tracks,
@@ -105,6 +111,7 @@ pub fn run() {
             netease::netease_comments,
             netease::netease_follows,
             netease::netease_cloud,
+            netease::netease_image,
             netease::netease_prepare_mutation,
             netease::netease_commit_mutation,
             netease::netease_start_qr_login,
@@ -122,6 +129,7 @@ pub fn run() {
             platform::windows::windows_register_file_associations,
             updater::updater_status,
             updater::updater_check,
+            updater::updater_update,
         ])
         .setup(move |app| {
             let app_data_dir = app.path().app_data_dir()?;
@@ -188,7 +196,8 @@ mod tests {
                 "source": "local",
                 "title": "untrusted title",
                 "playable": true
-            }
+            },
+            "context": { "kind": "manual", "id": null }
         }));
         assert!(result.is_err());
     }
@@ -232,6 +241,7 @@ mod tests {
             "netease_comments",
             "netease_follows",
             "netease_cloud",
+            "netease_image",
             "netease_prepare_mutation",
             "netease_commit_mutation",
         ] {

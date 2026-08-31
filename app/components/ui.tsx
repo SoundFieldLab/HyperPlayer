@@ -1,5 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { CaretRight, House, Info, SpinnerGap } from "@phosphor-icons/react";
+import { fallbackCover } from "../artwork";
+import { bridge } from "../bridge";
 import type { TrackDto } from "../bridge/contracts";
 import type { RemoteState } from "../remote";
 
@@ -42,7 +44,26 @@ export function formatTime(ms: number): string {
 }
 
 export function Cover({ src, alt, className = "" }: { src: string; alt: string; className?: string }): React.JSX.Element {
-  return <img className={`cover ${className}`} src={src} alt={alt} draggable={false} />;
+  const [resolved, setResolved] = useState(() => src.startsWith("https://") ? fallbackCover(src) : src);
+  useEffect(() => {
+    if (!src.startsWith("https://")) {
+      setResolved(src);
+      return;
+    }
+    let active = true;
+    let objectUrl: string | null = null;
+    setResolved(fallbackCover(src));
+    void bridge.neteaseImage(src).then((image) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(new Blob([new Uint8Array(image.bytes)], { type: image.mimeType }));
+      setResolved(objectUrl);
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
+  return <img className={`cover ${className}`} src={resolved} alt={alt} draggable={false} />;
 }
 
 export function SourceMark({ source }: { source: TrackDto["source"] }): React.JSX.Element {

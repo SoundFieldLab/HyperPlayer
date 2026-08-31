@@ -114,24 +114,29 @@ pub(crate) fn map_play_info(
         _ => fallback_level,
     };
     let fee = unsigned(value, "fee") as u8;
+    let free_trial_info = value
+        .get("freeTrialInfo")
+        .filter(|trial| trial.is_object())
+        .map(|trial| FreeTrialInfo {
+            start: unsigned(trial, "start"),
+            end: unsigned(trial, "end"),
+        });
+    let url = optional_string(value, "url")
+        .filter(|url| !url.is_empty())
+        .filter(|_| free_trial_info.is_none());
+    let is_paid_content = matches!(fee, 1 | 4) || free_trial_info.is_some();
 
     Ok(PlayInfo {
         id: unsigned(value, "id").max(fallback_id),
-        url: optional_string(value, "url").filter(|url| !url.is_empty()),
+        url,
         level,
         bitrate: unsigned(value, "br"),
         size_bytes: unsigned(value, "size"),
         md5: string(value, "md5"),
         container_type: string(value, "type"),
         fee,
-        free_trial_info: value
-            .get("freeTrialInfo")
-            .filter(|trial| trial.is_object())
-            .map(|trial| FreeTrialInfo {
-                start: unsigned(trial, "start"),
-                end: unsigned(trial, "end"),
-            }),
-        is_paid_content: false,
+        free_trial_info,
+        is_paid_content,
     })
 }
 
@@ -163,4 +168,42 @@ pub(crate) fn string(value: &Value, key: &str) -> String {
 pub(crate) fn optional_string(value: &Value, key: &str) -> Option<String> {
     let value = string(value, key);
     (!value.is_empty()).then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn play_info_preserves_paid_content_metadata_with_entitled_url() {
+        let info = map_play_info(
+            &json!({"id": 7, "url": "https://cdn.example/full.flac", "fee": 1}),
+            7,
+            QualityLevel::Lossless,
+        )
+        .unwrap();
+
+        assert_eq!(info.url.as_deref(), Some("https://cdn.example/full.flac"));
+        assert!(info.is_paid_content);
+    }
+
+    #[test]
+    fn play_info_rejects_trial_url_as_incomplete_playback() {
+        let info = map_play_info(
+            &json!({
+                "id": 8,
+                "url": "https://cdn.example/trial.mp3",
+                "fee": 0,
+                "freeTrialInfo": {"start": 0, "end": 30_000}
+            }),
+            8,
+            QualityLevel::Standard,
+        )
+        .unwrap();
+
+        assert_eq!(info.url, None);
+        assert!(info.is_paid_content);
+        assert_eq!(info.free_trial_info.unwrap().end, 30_000);
+    }
 }

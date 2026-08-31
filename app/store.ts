@@ -6,6 +6,7 @@ import type {
   BridgeContract,
   ContentDomain,
   PlaybackSnapshotDto,
+  PlaybackContextDto,
   QueueInsertPosition,
   TrackDto,
   Unlisten,
@@ -14,6 +15,10 @@ import { trackRefOf } from "./bridge/contracts";
 import { bridge } from "./bridge";
 
 export type ViewId = "home" | "search" | "library" | "discover" | "recent" | "songs" | "albums" | "artists" | "folders" | "playlists" | "album" | "artist" | "playlist" | "account" | "messages" | "settings" | "cache" | "status" | "dsp";
+export type LocalEntityKind = "album" | "artist" | "folder" | "playlist";
+export interface NavigationEntry { view: ViewId; detailId: number | string | null; detailKind: LocalEntityKind | null; }
+export interface DomainNavigation { current: NavigationEntry; back: NavigationEntry[]; forward: NavigationEntry[]; }
+export type NavigationState = Record<ContentDomain, DomainNavigation>;
 export type OverlayId = "none" | "queue" | "status";
 export type InitStatus = "idle" | "loading" | "ready" | "error";
 export interface ToastMessage { id: number; message: string; }
@@ -25,8 +30,9 @@ interface AppState {
   onboarding: boolean;
   domain: ContentDomain;
   view: ViewId;
-  detailId: number | null;
-  history: ViewId[];
+  detailId: number | string | null;
+  detailKind: LocalEntityKind | null;
+  navigation: NavigationState;
   playback: PlaybackSnapshotDto | null;
   settings: AppSettingsDto | null;
   tasks: BackgroundTaskDto[];
@@ -45,13 +51,15 @@ interface AppState {
   finishOnboarding(): void;
   rerunOnboarding(): void;
   setDomain(domain: ContentDomain): void;
-  navigate(view: ViewId, detailId?: number): void;
+  navigate(view: ViewId, detailId?: number | string, detailKind?: LocalEntityKind): void;
+  replaceNavigation(view: ViewId): void;
   back(): void;
+  forward(): void;
   togglePlayback(): Promise<void>;
   stop(): Promise<void>;
   next(): Promise<void>;
   previous(): Promise<void>;
-  playTrack(track: TrackDto): Promise<void>;
+  playTrack(track: TrackDto, context?: PlaybackContextDto): Promise<void>;
   seek(value: number): Promise<void>;
   setVolume(value: number): Promise<void>;
   setRepeat(value: PlaybackSnapshotDto["repeat"]): Promise<void>;
@@ -98,6 +106,15 @@ let transportGeneration = 0;
 let volumeGeneration = 0;
 let settingsGeneration = 0;
 
+const homeEntry: NavigationEntry = { view: "home", detailId: null, detailKind: null };
+function initialNavigation(): NavigationState {
+  return {
+    netease: { current: homeEntry, back: [], forward: [] },
+    local: { current: homeEntry, back: [], forward: [] },
+  };
+}
+function capHistory(entries: NavigationEntry[]): NavigationEntry[] { return entries.slice(-20); }
+
 export const useAppStore = create<AppState>((set, get) => ({
   ready: false,
   initStatus: "idle",
@@ -106,7 +123,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   domain: "netease",
   view: "home",
   detailId: null,
-  history: [],
+  detailKind: null,
+  navigation: initialNavigation(),
   playback: null,
   settings: null,
   tasks: [],
@@ -179,15 +197,99 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   finishOnboarding() {
     localStorage.setItem("hyperplayer.onboarded", "1");
-    set({ onboarding: false, domain: "netease", view: "home" });
+    set({ onboarding: false, domain: "netease", view: "home", detailId: null, detailKind: null, navigation: initialNavigation() });
   },
   rerunOnboarding() {
     localStorage.removeItem("hyperplayer.onboarded");
-    set({ onboarding: true, view: "home", history: [], overlay: "none", expandedPlayer: false });
+    const navigation = initialNavigation();
+    set({ onboarding: true, domain: "netease", view: "home", detailId: null, detailKind: null, navigation, overlay: "none", expandedPlayer: false });
   },
-  setDomain(domain) { set({ domain, view: "home", detailId: null, history: [] }); },
-  navigate(view, detailId) { set((state) => ({ history: [...state.history.slice(-19), state.view], view, detailId: detailId ?? null, selectedTrackIds: [] })); },
-  back() { const history = [...get().history]; const view = history.pop(); if (view) set({ view, history }); },
+  setDomain(domain) {
+    set((state) => {
+      if (domain === state.domain) return {};
+      const current = state.navigation[domain].current;
+      return { domain, view: current.view, detailId: current.detailId, detailKind: current.detailKind, selectedTrackIds: [] };
+    });
+  },
+  navigate(view, detailId, detailKind) {
+    set((state) => {
+      const next: NavigationEntry = {
+        view,
+        detailId: detailId ?? null,
+        detailKind: typeof detailId === "string" ? detailKind ?? null : null,
+      };
+      const active = state.navigation[state.domain];
+      if (active.current.view === next.view && active.current.detailId === next.detailId && active.current.detailKind === next.detailKind) return {};
+      return {
+        view: next.view,
+        detailId: next.detailId,
+        detailKind: next.detailKind,
+        navigation: {
+          ...state.navigation,
+          [state.domain]: { current: next, back: capHistory([...active.back, active.current]), forward: [] },
+        },
+        selectedTrackIds: [],
+      };
+    });
+  },
+  replaceNavigation(view) {
+    set((state) => {
+      const active = state.navigation[state.domain];
+      const next: NavigationEntry = { view, detailId: null, detailKind: null };
+      return {
+        view,
+        detailId: null,
+        detailKind: null,
+        navigation: {
+          ...state.navigation,
+          [state.domain]: { current: next, back: active.back, forward: [] },
+        },
+        selectedTrackIds: [],
+      };
+    });
+  },
+  back() {
+    set((state) => {
+      const active = state.navigation[state.domain];
+      const previous = active.back.at(-1);
+      if (!previous) return {};
+      return {
+        view: previous.view,
+        detailId: previous.detailId,
+        detailKind: previous.detailKind,
+        navigation: {
+          ...state.navigation,
+          [state.domain]: {
+            current: previous,
+            back: active.back.slice(0, -1),
+            forward: capHistory([...active.forward, active.current]),
+          },
+        },
+        selectedTrackIds: [],
+      };
+    });
+  },
+  forward() {
+    set((state) => {
+      const active = state.navigation[state.domain];
+      const next = active.forward.at(-1);
+      if (!next) return {};
+      return {
+        view: next.view,
+        detailId: next.detailId,
+        detailKind: next.detailKind,
+        navigation: {
+          ...state.navigation,
+          [state.domain]: {
+            current: next,
+            back: capHistory([...active.back, active.current]),
+            forward: active.forward.slice(0, -1),
+          },
+        },
+        selectedTrackIds: [],
+      };
+    });
+  },
   notifyError(error, fallback) {
     const toast = { id: ++toastId, message: errorMessage(error, fallback) };
     set((state) => ({ toasts: [...state.toasts.slice(-3), toast] }));
@@ -224,11 +326,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     try { const playback = await activeBridge.previous(); if (generation === transportGeneration) set({ playback }); }
     catch (error) { if (generation === transportGeneration) get().notifyError(error, "无法播放上一首"); }
   },
-  async playTrack(track) {
+  async playTrack(track, context) {
     const generation = ++transportGeneration;
     const previous = get().playback;
     try {
-      const playback = await activeBridge.play(trackRefOf(track));
+      const playback = await activeBridge.play(trackRefOf(track), context);
       if (generation === transportGeneration) set({ playback, selectedTrackIds: [track.id] });
     } catch (error) {
       if (generation !== transportGeneration) return;

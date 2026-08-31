@@ -1,7 +1,7 @@
 use crate::{
     dto::{CloseBehaviorDto, CloseRequestedDto, PlaybackStatusDto},
     events,
-    ports::AppState,
+    ports::{AppState, PlaybackTransition},
 };
 use std::time::{Duration, Instant};
 use tauri::{
@@ -44,6 +44,27 @@ fn install_progress_forwarder<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::R
                         }
                     }
                 }
+                if event.kind == hyperplayer_engine::EngineEventKind::AutomaticTransitionRequested {
+                    let state = app.state::<AppState>();
+                    let result = tauri::async_runtime::block_on(
+                        crate::commands::playback::transition_resolved(
+                            state.services.playback.as_ref(),
+                            state.services.tracks.as_ref(),
+                            PlaybackTransition::Next { automatic: true },
+                        ),
+                    );
+                    match result {
+                        Ok(snapshot) => {
+                            let _ = emit_engine_snapshot(&app, &snapshot);
+                        }
+                        Err(_) => {
+                            if let Ok((_, snapshot)) = state.services.playback.event_dto(event) {
+                                let _ = emit_engine_snapshot(&app, &snapshot);
+                            }
+                        }
+                    }
+                    continue;
+                }
                 let state = app.state::<AppState>();
                 let Ok((kind, snapshot)) = state.services.playback.event_dto(event) else {
                     break;
@@ -60,16 +81,12 @@ fn install_progress_forwarder<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::R
                         next_emit = Instant::now() + PROGRESS_INTERVAL;
                     }
                     hyperplayer_engine::EngineEventKind::StateChanged => {
-                        if app
-                            .emit(events::ENGINE_SNAPSHOT_CHANGED, &snapshot)
-                            .and_then(|_| {
-                                app.emit(events::PLAYBACK_STATE_CHANGED, &snapshot.playback)
-                            })
-                            .and_then(|_| app.emit(events::QUEUE_CHANGED, &snapshot.queue))
-                            .is_err()
-                        {
+                        if emit_engine_snapshot(&app, &snapshot).is_err() {
                             break;
                         }
+                    }
+                    hyperplayer_engine::EngineEventKind::AutomaticTransitionRequested => {
+                        unreachable!("automatic transitions are handled before event conversion")
                     }
                 }
             }
@@ -173,36 +190,52 @@ fn emit_close_requested<R: Runtime>(app: &tauri::AppHandle<R>) {
     );
 }
 
+fn emit_engine_snapshot<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    snapshot: &crate::dto::EngineSnapshotDto,
+) -> tauri::Result<()> {
+    app.emit(events::ENGINE_SNAPSHOT_CHANGED, snapshot)?;
+    app.emit(events::PLAYBACK_STATE_CHANGED, &snapshot.playback)?;
+    app.emit(events::QUEUE_CHANGED, &snapshot.queue)
+}
+
 fn tray_play_pause<R: Runtime>(app: &tauri::AppHandle<R>) {
     let state = app.state::<AppState>();
     let result = state.services.playback.state().and_then(|playback| {
         if playback.status == PlaybackStatusDto::Playing {
             state.services.playback.pause()
         } else {
-            state.services.playback.play_resolved(None)
+            tauri::async_runtime::block_on(crate::commands::playback::resume_resolved(
+                state.services.playback.as_ref(),
+                state.services.tracks.as_ref(),
+            ))
         }
     });
     if let Ok(snapshot) = result {
-        let _ = app.emit(events::ENGINE_SNAPSHOT_CHANGED, &snapshot);
-        let _ = app.emit(events::PLAYBACK_STATE_CHANGED, &snapshot.playback);
-        let _ = app.emit(events::QUEUE_CHANGED, &snapshot.queue);
+        let _ = emit_engine_snapshot(app, &snapshot);
     }
 }
 
 fn tray_previous<R: Runtime>(app: &tauri::AppHandle<R>) {
     let state = app.state::<AppState>();
-    if let Ok(snapshot) = state.services.playback.previous() {
-        let _ = app.emit(events::ENGINE_SNAPSHOT_CHANGED, &snapshot);
-        let _ = app.emit(events::PLAYBACK_STATE_CHANGED, &snapshot.playback);
-        let _ = app.emit(events::QUEUE_CHANGED, &snapshot.queue);
+    let result = tauri::async_runtime::block_on(crate::commands::playback::transition_resolved(
+        state.services.playback.as_ref(),
+        state.services.tracks.as_ref(),
+        PlaybackTransition::Previous,
+    ));
+    if let Ok(snapshot) = result {
+        let _ = emit_engine_snapshot(app, &snapshot);
     }
 }
 
 fn tray_next<R: Runtime>(app: &tauri::AppHandle<R>) {
     let state = app.state::<AppState>();
-    if let Ok(snapshot) = state.services.playback.next() {
-        let _ = app.emit(events::ENGINE_SNAPSHOT_CHANGED, &snapshot);
-        let _ = app.emit(events::PLAYBACK_STATE_CHANGED, &snapshot.playback);
-        let _ = app.emit(events::QUEUE_CHANGED, &snapshot.queue);
+    let result = tauri::async_runtime::block_on(crate::commands::playback::transition_resolved(
+        state.services.playback.as_ref(),
+        state.services.tracks.as_ref(),
+        PlaybackTransition::Next { automatic: false },
+    ));
+    if let Ok(snapshot) = result {
+        let _ = emit_engine_snapshot(app, &snapshot);
     }
 }

@@ -2,7 +2,7 @@
 
 ## 项目简介
 
-HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + React/TypeScript + Rust 音频引擎）。技术选型、详细设计、依赖部署和网易云 TypeScript 行为 oracle 已完成；**现已进入全量实现阶段，DSP 仅保留插入点与禁用占位，待 D16 后实现。**
+HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + React/TypeScript + Rust 音频引擎）。技术选型、详细设计、依赖部署和网易云 TypeScript 行为 oracle 已完成；**现已进入全量实现阶段，DSP 按 HyperSoundEngine v1.5.1 的完整核心能力实施，Rust 为播放权威，HyperPlayer 使用自有 UI。**
 
 ## 硬性约束
 
@@ -23,7 +23,8 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 ## 工作流程约束
 
 - **2026-08-30 用户已解除正式代码禁令并要求全量实现**：可创建 Tauri 2 应用、React UI、commands/capabilities、Rust 引擎/曲库和网易云 Rust Cleanroom 实现
-- **DSP 暂缓**：只实现稳定的音频管线插入点、旁路契约和 UI 禁用入口；不得虚构算法、效果器、参数或预设，待 D16 输入后再实现
+- **DSP 全量接入（2026-08-31 用户定调）**：以 HyperSoundEngine v1.5.1（commit `f7017621b7d84005fbfed8a3c42a119487a17326`）为完整 DSP 核心输入，迁入 22 阶段 Rust/TS 能力、参数、预设、配置编码和一致性测试；Rust 为实际播放权威，不复用 HSE UI/browser host/service/WASAPI。权利人 IceFireIcer 已授予 HyperPlayer 专项修改、融合及 Apache-2.0 分发授权，见 `LICENSE-HSE-AUTHORIZATION.md`；第三方 IR、素材和 SOFA/HRTF 数据仍须单独审计
+- **D25 保守默认（2026-08-31 用户授权工程定调）**：默认容量 10 GiB（可配置 2–100 GiB），到上限清理至 90%，保护最近 100 个不同远程曲目；Public 离线证明最长 7 天，AccountEntitled 离线永远 fail closed；整专补齐默认 standard、单并发、AC/非计费网络/磁盘保留条件满足时运行
 - 仍按现行定调与 ADR 实施；所有新增依赖须满足许可证约束，网易云实现继续严格遵守 Cleanroom 与模块隔离
 - 所有规划文件写入 `docs/`（已 gitignore）：需求、决策记录、ADR、术语表和协议规范
 - 每轮定调产生的新约束同步更新本文件与持久记忆
@@ -46,7 +47,7 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 - **UI 体系**：Tailwind CSS 4 + 深度定制 shadcn/ui（Radix）+ Phosphor Regular/Fill；zustand + TanStack Query；Motion 管产品过渡，CSS 管短反馈，Canvas/WebGL 管封面氛围、歌词高频渲染和未来 DSP 可视化；不引入 GSAP
 - **视觉方向**：明亮柔和消费产品 + 克制 Apple/Liquid Glass 近似；默认明亮、完整深石墨主题；`#3F55F9` 管交互、`#FF761C` 管播放；得意黑展示、思源黑体内容/歌词、Cascadia Mono 数据
 - **核心结构**：双内容域默认网易云、完全自绘标题栏、可展开三段式播放坞、42/58 封面+歌词播放层、有限槽位停靠/浮动窗口、完整桌面键盘与上下文菜单
-- **UI 验收要求**：A 明亮纯净 / B 封面氛围共用同一产品结构，所有页面与交互只在正式 Tauri/WebView2 窗口中验收。Computer Use + 多尺寸截图 + 设计 skills 通过后，最后由用户逐页确认；DSP 工作台继续等待 D16
+- **UI 验收要求**：A 明亮纯净 / B 封面氛围共用同一产品结构，所有页面与交互只在正式 Tauri/WebView2 窗口中验收。Computer Use + 多尺寸截图 + 设计 skills 通过后，最后由用户逐页确认；DSP 工作台按 HSE 核心能力使用 HyperPlayer 自有 UI 实现
 - **正式 UI 与验证仅运行在 Tauri/WebView2**：不提供浏览器预览或运行时 mock bridge；`pnpm dev` 启动 `tauri dev`，`pnpm build` 执行完整 Tauri 构建。Vite 内部脚本仅供 Tauri 生命周期调用，不作为独立产品入口
 - **系统集成**：优先 Tauri 2 官方/维护良好的插件，SMTC 等长尾能力用 Rust `windows-rs`
 - **打包更新**：Tauri bundler + updater plugin + GitHub Releases；签名方案待 M6 定稿

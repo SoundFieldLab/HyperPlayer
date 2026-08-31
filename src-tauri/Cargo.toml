@@ -14,9 +14,12 @@ tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
 async-trait = "0.1"
+base64 = "0.22"
 chrono = "0.4"
+futures-util = "0.3"
 hyperplayer-engine = { version = "0.1.0", path = "../crates/hyperplayer-engine" }
 hyperplayer-source-netease = { version = "0.1.0", path = "../crates/hyperplayer-source-netease" }
+minisign-verify = "0.2.5"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "stream"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
@@ -31,6 +34,7 @@ thiserror = "2.0"
 tokio = { version = "1", features = ["net", "sync"] }
 url = "2.5"
 uuid = { version = "1", features = ["v4"] }
+zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 zeroize = "1"
 
 [target.'cfg(windows)'.dependencies]

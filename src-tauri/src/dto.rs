@@ -92,10 +92,38 @@ pub struct SeekRequestDto {
     pub position_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum PlaybackContextKindDto {
+    Manual,
+    Album,
+    Playlist,
+    Search,
+    PersonalFm,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlaybackContextDto {
+    pub kind: PlaybackContextKindDto,
+    pub id: Option<String>,
+}
+
+impl Default for PlaybackContextDto {
+    fn default() -> Self {
+        Self {
+            kind: PlaybackContextKindDto::Manual,
+            id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlayTrackRequestDto {
     pub track: TrackRefDto,
+    #[serde(default)]
+    pub context: PlaybackContextDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -196,6 +224,40 @@ pub struct LibraryFolderDto {
     pub id: String,
     pub name: String,
     pub track_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LibraryPlaylistCreateRequestDto {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LibraryPlaylistRenameRequestDto {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LibraryPlaylistTrackRequestDto {
+    pub playlist_id: String,
+    pub track_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LibraryPlaylistReorderRequestDto {
+    pub playlist_id: String,
+    pub track_id: String,
+    pub target_position: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LibraryPlaylistDeleteRequestDto {
+    pub id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -402,6 +464,7 @@ pub enum CacheEntryStatusDto {
 pub struct CacheStatusDto {
     pub track: TrackRefDto,
     pub quality: Option<String>,
+    pub cached_versions: u32,
     pub status: CacheEntryStatusDto,
     pub access_class: CacheAccessClassDto,
     pub owner_user_id: Option<String>,
@@ -645,6 +708,19 @@ pub struct NeteaseNoticePageDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NeteaseImageRequestDto {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseImageDto {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct NeteaseLoginStartDto {
     pub login_id: String,
@@ -714,6 +790,8 @@ pub struct NeteasePlaylistDto {
 pub struct NeteaseHomeDto {
     pub recommended_tracks: Vec<TrackDto>,
     pub recommended_playlists: Vec<NeteasePlaylistDto>,
+    pub anonymous: bool,
+    pub unavailable_sections: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

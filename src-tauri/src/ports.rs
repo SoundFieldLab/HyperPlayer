@@ -18,16 +18,38 @@ const LOCATION_TICKET_TTL: Duration = Duration::from_secs(60);
 
 pub type ScanProgressSink = Arc<dyn Fn(ScanProgressDto) + Send + Sync>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaybackTransition {
+    Next { automatic: bool },
+    Previous,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlaybackMediaTarget {
+    pub queue_id: u64,
+    pub track: TrackRefDto,
+}
+
 pub trait PlaybackPort: Send + Sync {
     fn state(&self) -> AppResult<PlaybackStateDto>;
     fn play_resolved(
         &self,
         media: Option<hyperplayer_engine::TrustedResolvedMedia>,
+        context: PlaybackContextDto,
     ) -> AppResult<EngineSnapshotDto>;
+    fn restored_media_targets(&self) -> AppResult<Vec<(u64, TrackRefDto)>>;
+    fn transition_media_targets(
+        &self,
+        transition: PlaybackTransition,
+    ) -> AppResult<Vec<PlaybackMediaTarget>>;
+    fn attach_restored_media(
+        &self,
+        media: Vec<(u64, hyperplayer_engine::TrustedResolvedMedia)>,
+    ) -> AppResult<()>;
     fn pause(&self) -> AppResult<EngineSnapshotDto>;
     fn stop(&self) -> AppResult<EngineSnapshotDto>;
-    fn next(&self) -> AppResult<EngineSnapshotDto>;
-    fn previous(&self) -> AppResult<EngineSnapshotDto>;
+    fn next(&self, expected_queue_id: u64, automatic: bool) -> AppResult<EngineSnapshotDto>;
+    fn previous(&self, expected_queue_id: u64) -> AppResult<EngineSnapshotDto>;
     fn seek(&self, position_ms: u64) -> AppResult<EngineSnapshotDto>;
     fn set_volume(&self, volume: f32) -> AppResult<EngineSnapshotDto>;
     fn set_repeat_mode(&self, mode: RepeatModeDto) -> AppResult<EngineSnapshotDto>;
@@ -66,6 +88,17 @@ pub trait LibraryPort: Send + Sync {
         &self,
         request: LibraryQueryDto,
     ) -> AppResult<EntityPageDto<LibraryPlaylistDto>>;
+    fn create_playlist(&self, name: &str) -> AppResult<LibraryPlaylistDto>;
+    fn rename_playlist(&self, id: &str, name: &str) -> AppResult<LibraryPlaylistDto>;
+    fn delete_playlist(&self, id: &str) -> AppResult<()>;
+    fn add_playlist_track(&self, playlist_id: &str, track_id: &str) -> AppResult<()>;
+    fn remove_playlist_track(&self, playlist_id: &str, track_id: &str) -> AppResult<()>;
+    fn reorder_playlist_track(
+        &self,
+        playlist_id: &str,
+        track_id: &str,
+        target_position: u32,
+    ) -> AppResult<()>;
     fn album_tracks(&self, request: LibraryEntityTracksRequestDto) -> AppResult<LibraryPageDto>;
     fn artist_tracks(&self, request: LibraryEntityTracksRequestDto) -> AppResult<LibraryPageDto>;
     fn folder_tracks(&self, request: LibraryEntityTracksRequestDto) -> AppResult<LibraryPageDto>;
@@ -142,6 +175,7 @@ pub trait NeteasePort: Send + Sync {
     ) -> AppResult<NeteaseCommentPageDto>;
     async fn follows(&self, request: NeteaseFollowsRequestDto) -> AppResult<NeteaseUserPageDto>;
     async fn cloud(&self, page: PageRequestDto) -> AppResult<NeteaseCloudPageDto>;
+    async fn image(&self, url: &str) -> AppResult<NeteaseImageDto>;
     fn prepare_mutation(
         &self,
         window_label: &str,
@@ -192,7 +226,11 @@ impl AppServices {
         ));
         let settings = Arc::new(SettingsAdapter::open(app_data_dir.join("settings.json"))?);
         let credential_vault = crate::credential_vault::netease_credential_vault(app_data_dir)?;
-        let netease = Arc::new(NeteaseAdapter::new(settings.clone(), credential_vault)?);
+        let netease = Arc::new(NeteaseAdapter::new(
+            settings.clone(),
+            credential_vault,
+            repository.clone(),
+        )?);
         let cache_root = app_data_dir.join("cache");
         let cache = Arc::new(CacheAdapter::new(
             repository.clone(),
@@ -208,10 +246,19 @@ impl AppServices {
         spawn_prefetch_worker(cache.clone(), prefetch_receiver)?;
         let lyrics = Arc::new(crate::commands::lyrics::NeteaseLyricsAdapter::new(
             settings.clone(),
+            repository.clone(),
         ));
         let locations = Arc::new(LocationRegistry::open(
             app_data_dir.join("hyperplayer-locations.sqlite3"),
         )?);
+        {
+            let repository = repository
+                .lock()
+                .map_err(|_| crate::error::AppError::StateUnavailable)?;
+            for root in locations.all()? {
+                repository.register_library_root(&root)?;
+            }
+        }
         let tracks = Arc::new(TrackResolver::new(
             repository.clone(),
             locations.clone(),

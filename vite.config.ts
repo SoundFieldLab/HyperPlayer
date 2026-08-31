@@ -7,5 +7,5 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   envPrefix: ["VITE_", "TAURI_"],
-  test: { environment: "jsdom", include: ["app/**/*.test.ts"] },
+  test: { environment: "jsdom", include: ["app/**/*.test.{ts,tsx}"] },
 });

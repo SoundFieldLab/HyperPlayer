@@ -206,6 +206,18 @@ pub struct CacheRepositoryStats {
     pub locked_entries: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntitlementCacheScope {
+    Owner(u64),
+    AllAccounts,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CacheEntitlementLockResult {
+    pub locked_entries: usize,
+    pub revoked_leases: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemovedCacheObject {
     pub content_hash: String,
@@ -277,18 +289,23 @@ impl SqliteRepository {
     }
 
     pub fn media_path(&self, id: &MediaId) -> Result<Option<PathBuf>> {
+        Ok(self.media_path_with_root(id)?.map(|(path, _)| path))
+    }
+
+    pub fn media_path_with_root(&self, id: &MediaId) -> Result<Option<(PathBuf, PathBuf)>> {
         let Some(track) = self.track_by_id(id)? else {
             return Ok(None);
         };
         let candidate = track.path.canonicalize()?;
         let roots = self.library_roots()?;
-        if roots.iter().any(|root| candidate.starts_with(root)) {
-            Ok(Some(candidate))
-        } else {
-            Err(EngineError::InvalidInput(
-                "media path is outside registered library roots".into(),
-            ))
-        }
+        roots
+            .into_iter()
+            .find(|root| candidate.starts_with(root))
+            .map(|root| (candidate, root))
+            .map(Some)
+            .ok_or_else(|| {
+                EngineError::InvalidInput("media path is outside registered library roots".into())
+            })
     }
 
     pub fn save_playback_session(
@@ -337,6 +354,10 @@ impl SqliteRepository {
     }
 
     pub fn append_playback_history(&self, record: &PlaybackHistoryRecord) -> Result<()> {
+        self.start_playback_history(record).map(|_| ())
+    }
+
+    pub fn start_playback_history(&self, record: &PlaybackHistoryRecord) -> Result<u64> {
         self.connection.execute(
             "INSERT INTO playback_history(media_id, played_unix_ms, position_ms) VALUES (?1, ?2, ?3)",
             params![
@@ -345,6 +366,27 @@ impl SqliteRepository {
                 sqlite_integer(record.position_ms, "position_ms")?
             ],
         )?;
+        u64::try_from(self.connection.last_insert_rowid())
+            .map_err(|_| EngineError::InvalidInput("playback history id is invalid".into()))
+    }
+
+    pub fn update_playback_history_position(
+        &self,
+        history_id: u64,
+        position_ms: u64,
+    ) -> Result<()> {
+        let changed = self.connection.execute(
+            "UPDATE playback_history SET position_ms = ?2 WHERE id = ?1",
+            params![
+                sqlite_integer(history_id, "playback history id")?,
+                sqlite_integer(position_ms, "position_ms")?
+            ],
+        )?;
+        if changed == 0 {
+            return Err(EngineError::InvalidInput(
+                "playback history entry does not exist".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -658,37 +700,193 @@ impl SqliteRepository {
     }
 
     pub fn create_playlist(&self, id: &str, name: &str, now: u64) -> Result<()> {
-        if id.trim().is_empty() || name.trim().is_empty() {
-            return Err(EngineError::InvalidInput(
-                "playlist id and name are required".into(),
-            ));
-        }
+        let name = validate_playlist_name(id, name)?;
         let now = sqlite_integer(now, "playlist timestamp")?;
         self.connection.execute(
             "INSERT INTO playlists(id, name, created_unix_ms, updated_unix_ms)
              VALUES (?1, ?2, ?3, ?3)",
-            params![id, name.trim(), now],
+            params![id, name, now],
         )?;
         Ok(())
     }
 
     pub fn add_playlist_track(
-        &self,
+        &mut self,
         playlist_id: &str,
         media_id: &MediaId,
         now: u64,
     ) -> Result<()> {
-        self.connection.execute(
+        let now = sqlite_integer(now, "playlist timestamp")?;
+        let transaction = self.connection.transaction()?;
+        let inserted = transaction.execute(
             "INSERT INTO playlist_tracks(playlist_id, media_id, position)
              VALUES (?1, ?2, COALESCE((SELECT MAX(position) + 1 FROM playlist_tracks WHERE playlist_id = ?1), 0))
              ON CONFLICT(playlist_id, media_id) DO NOTHING",
             params![playlist_id, media_id.0],
         )?;
-        self.connection.execute(
+        if inserted == 1 {
+            transaction.execute(
+                "UPDATE playlists SET updated_unix_ms = ?2 WHERE id = ?1",
+                params![playlist_id, now],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn rename_playlist(&self, playlist_id: &str, name: &str, now: u64) -> Result<()> {
+        let name = validate_playlist_name(playlist_id, name)?;
+        let changed = self.connection.execute(
+            "UPDATE playlists SET name = ?2, updated_unix_ms = ?3 WHERE id = ?1",
+            params![
+                playlist_id,
+                name,
+                sqlite_integer(now, "playlist timestamp")?
+            ],
+        )?;
+        if changed == 0 {
+            return Err(EngineError::InvalidInput("playlist does not exist".into()));
+        }
+        Ok(())
+    }
+
+    pub fn delete_playlist(&mut self, playlist_id: &str) -> Result<()> {
+        if playlist_id.trim().is_empty() {
+            return Err(EngineError::InvalidInput("playlist id is required".into()));
+        }
+        let transaction = self.connection.transaction()?;
+        let changed = transaction.execute("DELETE FROM playlists WHERE id = ?1", [playlist_id])?;
+        if changed == 0 {
+            return Err(EngineError::InvalidInput("playlist does not exist".into()));
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn remove_playlist_track(
+        &mut self,
+        playlist_id: &str,
+        media_id: &MediaId,
+        now: u64,
+    ) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        let position: Option<u32> = transaction
+            .query_row(
+                "SELECT position FROM playlist_tracks WHERE playlist_id = ?1 AND media_id = ?2",
+                params![playlist_id, media_id.0],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(position) = position else {
+            return Err(EngineError::InvalidInput(
+                "playlist track does not exist".into(),
+            ));
+        };
+        transaction.execute(
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND media_id = ?2",
+            params![playlist_id, media_id.0],
+        )?;
+        transaction.execute(
+            "UPDATE playlist_tracks SET position = -position - 2 WHERE playlist_id = ?1 AND position > ?2",
+            params![playlist_id, position],
+        )?;
+        transaction.execute(
+            "UPDATE playlist_tracks SET position = -position - 3 WHERE playlist_id = ?1 AND position <= -2",
+            [playlist_id],
+        )?;
+        transaction.execute(
             "UPDATE playlists SET updated_unix_ms = ?2 WHERE id = ?1",
             params![playlist_id, sqlite_integer(now, "playlist timestamp")?],
         )?;
+        transaction.commit()?;
         Ok(())
+    }
+
+    pub fn reorder_playlist_track(
+        &mut self,
+        playlist_id: &str,
+        media_id: &MediaId,
+        target_position: u32,
+        now: u64,
+    ) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        let current: Option<u32> = transaction
+            .query_row(
+                "SELECT position FROM playlist_tracks WHERE playlist_id = ?1 AND media_id = ?2",
+                params![playlist_id, media_id.0],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current) = current else {
+            return Err(EngineError::InvalidInput(
+                "playlist track does not exist".into(),
+            ));
+        };
+        let count: u32 = transaction.query_row(
+            "SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?1",
+            [playlist_id],
+            |row| row.get(0),
+        )?;
+        if target_position >= count {
+            return Err(EngineError::InvalidInput(
+                "playlist target position is out of bounds".into(),
+            ));
+        }
+        if current != target_position {
+            transaction.execute(
+                "UPDATE playlist_tracks SET position = -1 WHERE playlist_id = ?1 AND media_id = ?2",
+                params![playlist_id, media_id.0],
+            )?;
+            if target_position < current {
+                transaction.execute(
+                    "UPDATE playlist_tracks SET position = -position - 2 WHERE playlist_id = ?1 AND position >= ?2 AND position < ?3",
+                    params![playlist_id, target_position, current],
+                )?;
+                transaction.execute(
+                    "UPDATE playlist_tracks SET position = -position - 1 WHERE playlist_id = ?1 AND position <= -2",
+                    [playlist_id],
+                )?;
+            } else {
+                transaction.execute(
+                    "UPDATE playlist_tracks SET position = -position - 2 WHERE playlist_id = ?1 AND position > ?2 AND position <= ?3",
+                    params![playlist_id, current, target_position],
+                )?;
+                transaction.execute(
+                    "UPDATE playlist_tracks SET position = -position - 3 WHERE playlist_id = ?1 AND position <= -2",
+                    [playlist_id],
+                )?;
+            }
+            transaction.execute(
+                "UPDATE playlist_tracks SET position = ?3 WHERE playlist_id = ?1 AND media_id = ?2",
+                params![playlist_id, media_id.0, target_position],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE playlists SET updated_unix_ms = ?2 WHERE id = ?1",
+            params![playlist_id, sqlite_integer(now, "playlist timestamp")?],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn playlist_by_id(&self, playlist_id: &str) -> Result<Option<PlaylistSummary>> {
+        self.connection
+            .query_row(
+                "SELECT p.id, p.name, COUNT(pt.media_id), p.updated_unix_ms
+                 FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
+                 WHERE p.id = ?1 GROUP BY p.id",
+                [playlist_id],
+                |row| {
+                    Ok(PlaylistSummary {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        track_count: u64_column(row, 2)?,
+                        updated_unix_ms: u64_column(row, 3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn query_playlists(
@@ -970,6 +1168,40 @@ impl SqliteRepository {
                 },
             )
             .map_err(Into::into)
+    }
+
+    pub fn lock_account_entitled_cache_entries(
+        &mut self,
+        scope: EntitlementCacheScope,
+    ) -> Result<CacheEntitlementLockResult> {
+        let owner_user_id = match scope {
+            EntitlementCacheScope::Owner(owner_user_id) => {
+                Some(sqlite_integer(owner_user_id, "owner_user_id")?)
+            }
+            EntitlementCacheScope::AllAccounts => None,
+        };
+        let transaction = self.connection.transaction()?;
+        let revoked_leases = transaction.execute(
+            "DELETE FROM cache_leases
+             WHERE content_hash IN (
+                 SELECT content_hash FROM cache_entries
+                 WHERE access_class = 'account_entitled'
+                   AND (?1 IS NULL OR owner_user_id = ?1)
+             )",
+            params![owner_user_id],
+        )?;
+        let locked_entries = transaction.execute(
+            "UPDATE cache_entries SET state = 'locked_entitlement'
+             WHERE access_class = 'account_entitled'
+               AND (?1 IS NULL OR owner_user_id = ?1)
+               AND state <> 'locked_entitlement'",
+            params![owner_user_id],
+        )?;
+        transaction.commit()?;
+        Ok(CacheEntitlementLockResult {
+            locked_entries,
+            revoked_leases,
+        })
     }
 
     pub fn remove_cache_entries_for(
@@ -1374,6 +1606,21 @@ fn map_album_fill_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<AlbumFillTas
     })
 }
 
+fn validate_playlist_name<'a>(id: &str, name: &'a str) -> Result<&'a str> {
+    let name = name.trim();
+    if id.trim().is_empty() || name.is_empty() {
+        return Err(EngineError::InvalidInput(
+            "playlist id and name are required".into(),
+        ));
+    }
+    if name.chars().count() > 80 {
+        return Err(EngineError::InvalidInput(
+            "playlist name is too long".into(),
+        ));
+    }
+    Ok(name)
+}
+
 fn sqlite_integer(value: u64, field: &str) -> Result<i64> {
     i64::try_from(value)
         .map_err(|_| EngineError::InvalidInput(format!("{field} exceeds SQLite INTEGER")))
@@ -1550,6 +1797,176 @@ mod tests {
     }
 
     #[test]
+    fn locking_entitled_cache_for_owner_preserves_other_owners_and_public_entries() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let owner_hash = "1".repeat(64);
+        let other_hash = "2".repeat(64);
+        for hash in [&owner_hash, &other_hash] {
+            repository
+                .record_cache_object(
+                    &CacheObject {
+                        content_hash: hash.clone(),
+                        size_bytes: 1,
+                        path: PathBuf::from(hash),
+                    },
+                    1,
+                )
+                .unwrap();
+        }
+        let entitled_entry = |content_id: &str, owner_user_id, content_hash: &str| CacheEntry {
+            content_id: MediaId::new(content_id),
+            quality: "lossless".into(),
+            content_hash: content_hash.into(),
+            access_class: CacheAccessClass::AccountEntitled { owner_user_id },
+            entitlement_snapshot: Some(EntitlementSnapshot {
+                product: "vip".into(),
+                valid_until_unix_ms: Some(123_456),
+                server_revision: Some("rev-1".into()),
+            }),
+            last_validated_unix_ms: Some(123_000),
+            official_source: "netease".into(),
+            state: CacheState::Available,
+        };
+        let owner_entry = entitled_entry("owner", 42, &owner_hash);
+        let other_entry = entitled_entry("other", 7, &other_hash);
+        let public_entry = CacheEntry {
+            content_id: MediaId::new("public"),
+            quality: "lossless".into(),
+            content_hash: owner_hash.clone(),
+            access_class: CacheAccessClass::Public,
+            entitlement_snapshot: None,
+            last_validated_unix_ms: None,
+            official_source: "netease".into(),
+            state: CacheState::Available,
+        };
+        for entry in [&owner_entry, &other_entry, &public_entry] {
+            repository.upsert_cache_entry(entry).unwrap();
+        }
+        let lease = CacheLease::NextTrackPrefetch;
+        repository
+            .acquire_cache_lease(&owner_hash, &lease, 2)
+            .unwrap();
+        repository
+            .acquire_cache_lease(&other_hash, &lease, 2)
+            .unwrap();
+
+        let result = repository
+            .lock_account_entitled_cache_entries(EntitlementCacheScope::Owner(42))
+            .unwrap();
+
+        assert_eq!(
+            result,
+            CacheEntitlementLockResult {
+                locked_entries: 1,
+                revoked_leases: 1,
+            }
+        );
+        assert_eq!(
+            repository
+                .cache_entry(&owner_entry.content_id, &owner_entry.quality)
+                .unwrap()
+                .unwrap()
+                .state,
+            CacheState::LockedEntitlement
+        );
+        assert_eq!(
+            repository
+                .cache_entry(&other_entry.content_id, &other_entry.quality)
+                .unwrap()
+                .unwrap()
+                .state,
+            CacheState::Available
+        );
+        assert_eq!(
+            repository
+                .cache_entry(&public_entry.content_id, &public_entry.quality)
+                .unwrap()
+                .unwrap()
+                .state,
+            CacheState::Available
+        );
+        assert_eq!(repository.cache_lease_count(&owner_hash).unwrap(), 0);
+        assert_eq!(repository.cache_lease_count(&other_hash).unwrap(), 1);
+    }
+
+    #[test]
+    fn locking_all_entitled_cache_is_idempotent_and_revokes_all_matching_leases() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let first_hash = "3".repeat(64);
+        let second_hash = "4".repeat(64);
+        for hash in [&first_hash, &second_hash] {
+            repository
+                .record_cache_object(
+                    &CacheObject {
+                        content_hash: hash.clone(),
+                        size_bytes: 1,
+                        path: PathBuf::from(hash),
+                    },
+                    1,
+                )
+                .unwrap();
+        }
+        for (content_id, owner_user_id, content_hash, state) in [
+            ("first", 42, &first_hash, CacheState::Available),
+            ("second", 7, &second_hash, CacheState::Partial),
+        ] {
+            repository
+                .upsert_cache_entry(&CacheEntry {
+                    content_id: MediaId::new(content_id),
+                    quality: "lossless".into(),
+                    content_hash: content_hash.clone(),
+                    access_class: CacheAccessClass::AccountEntitled { owner_user_id },
+                    entitlement_snapshot: Some(EntitlementSnapshot {
+                        product: "vip".into(),
+                        valid_until_unix_ms: Some(123_456),
+                        server_revision: Some("rev-1".into()),
+                    }),
+                    last_validated_unix_ms: Some(123_000),
+                    official_source: "netease".into(),
+                    state,
+                })
+                .unwrap();
+            repository
+                .acquire_cache_lease(content_hash, &CacheLease::NextTrackPrefetch, 2)
+                .unwrap();
+        }
+
+        assert_eq!(
+            repository
+                .lock_account_entitled_cache_entries(EntitlementCacheScope::AllAccounts)
+                .unwrap(),
+            CacheEntitlementLockResult {
+                locked_entries: 2,
+                revoked_leases: 2,
+            }
+        );
+        for content_id in ["first", "second"] {
+            assert_eq!(
+                repository
+                    .cache_entry(&MediaId::new(content_id), "lossless")
+                    .unwrap()
+                    .unwrap()
+                    .state,
+                CacheState::LockedEntitlement
+            );
+        }
+        assert_eq!(repository.cache_lease_count(&first_hash).unwrap(), 0);
+        assert_eq!(repository.cache_lease_count(&second_hash).unwrap(), 0);
+        assert_eq!(
+            repository
+                .lock_account_entitled_cache_entries(EntitlementCacheScope::AllAccounts)
+                .unwrap(),
+            CacheEntitlementLockResult::default()
+        );
+        assert_eq!(
+            repository
+                .lock_account_entitled_cache_entries(EntitlementCacheScope::Owner(999))
+                .unwrap(),
+            CacheEntitlementLockResult::default()
+        );
+    }
+
+    #[test]
     fn album_session_counts_once_per_day_and_promotes_at_five() {
         let mut repository = SqliteRepository::in_memory().unwrap();
         let first = repository
@@ -1614,14 +2031,24 @@ mod tests {
                 position_ms: 12_345,
             })
             .unwrap();
+        let history_id = repository
+            .start_playback_history(&PlaybackHistoryRecord {
+                media_id: MediaId::new("track-session"),
+                played_unix_ms: 100,
+                position_ms: 0,
+            })
+            .unwrap();
+        repository
+            .update_playback_history_position(history_id, 5_432)
+            .unwrap();
 
         let restored = repository.load_playback_session().unwrap().unwrap();
         assert_eq!(restored.queue.context_snapshot(), queue.context_snapshot());
         assert_eq!(restored.position_ms, 12_345);
-        assert_eq!(
-            repository.playback_history(10).unwrap()[0].position_ms,
-            12_345
-        );
+        let history = repository.playback_history(10).unwrap();
+        assert_eq!(history[0].media_id, MediaId::new("track-session"));
+        assert_eq!(history[0].position_ms, 5_432);
+        assert_eq!(history[1].position_ms, 12_345);
     }
 
     #[test]
@@ -1640,6 +2067,160 @@ mod tests {
             repository.media_path(&MediaId::new("local:safe")).unwrap(),
             Some(canonical_root.join("song.flac"))
         );
+    }
+
+    #[test]
+    fn playlist_lifecycle_preserves_tracks_and_ignores_duplicate_adds() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let first = track_at("local:first", "C:/music/first.flac");
+        let second = track_at("local:second", "C:/music/second.flac");
+        repository.upsert_track(&first).unwrap();
+        repository.upsert_track(&second).unwrap();
+        repository
+            .create_playlist("playlist", "Original", 1)
+            .unwrap();
+
+        repository
+            .add_playlist_track("playlist", &first.track.id, 2)
+            .unwrap();
+        repository
+            .add_playlist_track("playlist", &first.track.id, 3)
+            .unwrap();
+        assert_eq!(
+            repository
+                .playlist_by_id("playlist")
+                .unwrap()
+                .unwrap()
+                .updated_unix_ms,
+            2
+        );
+        repository
+            .add_playlist_track("playlist", &second.track.id, 4)
+            .unwrap();
+        repository
+            .rename_playlist("playlist", "  Renamed  ", 5)
+            .unwrap();
+
+        let playlists = repository.query_playlists(None, 10, 0).unwrap();
+        assert_eq!(playlists.total, 1);
+        assert_eq!(playlists.items[0].name, "Renamed");
+        assert_eq!(playlists.items[0].track_count, 2);
+        assert_eq!(
+            repository
+                .playlist_tracks("playlist", 10, 0)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|track| track.track.id)
+                .collect::<Vec<_>>(),
+            vec![first.track.id.clone(), second.track.id.clone()]
+        );
+
+        repository.delete_playlist("playlist").unwrap();
+        assert_eq!(repository.query_playlists(None, 10, 0).unwrap().total, 0);
+        assert_eq!(
+            repository.track_by_id(&first.track.id).unwrap(),
+            Some(first)
+        );
+        assert_eq!(
+            repository.track_by_id(&second.track.id).unwrap(),
+            Some(second)
+        );
+    }
+
+    #[test]
+    fn removing_and_reordering_playlist_tracks_keeps_a_dense_order() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let tracks = [
+            track_at("local:first", "C:/music/first.flac"),
+            track_at("local:second", "C:/music/second.flac"),
+            track_at("local:third", "C:/music/third.flac"),
+        ];
+        repository.create_playlist("playlist", "Order", 1).unwrap();
+        for (index, track) in tracks.iter().enumerate() {
+            repository.upsert_track(track).unwrap();
+            repository
+                .add_playlist_track("playlist", &track.track.id, index as u64 + 2)
+                .unwrap();
+        }
+
+        repository
+            .reorder_playlist_track("playlist", &tracks[2].track.id, 0, 10)
+            .unwrap();
+        repository
+            .reorder_playlist_track("playlist", &tracks[2].track.id, 2, 11)
+            .unwrap();
+        repository
+            .remove_playlist_track("playlist", &tracks[1].track.id, 12)
+            .unwrap();
+
+        assert_eq!(
+            repository
+                .playlist_tracks("playlist", 10, 0)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|track| track.track.id)
+                .collect::<Vec<_>>(),
+            vec![tracks[0].track.id.clone(), tracks[2].track.id.clone()]
+        );
+        repository
+            .reorder_playlist_track("playlist", &tracks[2].track.id, 0, 13)
+            .unwrap();
+        assert_eq!(
+            repository
+                .playlist_tracks("playlist", 10, 0)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|track| track.track.id)
+                .collect::<Vec<_>>(),
+            vec![tracks[2].track.id.clone(), tracks[0].track.id.clone()]
+        );
+    }
+
+    #[test]
+    fn playlist_mutations_reject_missing_tracks_and_out_of_bounds_positions() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let only = track_at("local:only", "C:/music/only.flac");
+        repository.upsert_track(&only).unwrap();
+        repository.create_playlist("playlist", "Bounds", 1).unwrap();
+        repository
+            .add_playlist_track("playlist", &only.track.id, 2)
+            .unwrap();
+
+        assert!(matches!(
+            repository.add_playlist_track("playlist", &MediaId::new("local:missing"), u64::MAX),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert_eq!(
+            repository.playlist_tracks("playlist", 10, 0).unwrap().total,
+            1
+        );
+        assert!(matches!(
+            repository.reorder_playlist_track("playlist", &only.track.id, 1, 3),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repository.remove_playlist_track("playlist", &MediaId::new("local:missing"), 4),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repository.rename_playlist("missing", "Name", 5),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repository.create_playlist("too-long", &"x".repeat(81), 6),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repository.rename_playlist("playlist", &"x".repeat(81), 7),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repository.delete_playlist("missing"),
+            Err(EngineError::InvalidInput(_))
+        ));
     }
 
     #[test]

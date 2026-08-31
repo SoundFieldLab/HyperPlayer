@@ -41,11 +41,17 @@ import type {
   NeteaseFavoritesDto,
   NeteaseFmDto,
   NeteaseHomeDto,
+  NeteaseImageDto,
+  NeteaseChartDto,
+  NeteaseDjPageDto,
   NeteaseLoginStartDto,
   NeteaseLoginStateDto,
+  NeteaseMvDetailDto,
+  NeteaseMvPageDto,
   NeteasePlaylistDetailDto,
   NeteaseSearchKind,
   NeteaseSearchPageDto,
+  NeteaseTracksDto,
   NeteaseUserPageDto,
   PlaybackSnapshotDto,
   QueueInsertPosition,
@@ -83,6 +89,12 @@ export const TAURI_COMMANDS = {
   libraryQueryFolders: "library_query_folders",
   libraryQueryRecent: "library_query_recent",
   libraryQueryPlaylists: "library_query_playlists",
+  libraryCreatePlaylist: "library_create_playlist",
+  libraryRenamePlaylist: "library_rename_playlist",
+  libraryDeletePlaylist: "library_delete_playlist",
+  libraryAddPlaylistTrack: "library_add_playlist_track",
+  libraryRemovePlaylistTrack: "library_remove_playlist_track",
+  libraryReorderPlaylistTrack: "library_reorder_playlist_track",
   libraryAlbumTracks: "library_album_tracks",
   libraryArtistTracks: "library_artist_tracks",
   libraryFolderTracks: "library_folder_tracks",
@@ -97,6 +109,12 @@ export const TAURI_COMMANDS = {
   libraryCancelScan: "library_cancel_scan",
   neteaseStatus: "netease_status",
   neteaseSearch: "netease_search",
+  neteaseMvs: "netease_mvs",
+  neteaseMvDetail: "netease_mv_detail",
+  neteaseDjRadios: "netease_dj_radios",
+  neteaseDjPrograms: "netease_dj_programs",
+  neteaseCharts: "netease_charts",
+  neteaseNewSongs: "netease_new_songs",
   neteaseHome: "netease_home",
   neteaseAlbumDetail: "netease_album_detail",
   neteasePlaylistDetail: "netease_playlist_detail",
@@ -107,6 +125,7 @@ export const TAURI_COMMANDS = {
   neteaseComments: "netease_comments",
   neteaseFollows: "netease_follows",
   neteaseCloud: "netease_cloud",
+  neteaseImage: "netease_image",
   neteaseStartQrLogin: "netease_start_qr_login",
   neteasePollQrLogin: "netease_poll_qr_login",
   neteaseLogout: "netease_logout",
@@ -123,6 +142,7 @@ export const TAURI_COMMANDS = {
   desktopLyricsSetClickThrough: "desktop_lyrics_set_click_through",
   updaterStatus: "updater_status",
   updaterCheck: "updater_check",
+  updaterUpdate: "updater_update",
   windowResolveClose: "window_resolve_close",
 } as const;
 
@@ -246,8 +266,8 @@ function tauriBridge(): BridgeContract {
       return { playback: snapshot(), settings: adaptSettings(value.settings), tasks: localTasks(value) };
     },
     async getPlayback() { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackGetState)); },
-    async play(track) {
-      const request = track ? { track } : null;
+    async play(track, context = { kind: "manual", id: null }) {
+      const request = track ? { track, context } : null;
       return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackPlay, { request }));
     },
     async pause() { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackPause)); },
@@ -280,6 +300,12 @@ function tauriBridge(): BridgeContract {
     async libraryQueryFolders(search, cursor = null) { return invoke<EntityPageDto<LibraryFolderDto>>(TAURI_COMMANDS.libraryQueryFolders, { request: { search: search?.trim() || null, page: { cursor, limit: 100 } } }); },
     async libraryQueryRecent(cursor = null) { return invoke<EntityPageDto<LibraryRecentDto>>(TAURI_COMMANDS.libraryQueryRecent, { page: { cursor, limit: 100 } }); },
     async libraryQueryPlaylists(search, cursor = null) { return invoke<EntityPageDto<LibraryPlaylistDto>>(TAURI_COMMANDS.libraryQueryPlaylists, { request: { search: search?.trim() || null, page: { cursor, limit: 100 } } }); },
+    async libraryCreatePlaylist(name) { return invoke<LibraryPlaylistDto>(TAURI_COMMANDS.libraryCreatePlaylist, { request: { name } }); },
+    async libraryRenamePlaylist(id, name) { return invoke<LibraryPlaylistDto>(TAURI_COMMANDS.libraryRenamePlaylist, { request: { id, name } }); },
+    async libraryDeletePlaylist(id) { await invoke(TAURI_COMMANDS.libraryDeletePlaylist, { request: { id } }); },
+    async libraryAddPlaylistTrack(playlistId, trackId) { await invoke(TAURI_COMMANDS.libraryAddPlaylistTrack, { request: { playlistId, trackId } }); },
+    async libraryRemovePlaylistTrack(playlistId, trackId) { await invoke(TAURI_COMMANDS.libraryRemovePlaylistTrack, { request: { playlistId, trackId } }); },
+    async libraryReorderPlaylistTrack(playlistId, trackId, targetPosition) { await invoke(TAURI_COMMANDS.libraryReorderPlaylistTrack, { request: { playlistId, trackId, targetPosition } }); },
     async libraryEntityTracks(kind, id, cursor = null) {
       const command = { album: TAURI_COMMANDS.libraryAlbumTracks, artist: TAURI_COMMANDS.libraryArtistTracks, folder: TAURI_COMMANDS.libraryFolderTracks, playlist: TAURI_COMMANDS.libraryPlaylistTracks }[kind];
       return invoke<LibraryPageDto>(command, { request: { id, page: { cursor, limit: 100 } } });
@@ -296,6 +322,12 @@ function tauriBridge(): BridgeContract {
     async neteaseSearch(query, kind: NeteaseSearchKind = "track", cursor = null) {
       return invoke<NeteaseSearchPageDto>(TAURI_COMMANDS.neteaseSearch, { request: { query, kind, page: { cursor, limit: 50 } } });
     },
+    async neteaseMvs(cursor = null) { return invoke<NeteaseMvPageDto>(TAURI_COMMANDS.neteaseMvs, { request: { area: "全部", kind: "全部", order: "最热", page: { cursor, limit: 24 } } }); },
+    async neteaseMvDetail(id) { return invoke<NeteaseMvDetailDto>(TAURI_COMMANDS.neteaseMvDetail, { request: { id } }); },
+    async neteaseDjRadios(cursor = null) { return invoke<NeteaseDjPageDto>(TAURI_COMMANDS.neteaseDjRadios, { page: { cursor, limit: 20 } }); },
+    async neteaseDjPrograms(radioId, cursor = null) { return invoke<NeteaseDjPageDto>(TAURI_COMMANDS.neteaseDjPrograms, { request: { radioId, ascending: false, page: { cursor, limit: 20 } } }); },
+    async neteaseCharts() { return invoke<NeteaseChartDto[]>(TAURI_COMMANDS.neteaseCharts); },
+    async neteaseNewSongs(areaId = 0) { return invoke<NeteaseTracksDto>(TAURI_COMMANDS.neteaseNewSongs, { request: { areaId } }); },
     async neteaseHome() { return invoke<NeteaseHomeDto>(TAURI_COMMANDS.neteaseHome); },
     async neteaseAlbumDetail(id) { return invoke<NeteaseAlbumDetailDto>(TAURI_COMMANDS.neteaseAlbumDetail, { request: { id } }); },
     async neteasePlaylistDetail(id) { return invoke<NeteasePlaylistDetailDto>(TAURI_COMMANDS.neteasePlaylistDetail, { request: { id } }); },
@@ -306,6 +338,7 @@ function tauriBridge(): BridgeContract {
     async neteaseComments(resource: NeteaseCommentResource, resourceId, cursor = null) { return invoke<NeteaseCommentPageDto>(TAURI_COMMANDS.neteaseComments, { request: { resource, resourceId, page: { cursor, limit: 50 } } }); },
     async neteaseFollows(userId, cursor = null) { return invoke<NeteaseUserPageDto>(TAURI_COMMANDS.neteaseFollows, { request: { userId, page: { cursor, limit: 50 } } }); },
     async neteaseCloud(cursor = null) { return invoke<NeteaseCloudPageDto>(TAURI_COMMANDS.neteaseCloud, { page: { cursor, limit: 50 } }); },
+    async neteaseImage(url) { return invoke<NeteaseImageDto>(TAURI_COMMANDS.neteaseImage, { request: { url } }); },
     async neteaseStartQrLogin() { return invoke<NeteaseLoginStartDto>(TAURI_COMMANDS.neteaseStartQrLogin); },
     async neteasePollQrLogin(loginId) { return invoke<NeteaseLoginStateDto>(TAURI_COMMANDS.neteasePollQrLogin, { request: { loginId } }); },
     async neteaseLogout() { return invoke<BackendNeteaseStatusDto>(TAURI_COMMANDS.neteaseLogout); },
@@ -322,6 +355,7 @@ function tauriBridge(): BridgeContract {
     async desktopLyricsSetClickThrough(enabled) { await invoke(TAURI_COMMANDS.desktopLyricsSetClickThrough, { request: { kind: "desktopLyrics", enabled } }); },
     async updaterStatus() { return invoke<UpdaterStatusDto>(TAURI_COMMANDS.updaterStatus); },
     async updaterCheck() { return invoke<UpdateCheckDto>(TAURI_COMMANDS.updaterCheck); },
+    async updaterUpdate(expectedVersion) { return invoke<boolean>(TAURI_COMMANDS.updaterUpdate, { expectedVersion }); },
     async resolveClose(action: CloseDecision, remember) { await invoke(TAURI_COMMANDS.windowResolveClose, { request: { action, remember } }); },
     async subscribe(handlers: BridgeEventHandlers): Promise<Unlisten> {
       const listeners: Unlisten[] = [];

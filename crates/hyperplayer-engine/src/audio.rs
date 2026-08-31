@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+pub const PLAYABLE_LOCAL_EXTENSIONS: &[&str] = &["wav", "flac", "mp3"];
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodecTrim {
     pub delay_frames: u32,

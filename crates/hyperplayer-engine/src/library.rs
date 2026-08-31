@@ -1,3 +1,4 @@
+use crate::audio::PLAYABLE_LOCAL_EXTENSIONS;
 use crate::error::{EngineError, Result};
 use crate::model::{MediaId, MediaSource, Track};
 use crate::repository::{LibraryTrack, ScanRepository};
@@ -10,10 +11,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
-
-const AUDIO_EXTENSIONS: &[&str] = &[
-    "aac", "aif", "aiff", "ape", "flac", "m4a", "mp3", "mp4", "ogg", "opus", "wav", "wv",
-];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ScanReport {
@@ -188,6 +185,31 @@ impl ContentAddressedArtwork {
     }
 }
 
+pub fn read_embedded_lyrics(path: &Path) -> Result<Option<String>> {
+    const MAX_EMBEDDED_LYRICS_BYTES: usize = 1024 * 1024;
+
+    let tagged_file = lofty::read_from_path(path)?;
+    let Some(tag) = tagged_file
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag())
+    else {
+        return Ok(None);
+    };
+    for key in [ItemKey::Lyrics, ItemKey::UnsyncLyrics] {
+        if let Some(value) = tag.get_string(key) {
+            if value.len() > MAX_EMBEDDED_LYRICS_BYTES {
+                return Err(EngineError::InvalidInput(
+                    "embedded lyrics exceed the size limit".into(),
+                ));
+            }
+            if !value.trim().is_empty() {
+                return Ok(Some(value.to_owned()));
+            }
+        }
+    }
+    Ok(None)
+}
+
 pub fn read_embedded_artwork(path: &Path) -> Result<Option<ArtworkObject>> {
     let tagged_file = lofty::read_from_path(path)?;
     let tag = tagged_file
@@ -333,7 +355,7 @@ pub fn is_supported_audio(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
         .map(|value| {
-            AUDIO_EXTENSIONS
+            PLAYABLE_LOCAL_EXTENSIONS
                 .iter()
                 .any(|extension| value.eq_ignore_ascii_case(extension))
         })
@@ -409,14 +431,15 @@ mod tests {
         fs::create_dir(&nested).unwrap();
         fs::write(root.path().join("one.MP3"), []).unwrap();
         fs::write(nested.join("two.flac"), []).unwrap();
+        fs::write(nested.join("three.WaV"), []).unwrap();
         fs::write(nested.join("notes.txt"), []).unwrap();
         let scanner = LibraryScanner::new(FakeReader {
             paths: Mutex::new(vec![]),
         });
 
         let report = scanner.scan(&[root.path().to_path_buf()]).unwrap();
-        assert_eq!(report.discovered, 2);
-        assert_eq!(report.tracks.len(), 2);
+        assert_eq!(report.discovered, PLAYABLE_LOCAL_EXTENSIONS.len());
+        assert_eq!(report.tracks.len(), PLAYABLE_LOCAL_EXTENSIONS.len());
         assert!(report.failures.is_empty());
     }
 
@@ -456,9 +479,48 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_extensions_are_rejected() {
-        assert!(is_supported_audio(Path::new("song.opus")));
+    fn scanner_uses_the_decoder_playable_extension_set() {
+        assert_eq!(PLAYABLE_LOCAL_EXTENSIONS, &["wav", "flac", "mp3"]);
+        for extension in PLAYABLE_LOCAL_EXTENSIONS {
+            assert!(is_supported_audio(Path::new(&format!(
+                "song.{}",
+                extension.to_ascii_uppercase()
+            ))));
+        }
+        for extension in [
+            "aac", "m4a", "mp4", "ogg", "opus", "ape", "aif", "aiff", "wv",
+        ] {
+            assert!(!is_supported_audio(Path::new(&format!("song.{extension}"))));
+        }
         assert!(!is_supported_audio(Path::new("cover.jpg")));
+    }
+
+    #[test]
+    fn malformed_playable_files_fail_metadata_while_unsupported_files_are_ignored() {
+        let root = tempdir().unwrap();
+        for extension in PLAYABLE_LOCAL_EXTENSIONS {
+            fs::write(root.path().join(format!("broken.{extension}")), b"broken").unwrap();
+        }
+        for extension in [
+            "aac", "m4a", "mp4", "ogg", "opus", "ape", "aif", "aiff", "wv",
+        ] {
+            fs::write(root.path().join(format!("ignored.{extension}")), b"broken").unwrap();
+        }
+
+        let report = LibraryScanner::default()
+            .scan(&[root.path().to_path_buf()])
+            .unwrap();
+
+        assert_eq!(report.discovered, PLAYABLE_LOCAL_EXTENSIONS.len());
+        assert!(report.tracks.is_empty());
+        assert_eq!(report.failures.len(), PLAYABLE_LOCAL_EXTENSIONS.len());
+        assert!(report.failures.iter().all(|failure| {
+            failure.path.extension().is_some_and(|extension| {
+                PLAYABLE_LOCAL_EXTENSIONS
+                    .iter()
+                    .any(|playable| extension.eq_ignore_ascii_case(playable))
+            })
+        }));
     }
 
     struct CancellingRepository {

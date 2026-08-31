@@ -41,6 +41,8 @@ function MainApp(): React.JSX.Element {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); state.setSearchOpen(true); }
+      if (event.altKey && event.key === "ArrowLeft") { event.preventDefault(); state.back(); }
+      if (event.altKey && event.key === "ArrowRight") { event.preventDefault(); state.forward(); }
       if (event.altKey && event.key.toLowerCase() === "q") { event.preventDefault(); state.setOverlay(state.overlay === "queue" ? "none" : "queue"); }
       if (event.key === "Escape") {
         if (state.searchOpen) state.setSearchOpen(false);
@@ -50,7 +52,7 @@ function MainApp(): React.JSX.Element {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [state.searchOpen, state.overlay, state.expandedPlayer]);
+  }, [state.searchOpen, state.overlay, state.expandedPlayer, state.back, state.forward]);
   const systemDark = useSystemTheme(state.settings?.theme === "system");
   const theme = state.settings?.theme === "system" ? (systemDark ? "dark" : "light") : state.settings?.theme ?? "light";
   if (state.initStatus === "error") return <div className="boot boot-error" role="alert"><Brand/><h1>初始化失败</h1><p>{state.initError}</p><button className="button primary" onClick={() => void state.init()}>重试</button></div>;
