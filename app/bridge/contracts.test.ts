@@ -78,7 +78,7 @@ describe("bridge contract adapters", () => {
       "playback_stop", "playback_next", "playback_previous", "playback_set_repeat_mode",
       "library_overview", "library_query_tracks", "library_register_location", "library_start_scan", "library_cancel_scan",
       "netease_status", "netease_search", "netease_home", "netease_album_detail", "netease_playlist_detail", "netease_artist_detail", "netease_personal_fm",
-      "netease_account", "netease_favorites", "netease_comments", "netease_follows", "netease_cloud", "netease_start_qr_login", "netease_poll_qr_login", "netease_logout",
+      "netease_account", "netease_favorites", "netease_comments", "netease_follows", "netease_cloud", "netease_image", "netease_start_qr_login", "netease_poll_qr_login", "netease_logout",
       "cache_stats", "cache_status", "cache_track", "cache_remove", "cache_clear", "lyrics_get",
       "window_show", "window_hide", "window_close", "window_set_always_on_top", "desktop_lyrics_set_click_through",
       "updater_status", "updater_check",

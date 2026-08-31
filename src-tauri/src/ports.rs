@@ -142,6 +142,7 @@ pub trait NeteasePort: Send + Sync {
     ) -> AppResult<NeteaseCommentPageDto>;
     async fn follows(&self, request: NeteaseFollowsRequestDto) -> AppResult<NeteaseUserPageDto>;
     async fn cloud(&self, page: PageRequestDto) -> AppResult<NeteaseCloudPageDto>;
+    async fn image(&self, url: &str) -> AppResult<NeteaseImageDto>;
     fn prepare_mutation(
         &self,
         window_label: &str,

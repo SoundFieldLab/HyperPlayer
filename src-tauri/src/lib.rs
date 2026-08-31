@@ -105,6 +105,7 @@ pub fn run() {
             netease::netease_comments,
             netease::netease_follows,
             netease::netease_cloud,
+            netease::netease_image,
             netease::netease_prepare_mutation,
             netease::netease_commit_mutation,
             netease::netease_start_qr_login,
@@ -232,6 +233,7 @@ mod tests {
             "netease_comments",
             "netease_follows",
             "netease_cloud",
+            "netease_image",
             "netease_prepare_mutation",
             "netease_commit_mutation",
         ] {

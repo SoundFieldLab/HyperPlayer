@@ -3,14 +3,14 @@ use crate::{
         NeteaseAccountDto, NeteaseAlbumDetailDto, NeteaseCloudPageDto, NeteaseCommentsRequestDto,
         NeteaseCommitMutationRequestDto, NeteaseCursorRequestDto, NeteaseDjPageDto,
         NeteaseDjProgramsRequestDto, NeteaseEventPageDto, NeteaseFavoritesDto, NeteaseFmDto,
-        NeteaseFollowsRequestDto, NeteaseHomeDto, NeteaseListenReportDto,
-        NeteaseListenReportRequestDto, NeteaseListenStatsDto, NeteaseLoginPollRequestDto,
-        NeteaseLoginStartDto, NeteaseLoginStateDto, NeteaseMutationConfirmationDto,
-        NeteaseMutationResultDto, NeteaseMvDetailDto, NeteaseMvListRequestDto, NeteaseMvPageDto,
-        NeteaseNewSongsRequestDto, NeteaseNoticePageDto, NeteasePlaylistDetailDto,
-        NeteasePrepareMutationRequestDto, NeteaseResourceRequestDto, NeteaseSearchPageDto,
-        NeteaseSearchRequestDto, NeteaseStatusDto, NeteaseTracksDto, NeteaseUserEventsRequestDto,
-        NeteaseUserPageDto, PageRequestDto,
+        NeteaseFollowsRequestDto, NeteaseHomeDto, NeteaseImageDto, NeteaseImageRequestDto,
+        NeteaseListenReportDto, NeteaseListenReportRequestDto, NeteaseListenStatsDto,
+        NeteaseLoginPollRequestDto, NeteaseLoginStartDto, NeteaseLoginStateDto,
+        NeteaseMutationConfirmationDto, NeteaseMutationResultDto, NeteaseMvDetailDto,
+        NeteaseMvListRequestDto, NeteaseMvPageDto, NeteaseNewSongsRequestDto, NeteaseNoticePageDto,
+        NeteasePlaylistDetailDto, NeteasePrepareMutationRequestDto, NeteaseResourceRequestDto,
+        NeteaseSearchPageDto, NeteaseSearchRequestDto, NeteaseStatusDto, NeteaseTracksDto,
+        NeteaseUserEventsRequestDto, NeteaseUserPageDto, PageRequestDto,
     },
     error::CommandResult,
     events,
@@ -54,6 +54,7 @@ pub const NETEASE_COMMAND_NAMES: &[&str] = &[
     "netease_comments",
     "netease_follows",
     "netease_cloud",
+    "netease_image",
     "netease_prepare_mutation",
     "netease_commit_mutation",
     "netease_start_qr_login",
@@ -258,6 +259,16 @@ pub async fn netease_cloud(
 ) -> CommandResult<NeteaseCloudPageDto> {
     require_main(&window)?;
     super::command(state.services.netease.cloud(page).await)
+}
+
+#[tauri::command]
+pub async fn netease_image(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    request: NeteaseImageRequestDto,
+) -> CommandResult<NeteaseImageDto> {
+    require_main(&window)?;
+    super::command(state.services.netease.image(&request.url).await)
 }
 
 #[tauri::command]

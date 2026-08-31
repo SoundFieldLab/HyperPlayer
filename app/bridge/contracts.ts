@@ -267,6 +267,11 @@ export interface NeteaseUserPageDto { users: NeteaseUserDto[]; nextCursor: strin
 export interface NeteaseCloudSongDto { cloudId: number; track: BackendTrackDto; fileName: string | null; fileSize: number | null; }
 export interface NeteaseCloudPageDto { songs: NeteaseCloudSongDto[]; totalCount: number; hasMore: boolean; nextCursor: string | null; }
 
+export interface NeteaseImageDto {
+  mimeType: string;
+  bytes: number[];
+}
+
 export interface NeteaseLoginStartDto {
   loginId: string;
   qrImageDataUrl: string;
@@ -423,6 +428,7 @@ export interface BridgeContract {
   neteaseComments(resource: NeteaseCommentResource, resourceId: number, cursor?: string | null): Promise<NeteaseCommentPageDto>;
   neteaseFollows(userId: number, cursor?: string | null): Promise<NeteaseUserPageDto>;
   neteaseCloud(cursor?: string | null): Promise<NeteaseCloudPageDto>;
+  neteaseImage(url: string): Promise<NeteaseImageDto>;
   neteaseStartQrLogin(): Promise<NeteaseLoginStartDto>;
   neteasePollQrLogin(loginId: string): Promise<NeteaseLoginStateDto>;
   neteaseLogout(): Promise<BackendNeteaseStatusDto>;

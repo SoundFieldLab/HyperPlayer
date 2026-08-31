@@ -36,7 +36,7 @@ use hyperplayer_engine::{
 };
 use hyperplayer_source_netease::{
     CommentResource, HttpRequest, HttpResponse, LoginQrState, NeteaseService, PageRequest,
-    QualityPreference, SearchKind, Session, Transport, UserAccount, VipInfo,
+    PlayInfo, QualityPreference, SearchKind, Session, Transport, UserAccount, VipInfo,
 };
 use rand::{rngs::OsRng, CryptoRng, RngCore};
 use reqwest::{redirect::Policy, Client, Response};
@@ -77,6 +77,9 @@ const MAX_SCANS_PER_ROOT: usize = 1;
 const MAX_CACHE_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_CONCURRENT_CACHE_DOWNLOADS: usize = 3;
 const MAX_MEDIA_REDIRECTS: usize = 5;
+const MAX_NETEASE_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_NETEASE_IMAGE_REDIRECTS: usize = 3;
+const NETEASE_IMAGE_MIME_TYPES: &[&str] = &["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 type Repository = Arc<Mutex<SqliteRepository>>;
 
@@ -2418,6 +2421,46 @@ impl NeteasePort for NeteaseAdapter {
         ))
     }
 
+    async fn image(&self, url: &str) -> AppResult<NeteaseImageDto> {
+        self.require_service()?;
+        let client = secure_http_client()?;
+        let mut response = send_trusted_netease_image_request(&client, url).await?;
+        let mime_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .map(str::trim)
+            .filter(|value| NETEASE_IMAGE_MIME_TYPES.contains(value))
+            .ok_or_else(|| {
+                AppError::Unavailable("NetEase image response has an unsupported MIME type".into())
+            })?
+            .to_owned();
+        if response
+            .content_length()
+            .is_some_and(|length| length == 0 || length > MAX_NETEASE_IMAGE_BYTES)
+        {
+            return Err(AppError::Unavailable(
+                "NetEase image response size is outside the image limit".into(),
+            ));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(map_reqwest_app_error)? {
+            if bytes.len().saturating_add(chunk.len()) > MAX_NETEASE_IMAGE_BYTES as usize {
+                return Err(AppError::Unavailable(
+                    "NetEase image response exceeded the image limit".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if bytes.is_empty() {
+            return Err(AppError::Unavailable(
+                "NetEase image response contained no bytes".into(),
+            ));
+        }
+        Ok(NeteaseImageDto { mime_type, bytes })
+    }
+
     fn prepare_mutation(
         &self,
         window_label: &str,
@@ -2674,27 +2717,6 @@ impl NeteasePort for NeteaseAdapter {
                 "NetEase reports that this track is not playable".into(),
             ));
         }
-        if metadata.is_vip {
-            return Err(AppError::Unavailable(
-                "real-time NetEase VIP entitlement verification is unavailable".into(),
-            ));
-        }
-        let play_info = service
-            .song_url(
-                song_id,
-                QualityPreference::Auto,
-                false,
-                Duration::from_secs(12),
-            )
-            .await?;
-        if play_info.url.is_none()
-            || play_info.free_trial_info.is_some()
-            || play_info.is_paid_content
-        {
-            return Err(AppError::Unavailable(
-                "NetEase did not authorize an official full-track playback URL".into(),
-            ));
-        }
         let artist_ids = metadata
             .artists
             .iter()
@@ -2741,7 +2763,8 @@ impl PlaybackMediaBackend for NeteaseAdapter {
                 "NetEase reports that this track is not playable".into(),
             ));
         }
-        if metadata.is_vip {
+        let is_vip = metadata.is_vip;
+        if is_vip {
             let user = service.account().await?.ok_or_else(|| {
                 AppError::Unavailable("NetEase VIP playback requires login".into())
             })?;
@@ -2779,19 +2802,12 @@ impl PlaybackMediaBackend for NeteaseAdapter {
             .song_url(
                 song_id,
                 QualityPreference::Auto,
-                false,
+                is_vip,
                 Duration::from_secs(12),
             )
             .await?;
-        let url = play_info.url.ok_or_else(|| {
-            AppError::Unavailable("NetEase did not return an official playback URL".into())
-        })?;
-        if play_info.free_trial_info.is_some() || play_info.is_paid_content {
-            return Err(AppError::Unavailable(
-                "NetEase did not authorize an official full-track playback URL".into(),
-            ));
-        }
-        let trusted_url = TrustedMediaUrl::parse(&url).await?;
+        let url = authorized_official_url(&play_info, is_vip)?;
+        let trusted_url = TrustedMediaUrl::parse(url).await?;
         Ok(OfficialPlaybackResource {
             track: resolved,
             url: trusted_url.0.into(),
@@ -3335,6 +3351,18 @@ fn is_trusted_media_host(host: &str) -> bool {
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
 }
 
+fn is_trusted_netease_image_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    [
+        "music.126.net",
+        "music.163.com",
+        "p1.music.126.net",
+        "p2.music.126.net",
+    ]
+    .iter()
+    .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
+}
+
 fn is_public_ip(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(address) => is_public_ipv4(address),
@@ -3417,6 +3445,86 @@ async fn send_trusted_media_request(client: &Client, initial: &str) -> AppResult
     ))
 }
 
+async fn send_trusted_netease_image_request(client: &Client, initial: &str) -> AppResult<Response> {
+    let mut current = parse_trusted_netease_image_url(initial).await?;
+    for redirect_count in 0..=MAX_NETEASE_IMAGE_REDIRECTS {
+        let response = client
+            .get(current.clone())
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .map_err(map_reqwest_app_error)?;
+        let remote_address = response.remote_addr().ok_or_else(|| {
+            AppError::Unavailable("NetEase image connection address is unavailable".into())
+        })?;
+        if !is_public_ip(remote_address.ip()) {
+            return Err(AppError::Unavailable(
+                "NetEase image connection used a non-public address".into(),
+            ));
+        }
+        if response.status().is_redirection() {
+            if redirect_count == MAX_NETEASE_IMAGE_REDIRECTS {
+                return Err(AppError::Unavailable(
+                    "NetEase image response exceeded the redirect limit".into(),
+                ));
+            }
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| AppError::Unavailable("NetEase image redirect is invalid".into()))?;
+            let next = current
+                .join(location)
+                .map_err(|_| AppError::Unavailable("NetEase image redirect is invalid".into()))?;
+            current = parse_trusted_netease_image_url(next.as_str()).await?;
+            continue;
+        }
+        if !response.status().is_success() {
+            return Err(AppError::Unavailable(format!(
+                "NetEase image request failed with HTTP {}",
+                response.status().as_u16()
+            )));
+        }
+        return Ok(response);
+    }
+    Err(AppError::Unavailable(
+        "NetEase image request could not be completed".into(),
+    ))
+}
+
+async fn parse_trusted_netease_image_url(value: &str) -> AppResult<Url> {
+    let url = Url::parse(value)
+        .map_err(|_| AppError::Unavailable("NetEase image URL is invalid".into()))?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port_or_known_default() != Some(443)
+    {
+        return Err(AppError::Unavailable(
+            "NetEase image URL is not a trusted HTTPS endpoint".into(),
+        ));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| AppError::Unavailable("NetEase image URL has no trusted host".into()))?;
+    if host.parse::<IpAddr>().is_ok() || !is_trusted_netease_image_host(host) {
+        return Err(AppError::Unavailable(
+            "NetEase image URL host is not allowlisted".into(),
+        ));
+    }
+    let addresses = tokio::net::lookup_host((host, 443))
+        .await
+        .map_err(|_| AppError::Unavailable("NetEase image host lookup failed".into()))?
+        .map(|address| address.ip())
+        .collect::<HashSet<_>>();
+    if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(*address)) {
+        return Err(AppError::Unavailable(
+            "NetEase image host did not resolve to public addresses".into(),
+        ));
+    }
+    Ok(url)
+}
+
 fn map_reqwest_app_error(error: reqwest::Error) -> AppError {
     if error.is_timeout() {
         AppError::Unavailable("network request timed out".into())
@@ -3439,6 +3547,18 @@ fn map_reqwest_error(error: reqwest::Error) -> hyperplayer_source_netease::Error
     } else {
         hyperplayer_source_netease::Error::Transport("network request failed".into())
     }
+}
+
+fn authorized_official_url(play_info: &PlayInfo, account_entitled: bool) -> AppResult<&str> {
+    let url = play_info.url.as_deref().ok_or_else(|| {
+        AppError::Unavailable("NetEase did not return an official playback URL".into())
+    })?;
+    if play_info.free_trial_info.is_some() || (play_info.is_paid_content && !account_entitled) {
+        return Err(AppError::Unavailable(
+            "NetEase did not authorize an official full-track playback URL".into(),
+        ));
+    }
+    Ok(url)
 }
 
 fn cache_quality(value: &str) -> AppResult<&str> {
@@ -3911,11 +4031,48 @@ mod tests {
     }
 
     #[test]
+    fn official_playback_allows_entitled_paid_urls_but_rejects_trials() {
+        let paid = PlayInfo {
+            id: 7,
+            url: Some("https://m10.music.126.net/full.flac".into()),
+            level: hyperplayer_source_netease::QualityLevel::Lossless,
+            bitrate: 0,
+            size_bytes: 0,
+            md5: String::new(),
+            container_type: "flac".into(),
+            fee: 1,
+            free_trial_info: None,
+            is_paid_content: true,
+        };
+        assert_eq!(
+            authorized_official_url(&paid, true).unwrap(),
+            "https://m10.music.126.net/full.flac"
+        );
+        assert!(authorized_official_url(&paid, false).is_err());
+
+        let trial = PlayInfo {
+            free_trial_info: Some(hyperplayer_source_netease::FreeTrialInfo {
+                start: 0,
+                end: 30_000,
+            }),
+            ..paid
+        };
+        assert!(authorized_official_url(&trial, true).is_err());
+    }
+
+    #[test]
     fn trusted_media_hosts_and_public_addresses_are_strict() {
         assert!(is_trusted_media_host("m10.music.126.net"));
         assert!(is_trusted_media_host("music.163.com"));
         assert!(!is_trusted_media_host("music.126.net.attacker.test"));
         assert!(!is_trusted_media_host("example.com"));
+        assert!(is_trusted_netease_image_host("p1.music.126.net"));
+        assert!(is_trusted_netease_image_host("sub.music.163.com"));
+        assert!(!is_trusted_netease_image_host(
+            "music.163.com.attacker.test"
+        ));
+        assert!(!is_trusted_netease_image_host("example.com"));
+        assert!(!is_trusted_netease_image_host("127.0.0.1"));
         assert!(is_public_ip("8.8.8.8".parse().unwrap()));
         for address in ["127.0.0.1", "10.0.0.1", "169.254.1.2", "::1", "fc00::1"] {
             assert!(!is_public_ip(address.parse().unwrap()), "{address}");

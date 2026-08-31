@@ -2,7 +2,7 @@
 
 更新时间：2026-08-31
 
-> 最近一次本地验证：前端 16 项、engine 56 项、网易云 Rust 33 项、Tauri 49 项测试通过；IPC 清单 65 个 command / 12 个 event 匹配；`cargo deny` advisories/licenses 通过；`pnpm build` 成功生成 x64 NSIS 与 MSI。验证后已清除 `node_modules`、`dist` 和全部 Rust `target` 缓存，因此复验需先恢复依赖。
+> 最近一次本地验证：前端 16 项、engine 56 项、网易云 Rust 38 项、Tauri 50 项测试通过；IPC 清单 66 个 command / 12 个 event 匹配；`cargo deny` advisories/licenses 通过；此前 `pnpm build` 已成功生成 x64 NSIS 与 MSI。验证后应清除 `node_modules`、`dist` 和全部 Rust `target` 缓存，因此复验可能需要先恢复依赖。
 
 ## 自动化门禁
 
@@ -25,7 +25,7 @@
 | D25 缓存策略 | 未决 | 缓存总容量、最近 100 首淘汰、断网行为和后台资源阈值必须通过显式策略接口隔离；定案前默认 fail closed，不得把临时数值固化为契约 |
 | VIP 缓存权益 | D23 硬门禁 | 离线测试必须覆盖未登录、非 VIP、过期、切号、服务端校验失败均拒绝；仅同一 `AccountEntitled(userId)` 且实时权益有效时放行 |
 | 专辑缓存晋升 | D24 硬门禁 | 离线测试覆盖专辑上下文、完整一首或累计 5 分钟、每日最多计一次、5 次晋升、空闲低优先级补齐及权益门禁 |
-| 网易云 Rust 迁移 | 独立 workspace 已落地 | 每个迁移端点须以行为规范和 TS oracle 的固定输入/输出 fixture 验证成功、错误码、退避、音质降级、付费内容拦截与歌词等价；独立 workspace 必须通过 fmt/clippy/test 与许可证门禁 |
+| 网易云 Rust 迁移 | 最小在线闭环已接通，扩展能力持续补齐 | XEAPI 首次调用会执行并发安全、失败可重试的网络初始化；扫码登录返回本地 SVG data URL；官方图片通过主窗口专用 command 按域名、DNS、公网地址、MIME、体积和重定向校验。每个迁移端点仍须以行为规范和 TS oracle 的固定输入/输出 fixture 验证成功、错误码、退避、音质降级、付费内容拦截与歌词等价 |
 | Tauri DTO/capabilities | 已落地，契约覆盖持续补齐 | command/event/channel DTO 需序列化契约测试；capabilities 需最小权限检查，禁止通用网络代理、任意 URL、任意文件系统或 Cookie 读写接口 |
 
 ## 外部测试门槛

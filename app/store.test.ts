@@ -89,6 +89,7 @@ function mockBridge(overrides: Partial<BridgeContract> = {}): BridgeContract {
     neteaseComments: vi.fn(async () => ({ comments: [], totalCount: 0, hasMore: false, nextCursor: null })),
     neteaseFollows: vi.fn(async () => ({ users: [], nextCursor: null })),
     neteaseCloud: vi.fn(async () => ({ songs: [], totalCount: 0, hasMore: false, nextCursor: null })),
+    neteaseImage: vi.fn(async () => ({ mimeType: "image/png", bytes: [] })),
     neteaseStartQrLogin: vi.fn(async () => ({ loginId: "login", qrImageDataUrl: "data:image/png;base64,", expiresAt: "" })),
     neteasePollQrLogin: vi.fn(async () => ({ phase: "waiting" as const, status: { enabled: true, authenticated: false, userId: null, displayName: null } })),
     neteaseLogout: vi.fn(async () => ({ enabled: true, authenticated: false, userId: null, displayName: null })),

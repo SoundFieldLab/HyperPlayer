@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use qrcode::{render::svg, QrCode};
 use rand::{rngs::OsRng, RngCore};
 use serde_json::{json, Value};
 use std::{
@@ -38,6 +39,8 @@ pub struct NeteaseService<T: Transport, S: Sleeper = StdSleeper> {
     sleeper: Arc<S>,
     session: Mutex<Session>,
     enabled: AtomicBool,
+    xeapi_bootstrapped: AtomicBool,
+    xeapi_bootstrap_lock: tokio::sync::Mutex<()>,
     anti_cheat_token: Mutex<Option<String>>,
 }
 impl<T: Transport> NeteaseService<T, StdSleeper> {
@@ -67,11 +70,14 @@ impl NeteaseService<ReqwestTransport, StdSleeper> {
 }
 impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
     pub fn with_sleeper(transport: T, session: Session, sleeper: S) -> Self {
+        let has_xeapi_key = session.xeapi_key().is_ok();
         Self {
             transport: Arc::new(transport),
             sleeper: Arc::new(sleeper),
             session: Mutex::new(session),
             enabled: AtomicBool::new(true),
+            xeapi_bootstrapped: AtomicBool::new(has_xeapi_key),
+            xeapi_bootstrap_lock: tokio::sync::Mutex::new(()),
             anti_cheat_token: Mutex::new(None),
         }
     }
@@ -86,7 +92,10 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         self.enabled.load(Ordering::Acquire)
     }
     pub fn update_session(&self, session: Session) {
-        *self.session() = session
+        let has_xeapi_key = session.xeapi_key().is_ok();
+        *self.session() = session;
+        self.xeapi_bootstrapped
+            .store(has_xeapi_key, Ordering::Release);
     }
     pub fn set_user_cookie(&self, cookie: &str) {
         self.session().set_user_cookie(cookie)
@@ -98,9 +107,20 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         if key.trim().is_empty() {
             return Err(Error::Validation("二维码 key 不能为空".into()));
         }
-        Ok(format!(
+        let payload = format!(
             "https://music.163.com/login?codekey={}",
             percent_encode(key)
+        );
+        let svg = QrCode::new(payload.as_bytes())
+            .map_err(|error| Error::Validation(format!("二维码内容无效：{error}")))?
+            .render::<svg::Color>()
+            .min_dimensions(256, 256)
+            .dark_color(svg::Color("#000000"))
+            .light_color(svg::Color("#ffffff"))
+            .build();
+        Ok(format!(
+            "data:image/svg+xml;base64,{}",
+            BASE64.encode(svg.as_bytes())
         ))
     }
     pub fn quality_candidates(preference: QualityPreference, is_vip: bool) -> Vec<QualityLevel> {
@@ -277,6 +297,10 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         timeout: Duration,
     ) -> Result<Value> {
         self.ensure_enabled()?;
+        self.ensure_xeapi_bootstrapped().await?;
+        self.xeapi_ready(path, payload, timeout).await
+    }
+    async fn xeapi_ready(&self, path: &str, payload: Value, timeout: Duration) -> Result<Value> {
         let map = payload
             .as_object()
             .ok_or_else(|| Error::Validation("payload 必须是对象".into()))?;
@@ -358,6 +382,18 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
     /// 初始化 xeapi 公钥，并尽力注册匿名会话。匿名注册失败不影响公开读取接口。
     pub async fn bootstrap_network(&self) -> Result<()> {
         self.ensure_enabled()?;
+        self.ensure_xeapi_bootstrapped().await
+    }
+
+    async fn ensure_xeapi_bootstrapped(&self) -> Result<()> {
+        if self.xeapi_bootstrapped.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let _guard = self.xeapi_bootstrap_lock.lock().await;
+        if self.xeapi_bootstrapped.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
         let mut nonce_bytes = [0u8; 16];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = nonce_bytes
@@ -370,7 +406,8 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             .as_millis()
             .to_string();
         self.fetch_xeapi_public_key(&timestamp, &nonce).await?;
-        let _ = self.register_anonymous().await;
+        let _ = self.register_anonymous_ready().await;
+        self.xeapi_bootstrapped.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -483,10 +520,10 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         Ok(())
     }
 
-    async fn register_anonymous(&self) -> Result<bool> {
+    async fn register_anonymous_ready(&self) -> Result<bool> {
         let username = self.session().encoded_anonymous_username();
         let value = self
-            .xeapi(
+            .xeapi_ready(
                 "/api/register/anonimous",
                 json!({"username":username}),
                 Duration::from_secs(12),
@@ -919,6 +956,18 @@ mod tests {
         )
     }
     #[test]
+    fn qr_image_is_an_embeddable_svg_data_url() {
+        let data_url = NeteaseService::<Fake, NoSleep>::qr_image_url("login-key").unwrap();
+        let encoded = data_url
+            .strip_prefix("data:image/svg+xml;base64,")
+            .expect("QR helper must return an SVG data URL");
+        let svg = String::from_utf8(BASE64.decode(encoded).unwrap()).unwrap();
+
+        assert!(svg.starts_with("<?xml"));
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("<path"));
+    }
+    #[test]
     fn authorized_qr_cookie_stays_in_session() {
         let svc = service(vec![response(
             json!({"code":803,"cookie":["MUSIC_U=secret","__csrf=x"]}),
@@ -1114,6 +1163,94 @@ mod tests {
             "3"
         );
         assert_eq!(svc.transport.requests.lock().unwrap().len(), 2);
+        block_on(svc.bootstrap_network()).unwrap();
+        assert_eq!(svc.transport.requests.lock().unwrap().len(), 2);
+    }
+
+    struct LazyBootstrapFake {
+        encrypted: String,
+        key_attempts: std::sync::atomic::AtomicUsize,
+        xeapi_requests: std::sync::atomic::AtomicUsize,
+        fail_first_key: bool,
+    }
+    #[async_trait]
+    impl Transport for LazyBootstrapFake {
+        async fn execute(&self, request: HttpRequest) -> Result<crate::HttpResponse> {
+            if request.url.contains("security/key/get") {
+                let attempt = self.key_attempts.fetch_add(1, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                if self.fail_first_key && attempt == 0 {
+                    return Err(Error::Transport("首次初始化失败".into()));
+                }
+                let form = String::from_utf8(request.body).unwrap();
+                let nonce = form
+                    .split('&')
+                    .find_map(|part| part.strip_prefix("nonce="))
+                    .unwrap();
+                let timestamp = "1700000000000";
+                return response(json!({
+                    "code": 200,
+                    "data": {
+                        "encryptedData": self.encrypted,
+                        "timestamp": timestamp,
+                        "signature": crypto::xeapi_sign(timestamp, nonce)
+                    }
+                }));
+            }
+            self.xeapi_requests.fetch_add(1, Ordering::SeqCst);
+            encrypted_xeapi_response(
+                json!({"code": 200, "data": [{"id": 7, "url": "https://cdn.example/song.mp3"}]}),
+            )
+        }
+    }
+    fn lazy_bootstrap_service(fail_first_key: bool) -> NeteaseService<LazyBootstrapFake, NoSleep> {
+        let encrypted = crypto::encrypt_xeapi_public_key_fixture(&json!({
+            "publicKey": BASE64.encode([7u8; 32]),
+            "sk": "fixture-sk",
+            "version": "3"
+        }));
+        let mut rng = StdRng::seed_from_u64(10);
+        NeteaseService::with_sleeper(
+            LazyBootstrapFake {
+                encrypted,
+                key_attempts: std::sync::atomic::AtomicUsize::new(0),
+                xeapi_requests: std::sync::atomic::AtomicUsize::new(0),
+                fail_first_key,
+            },
+            Session::new(&mut rng),
+            NoSleep,
+        )
+    }
+
+    #[tokio::test]
+    async fn concurrent_xeapi_calls_share_one_lazy_bootstrap() {
+        let svc = lazy_bootstrap_service(false);
+        let (first, second) = tokio::join!(
+            svc.song_play_info(7, QualityLevel::Standard, Duration::from_secs(1)),
+            svc.song_play_info(7, QualityLevel::Standard, Duration::from_secs(1))
+        );
+
+        assert!(first.unwrap().url.is_some());
+        assert!(second.unwrap().url.is_some());
+        assert_eq!(svc.transport.key_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(svc.transport.xeapi_requests.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn failed_lazy_bootstrap_is_retried_by_next_xeapi_call() {
+        let svc = lazy_bootstrap_service(true);
+
+        assert!(svc
+            .song_play_info(7, QualityLevel::Standard, Duration::from_secs(1))
+            .await
+            .is_err());
+        assert!(svc
+            .song_play_info(7, QualityLevel::Standard, Duration::from_secs(1))
+            .await
+            .unwrap()
+            .url
+            .is_some());
+        assert_eq!(svc.transport.key_attempts.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -1121,9 +1258,20 @@ mod tests {
         let encrypted = crypto::encrypt_xeapi_public_key_fixture(&json!({
             "publicKey": BASE64.encode([7u8; 32]), "sk":"x", "version":"1"
         }));
-        let svc = service(vec![response(json!({
-            "code":200,"data":{"encryptedData":encrypted,"timestamp":"1","signature":"bad"}
-        }))]);
+        let mut rng = StdRng::seed_from_u64(11);
+        let svc = NeteaseService::with_sleeper(
+            Fake {
+                responses: Mutex::new(
+                    vec![response(json!({
+                        "code":200,"data":{"encryptedData":encrypted,"timestamp":"1","signature":"bad"}
+                    }))]
+                    .into(),
+                ),
+                requests: Mutex::new(vec![]),
+            },
+            Session::new(&mut rng),
+            NoSleep,
+        );
         assert!(matches!(
             block_on(svc.bootstrap_network()),
             Err(Error::Crypto(_))
@@ -1168,7 +1316,7 @@ mod tests {
         let svc = service(vec![encrypted_xeapi_response(json!({
             "code":200,"cookie":["MUSIC_A=anonymous-secret; Path=/"]
         }))]);
-        assert!(block_on(svc.register_anonymous()).unwrap());
+        assert!(block_on(svc.register_anonymous_ready()).unwrap());
         assert_eq!(
             svc.session
                 .lock()
