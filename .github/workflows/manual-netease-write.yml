@@ -1,0 +1,41 @@
+name: Manual - Netease controlled write acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Reversible write scenario
+        required: true
+        type: choice
+        options:
+          - playlist-create-delete
+          - favorite-toggle
+      confirmation:
+        description: Type WRITE:<operation> exactly
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-netease-write
+  cancel-in-progress: false
+
+jobs:
+  write:
+    name: Approved reversible write
+    runs-on: windows-latest
+    environment: netease-write-acceptance
+    timeout-minutes: 15
+    env:
+      HYPERPLAYER_ACCEPTANCE_DRIVER: ${{ vars.HYPERPLAYER_ACCEPTANCE_DRIVER }}
+      HYPERPLAYER_NETEASE_WRITE_ACCOUNT_JSON: ${{ secrets.HYPERPLAYER_NETEASE_WRITE_ACCOUNT_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mask protected write account
+        shell: pwsh
+        run: Write-Output "::add-mask::$env:HYPERPLAYER_NETEASE_WRITE_ACCOUNT_JSON"
+      - name: Run controlled write and cleanup
+        shell: pwsh
+        run: ./scripts/acceptance/Invoke-NeteaseWriteAcceptance.ps1 -Operation '${{ inputs.operation }}' -Confirmation '${{ inputs.confirmation }}'
