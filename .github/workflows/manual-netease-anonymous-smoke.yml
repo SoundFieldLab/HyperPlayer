@@ -1,0 +1,30 @@
+name: Manual - Netease anonymous smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type ANONYMOUS-SMOKE to allow external requests
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-netease-anonymous-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Anonymous external smoke
+    runs-on: windows-latest
+    environment: netease-anonymous-acceptance
+    timeout-minutes: 10
+    env:
+      HYPERPLAYER_ACCEPTANCE_DRIVER: ${{ vars.HYPERPLAYER_ACCEPTANCE_DRIVER }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run anonymous read-only smoke
+        shell: pwsh
+        run: ./scripts/acceptance/Invoke-NeteaseAnonymousSmoke.ps1 -Confirmation '${{ inputs.confirmation }}'

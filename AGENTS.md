@@ -2,12 +2,12 @@
 
 ## 项目简介
 
-HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + React/TypeScript + Rust 音频引擎）。当前仓库已完成技术选型、详细设计、依赖部署和网易云 TypeScript 行为 oracle；**尚未创建 Tauri 应用源码或 UI**。
+HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + React/TypeScript + Rust 音频引擎）。技术选型、详细设计、依赖部署和网易云 TypeScript 行为 oracle 已完成；**现已进入全量实现阶段，DSP 仅保留插入点与禁用占位，待 D16 后实现。**
 
 ## 硬性约束
 
 - **现行技术栈是 Tauri 2（D21 / ADR-0005）**：D13 Electron 方案已作废；不得恢复 Electron、Node sidecar、napi-rs 或打包 Chromium，除非用户重新定调并新增 ADR
-- 许可证 **MIT**：依赖只收 MIT/Apache/BSD；GPL 组件不引入；LGPL 仅限合规评估通过后使用
+- 项目许可证 **Apache-2.0**：依赖仅接受 Apache-2.0/MIT/BSD/ISC/Zlib/Unicode/OFL 等经审核可兼容许可证；GPL/AGPL 组件不引入；LGPL/MPL 等弱 copyleft 仅限完成合规评估并记录后使用
 - **只发 Windows**（Tauri 跨平台能力保留，未来可逆）；Windows 使用系统 WebView2
 - 资源占用**不设未经实测的硬指标**；M1/M6 分别测空闲/播放内存、冷启动与安装体积
 - **自研 DSP 是一等公民**：音频管线必须保留插入点；DSP 为 TS+Rust 双实现，Rust 为准
@@ -22,14 +22,16 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 
 ## 工作流程约束
 
-- 当前只允许**详细设计、环境部署、依赖清单维护和经用户明确批准的独立高保真 UI 原型**；在用户明确解除前，不创建正式 Tauri 应用源码、commands、capabilities 或网易云 Rust 实现
+- **2026-08-30 用户已解除正式代码禁令并要求全量实现**：可创建 Tauri 2 应用、React UI、commands/capabilities、Rust 引擎/曲库和网易云 Rust Cleanroom 实现
+- **DSP 暂缓**：只实现稳定的音频管线插入点、旁路契约和 UI 禁用入口；不得虚构算法、效果器、参数或预设，待 D16 输入后再实现
+- 仍按现行定调与 ADR 实施；所有新增依赖须满足许可证约束，网易云实现继续严格遵守 Cleanroom 与模块隔离
 - 所有规划文件写入 `docs/`（已 gitignore）：需求、决策记录、ADR、术语表和协议规范
 - 每轮定调产生的新约束同步更新本文件与持久记忆
 
 ## 目录结构
 
 - `docs/` — 调研、需求基线、决策记录、ADR、术语表和网易云行为规范，已 gitignore
-- `crates/hyperplayer-engine/` — 框架无关的 Rust 引擎/领域 crate 占位；未来拥有音频、DSP、曲库、SQLite
+- `crates/hyperplayer-engine/` — 框架无关的 Rust 引擎/领域 crate：音频解码与 CPAL 输出、透明 DSP 管线、队列、歌词、曲库、SQLite 和受控缓存
 - `src/audio-source/netease/` — 网易云 TypeScript Cleanroom oracle（115 个函数，已联网 PoC）
 - `src/audio-source/lyrics/` — LRC/YRC/TTML 与时间轴纯 TypeScript 实现
 - `temp/` — 第三方参考、PoC 和依赖探针，已 gitignore，永不入库
@@ -41,23 +43,27 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 - **音频/曲库核心**：`hyperplayer-engine` Rust crate —— symphonia 解码 + DSP 管线 + cpal/miniaudio（WASAPI）输出 + lofty + rusqlite；独立线程，框架无关
 - **桥**：短请求/响应用 Tauri commands；播放状态、扫描进度等连续数据用 events/channel；显式 serde DTO
 - **UI 设计基线已完成（UI-D1~UI-D79）**：现行规则见 `docs/UI设计基线.md`，决策过程见 `docs/UI定调决策记录.md`；不得回退成默认 shadcn、移动端底部 Tab、营销页布局或遍地玻璃卡片
-- **UI 体系**：Tailwind CSS 4 + 深度定制 shadcn/ui（Radix）+ Phosphor Regular/Fill；zustand + TanStack Query；Motion 管产品过渡，GSAP 仅限封面氛围、歌词复杂过渡和未来 DSP 可视化
+- **UI 体系**：Tailwind CSS 4 + 深度定制 shadcn/ui（Radix）+ Phosphor Regular/Fill；zustand + TanStack Query；Motion 管产品过渡，CSS 管短反馈，Canvas/WebGL 管封面氛围、歌词高频渲染和未来 DSP 可视化；不引入 GSAP
 - **视觉方向**：明亮柔和消费产品 + 克制 Apple/Liquid Glass 近似；默认明亮、完整深石墨主题；`#3F55F9` 管交互、`#FF761C` 管播放；得意黑展示、思源黑体内容/歌词、Cascadia Mono 数据
 - **核心结构**：双内容域默认网易云、完全自绘标题栏、可展开三段式播放坞、42/58 封面+歌词播放层、有限槽位停靠/浮动窗口、完整桌面键盘与上下文菜单
-- **原型要求**：正式 UI 前先做独立 React 高保真原型。第一轮核心聆听路径提供 A 明亮纯净 / B 封面氛围两套完整变体；第二轮覆盖剩余关键页面；DSP 等产品-D16 后第三轮。Computer Use + 多尺寸截图 + 设计 skills 先验收，最后由用户逐页确认
+- **UI 验收要求**：A 明亮纯净 / B 封面氛围共用同一产品结构，所有页面与交互只在正式 Tauri/WebView2 窗口中验收。Computer Use + 多尺寸截图 + 设计 skills 通过后，最后由用户逐页确认；DSP 工作台继续等待 D16
+- **正式 UI 与验证仅运行在 Tauri/WebView2**：不提供浏览器预览或运行时 mock bridge；`pnpm dev` 启动 `tauri dev`，`pnpm build` 执行完整 Tauri 构建。Vite 内部脚本仅供 Tauri 生命周期调用，不作为独立产品入口
 - **系统集成**：优先 Tauri 2 官方/维护良好的插件，SMTC 等长尾能力用 Rust `windows-rs`
 - **打包更新**：Tauri bundler + updater plugin + GitHub Releases；签名方案待 M6 定稿
 - 决策依据：`docs/定调决策记录.md`（D21）、`docs/adr/0005-tauri2-react-rust.md`；Rust 曲库边界见 ADR-0004
 
 ## 构建 / 测试
 
-暂无应用构建脚本（尚未创建 Tauri app crate）。不要猜测 `tauri dev/build` 命令；M0 创建实际配置后再登记。
+正式应用已经建立，开发和验证以仓库脚本为准：
 
-当前可验证命令：
-
-- Rust engine 占位 crate：在 `crates/` 运行 `cargo build`
-- 网易云 TypeScript oracle：运行严格 `tsc --noEmit`（具体参数见最近验证记录；M0 后纳入正式 tsconfig/script）
-- Tauri CLI 环境：`pnpm exec tauri --version`
+- 安装依赖：`pnpm install --frozen-lockfile`
+- 开发运行：`pnpm dev`（启动 Tauri 2 + WebView2；不提供浏览器预览）
+- 完整构建：`pnpm build`
+- 仅供 Tauri 内部调用的前端构建：`pnpm frontend:build`
+- 前端单元测试：`pnpm test`
+- Rust engine：在 `crates/` 运行 `cargo test --workspace --all-targets --all-features --locked`
+- 网易云 TypeScript oracle：`pnpm exec tsc -p tests/oracle-tsconfig.json --pretty false`
+- Tauri Rust：在 `src-tauri/` 运行 `cargo test --workspace --all-targets --all-features --locked`
 
 ## 环境备忘（2026-08-30 实测）
 

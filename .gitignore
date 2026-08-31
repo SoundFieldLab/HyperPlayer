@@ -10,8 +10,12 @@ dist/
 out/
 
 # Rust
-crates/target/
-src-tauri/target/
+**/target/
+
+# TypeScript / Vite generated metadata
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
 
 # 原生模块产物
 *.node

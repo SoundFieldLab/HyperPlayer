@@ -1,0 +1,30 @@
+name: Manual - Windows audio and SMTC acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type WINDOWS-AUDIO-SMTC after reserving the physical test machine
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-windows-audio-smtc
+  cancel-in-progress: false
+
+jobs:
+  hardware:
+    name: WASAPI, SMTC and media keys on physical Windows
+    runs-on: [self-hosted, Windows, X64, hyperplayer-audio]
+    environment: windows-audio-smtc-acceptance
+    timeout-minutes: 30
+    env:
+      HYPERPLAYER_ACCEPTANCE_DRIVER: ${{ vars.HYPERPLAYER_ACCEPTANCE_DRIVER }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run physical device acceptance
+        shell: pwsh
+        run: ./scripts/acceptance/Invoke-WindowsAudioSmtcAcceptance.ps1 -Confirmation '${{ inputs.confirmation }}'
