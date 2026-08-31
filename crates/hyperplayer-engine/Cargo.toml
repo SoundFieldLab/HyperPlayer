@@ -2,10 +2,19 @@
 name = "hyperplayer-engine"
 version = "0.1.0"
 edition = "2021"
-description = "HyperPlayer 音频引擎与曲库核心（解码/DSP/输出/扫描/存储）"
+description = "HyperPlayer 框架无关的音频引擎与曲库核心"
+license = "Apache-2.0"
 
 [dependencies]
+claxon = "0.4.3"
 cpal = "0.18.2"
 lofty = "0.25.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
-symphonia = { version = "0.6.1", features = ["all"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3"] }
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3.23"
