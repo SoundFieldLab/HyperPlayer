@@ -44,11 +44,12 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 - **音频/曲库核心**：`hyperplayer-engine` Rust crate —— symphonia 解码 + DSP 管线 + cpal/miniaudio（WASAPI）输出 + lofty + rusqlite；独立线程，框架无关
 - **桥**：短请求/响应用 Tauri commands；播放状态、扫描进度等连续数据用 events/channel；显式 serde DTO
 - **UI 设计基线已完成（UI-D1~UI-D79）**：现行规则见 `docs/UI设计基线.md`，决策过程见 `docs/UI定调决策记录.md`；不得回退成默认 shadcn、移动端底部 Tab、营销页布局或遍地玻璃卡片
-- **UI 体系**：Tailwind CSS 4 + 深度定制 shadcn/ui（Radix）+ Phosphor Regular/Fill；zustand + TanStack Query；Motion 管产品过渡，CSS 管短反馈，Canvas/WebGL 管封面氛围、歌词高频渲染和未来 DSP 可视化；不引入 GSAP
+- **UI 体系**：Tailwind CSS 4 + 深度定制 shadcn/ui（Radix）+ Phosphor Regular/Fill；zustand + TanStack Query；Motion 管产品过渡，CSS 管短反馈；主窗口的封面氛围、按需波形/频谱、DSP 曲线/仪表和 2D/2.5D 空间场可选用 vGPU 0.3.1，必须运行时检测 WebGPU 并保留 Canvas2D/SVG/DOM 降级；不引入 GSAP
 - **视觉方向**：明亮柔和消费产品 + 克制 Apple/Liquid Glass 近似；默认明亮、完整深石墨主题；`#3F55F9` 管交互、`#FF761C` 管播放；得意黑展示、思源黑体内容/歌词、Cascadia Mono 数据
 - **核心结构**：双内容域默认网易云、完全自绘标题栏、可展开三段式播放坞、42/58 封面+歌词播放层、有限槽位停靠/浮动窗口、完整桌面键盘与上下文菜单
 - **UI 验收要求**：A 明亮纯净 / B 封面氛围共用同一产品结构，所有页面与交互只在正式 Tauri/WebView2 窗口中验收。Computer Use + 多尺寸截图 + 设计 skills 通过后，最后由用户逐页确认；DSP 工作台按 HSE 核心能力使用 HyperPlayer 自有 UI 实现
 - **正式 UI 与验证仅运行在 Tauri/WebView2**：不提供浏览器预览或运行时 mock bridge；`pnpm dev` 启动 `tauri dev`，`pnpm build` 执行完整 Tauri 构建。Vite 内部脚本仅供 Tauri 生命周期调用，不作为独立产品入口
+- **vGPU 可视化边界（D31 / UI-D80）**：`vgpu` 只承担 WebView2 主窗口的可选 GPU 渲染，不承担权威 DSP/FFT/LUFS/HRTF 计算。适用范围：B 材质封面氛围、用户按需打开的微型波形/频谱、DSP 响应曲线/仪表、2D/克制 2.5D 空间场；迷你播放器和桌面歌词不创建独立 GPU context。高频数据使用独立有界 telemetry channel，不进入 Zustand/通用 events，不传原始 PCM；缺少 WebGPU、设备丢失、窗口隐藏或减少动效时退化到 Canvas2D/SVG/DOM，绝不影响播放
 - **系统集成**：优先 Tauri 2 官方/维护良好的插件，SMTC 等长尾能力用 Rust `windows-rs`
 - **打包更新**：Tauri bundler + updater plugin + GitHub Releases；签名方案待 M6 定稿
 - 决策依据：`docs/定调决策记录.md`（D21）、`docs/adr/0005-tauri2-react-rust.md`；Rust 曲库边界见 ADR-0004

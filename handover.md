@@ -1,125 +1,155 @@
 # HyperPlayer 当前交接
 
-更新时间：2026-08-31
+更新时间：2026-09-01
 
-## 当前结论
+## 一句话结论
 
-HyperPlayer 已完成 Tauri 2 + React/TypeScript + Rust 工程主干，并形成播放、队列、本地曲库、歌词、缓存门禁和部分网易云能力的真实闭环，但**尚未达到 v1 全功能完成**。
+HyperPlayer 已具备可构建、可运行的 Tauri 2 播放器主干，以及本地播放/曲库/队列/歌词、部分缓存策略和部分网易云能力的真实闭环，但**尚未达到 v1 全功能完成**。
 
-后续必须按完整链路判断功能完成度：
+判断功能是否完成必须使用完整证据链：
 
-`定调 → 领域实现 → Tauri IPC → frontend bridge → UI 工作流 → 自动测试 → 真实 Tauri / 公网 / 账号 / 硬件验收`
+`定调要求 → Rust/TS 领域实现 → Tauri IPC → frontend bridge → UI 工作流 → 自动测试 → 真实 Tauri / 公网 / 账号 / 硬件验收`
 
-不得再用测试数量、IPC command 数量或网易云 115 项 route catalog 代替端到端证据。
+测试数量、command 数量和网易云 115 项 route catalog 都只是辅助证据，不能单独证明端到端完成。
 
-2026-08-31 曾误将主窗口替换为无关 `ProjectDashboard`。该偏移已完整撤销：`app/App.tsx`、`index.html` 已恢复，错误 dashboard 文件已删除，真实 Tauri/WebView2 已确认 HyperPlayer 主界面恢复。
+## 当前 Git 状态
 
-## 依据
+- 唯一规范分支：`main`
+- PR #2 已合并：<https://github.com/SoundFieldLab/HyperPlayer/pull/2>
+- 业务功能提交：`39de988 feat: close library and anonymous discovery workflows`
+- `main` 合并提交：`0be5403 Merge pull request #2 from SoundFieldLab/feat/p0-netease-runtime-closure`
+- 合并后 Quality：<https://github.com/SoundFieldLab/HyperPlayer/actions/runs/33416186027>，成功
+- 合并后 Licenses：<https://github.com/SoundFieldLab/HyperPlayer/actions/runs/33416186019>，成功
+- 本文档与 `AGENTS.md` 的 D31/UI-D80 更新作为后续文档提交进入 `main`
+- `src-tauri/gen/` 是未跟踪生成目录，清理后不得进入提交
+- `temp/`、`node_modules/`、`dist/` 和 Rust `target/` 均已 gitignore
 
-- `AGENTS.md`
-- `docs/需求基线.md`
-- `docs/定调决策记录.md`
-- `docs/UI设计基线.md`
-- `docs/UI定调决策记录.md`
-- `docs/音源-网易云-行为规范.md`
-- `tests/ACCEPTANCE_MATRIX.md`
-- `LICENSE-HSE-AUTHORIZATION.md`
-
-## Git 状态
-
-- 分支：`feat/p0-netease-runtime-closure`
-- 提交基线：`23ef617 feat(desktop): close playback context and desktop actions`
-- 远程 feature tip 与本地基线一致，检查时为 `0 ahead / 0 behind`；无需先 pull。
-- 当前大型业务批次仍在工作区，准备提交并推送。
-- `src-tauri/gen/` 是未跟踪生成物，不得进入提交。
-- `temp/`、`node_modules/`、`dist/` 和 Rust `target/` 均为忽略内容。
-
-此前已推送：
+历史功能提交：
 
 1. `7137bea feat(netease): close runtime playback and image gaps`
 2. `c9b239d feat(engine): persist playback history and entitlement locks`
 3. `23ef617 feat(desktop): close playback context and desktop actions`
+4. `39de988 feat: close library and anonymous discovery workflows`
 
-已有 CI：
+## 权威定调文件
 
-- `7137bea` Quality：<https://github.com/SoundFieldLab/HyperPlayer/actions/runs/33363666181>
-- `7137bea` Licenses：<https://github.com/SoundFieldLab/HyperPlayer/actions/runs/33363666175>
-- `23ef617` Quality：<https://github.com/SoundFieldLab/HyperPlayer/actions/runs/33370697809>
+后续工作必须先按能力类别查阅对应文件：
 
-## 当前批次已实现
+| 能力 | 权威输入 |
+|---|---|
+| 产品范围、技术栈、里程碑 | `docs/需求基线.md`、`docs/定调决策记录.md` |
+| Tauri / Rust / 曲库所有权 | `docs/adr/0004-rust-owns-library.md`、`docs/adr/0005-tauri2-react-rust.md` |
+| UI 信息架构、状态、交互 | `docs/UI设计基线.md`、`docs/UI定调决策记录.md` |
+| 网易云协议与 Cleanroom 行为 | `docs/音源-网易云-行为规范.md`、`src/audio-source/netease/` oracle |
+| 自动化与外部验收门槛 | `tests/ACCEPTANCE_MATRIX.md` |
+| HSE 使用、修改和分发权利 | `LICENSE-HSE-AUTHORIZATION.md` |
+| Agent 执行硬约束 | `AGENTS.md` |
 
-### 播放和恢复队列
+现行新增决策：
+
+- **D29**：HyperSoundEngine v1.5.1 完整 DSP 核心接入，解除 D16/D27 的 DSP 挂起。
+- **D30**：采用保守 D25 缓存默认，解除容量/离线/后台资源策略待定。
+- **D31 / UI-D80**：vGPU 0.3.1 只作为主窗口可选 WebGPU 可视化层，Rust/HSE 继续负责权威音频与分析计算。
+
+## 已完成并推送
+
+### 网易云最小播放闭环
+
+- XEAPI 首次调用具备并发安全、幂等、失败可重试的 lazy bootstrap。
+- 二维码为本地 SVG data URL。
+- 网易云图片代理限制 HTTPS、网易域名、公网 DNS/IP、逐跳重定向、MIME 和 10 MiB。
+- 免费曲目使用官方播放 URL；登录 VIP 用户可按音质梯度请求官方完整 URL。
+- 试听 URL、无 URL 和替代源均拒绝。
+
+### 播放上下文、D23/D24 与桌面动作
+
+- 播放上下文区分 manual/album/playlist/search/personalFm。
+- D24 只接受匹配后端 albumId 的明确专辑上下文，seek 跳跃不累计有效时间。
+- 播放历史按真实 Playing 会话保存最终位置。
+- D23 支持按账号或全部账号锁定 AccountEntitled 缓存并撤销 lease。
+- 登出锁定权益缓存并停止当前网易云播放。
+- 队列 mutation 会同步 standby decoder。
+- Windows 回收站使用 `IFileOperation + FOFX_RECYCLEONDELETE`，无永久删除回退。
+
+## 当前工作区已实现但尚未提交
+
+以下内容已经存在于当前工作区，不能整体恢复或覆盖。
+
+### 播放与恢复队列
 
 - 恢复队列启动后保持暂停。
-- 播放时通过正常 `TrackResolverPort` 重新解析当前和相邻媒体，不信任持久化 URL 或文件句柄。
-- 连续 Next/Previous、自动 EOF、shuffle、repeat-all、托盘和 SMTC 均走 resolver-aware transition。
-- 当前项或目标项解析失败时保持非 Playing，不破坏 queue ID、顺序、模式、历史和保存位置。
-- standby decoder 在可用时持续重新预热。
+- 调用播放时通过正常 `TrackResolverPort` 重新解析媒体，不信任持久化 URL 或文件句柄。
+- 当前、下一项、后续 standby 持续水合，覆盖手动 Next/Previous、自动 EOF、shuffle、repeat-all、托盘和 SMTC。
+- 解析或 decoder 准备失败不改变 queue ID、顺序、模式、历史或保存位置，并保持非 Playing。
+- 本地媒体重新经过 SQLite 和注册根；网易云媒体重新经过官方 resolver 和 D23。
 
-### 本地曲库和扫描
+### 本地曲库扫描
 
-- engine 统一声明当前可播放格式：WAV、FLAC、MP3；scanner 与 Tauri 使用同一集合。
+- engine 单一声明当前可播放格式：WAV、FLAC、MP3；scanner 和 Tauri 复用同一集合。
 - Tauri 正式扫描复用 `LibraryScanner::scan_with_cancel`。
-- 完整扫描后删除真正缺失的索引；取消或根目录读取不完整时不清理。
-- 现存历史不支持格式条目不会被误删，新扫描不会继续索引不可播放格式。
-- 嵌入封面进入内容寻址存储；遍历、元数据、封面和入库错误逐文件报告。
+- 未取消且完整遍历后删除真正缺失的索引。
+- 取消、根目录读取失败、现存元数据失败和磁盘上仍存在的历史不支持格式不会误删。
+- 嵌入封面进入内容寻址存储。
+- 遍历、元数据、封面和入库错误通过现有 scan progress `phase` 逐文件报告。
 
 ### 本地歌词
 
-- 支持 LRC/YRC/TTML sidecar 与 Lofty `Lyrics/UnsyncLyrics` 嵌入歌词。
-- 只能通过已注册 `MediaId` 和曲库根解析，不接受前端裸路径。
-- sidecar 规范化后必须仍在注册根内，限制 1 MiB。
-- 历史与新增曲库根同步到 engine repository。
+- 支持 LRC/YRC/TTML sidecar 与 Lofty `Lyrics/UnsyncLyrics`。
+- 仅通过已注册 `MediaId` 和曲库根解析；前端裸路径不能作为 TrackRef。
+- sidecar 规范化后必须仍位于注册根内，大小限制 1 MiB。
+- 历史和新增位置会同步到 engine repository。
 
 ### 本地播放列表
 
 - repository 支持 create/rename/delete/add/remove/reorder/query，名称上限 80 字符。
-- 添加、移除、重排为事务操作；重复添加不改变更新时间；临时负位置避免唯一索引冲突。
-- UI 支持首个列表创建、重命名、删除、完整分页加载候选歌曲、添加、批量移除、单曲上移/下移。
-- 列表详情保持后端顺序；批量部分失败后仍刷新并可重试。
+- 添加、移除和重排使用事务；重复添加不刷新更新时间；临时负位置避免唯一索引冲突。
+- UI 支持首个列表创建、重命名、删除、分页加载候选歌曲、添加、批量移除、上移/下移。
+- 批量部分失败后会刷新列表并允许继续重试。
 
 ### 双内容域导航
 
-- 网易云和本地域分别保存 current/back/forward stack。
-- history entry 保存 view、detailId 和本地 entity kind；字符串本地 ID 与数字网易云 ID 分离。
-- 切换域恢复该域最后页面，新增导航只清当前域 forward，栈上限 20。
-- 标题栏前进/后退、Alt+Left/Alt+Right 已接入。
+- 网易云和本地域分别保存 current/back/forward stack，最多 20 条。
+- history entry 保存 view、detailId 和本地 entity kind。
+- 字符串本地 ID 与数字网易云 ID 分离。
+- 本地 album/artist/folder/playlist 详情可被前进、后退和域切换恢复。
+- 标题栏前进/后退与 Alt+Left/Alt+Right 已接通。
 
-### 缓存和 D23/D24
+### 缓存 UI 与状态
 
-- D23 AccountEntitled 缓存绑定账号并实时校验；登出、切号、过期或验证失败 fail closed。
-- D24 专辑上下文、有效时长、每日计数、五次晋升和下一首预取基础已实现。
-- 展开播放器显示真实 cache status，处理 missing/failed/queued/caching/ready/lockedEntitlement，并防止旧请求覆盖新曲目。
-- 同曲目多个质量版本按最严格状态聚合；删除操作明确删除所有缓存版本。
+- 展开播放器使用受信 `{id, source}` 查询 cache status。
+- missing/failed、queued/caching、ready、lockedEntitlement 都有明确状态和动作。
+- 旧异步响应不会覆盖已切换的新曲目。
+- 同曲目多个质量版本按最严格状态聚合；`cachedVersions` 显示版本数，删除语义为删除该曲目的全部缓存版本。
+- 未实现的喜欢/更多保持禁用，不伪造写操作。
 
-### 网易云匿名与发现
+### 网易云匿名首页与 Discover
 
-- 匿名首页使用 `public_explore()` 并行聚合公开歌单、新歌、榜单和热门艺人；分区独立降级，全部失败才报错。
-- 匿名首页不调用日推、账号推荐资源或私人 FM；私人 FM 显示登录入口。
-- 真实 Tauri/WebView2 已确认未登录首页加载公开新歌且不出现私人 FM 认证错误。
-- Discover 已接榜单、新歌、MV 元数据、DJ/电台，分区独立 loading/empty/error/retry；支持适用分页。
-- 新歌和 DJ 主曲目复用真实播放/队列；榜单进入歌单详情；MV 未接视频播放时不显示假播放。
-- 艺人详情补齐 head info、简介和粉丝数，可选分区独立降级。
-- source 层新增 `mv_play_url`、`similar_mvs`、`top_mvs`；尚未接入 Tauri MV 视频播放。
+- 匿名 `public_explore()` 并行请求公开歌单、新歌、榜单和热门艺人，分区独立降级，全部失败才报错。
+- 匿名首页不调用日推、账号推荐资源或私人 FM；私人 FM 变成登录入口。
+- 真实 Tauri/WebView2 已确认未登录首页加载公开新歌，不再显示私人 FM 认证错误。
+- Discover 已接榜单、新歌、MV 元数据、DJ/电台，分区独立 loading/empty/error/retry，并支持适用分页。
+- 新歌和 DJ 主曲目使用真实播放/队列；榜单打开现有歌单详情；MV 没有运行时播放链路时不显示假播放。
+- 艺人详情补齐 head info、introduction、fans count，可选分区独立降级。
+- source 层新增 `mv_play_url`、`similar_mvs`、`top_mvs`；尚未接到 Tauri 和视频播放器。
 
 ### Updater
 
-- 仅保留 `updater_update(expectedVersion)` 单一安装 IPC。
-- metadata 与 package 均要求 HTTPS、无凭据/fragment；DNS 全部为公网地址并绑定已验证地址；禁用代理；逐跳手动验证重定向。
-- metadata 限制 1 MiB，package 限制 512 MiB；使用全流程 deadline。
-- 本地解析 Tauri release metadata、进行 semantic version 比较；expectedVersion 变化时 fail closed。
-- 使用 Minisign 验签后才启动 Windows installer；所有外部错误向前端脱敏。
-- 缺少公钥/endpoint 时真实 Tauri 已确认 fail closed。
+- 只保留单一 `updater_update(expectedVersion)` 安装 IPC。
+- metadata 和 package 均要求 HTTPS、无 credentials/fragment、公网 DNS/IP，绑定已验证地址并禁用系统代理。
+- 每一跳手动校验重定向，metadata 限制 1 MiB，package 限制 512 MiB，并有全流程 deadline。
+- metadata 本地解析和 semantic-version 比较，expectedVersion 改变时 fail closed。
+- 使用 Minisign 公钥验签后才启动 Windows installer。
+- 缺少公钥或 endpoint 时 fail closed；所有外部错误向前端脱敏。
 
-### 前端页面与测试
+### Settings、测试与 Discover UI
 
-- Settings 已分为外观、播放、音频/DSP、曲库、缓存、网易云、快捷键、系统、隐私、关于。
-- 展开播放器的缓存控制为真实 bridge 行为，未实现的喜欢/更多保持禁用。
-- 新增页面级播放列表、Settings、Discover、Player cache 和导航测试。
+- Settings 已拆分外观、播放、音频/DSP、曲库、缓存、网易云、快捷键、系统、隐私、关于。
+- 无后端支持的项目明确只读或 unavailable。
+- 新增页面级 playlist、Settings、Discover、Player cache 和 navigation 测试。
 
-## 当前验证基线
+## 当前最终验证结果
 
-最新整合结果：
+当前工作树最近一次通过：
 
 - frontend：53 tests / 8 files
 - engine：69 tests
@@ -127,15 +157,15 @@ HyperPlayer 已完成 Tauri 2 + React/TypeScript + Rust 工程主干，并形成
 - Tauri：85 tests
 - IPC：79 commands / 12 events
 - Rust 1.98 三个 manifest fmt/clippy/test：通过
-- 三个 manifest `cargo deny --offline`：通过，只有既有 duplicate/unmatched allow warnings
+- 三个 manifest `cargo deny --offline`：通过，仅既有 duplicate/unmatched allow warnings
 - 网易云 TypeScript oracle：通过
 - JavaScript production license audit：通过
 - `pnpm frontend:build`：通过，仍有约 598 KiB chunk warning
-- 最新完整 `pnpm build`：通过，生成 x64 NSIS 与 MSI
+- 最新 `pnpm build`：通过，生成 x64 NSIS 和 MSI
 
-提交前必须基于最终工作树重跑上述门禁；文档数字不能代替命令结果。
+提交前仍需再执行一次最终 diff/状态检查，并确保 `src-tauri/gen/` 不进入提交。
 
-## HSE v1.5.1 与 D29
+## HSE v1.5.1 固定来源与授权
 
 用户已要求 HSE 完整 DSP 核心接入，并授权 HyperPlayer 修改、融合、再许可和以 Apache-2.0 分发 HSE v1.5.1 自有代码、参数、预设、规范与测试向量；见 `LICENSE-HSE-AUTHORIZATION.md`。
 
@@ -145,53 +175,86 @@ HyperPlayer 已完成 Tauri 2 + React/TypeScript + Rust 工程主干，并形成
 - tag：`v1.5.1`
 - tag object：`3602b86906e6a345baaf6e87fe559f80ed399cc4`
 - commit：`f7017621b7d84005fbfed8a3c42a119487a17326`
-- 本地源码归档：`temp/HyperSoundEngine-v1.5.1-local.tar.gz`
+- 本地归档：`temp/HyperSoundEngine-v1.5.1-local.tar.gz`
 - SHA-256：`25fa1568b067ca241882f93fa5f562852425ec32f2b0afd8b8f72b5315a49a91`
 
-接入范围：完整 22 阶段 Rust/TS DSP 核心、完整参数、12 个预设、HSE2 编码与 parity；不复用 HSE UI、browser host、WASM/service/N-API 或重复 WASAPI。第三方 IR、素材和 SOFA/HRTF 数据不在专项授权内，须独立审计。
+D29 接入范围：完整 22 阶段 Rust/TS DSP 核心、完整参数模型、12 个预设、HSE2 编码和 parity。HyperPlayer 不复用 HSE UI、browser host、WASM/service/N-API 或重复 WASAPI。第三方 IR、素材与 SOFA/HRTF 数据不在专项授权内，须独立审计。
 
 ## D30 缓存默认
 
 - 10 GiB 默认容量，可配置 2–100 GiB，到上限清理至 90%。
 - 保护最近 100 个不同远程曲目。
 - 淘汰顺序：过期 partial/orphan → locked entitlement → album-fill remainder → automatic → user-requested → 最旧 recent。
+- partial 24 小时清理；启动时 DB/object orphan 对账。
 - Public 离线证明最长 7 天；AccountEntitled 离线永远拒绝。
 - 整专补齐 standard、单并发、让路 manual/next-track；AC、非计费网络和磁盘保留条件满足时运行。
-- schema v7、迁移前备份、LRU、获取类型、授权/完整性时间和 durable album-fill items 尚待实现。
+- schema v7、迁移前备份、LRU、获取类型、授权/完整性时间和 durable album-fill items 尚未实现。
 
-## 全功能审查仍存在的缺口
+## vGPU 可视化定调（D31 / UI-D80）
 
-### 前端
+`vgpu` skill 已全局安装给 ZCode。上游 `vercel-labs/vgpu` 版本 0.3.1，MIT 许可证；当前没有加入 HyperPlayer `package.json`。
 
-- 本地首页仍是导航壳，未完成继续聆听、最近新增、常听内容和扫描/存储摘要。
-- 网易云消息、动态、报告和写操作多数尚未进入 bridge/UI。
-- 搜索缺少完整实体分组、跨域模式、历史和建议。
-- `adaptTrack` 仍把 playable 简化为 free、默认 cache 为 none，权益/缓存/封面映射尚未完整。
-- 展开播放器真实 PCM 波形、部分上下文动作、完整焦点陷阱和可访问性仍不足。
-- Discover MV 目前只展示元数据；没有 Tauri MV URL command 和视频播放器。
+允许接入：
 
-### 后端
+- 主窗口 B 材质封面氛围。
+- 用户按需打开的微型波形/频谱。
+- DSP 响应曲线、FFT/LUFS/peak/limiter-reduction 仪表。
+- HRTF 的 2D 或克制 2.5D 空间场。
 
-- MP3/FLAC 增量解码、真实 codec delay/padding 和完整 gapless fixture 未完成。
-- 设备枚举/切换、默认设备恢复、格式协商和独占模式未完成。
-- typed scan error DTO、完整 SMTC metadata/timeline、文件关联未完成。
-- D29 DSP 完整迁入和 D30 schema/policy/worker 尚未开始。
+边界：
 
-### 网易云 Cleanroom
+- Rust/HSE 负责权威 DSP、FFT、LUFS、true peak 和 HRTF；vGPU 只渲染 bounded telemetry。
+- 不传原始高频 PCM，不进入 Zustand 或通用 Tauri events。
+- 迷你播放器和桌面歌词不创建独立 GPU context。
+- 缺少 WebGPU、初始化失败或 device lost 时退化到同一 telemetry 驱动的 Canvas2D/SVG/DOM，不影响播放。
+- 使用独立二进制 channel、subscribe/ack/activity/close；每 WebView 一个会话，全局默认最多两个，每会话一个未 ACK 动态帧，积压覆盖旧帧。
+- tap 为 `post_dsp_pre_output_gain`；默认 30 Hz，失焦/节能 15 Hz，减少动效 2 Hz，隐藏 0 Hz；动态帧目标小于 1 KiB。
+- 接入顺序：Rust/HSE telemetry → Canvas2D fallback → vGPU renderer → 真实 WebView2 device-loss 与像素验收。
+
+## 尚未完成的主要能力
+
+### DSP / D29
+
+- 22 阶段 HSE 核心尚未迁入 HyperPlayer。
+- ProcessorChain 的 prepare/replace/revision/latency/fault/tail 契约尚未实现。
+- standby raw PCM 与状态型 DSP 连续性尚未重构。
+- 参数、12 个预设、HSE2、Rust/TS parity、Tauri DspPort、原生工作台、telemetry 和 vGPU 均未实现。
+
+### 缓存 / D30
+
+- schema v7、容量策略、LRU/最近 100、partial/orphan 对账、Windows power/metered/disk probes、durable album-fill worker 和 UI 尚未实现。
+
+### 网易云
 
 - 115 route catalog 不是 115 个实现。
-- Rust 可执行对应仍约为一半以上，MV read group 和 artist enrichment 已增加，但仍缺 hot/suggest、完整 playlist/artist/MV/DJ、similar、banner/wiki/blog、热评/楼层、账号历史、scrobble、journey/explore-next 等。
-- Rust/Tauri 匿名公网 smoke、登录/VIP/写操作受控账号验收尚未完成。
-- fee `4` 的购买权益模型仍需确认，不能简单永久等同 VIP。
+- 仍缺 hot/suggest、完整 playlist/artist/MV/DJ、similar、banner/wiki/blog、热评/楼层、账号历史、scrobble、journey/explore-next 等。
+- MV URL source API 尚未进入 Tauri 和视频播放器。
+- 登录/VIP/写操作尚无受控账号外部验收；fee `4` 购买权益模型仍需确认。
+
+### 音频、本地与 Windows
+
+- MP3/FLAC 增量解码、真实 codec delay/padding、完整 gapless fixture。
+- 输出设备枚举/切换、默认设备恢复、格式协商和独占模式。
+- 本地首页、文件夹管理、标签重读、播放列表拖拽和完整上下文菜单。
+- typed scan errors、完整 SMTC metadata/timeline、文件关联和真实 PCM telemetry。
+
+### 前端产品收口
+
+- 真实 entitlement/quality/cache/artwork 映射仍不完整。
+- 消息、动态、报告、云盘写操作和受控 mutation UI 未完成。
+- 跨域实体搜索、建议、历史、scroll/filter snapshot 未完成。
+- 完整焦点陷阱、forced-colors、文本缩放和多尺寸页面验收未完成。
 
 ## 下一步执行顺序
 
-1. 对当前工作树执行最终门禁、完整构建和真实 Tauri 回归。
-2. 拆分或原子提交当前跨层批次，推送并等待 Quality/Licenses。
+1. 对当前工作树执行最终 diff/status 检查，排除 `src-tauri/gen`。
+2. 创建当前跨层原子提交并推送，等待 Quality/Licenses 全绿。
 3. CI 通过后清理 `node_modules`、`dist`、全部 `target` 和 `src-tauri/gen`。
-4. 基于固定 HSE v1.5.1 开始 DSP runtime 重构，再按五个算法组并行迁入完整核心。
-5. 实施 D30 schema v7、策略、资源探针、worker 和 UI。
-6. 继续网易云剩余能力、本地体验、音频设备/系统集成和最终 UI 验收。
+4. 进行 D29 DSP runtime 基础重构。
+5. 五个算法组并行迁入 HSE 22 阶段完整核心，主线程串行整合。
+6. 完成参数、预设、HSE2、parity、Tauri DSP、HyperPlayer 原生 UI、telemetry 和 vGPU。
+7. 实施 D30 schema/policy/worker/UI。
+8. 继续网易云剩余能力、音频设备/系统能力和最终产品验收。
 
 ## 外部验收阻塞
 
