@@ -429,9 +429,7 @@ fn lrc_timestamps_and_text(line: &str) -> (Vec<u64>, String) {
 fn parse_lrc_time(value: &str) -> Option<u64> {
     let (minutes, seconds) = value.split_once(':')?;
     let minutes = minutes.parse::<u64>().ok()?;
-    let (seconds, fraction) = seconds
-        .split_once(['.', ':'])
-        .map_or((seconds, ""), |parts| parts);
+    let (seconds, fraction) = seconds.split_once(['.', ':']).unwrap_or((seconds, ""));
     let seconds = seconds.parse::<u64>().ok()?;
     if seconds >= 60 || fraction.len() > 3 || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
