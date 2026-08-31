@@ -289,18 +289,23 @@ impl SqliteRepository {
     }
 
     pub fn media_path(&self, id: &MediaId) -> Result<Option<PathBuf>> {
+        Ok(self.media_path_with_root(id)?.map(|(path, _)| path))
+    }
+
+    pub fn media_path_with_root(&self, id: &MediaId) -> Result<Option<(PathBuf, PathBuf)>> {
         let Some(track) = self.track_by_id(id)? else {
             return Ok(None);
         };
         let candidate = track.path.canonicalize()?;
         let roots = self.library_roots()?;
-        if roots.iter().any(|root| candidate.starts_with(root)) {
-            Ok(Some(candidate))
-        } else {
-            Err(EngineError::InvalidInput(
-                "media path is outside registered library roots".into(),
-            ))
-        }
+        roots
+            .into_iter()
+            .find(|root| candidate.starts_with(root))
+            .map(|root| (candidate, root))
+            .map(Some)
+            .ok_or_else(|| {
+                EngineError::InvalidInput("media path is outside registered library roots".into())
+            })
     }
 
     pub fn save_playback_session(
@@ -695,37 +700,193 @@ impl SqliteRepository {
     }
 
     pub fn create_playlist(&self, id: &str, name: &str, now: u64) -> Result<()> {
-        if id.trim().is_empty() || name.trim().is_empty() {
-            return Err(EngineError::InvalidInput(
-                "playlist id and name are required".into(),
-            ));
-        }
+        let name = validate_playlist_name(id, name)?;
         let now = sqlite_integer(now, "playlist timestamp")?;
         self.connection.execute(
             "INSERT INTO playlists(id, name, created_unix_ms, updated_unix_ms)
              VALUES (?1, ?2, ?3, ?3)",
-            params![id, name.trim(), now],
+            params![id, name, now],
         )?;
         Ok(())
     }
 
     pub fn add_playlist_track(
-        &self,
+        &mut self,
         playlist_id: &str,
         media_id: &MediaId,
         now: u64,
     ) -> Result<()> {
-        self.connection.execute(
+        let now = sqlite_integer(now, "playlist timestamp")?;
+        let transaction = self.connection.transaction()?;
+        let inserted = transaction.execute(
             "INSERT INTO playlist_tracks(playlist_id, media_id, position)
              VALUES (?1, ?2, COALESCE((SELECT MAX(position) + 1 FROM playlist_tracks WHERE playlist_id = ?1), 0))
              ON CONFLICT(playlist_id, media_id) DO NOTHING",
             params![playlist_id, media_id.0],
         )?;
-        self.connection.execute(
+        if inserted == 1 {
+            transaction.execute(
+                "UPDATE playlists SET updated_unix_ms = ?2 WHERE id = ?1",
+                params![playlist_id, now],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn rename_playlist(&self, playlist_id: &str, name: &str, now: u64) -> Result<()> {
+        let name = validate_playlist_name(playlist_id, name)?;
+        let changed = self.connection.execute(
+            "UPDATE playlists SET name = ?2, updated_unix_ms = ?3 WHERE id = ?1",
+            params![
+                playlist_id,
+                name,
+                sqlite_integer(now, "playlist timestamp")?
+            ],
+        )?;
+        if changed == 0 {
+            return Err(EngineError::InvalidInput("playlist does not exist".into()));
+        }
+        Ok(())
+    }
+
+    pub fn delete_playlist(&mut self, playlist_id: &str) -> Result<()> {
+        if playlist_id.trim().is_empty() {
+            return Err(EngineError::InvalidInput("playlist id is required".into()));
+        }
+        let transaction = self.connection.transaction()?;
+        let changed = transaction.execute("DELETE FROM playlists WHERE id = ?1", [playlist_id])?;
+        if changed == 0 {
+            return Err(EngineError::InvalidInput("playlist does not exist".into()));
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn remove_playlist_track(
+        &mut self,
+        playlist_id: &str,
+        media_id: &MediaId,
+        now: u64,
+    ) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        let position: Option<u32> = transaction
+            .query_row(
+                "SELECT position FROM playlist_tracks WHERE playlist_id = ?1 AND media_id = ?2",
+                params![playlist_id, media_id.0],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(position) = position else {
+            return Err(EngineError::InvalidInput(
+                "playlist track does not exist".into(),
+            ));
+        };
+        transaction.execute(
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND media_id = ?2",
+            params![playlist_id, media_id.0],
+        )?;
+        transaction.execute(
+            "UPDATE playlist_tracks SET position = -position - 2 WHERE playlist_id = ?1 AND position > ?2",
+            params![playlist_id, position],
+        )?;
+        transaction.execute(
+            "UPDATE playlist_tracks SET position = -position - 3 WHERE playlist_id = ?1 AND position <= -2",
+            [playlist_id],
+        )?;
+        transaction.execute(
             "UPDATE playlists SET updated_unix_ms = ?2 WHERE id = ?1",
             params![playlist_id, sqlite_integer(now, "playlist timestamp")?],
         )?;
+        transaction.commit()?;
         Ok(())
+    }
+
+    pub fn reorder_playlist_track(
+        &mut self,
+        playlist_id: &str,
+        media_id: &MediaId,
+        target_position: u32,
+        now: u64,
+    ) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        let current: Option<u32> = transaction
+            .query_row(
+                "SELECT position FROM playlist_tracks WHERE playlist_id = ?1 AND media_id = ?2",
+                params![playlist_id, media_id.0],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current) = current else {
+            return Err(EngineError::InvalidInput(
+                "playlist track does not exist".into(),
+            ));
+        };
+        let count: u32 = transaction.query_row(
+            "SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?1",
+            [playlist_id],
+            |row| row.get(0),
+        )?;
+        if target_position >= count {
+            return Err(EngineError::InvalidInput(
+                "playlist target position is out of bounds".into(),
+            ));
+        }
+        if current != target_position {
+            transaction.execute(
+                "UPDATE playlist_tracks SET position = -1 WHERE playlist_id = ?1 AND media_id = ?2",
+                params![playlist_id, media_id.0],
+            )?;
+            if target_position < current {
+                transaction.execute(
+                    "UPDATE playlist_tracks SET position = -position - 2 WHERE playlist_id = ?1 AND position >= ?2 AND position < ?3",
+                    params![playlist_id, target_position, current],
+                )?;
+                transaction.execute(
+                    "UPDATE playlist_tracks SET position = -position - 1 WHERE playlist_id = ?1 AND position <= -2",
+                    [playlist_id],
+                )?;
+            } else {
+                transaction.execute(
+                    "UPDATE playlist_tracks SET position = -position - 2 WHERE playlist_id = ?1 AND position > ?2 AND position <= ?3",
+                    params![playlist_id, current, target_position],
+                )?;
+                transaction.execute(
+                    "UPDATE playlist_tracks SET position = -position - 3 WHERE playlist_id = ?1 AND position <= -2",
+                    [playlist_id],
+                )?;
+            }
+            transaction.execute(
+                "UPDATE playlist_tracks SET position = ?3 WHERE playlist_id = ?1 AND media_id = ?2",
+                params![playlist_id, media_id.0, target_position],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE playlists SET updated_unix_ms = ?2 WHERE id = ?1",
+            params![playlist_id, sqlite_integer(now, "playlist timestamp")?],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn playlist_by_id(&self, playlist_id: &str) -> Result<Option<PlaylistSummary>> {
+        self.connection
+            .query_row(
+                "SELECT p.id, p.name, COUNT(pt.media_id), p.updated_unix_ms
+                 FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
+                 WHERE p.id = ?1 GROUP BY p.id",
+                [playlist_id],
+                |row| {
+                    Ok(PlaylistSummary {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        track_count: u64_column(row, 2)?,
+                        updated_unix_ms: u64_column(row, 3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn query_playlists(
@@ -1445,6 +1606,21 @@ fn map_album_fill_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<AlbumFillTas
     })
 }
 
+fn validate_playlist_name<'a>(id: &str, name: &'a str) -> Result<&'a str> {
+    let name = name.trim();
+    if id.trim().is_empty() || name.is_empty() {
+        return Err(EngineError::InvalidInput(
+            "playlist id and name are required".into(),
+        ));
+    }
+    if name.chars().count() > 80 {
+        return Err(EngineError::InvalidInput(
+            "playlist name is too long".into(),
+        ));
+    }
+    Ok(name)
+}
+
 fn sqlite_integer(value: u64, field: &str) -> Result<i64> {
     i64::try_from(value)
         .map_err(|_| EngineError::InvalidInput(format!("{field} exceeds SQLite INTEGER")))
@@ -1891,6 +2067,160 @@ mod tests {
             repository.media_path(&MediaId::new("local:safe")).unwrap(),
             Some(canonical_root.join("song.flac"))
         );
+    }
+
+    #[test]
+    fn playlist_lifecycle_preserves_tracks_and_ignores_duplicate_adds() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let first = track_at("local:first", "C:/music/first.flac");
+        let second = track_at("local:second", "C:/music/second.flac");
+        repository.upsert_track(&first).unwrap();
+        repository.upsert_track(&second).unwrap();
+        repository
+            .create_playlist("playlist", "Original", 1)
+            .unwrap();
+
+        repository
+            .add_playlist_track("playlist", &first.track.id, 2)
+            .unwrap();
+        repository
+            .add_playlist_track("playlist", &first.track.id, 3)
+            .unwrap();
+        assert_eq!(
+            repository
+                .playlist_by_id("playlist")
+                .unwrap()
+                .unwrap()
+                .updated_unix_ms,
+            2
+        );
+        repository
+            .add_playlist_track("playlist", &second.track.id, 4)
+            .unwrap();
+        repository
+            .rename_playlist("playlist", "  Renamed  ", 5)
+            .unwrap();
+
+        let playlists = repository.query_playlists(None, 10, 0).unwrap();
+        assert_eq!(playlists.total, 1);
+        assert_eq!(playlists.items[0].name, "Renamed");
+        assert_eq!(playlists.items[0].track_count, 2);
+        assert_eq!(
+            repository
+                .playlist_tracks("playlist", 10, 0)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|track| track.track.id)
+                .collect::<Vec<_>>(),
+            vec![first.track.id.clone(), second.track.id.clone()]
+        );
+
+        repository.delete_playlist("playlist").unwrap();
+        assert_eq!(repository.query_playlists(None, 10, 0).unwrap().total, 0);
+        assert_eq!(
+            repository.track_by_id(&first.track.id).unwrap(),
+            Some(first)
+        );
+        assert_eq!(
+            repository.track_by_id(&second.track.id).unwrap(),
+            Some(second)
+        );
+    }
+
+    #[test]
+    fn removing_and_reordering_playlist_tracks_keeps_a_dense_order() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let tracks = [
+            track_at("local:first", "C:/music/first.flac"),
+            track_at("local:second", "C:/music/second.flac"),
+            track_at("local:third", "C:/music/third.flac"),
+        ];
+        repository.create_playlist("playlist", "Order", 1).unwrap();
+        for (index, track) in tracks.iter().enumerate() {
+            repository.upsert_track(track).unwrap();
+            repository
+                .add_playlist_track("playlist", &track.track.id, index as u64 + 2)
+                .unwrap();
+        }
+
+        repository
+            .reorder_playlist_track("playlist", &tracks[2].track.id, 0, 10)
+            .unwrap();
+        repository
+            .reorder_playlist_track("playlist", &tracks[2].track.id, 2, 11)
+            .unwrap();
+        repository
+            .remove_playlist_track("playlist", &tracks[1].track.id, 12)
+            .unwrap();
+
+        assert_eq!(
+            repository
+                .playlist_tracks("playlist", 10, 0)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|track| track.track.id)
+                .collect::<Vec<_>>(),
+            vec![tracks[0].track.id.clone(), tracks[2].track.id.clone()]
+        );
+        repository
+            .reorder_playlist_track("playlist", &tracks[2].track.id, 0, 13)
+            .unwrap();
+        assert_eq!(
+            repository
+                .playlist_tracks("playlist", 10, 0)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|track| track.track.id)
+                .collect::<Vec<_>>(),
+            vec![tracks[2].track.id.clone(), tracks[0].track.id.clone()]
+        );
+    }
+
+    #[test]
+    fn playlist_mutations_reject_missing_tracks_and_out_of_bounds_positions() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let only = track_at("local:only", "C:/music/only.flac");
+        repository.upsert_track(&only).unwrap();
+        repository.create_playlist("playlist", "Bounds", 1).unwrap();
+        repository
+            .add_playlist_track("playlist", &only.track.id, 2)
+            .unwrap();
+
+        assert!(matches!(
+            repository.add_playlist_track("playlist", &MediaId::new("local:missing"), u64::MAX),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert_eq!(
+            repository.playlist_tracks("playlist", 10, 0).unwrap().total,
+            1
+        );
+        assert!(matches!(
+            repository.reorder_playlist_track("playlist", &only.track.id, 1, 3),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repository.remove_playlist_track("playlist", &MediaId::new("local:missing"), 4),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repository.rename_playlist("missing", "Name", 5),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repository.create_playlist("too-long", &"x".repeat(81), 6),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repository.rename_playlist("playlist", &"x".repeat(81), 7),
+            Err(EngineError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            repository.delete_playlist("missing"),
+            Err(EngineError::InvalidInput(_))
+        ));
     }
 
     #[test]

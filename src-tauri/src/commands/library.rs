@@ -4,8 +4,10 @@ use crate::{
         EntityPageDto, LibraryAlbumDto, LibraryArtistDto, LibraryArtworkDto,
         LibraryArtworkRequestDto, LibraryEntityTracksRequestDto, LibraryFolderDto,
         LibraryLocationDto, LibraryLocationSelectionDto, LibraryMutationResultDto,
-        LibraryOverviewDto, LibraryPageDto, LibraryPlaylistDto, LibraryQueryDto, LibraryRecentDto,
-        LibraryScanRequestDto, LibraryTrackRequestDto, PageRequestDto,
+        LibraryOverviewDto, LibraryPageDto, LibraryPlaylistCreateRequestDto,
+        LibraryPlaylistDeleteRequestDto, LibraryPlaylistDto, LibraryPlaylistRenameRequestDto,
+        LibraryPlaylistReorderRequestDto, LibraryPlaylistTrackRequestDto, LibraryQueryDto,
+        LibraryRecentDto, LibraryScanRequestDto, LibraryTrackRequestDto, PageRequestDto,
         RegisterLibraryLocationRequestDto, TaskAcceptedDto,
     },
     error::{AppError, CommandResult},
@@ -67,6 +69,85 @@ pub fn library_query_recent(
     page: PageRequestDto,
 ) -> CommandResult<EntityPageDto<LibraryRecentDto>> {
     super::command(state.services.library.query_recent(page))
+}
+
+#[tauri::command]
+pub fn library_create_playlist(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    request: LibraryPlaylistCreateRequestDto,
+) -> CommandResult<LibraryPlaylistDto> {
+    require_main(&window)?;
+    super::command(state.services.library.create_playlist(&request.name))
+}
+
+#[tauri::command]
+pub fn library_rename_playlist(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    request: LibraryPlaylistRenameRequestDto,
+) -> CommandResult<LibraryPlaylistDto> {
+    require_main(&window)?;
+    super::command(
+        state
+            .services
+            .library
+            .rename_playlist(&request.id, &request.name),
+    )
+}
+
+#[tauri::command]
+pub fn library_delete_playlist(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    request: LibraryPlaylistDeleteRequestDto,
+) -> CommandResult<()> {
+    require_main(&window)?;
+    super::command(state.services.library.delete_playlist(&request.id))
+}
+
+#[tauri::command]
+pub fn library_add_playlist_track(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    request: LibraryPlaylistTrackRequestDto,
+) -> CommandResult<()> {
+    require_main(&window)?;
+    super::command(
+        state
+            .services
+            .library
+            .add_playlist_track(&request.playlist_id, &request.track_id),
+    )
+}
+
+#[tauri::command]
+pub fn library_remove_playlist_track(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    request: LibraryPlaylistTrackRequestDto,
+) -> CommandResult<()> {
+    require_main(&window)?;
+    super::command(
+        state
+            .services
+            .library
+            .remove_playlist_track(&request.playlist_id, &request.track_id),
+    )
+}
+
+#[tauri::command]
+pub fn library_reorder_playlist_track(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    request: LibraryPlaylistReorderRequestDto,
+) -> CommandResult<()> {
+    require_main(&window)?;
+    super::command(state.services.library.reorder_playlist_track(
+        &request.playlist_id,
+        &request.track_id,
+        request.target_position,
+    ))
 }
 
 #[tauri::command]

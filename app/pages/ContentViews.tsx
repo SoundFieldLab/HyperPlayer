@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Broadcast, CaretRight, Check, CloudArrowDown, Command, FolderOpen, Heart, Info,
-  MagnifyingGlass, MusicNotes, Play, Queue, Scan, Sidebar, SlidersHorizontal, User, WifiHigh,
+  Broadcast, CaretDown, CaretRight, CaretUp, Check, CloudArrowDown, Command, FolderOpen, Heart, Info,
+  MagnifyingGlass, MusicNotes, Play, Queue, Scan, Sidebar, SlidersHorizontal, Trash, User, WifiHigh, ListPlus,
 } from "@phosphor-icons/react";
 import { fallbackCover } from "../artwork";
 import { adaptTrack, bridge } from "../bridge";
@@ -12,11 +12,34 @@ import { useRemote } from "../hooks/useRemote";
 import { remoteFailure, remoteSuccess, type RemoteState } from "../remote";
 import { useAppStore } from "../store";
 import { SettingsView } from "./SettingsView";
+import { DiscoverView } from "./DiscoverView";
 
 type GridItem = { id: string | number; title: string; sub: string; cover: string };
 
-function AppTrackTable({ tracks, compact = false, playbackContext }: { tracks: TrackDto[]; compact?: boolean; playbackContext?: PlaybackContextDto }): React.JSX.Element {
-  return <TrackTable tracks={tracks} compact={compact} playbackContext={playbackContext}/>;
+async function loadAllLibraryTracks(): Promise<TrackDto[]> {
+  const tracks: TrackDto[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await bridge.libraryQuery(undefined, cursor);
+    tracks.push(...page.items.map(adaptTrack));
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+  return tracks;
+}
+
+async function loadAllEntityTracks(kind: "album" | "artist" | "folder" | "playlist", id: string): Promise<TrackDto[]> {
+  const tracks: TrackDto[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await bridge.libraryEntityTracks(kind, id, cursor);
+    tracks.push(...page.items.map(adaptTrack));
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+  return tracks;
+}
+
+function AppTrackTable({ tracks, compact = false, playbackContext, preserveOrder = false }: { tracks: TrackDto[]; compact?: boolean; playbackContext?: PlaybackContextDto; preserveOrder?: boolean }): React.JSX.Element {
+  return <TrackTable tracks={tracks} compact={compact} playbackContext={playbackContext} preserveOrder={preserveOrder}/>;
 }
 
 function AlbumGrid({ items, artist = false, onSelect }: { items: GridItem[]; artist?: boolean; onSelect: (item: GridItem) => void }): React.JSX.Element {
@@ -26,18 +49,20 @@ function AlbumGrid({ items, artist = false, onSelect }: { items: GridItem[]; art
 function HomeView(): React.JSX.Element {
   const domain = useAppStore((state) => state.domain);
   const navigate = useAppStore((state) => state.navigate);
-  const [home, reloadHome] = useRemote(() => domain === "netease" ? bridge.neteaseHome() : Promise.resolve({ recommendedTracks: [], recommendedPlaylists: [] }), [domain], (value) => value.recommendedTracks.length === 0 && value.recommendedPlaylists.length === 0);
-  const [fm, reloadFm] = useRemote(() => domain === "netease" ? bridge.neteasePersonalFm() : Promise.resolve({ tracks: [] }), [domain], (value) => value.tracks.length === 0);
+  const [home, reloadHome] = useRemote(() => domain === "netease" ? bridge.neteaseHome() : Promise.resolve({ recommendedTracks: [], recommendedPlaylists: [], anonymous: true, unavailableSections: [] }), [domain], (value) => value.recommendedTracks.length === 0 && value.recommendedPlaylists.length === 0);
+  const [fm, reloadFm] = useRemote(() => domain === "netease" && home.status === "ready" && !home.data.anonymous ? bridge.neteasePersonalFm() : Promise.resolve({ tracks: [] }), [domain, home.status === "ready" ? home.data.anonymous : true], (value) => value.tracks.length === 0);
   if (domain === "local") {
     return <Page title="本地音乐" subtitle="数据来自已连接的本地曲库"><div className="home-actions"><button className="button primary" onClick={() => navigate("library")}><MusicNotes/>打开本地曲库</button><button className="button secondary" onClick={() => navigate("recent")}><Heart/>最近播放</button><button className="button secondary" onClick={() => navigate("status")}><WifiHigh/>查看状态</button></div></Page>;
   }
   const tracks = home.status === "ready" ? home.data.recommendedTracks.map(adaptTrack) : [];
   const fmTracks = fm.status === "ready" ? fm.data.tracks.map(adaptTrack) : [];
-  return <Page title="网易云" subtitle="推荐与私人 FM 均来自已连接服务">
-    <div className="feature-row"><button onClick={() => fmTracks[0] && void useAppStore.getState().playTrack(fmTracks[0], { kind: "personalFm", id: null })} disabled={!fmTracks.length}><span className="fm-tile"><Broadcast weight="fill"/></span><span><b>私人 FM</b><small>{fmTracks.length ? `${fmTracks.length} 首待播` : "暂无可播放内容"}</small></span></button><button onClick={() => navigate("library")}><span className="date-tile"><Heart/></span><span><b>我的收藏</b><small>歌单、关注与云盘</small></span></button><button onClick={() => navigate("search")}><span className="new-tile"><MagnifyingGlass/></span><span><b>搜索网易云</b><small>歌曲、专辑与艺术家</small></span></button></div>
-    <SectionTitle>推荐歌曲</SectionTitle><RemoteNotice state={home} empty="暂无推荐内容" retry={reloadHome}/>{tracks.length > 0 && <AppTrackTable tracks={tracks}/>} 
-    <SectionTitle>私人 FM</SectionTitle><RemoteNotice state={fm} empty="私人 FM 暂无歌曲" retry={reloadFm}/>{fmTracks.length > 0 && <AppTrackTable tracks={fmTracks} compact/>}
-    {home.status === "ready" && home.data.recommendedPlaylists.length > 0 && <><SectionTitle>推荐歌单</SectionTitle><div className="cover-grid">{home.data.recommendedPlaylists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("playlist", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/><span className="hover-play"><Play weight="fill"/></span></div><b>{item.name}</b><small>{item.ownerName || `${item.trackCount} 首`}</small></button>)}</div></>}
+  const anonymous = home.status === "ready" && home.data.anonymous;
+  return <Page title="网易云" subtitle={anonymous ? "未登录 · 正在展示公开发现内容" : "推荐与私人 FM 均来自已连接服务"}>
+    {home.status === "ready" && home.data.unavailableSections.length > 0 && <div className="notice"><Info/>部分公开内容暂不可用：{home.data.unavailableSections.join("、")}</div>}
+    <div className="feature-row"><button onClick={() => anonymous ? navigate("account") : fmTracks[0] && void useAppStore.getState().playTrack(fmTracks[0], { kind: "personalFm", id: null })} disabled={!anonymous && !fmTracks.length}><span className="fm-tile"><Broadcast weight="fill"/></span><span><b>{anonymous ? "登录使用私人 FM" : "私人 FM"}</b><small>{anonymous ? "扫码登录后获取个性化内容" : fmTracks.length ? `${fmTracks.length} 首待播` : "暂无可播放内容"}</small></span></button><button onClick={() => navigate("library")}><span className="date-tile"><Heart/></span><span><b>我的收藏</b><small>歌单、关注与云盘</small></span></button><button onClick={() => navigate("search")}><span className="new-tile"><MagnifyingGlass/></span><span><b>搜索网易云</b><small>歌曲、专辑与艺术家</small></span></button></div>
+    <SectionTitle>{anonymous ? "公开新歌" : "推荐歌曲"}</SectionTitle><RemoteNotice state={home} empty="暂无公开内容" retry={reloadHome}/>{tracks.length > 0 && <AppTrackTable tracks={tracks}/>}
+    {!anonymous && <><SectionTitle>私人 FM</SectionTitle><RemoteNotice state={fm} empty="私人 FM 暂无歌曲" retry={reloadFm}/>{fmTracks.length > 0 && <AppTrackTable tracks={fmTracks} compact/>}</>}
+    {home.status === "ready" && home.data.recommendedPlaylists.length > 0 && <><SectionTitle>{anonymous ? "公开歌单" : "推荐歌单"}</SectionTitle><div className="cover-grid">{home.data.recommendedPlaylists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("playlist", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/><span className="hover-play"><Play weight="fill"/></span></div><b>{item.name}</b><small>{item.ownerName || `${item.trackCount} 首`}</small></button>)}</div></>}
   </Page>;
 }
 
@@ -103,7 +128,9 @@ function NeteaseLibraryView(): React.JSX.Element {
 }
 
 function LocalBrowseView({ kind }: { kind: "albums" | "artists" | "playlists" | "recent" | "folders" }): React.JSX.Element {
-  const [selected, setSelected] = useState<GridItem | null>(null);
+  const [playlistBusy, setPlaylistBusy] = useState(false);
+  const [addingTracks, setAddingTracks] = useState(false);
+  const [libraryChoices, setLibraryChoices] = useState<TrackDto[]>([]);
   const [query, reload] = useRemote(async () => {
     if (kind === "albums") return { kind, page: await bridge.libraryQueryAlbums() } as const;
     if (kind === "artists") return { kind, page: await bridge.libraryQueryArtists() } as const;
@@ -112,42 +139,120 @@ function LocalBrowseView({ kind }: { kind: "albums" | "artists" | "playlists" | 
     return { kind, page: await bridge.libraryQueryRecent() } as const;
   }, [kind], (value) => value.page.items.length === 0);
   const entityKind = kind === "albums" ? "album" : kind === "artists" ? "artist" : kind === "folders" ? "folder" : "playlist";
+  const { detailId, detailKind, navigate, notifyError, replaceNavigation, selectedTrackIds } = useAppStore();
+  const items: GridItem[] = query.status === "ready" && query.data.kind === "albums"
+    ? (query.data.page.items as LibraryAlbumDto[]).map((item) => ({ id: item.id, title: item.title, sub: `${item.artists.join(" / ")} · ${item.trackCount} 首`, cover: fallbackCover(item.artworkHash ?? item.id) }))
+    : query.status === "ready" && query.data.kind === "artists"
+      ? (query.data.page.items as LibraryArtistDto[]).map((item) => ({ id: item.id, title: item.name, sub: `${item.albumCount} 张专辑 · ${item.trackCount} 首`, cover: fallbackCover(item.artworkHash ?? item.id) }))
+      : query.status === "ready" && query.data.kind === "folders"
+        ? (query.data.page.items as LibraryFolderDto[]).map((item) => ({ id: item.id, title: item.name, sub: `${item.trackCount} 首`, cover: fallbackCover(item.id) }))
+        : query.status === "ready" && query.data.kind === "playlists"
+          ? (query.data.page.items as LibraryPlaylistDto[]).map((item) => ({ id: item.id, title: item.name, sub: `${item.trackCount} 首`, cover: fallbackCover(item.id) }))
+          : [];
+  const selectedId = detailKind === entityKind && typeof detailId === "string" ? detailId : null;
+  const selected = selectedId === null ? null : items.find((item) => String(item.id) === selectedId) ?? null;
+  useEffect(() => {
+    if (query.status === "ready" && selectedId !== null && selected === null) replaceNavigation(kind);
+  }, [kind, query.status, replaceNavigation, selected, selectedId]);
   const [tracks, reloadTracks] = useRemote(
-    () => selected ? bridge.libraryEntityTracks(entityKind, String(selected.id)).then((page) => page.items.map(adaptTrack)) : Promise.resolve([]),
+    () => selected ? loadAllEntityTracks(entityKind, String(selected.id)) : Promise.resolve([]),
     [selected?.id, entityKind],
     (items) => selected !== null && items.length === 0,
   );
+  async function createPlaylist(): Promise<void> {
+    const name = window.prompt("播放列表名称")?.trim();
+    if (!name) return;
+    setPlaylistBusy(true);
+    try { await bridge.libraryCreatePlaylist(name); await reload(); }
+    catch (error) { notifyError(error, "无法创建播放列表"); }
+    finally { setPlaylistBusy(false); }
+  }
+  async function renamePlaylist(): Promise<void> {
+    if (kind !== "playlists" || !selected) return;
+    const name = window.prompt("重命名播放列表", selected.title)?.trim();
+    if (!name || name === selected.title) return;
+    setPlaylistBusy(true);
+    try { await bridge.libraryRenamePlaylist(String(selected.id), name); await reload(); }
+    catch (error) { notifyError(error, "无法重命名播放列表"); }
+    finally { setPlaylistBusy(false); }
+  }
+  async function deletePlaylist(): Promise<void> {
+    if (kind !== "playlists" || !selected || !window.confirm(`删除播放列表“${selected.title}”？`)) return;
+    setPlaylistBusy(true);
+    try { await bridge.libraryDeletePlaylist(String(selected.id)); navigate(kind); await reload(); }
+    catch (error) { notifyError(error, "无法删除播放列表"); }
+    finally { setPlaylistBusy(false); }
+  }
+  async function openAddTracks(): Promise<void> {
+    setPlaylistBusy(true);
+    try {
+      const page = await loadAllLibraryTracks();
+      setLibraryChoices(page);
+      setAddingTracks(true);
+    } catch (error) { notifyError(error, "无法读取本地曲库"); }
+    finally { setPlaylistBusy(false); }
+  }
+  async function addTrack(track: TrackDto): Promise<void> {
+    if (!selected) return;
+    setPlaylistBusy(true);
+    try { await bridge.libraryAddPlaylistTrack(String(selected.id), track.id); setAddingTracks(false); reloadTracks(); await reload(); }
+    catch (error) { notifyError(error, `无法添加 ${track.title}`); }
+    finally { setPlaylistBusy(false); }
+  }
+  async function removeSelectedTracks(): Promise<void> {
+    if (!selected || tracks.status !== "ready") return;
+    const targets = tracks.data.filter((track) => selectedTrackIds.includes(track.id));
+    if (!targets.length) return;
+    setPlaylistBusy(true);
+    const results = await Promise.allSettled(targets.map((track) => bridge.libraryRemovePlaylistTrack(String(selected.id), track.id)));
+    useAppStore.setState({ selectedTrackIds: [] });
+    reloadTracks();
+    await reload();
+    setPlaylistBusy(false);
+    const failed = results.filter((result) => result.status === "rejected").length;
+    if (failed > 0) notifyError(new Error(`${failed} 首歌曲移除失败`), "播放列表仅完成部分修改");
+  }
+  async function moveSelectedTrack(delta: -1 | 1): Promise<void> {
+    if (!selected || tracks.status !== "ready" || selectedTrackIds.length !== 1) return;
+    const current = tracks.data.findIndex((track) => track.id === selectedTrackIds[0]);
+    const target = current + delta;
+    if (current < 0 || target < 0 || target >= tracks.data.length) return;
+    setPlaylistBusy(true);
+    try { await bridge.libraryReorderPlaylistTrack(String(selected.id), selectedTrackIds[0], target); reloadTracks(); }
+    catch (error) { notifyError(error, "无法调整播放列表顺序"); }
+    finally { setPlaylistBusy(false); }
+  }
+  const selectedPlaylistTracks = tracks.status === "ready" ? tracks.data.filter((track) => selectedTrackIds.includes(track.id)) : [];
+  const selectedPlaylistIndex = tracks.status === "ready" && selectedPlaylistTracks.length === 1 ? tracks.data.findIndex((track) => track.id === selectedPlaylistTracks[0].id) : -1;
+  const playlistActions = kind === "playlists" && !selected ? <button className="button primary" disabled={playlistBusy} onClick={() => void createPlaylist()}><ListPlus/>新建播放列表</button> : selected && kind === "playlists" ? <><button className="button primary" disabled={playlistBusy} onClick={() => void openAddTracks()}><ListPlus/>添加歌曲</button><button className="button secondary" disabled={playlistBusy} onClick={() => void renamePlaylist()}>重命名</button><button className="button danger" disabled={playlistBusy} onClick={() => void deletePlaylist()}>删除</button></> : undefined;
   const title = { albums: "专辑", artists: "艺术家", playlists: "播放列表", recent: "最近播放", folders: "文件夹" }[kind];
-  if (query.status !== "ready") return <Page title={title} subtitle="读取本地曲库"><RemoteNotice state={query} empty={`暂无${title}`} retry={reload}/></Page>;
+  if (query.status !== "ready") {
+    if (kind === "playlists" && query.status === "empty") return <Page title={title} subtitle="0 项" actions={playlistActions}><RemoteNotice state={query} empty="暂无播放列表" retry={reload}/></Page>;
+    return <Page title={title} subtitle="读取本地曲库"><RemoteNotice state={query} empty={`暂无${title}`} retry={reload}/></Page>;
+  }
   if (query.data.kind === "recent") return <Page title={title} subtitle={`${query.data.page.total} 条最近播放`}><AppTrackTable tracks={(query.data.page.items as LibraryRecentDto[]).map((item) => adaptTrack(item.track))}/></Page>;
-  const items: GridItem[] = query.data.kind === "albums"
-    ? (query.data.page.items as LibraryAlbumDto[]).map((item) => ({ id: item.id, title: item.title, sub: `${item.artists.join(" / ")} · ${item.trackCount} 首`, cover: fallbackCover(item.artworkHash ?? item.id) }))
-    : query.data.kind === "artists"
-      ? (query.data.page.items as LibraryArtistDto[]).map((item) => ({ id: item.id, title: item.name, sub: `${item.albumCount} 张专辑 · ${item.trackCount} 首`, cover: fallbackCover(item.artworkHash ?? item.id) }))
-      : query.data.kind === "folders"
-        ? (query.data.page.items as LibraryFolderDto[]).map((item) => ({ id: item.id, title: item.name, sub: `${item.trackCount} 首`, cover: fallbackCover(item.id) }))
-        : (query.data.page.items as LibraryPlaylistDto[]).map((item) => ({ id: item.id, title: item.name, sub: `${item.trackCount} 首`, cover: fallbackCover(item.id) }));
-  return <Page title={selected?.title ?? title} subtitle={selected ? `来自${title}` : `${query.data.page.total} 项`} actions={selected ? <button className="button secondary" onClick={() => setSelected(null)}>返回{title}</button> : undefined}>
-    {selected ? <><RemoteNotice state={tracks} empty="此项目暂无歌曲" retry={reloadTracks}/>{tracks.status === "ready" && <AppTrackTable tracks={tracks.data}/>}</> : <><div className="view-toolbar"><span>按名称排序</span><button><Sidebar/>调整视图</button></div><AlbumGrid items={items} artist={query.data.kind === "artists"} onSelect={setSelected}/></>}
+  return <Page title={selected?.title ?? title} subtitle={selected ? `来自${title}` : `${query.data.page.total} 项`} actions={<>{playlistActions}{selected && <button className="button secondary" onClick={() => navigate(kind)}>返回{title}</button>}</>}>
+    {selected ? <>{kind === "playlists" && selectedPlaylistTracks.length > 0 && <div className="playlist-track-actions" role="toolbar" aria-label="播放列表曲目操作"><b>已选择 {selectedPlaylistTracks.length} 首</b><button className="button secondary" disabled={playlistBusy || selectedPlaylistTracks.length !== 1 || selectedPlaylistIndex <= 0} onClick={() => void moveSelectedTrack(-1)}><CaretUp/>上移</button><button className="button secondary" disabled={playlistBusy || selectedPlaylistTracks.length !== 1 || tracks.status !== "ready" || selectedPlaylistIndex >= tracks.data.length - 1} onClick={() => void moveSelectedTrack(1)}><CaretDown/>下移</button><button className="button danger" disabled={playlistBusy} onClick={() => void removeSelectedTracks()}><Trash/>从列表移除</button></div>}<RemoteNotice state={tracks} empty="此项目暂无歌曲" retry={reloadTracks}/>{tracks.status === "ready" && <AppTrackTable tracks={tracks.data} preserveOrder={kind === "playlists"}/>}</> : <><div className="view-toolbar"><span>按名称排序</span><button><Sidebar/>调整视图</button></div><AlbumGrid items={items} artist={query.data.kind === "artists"} onSelect={(item) => navigate(kind, String(item.id), entityKind)}/></>}
+    {addingTracks && <div className="modal-backdrop"><div className="playlist-picker" role="dialog" aria-modal="true" aria-labelledby="playlist-picker-title"><header><div><h2 id="playlist-picker-title">添加到 {selected?.title}</h2><p>从本地曲库选择一首歌曲</p></div><button className="icon-button" aria-label="关闭" onClick={() => setAddingTracks(false)}>×</button></header><div>{libraryChoices.length ? libraryChoices.map((track) => <button key={track.id} disabled={playlistBusy || (tracks.status === "ready" && tracks.data.some((item) => item.id === track.id))} onClick={() => void addTrack(track)}><Cover src={track.coverSeed} alt=""/><span><b>{track.title}</b><small>{track.artists.join(" / ")}</small></span><ListPlus/></button>) : <div className="remote-state empty"><MusicNotes/><b>本地曲库没有歌曲</b><span>先扫描本地音乐文件夹。</span></div>}</div></div></div>}
   </Page>;
 }
 
 function BrowseView({ kind }: { kind: "albums" | "artists" | "playlists" | "discover" | "recent" | "folders" | "songs" }): React.JSX.Element {
   if (kind === "songs") return <LibraryView/>;
-  if (kind === "discover") return <Page title="发现" subtitle="榜单、新歌、MV 与电台"><div className="remote-state unavailable"><Info/><b>发现内容正在接入</b><span>当前版本不会展示虚构在线内容。</span></div></Page>;
+  if (kind === "discover") return <DiscoverView/>;
   return <LocalBrowseView kind={kind}/>;
 }
 
 function DetailView({ type }: { type: "album" | "artist" | "playlist" }): React.JSX.Element {
   const detailId = useAppStore((state) => state.detailId);
   async function load() {
-    if (detailId === null) throw { code: "unavailable", message: "未选择可加载的网易云资源" };
+    if (typeof detailId !== "number") throw { code: "unavailable", message: "未选择可加载的网易云资源" };
     if (type === "album") { const value = await bridge.neteaseAlbumDetail(detailId); return { title: value.album.name, subtitle: value.artist?.name || "网易云专辑", description: value.description, cover: value.album.coverUrl, tracks: value.tracks.map(adaptTrack) }; }
     if (type === "artist") { const value = await bridge.neteaseArtistDetail(detailId); return { title: value.artist.name, subtitle: value.fansCount === null ? "网易云艺术家" : `${value.fansCount.toLocaleString()} 位粉丝`, description: value.introduction || value.artist.briefDescription, cover: value.artist.imageUrl, tracks: value.hotTracks.map(adaptTrack) }; }
     const value = await bridge.neteasePlaylistDetail(detailId); return { title: value.playlist.name, subtitle: `${value.playlist.trackCount} 首 · ${value.playlist.ownerName || "网易云歌单"}`, description: value.playlist.description, cover: value.playlist.coverUrl, tracks: value.tracks.map(adaptTrack) };
   }
   const [detail, reload] = useRemote(load, [type, detailId], (value) => value.tracks.length === 0);
-  const [comments, reloadComments] = useRemote(() => detailId !== null && type !== "artist" ? bridge.neteaseComments(type, detailId) : Promise.resolve({ comments: [], totalCount: 0, hasMore: false, nextCursor: null }), [type, detailId], (value) => value.comments.length === 0);
+  const [comments, reloadComments] = useRemote(() => typeof detailId === "number" && type !== "artist" ? bridge.neteaseComments(type, detailId) : Promise.resolve({ comments: [], totalCount: 0, hasMore: false, nextCursor: null }), [type, detailId], (value) => value.comments.length === 0);
   const { playTrack, enqueueTrack } = useAppStore();
   if (detail.status !== "ready") return <Page title={{ album: "专辑详情", artist: "艺术家详情", playlist: "歌单详情" }[type]} subtitle="读取网易云详情"><RemoteNotice state={detail} empty="详情中暂无曲目" retry={reload}/></Page>;
   const item = detail.data;
@@ -226,7 +331,18 @@ function StatusView(): React.JSX.Element {
   const [updater, reloadUpdater] = useRemote(() => bridge.updaterStatus(), [], () => false);
   const [check, setCheck] = useState<RemoteState<UpdateCheckDto>>({ status: "idle" });
   async function checkUpdate(): Promise<void> { setCheck({ status: "loading" }); try { setCheck(remoteSuccess(await bridge.updaterCheck())); } catch (error) { setCheck(remoteFailure(error)); } }
-  return <Page title="状态中心" subtitle="扫描、缓存、同步与更新"><SectionTitle>正在进行</SectionTitle>{tasks.length ? <div className="task-list">{tasks.map((task) => <div key={task.id}><span className={`task-icon ${task.state}`}>{task.kind === "scan" ? <Scan/> : task.kind === "cache" ? <CloudArrowDown/> : <WifiHigh/>}</span><span><b>{task.title}</b><small>{task.detail}</small>{task.progress !== null && <i className="progress"><i style={{width:`${task.progress * 100}%`}}/></i>}</span></div>)}</div> : <div className="remote-state empty"><Check/><b>没有后台任务</b><span>仅显示本次运行中由后端事件报告的任务。</span></div>}<SectionTitle>应用更新</SectionTitle><RemoteNotice state={updater} retry={reloadUpdater}/>{updater.status === "ready" && <div className="updater-row"><span><b>{updater.data.enabled ? "更新检查可用" : "更新器不可用"}</b><small>{updater.data.reason || "可检查新版本"}</small></span><button className="button secondary" disabled={!updater.data.enabled || check.status === "loading"} onClick={() => void checkUpdate()}>检查更新</button></div>}{check.status === "ready" && <div className="notice"><Info/>{check.data.available ? `发现版本 ${check.data.version}` : `当前已是最新版本 ${check.data.currentVersion}`}</div>}{(check.status === "error" || check.status === "unavailable") && <RemoteNotice state={check}/>}</Page>;
+  const [installing, setInstalling] = useState(false);
+  async function installUpdate(): Promise<void> {
+    setInstalling(true);
+    try {
+      if (check.status !== "ready" || !check.data.version) return;
+      const installed = await bridge.updaterUpdate(check.data.version);
+      if (!installed && check.status === "ready") {
+        setCheck(remoteSuccess({ ...check.data, available: false, version: null, notes: null }));
+      }
+    } catch (error) { setCheck(remoteFailure(error)); } finally { setInstalling(false); }
+  }
+  return <Page title="状态中心" subtitle="扫描、缓存、同步与更新"><SectionTitle>正在进行</SectionTitle>{tasks.length ? <div className="task-list">{tasks.map((task) => <div key={task.id}><span className={`task-icon ${task.state}`}>{task.kind === "scan" ? <Scan/> : task.kind === "cache" ? <CloudArrowDown/> : <WifiHigh/>}</span><span><b>{task.title}</b><small>{task.detail}</small>{task.progress !== null && <i className="progress"><i style={{width:`${task.progress * 100}%`}}/></i>}</span></div>)}</div> : <div className="remote-state empty"><Check/><b>没有后台任务</b><span>仅显示本次运行中由后端事件报告的任务。</span></div>}<SectionTitle>应用更新</SectionTitle><RemoteNotice state={updater} retry={reloadUpdater}/>{updater.status === "ready" && <div className="updater-row"><span><b>{updater.data.enabled ? "更新检查可用" : "更新器不可用"}</b><small>{updater.data.reason || "可检查新版本"}</small></span><button className="button secondary" disabled={!updater.data.enabled || check.status === "loading" || installing} onClick={() => void checkUpdate()}>检查更新</button></div>}{check.status === "ready" && <div className="notice"><Info/>{check.data.available ? <><span>发现版本 {check.data.version}</span><button className="button primary" disabled={installing} onClick={() => void installUpdate()}>{installing ? "安装中" : "下载并安装"}</button></> : `当前已是最新版本 ${check.data.currentVersion}`}</div>}{(check.status === "error" || check.status === "unavailable") && <RemoteNotice state={check}/>}</Page>;
 }
 
 function DspView(): React.JSX.Element { return <Page title="音效" subtitle="全局 DSP 工作台"><div className="dsp-empty"><SlidersHorizontal/><h2>音效工作台尚未开放</h2><p>真实 DSP 效果、参数模型与链路规格尚未确定。当前音频保持稳定旁路，不提供假均衡器或预设。</p><span><Check/>音频管线插入点已保留</span><span><Check/>旁路状态跨内容域共享</span><button className="button primary" disabled>规格待接入</button></div></Page>; }

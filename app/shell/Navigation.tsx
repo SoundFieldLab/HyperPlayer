@@ -34,7 +34,8 @@ export function SidebarNav(): React.JSX.Element {
 }
 
 export function Titlebar(): React.JSX.Element {
-  const { view, history, back, searchOpen, setSearchOpen } = useAppStore();
+  const { domain, view, navigation, back, forward, searchOpen, setSearchOpen } = useAppStore();
+  const activeHistory = navigation[domain];
   function runWindowAction(action: "minimize" | "maximize" | "close"): void {
     const currentWindow = getCurrentWindow();
     if (action === "minimize") void currentWindow.minimize();
@@ -42,7 +43,7 @@ export function Titlebar(): React.JSX.Element {
     else void currentWindow.close();
   }
   return <header className="titlebar" data-tauri-drag-region>
-    <div className="history-controls"><IconButton label="返回" onClick={back} disabled={!history.length}><ArrowLeft/></IconButton><IconButton label="前进" disabled><ArrowRight/></IconButton></div>
+    <div className="history-controls"><IconButton label="返回" onClick={back} disabled={!activeHistory.back.length}><ArrowLeft/></IconButton><IconButton label="前进" onClick={forward} disabled={!activeHistory.forward.length}><ArrowRight/></IconButton></div>
     <span className="page-context">{copy[view]}</span>
     <button type="button" className="global-search" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={() => setSearchOpen(!searchOpen)}><MagnifyingGlass/><span>搜索音乐或输入命令</span><kbd>Ctrl K</kbd></button>
     <div className="window-controls" aria-label="窗口控件"><IconButton label="最小化窗口" onClick={() => runWindowAction("minimize")}><Minus/></IconButton><IconButton label="最大化或还原窗口" onClick={() => runWindowAction("maximize")}><ArrowsOut/></IconButton><IconButton label="关闭窗口" className="close" onClick={() => runWindowAction("close")}><X/></IconButton></div>

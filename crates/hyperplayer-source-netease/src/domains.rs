@@ -3,7 +3,7 @@ use std::{collections::HashSet, time::Duration};
 
 use crate::{
     dto::*,
-    service::{NeteaseService, Sleeper},
+    service::{NeteaseService, PublicExplore, PublicExploreSection, Sleeper},
     transport::Transport,
     Error, Result,
 };
@@ -169,13 +169,45 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         if !artist_value.is_object() {
             return Err(Error::InvalidResponse("缺少 artist".into()));
         }
-        let artist = map_artist_summary(artist_value);
+        let mut artist = map_artist_summary(artist_value);
         let hot_songs = values(&base, "hotSongs").map(map_track).collect();
+        let (detail, description, followers) = futures::join!(
+            self.eapi(
+                "/api/artist/head/info/get",
+                json!({"id":id}),
+                Duration::from_secs(12),
+            ),
+            self.eapi(
+                "/api/artist/introduction",
+                json!({"id":id}),
+                Duration::from_secs(12),
+            ),
+            self.eapi(
+                "/api/artist/follow/count/get",
+                json!({"id":id}),
+                Duration::from_secs(12),
+            ),
+        );
+        if let Ok(detail) = detail {
+            artist.brief_description =
+                text(detail.get("data").unwrap_or(&Value::Null), "briefDesc")
+                    .or(artist.brief_description);
+        }
+        let introduction = description.ok().and_then(|body| {
+            let joined = values(&body, "introduction")
+                .filter_map(|item| text(item, "txt"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!joined.is_empty()).then_some(joined)
+        });
+        let fans_count = followers
+            .ok()
+            .and_then(|body| number(body.get("data").unwrap_or(&Value::Null), "fansCnt"));
         Ok(ArtistOverview {
             artist,
             hot_songs,
-            introduction: None,
-            fans_count: None,
+            introduction,
+            fans_count,
         })
     }
 
@@ -233,6 +265,80 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             )
             .await?;
         Ok(values(&body, "recommend").map(map_playlist).collect())
+    }
+
+    /// 聚合未登录即可访问的发现内容。单个上游失败只标记对应分区；全部失败时返回错误。
+    pub async fn public_explore(&self) -> Result<PublicExplore> {
+        let page = PageRequest {
+            limit: 30,
+            offset: 0,
+        };
+        let (playlists, new_songs, charts, popular_artists) = futures::join!(
+            self.personalized_playlists(page),
+            self.new_songs(0),
+            self.charts(),
+            self.popular_artists(page),
+        );
+
+        let mut unavailable_sections = Vec::new();
+        let playlists = degrade_section(
+            playlists,
+            PublicExploreSection::Playlists,
+            &mut unavailable_sections,
+        );
+        let new_songs = degrade_section(
+            new_songs,
+            PublicExploreSection::NewSongs,
+            &mut unavailable_sections,
+        );
+        let charts = degrade_section(
+            charts,
+            PublicExploreSection::Charts,
+            &mut unavailable_sections,
+        );
+        let popular_artists = degrade_section(
+            popular_artists,
+            PublicExploreSection::PopularArtists,
+            &mut unavailable_sections,
+        );
+
+        if unavailable_sections.len() == 4 {
+            return Err(Error::Transport("网易云公共发现内容暂不可用".into()));
+        }
+
+        Ok(PublicExplore {
+            playlists,
+            new_songs,
+            charts,
+            popular_artists,
+            unavailable_sections,
+        })
+    }
+
+    /// 未登录可用的个性化公开歌单，不调用账号推荐资源接口。
+    pub async fn personalized_playlists(&self, page: PageRequest) -> Result<Vec<PlaylistSummary>> {
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                "/api/personalized/playlist",
+                json!({"limit":page.limit,"offset":page.offset,"total":true,"n":1000}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "result").map(map_playlist).collect())
+    }
+
+    /// 未登录可用的热门歌手列表。
+    pub async fn popular_artists(&self, page: PageRequest) -> Result<Vec<ArtistSummary>> {
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                "/api/artist/top",
+                json!({"limit":page.limit,"offset":page.offset,"total":true}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "artists").map(map_artist_summary).collect())
     }
 
     pub async fn personal_fm(&self) -> Result<Vec<Track>> {
@@ -1120,4 +1226,18 @@ fn map_notice(value: &Value) -> NoticeMessage {
 
 fn success() -> MutationResult {
     MutationResult { succeeded: true }
+}
+
+fn degrade_section<T>(
+    result: Result<Vec<T>>,
+    section: PublicExploreSection,
+    unavailable_sections: &mut Vec<PublicExploreSection>,
+) -> Vec<T> {
+    match result {
+        Ok(items) => items,
+        Err(_) => {
+            unavailable_sections.push(section);
+            Vec::new()
+        }
+    }
 }

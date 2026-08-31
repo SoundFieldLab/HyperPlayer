@@ -13,7 +13,8 @@ use crate::{
     error::{AppError, AppResult},
     ports::{
         validate_id, validate_page, validate_track_ref, CachePort, LibraryPort, NeteasePort,
-        PlaybackPort, QueuePort, ScanProgressSink, SettingsPort, TrackResolverPort,
+        PlaybackMediaTarget, PlaybackPort, PlaybackTransition, QueuePort, ScanProgressSink,
+        SettingsPort, TrackResolverPort,
     },
 };
 use async_trait::async_trait;
@@ -25,13 +26,13 @@ use hyperplayer_engine::{
         ContentAddressedCache, PlaybackAuthorization, Verification,
     },
     library::{
-        is_supported_audio, read_embedded_artwork, ContentAddressedArtwork, LoftyMetadataReader,
-        MetadataReader,
+        read_embedded_artwork, ContentAddressedArtwork, LibraryScanner, LoftyMetadataReader,
+        MetadataReader, ScanCancellation, ScanFailure,
     },
     model::{MediaId, MediaSource, QueueItem, Track},
     playback::{PlaybackSnapshot, PlaybackState},
     queue::{PlaybackMode, PlaybackQueue, QueueInsertPosition},
-    repository::{PlaybackHistoryRecord, SqliteRepository},
+    repository::{LibraryTrack, PlaybackHistoryRecord, SqliteRepository},
     MediaHandle, TrustedResolvedMedia,
 };
 use hyperplayer_source_netease::{
@@ -43,15 +44,12 @@ use reqwest::{redirect::Policy, Client, Response};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::{self, OpenOptions},
     io::{Read, Seek, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, MutexGuard,
-    },
+    sync::{Arc, Mutex, MutexGuard},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -61,6 +59,8 @@ use zeroize::Zeroize;
 
 #[cfg(test)]
 use hyperplayer_source_netease::{Album, Artist, PlaylistSummary};
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 
 const ENGINE_COMMAND_CAPACITY: usize = 64;
 const SHUFFLE_SEED: u64 = 0x4859_5045_5250_4c59;
@@ -131,6 +131,7 @@ pub struct EngineAdapter {
     playback_history: Mutex<Option<PlaybackHistorySession>>,
     album_session: Mutex<Option<AlbumSessionState>>,
     prefetch_sender: std::sync::mpsc::SyncSender<PrefetchRequest>,
+    restored_media_pending: Mutex<bool>,
     operation: Mutex<()>,
 }
 
@@ -163,6 +164,7 @@ impl EngineAdapter {
             .as_ref()
             .map(|session| max_queue_id(&session.queue).saturating_add(1))
             .unwrap_or(1);
+        let has_restored_queue = restored.is_some();
         if let Some(session) = restored {
             handle.request(EngineCommand::RestoreQueue {
                 snapshot: session.queue.context_snapshot(),
@@ -181,6 +183,7 @@ impl EngineAdapter {
             playback_history: Mutex::new(None),
             album_session: Mutex::new(None),
             prefetch_sender,
+            restored_media_pending: Mutex::new(has_restored_queue),
             operation: Mutex::new(()),
         })
     }
@@ -554,14 +557,84 @@ impl PlaybackPort for EngineAdapter {
             }
         };
         if has_new_media {
+            *self.restored_media_pending.app_lock()? = false;
             self.finish_playback_history()?;
             *self.playback_context.app_lock()? = context;
             self.clear_album_session()?;
+        } else if *self.restored_media_pending.app_lock()? {
+            *self.restored_media_pending.app_lock()? = false;
         }
         self.update_playback_history(&snapshot)?;
         self.update_album_schedule(&snapshot)?;
         self.commit_snapshot(&snapshot)?;
         self.engine_dto(snapshot)
+    }
+
+    fn restored_media_targets(&self) -> AppResult<Vec<(u64, TrackRefDto)>> {
+        if !*self.restored_media_pending.app_lock()? {
+            return Ok(Vec::new());
+        }
+        let snapshot = self.handle.snapshot()?;
+        let Some(current) = snapshot.queue.current.clone() else {
+            return Ok(Vec::new());
+        };
+        let mut targets = vec![(current.queue_id, track_dto(&current.track).track_ref)];
+        let queue = PlaybackQueue::restore(snapshot.queue).ok_or_else(|| {
+            AppError::Unavailable("engine returned an invalid queue snapshot".into())
+        })?;
+        if let Some(next) = queue.peek_next(true) {
+            if next.queue_id != current.queue_id {
+                targets.push((next.queue_id, track_dto(&next.track).track_ref));
+            }
+        }
+        Ok(targets)
+    }
+
+    fn transition_media_targets(
+        &self,
+        transition: PlaybackTransition,
+    ) -> AppResult<Vec<PlaybackMediaTarget>> {
+        let snapshot = self.handle.snapshot()?;
+        let mut queue = PlaybackQueue::restore(snapshot.queue).ok_or_else(|| {
+            AppError::Unavailable("engine returned an invalid queue snapshot".into())
+        })?;
+        let target = match transition {
+            PlaybackTransition::Next { automatic } => queue.peek_next(automatic).cloned(),
+            PlaybackTransition::Previous => queue.traversal_history().last().cloned(),
+        }
+        .ok_or_else(|| AppError::Unavailable("queue has no transition target".into()))?;
+        match transition {
+            PlaybackTransition::Next { automatic } => {
+                queue.advance(automatic);
+            }
+            PlaybackTransition::Previous => {
+                queue.previous();
+            }
+        }
+        let mut targets = vec![PlaybackMediaTarget {
+            queue_id: target.queue_id,
+            track: track_dto(&target.track).track_ref,
+        }];
+        if let Some(following) = queue.peek_next(true) {
+            if following.queue_id != target.queue_id {
+                targets.push(PlaybackMediaTarget {
+                    queue_id: following.queue_id,
+                    track: track_dto(&following.track).track_ref,
+                });
+            }
+        }
+        Ok(targets)
+    }
+
+    fn attach_restored_media(&self, media: Vec<(u64, TrustedResolvedMedia)>) -> AppResult<()> {
+        if media.is_empty() {
+            return Err(AppError::InvalidArgument(
+                "restored queue media cannot be empty".into(),
+            ));
+        }
+        let _guard = self.operation.app_lock()?;
+        self.command(EngineCommand::AttachResolvedMedia { media })?;
+        Ok(())
     }
 
     fn pause(&self) -> AppResult<EngineSnapshotDto> {
@@ -572,12 +645,15 @@ impl PlaybackPort for EngineAdapter {
         self.execute(EngineCommand::Stop)
     }
 
-    fn next(&self) -> AppResult<EngineSnapshotDto> {
-        self.execute(EngineCommand::Next { automatic: false })
+    fn next(&self, expected_queue_id: u64, automatic: bool) -> AppResult<EngineSnapshotDto> {
+        self.execute(EngineCommand::Next {
+            automatic,
+            expected_queue_id,
+        })
     }
 
-    fn previous(&self) -> AppResult<EngineSnapshotDto> {
-        self.execute(EngineCommand::Previous)
+    fn previous(&self, expected_queue_id: u64) -> AppResult<EngineSnapshotDto> {
+        self.execute(EngineCommand::Previous { expected_queue_id })
     }
 
     fn seek(&self, position_ms: u64) -> AppResult<EngineSnapshotDto> {
@@ -695,6 +771,24 @@ impl LocationRegistry {
             id,
             path: canonical.to_string_lossy().into_owned(),
         })
+    }
+
+    pub fn unregister(&self, id: &str) -> AppResult<bool> {
+        Ok(self
+            .connection
+            .app_lock()?
+            .execute("DELETE FROM library_locations WHERE id = ?1", [id])?
+            == 1)
+    }
+
+    pub fn all(&self) -> AppResult<Vec<PathBuf>> {
+        let connection = self.connection.app_lock()?;
+        let mut statement = connection
+            .prepare("SELECT canonical_path FROM library_locations ORDER BY canonical_path")?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0).map(PathBuf::from))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     fn resolve_many(&self, ids: &[String]) -> AppResult<Vec<PathBuf>> {
@@ -890,7 +984,7 @@ impl TrackResolverPort for TrackResolver {
 }
 
 struct ActiveScan {
-    cancelled: Arc<AtomicBool>,
+    cancellation: Arc<ScanCancellation>,
     roots: Vec<PathBuf>,
 }
 
@@ -1179,6 +1273,81 @@ impl LibraryPort for LibraryAdapter {
         })
     }
 
+    fn create_playlist(&self, name: &str) -> AppResult<LibraryPlaylistDto> {
+        let id = format!("local-playlist-{}", Uuid::new_v4());
+        let now = unix_millis();
+        self.repository
+            .app_lock()?
+            .create_playlist(&id, name, now)?;
+        Ok(LibraryPlaylistDto {
+            id,
+            name: name.trim().to_owned(),
+            track_count: 0,
+            updated_unix_ms: now,
+        })
+    }
+
+    fn rename_playlist(&self, id: &str, name: &str) -> AppResult<LibraryPlaylistDto> {
+        validate_id(id, "playlistId")?;
+        let now = unix_millis();
+        let repository = self.repository.app_lock()?;
+        repository.rename_playlist(id, name, now)?;
+        repository
+            .playlist_by_id(id)?
+            .map(|playlist| LibraryPlaylistDto {
+                id: playlist.id,
+                name: playlist.name,
+                track_count: playlist.track_count,
+                updated_unix_ms: playlist.updated_unix_ms,
+            })
+            .ok_or_else(|| AppError::Unavailable("playlist disappeared after rename".into()))
+    }
+
+    fn delete_playlist(&self, id: &str) -> AppResult<()> {
+        validate_id(id, "playlistId")?;
+        self.repository.app_lock()?.delete_playlist(id)?;
+        Ok(())
+    }
+
+    fn add_playlist_track(&self, playlist_id: &str, track_id: &str) -> AppResult<()> {
+        validate_id(playlist_id, "playlistId")?;
+        validate_id(track_id, "trackId")?;
+        self.repository.app_lock()?.add_playlist_track(
+            playlist_id,
+            &MediaId::new(track_id),
+            unix_millis(),
+        )?;
+        Ok(())
+    }
+
+    fn remove_playlist_track(&self, playlist_id: &str, track_id: &str) -> AppResult<()> {
+        validate_id(playlist_id, "playlistId")?;
+        validate_id(track_id, "trackId")?;
+        self.repository.app_lock()?.remove_playlist_track(
+            playlist_id,
+            &MediaId::new(track_id),
+            unix_millis(),
+        )?;
+        Ok(())
+    }
+
+    fn reorder_playlist_track(
+        &self,
+        playlist_id: &str,
+        track_id: &str,
+        target_position: u32,
+    ) -> AppResult<()> {
+        validate_id(playlist_id, "playlistId")?;
+        validate_id(track_id, "trackId")?;
+        self.repository.app_lock()?.reorder_playlist_track(
+            playlist_id,
+            &MediaId::new(track_id),
+            target_position,
+            unix_millis(),
+        )?;
+        Ok(())
+    }
+
     fn album_tracks(&self, request: LibraryEntityTracksRequestDto) -> AppResult<LibraryPageDto> {
         self.entity_tracks(request, |repository, id, limit, offset| {
             repository.album_tracks(id, limit, offset)
@@ -1271,7 +1440,16 @@ impl LibraryPort for LibraryAdapter {
     }
 
     fn register_location(&self, path: &Path) -> AppResult<LibraryLocationDto> {
-        self.locations.register(path)
+        let location = self.locations.register(path)?;
+        if let Err(error) = self
+            .repository
+            .app_lock()?
+            .register_library_root(Path::new(&location.path))
+        {
+            let _ = self.locations.unregister(&location.id);
+            return Err(error.into());
+        }
+        Ok(location)
     }
 
     fn start_scan(
@@ -1281,7 +1459,7 @@ impl LibraryPort for LibraryAdapter {
     ) -> AppResult<TaskAcceptedDto> {
         let roots = self.locations.resolve_many(&request.location_ids)?;
         let task_id = Uuid::new_v4().to_string();
-        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancellation = Arc::new(ScanCancellation::default());
         {
             let mut scans = self.scans.app_lock()?;
             if scans.len() >= MAX_CONCURRENT_SCANS {
@@ -1303,12 +1481,13 @@ impl LibraryPort for LibraryAdapter {
             scans.insert(
                 task_id.clone(),
                 ActiveScan {
-                    cancelled: cancelled.clone(),
+                    cancellation: cancellation.clone(),
                     roots: roots.clone(),
                 },
             );
         }
         let repository = self.repository.clone();
+        let artwork = self.artwork.clone();
         let scans = self.scans.clone();
         let worker_task_id = task_id.clone();
         let spawn_result = thread::Builder::new()
@@ -1327,10 +1506,11 @@ impl LibraryPort for LibraryAdapter {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     scan_registered_roots(
                         &roots,
-                        &cancelled,
+                        &cancellation,
                         &worker_task_id,
                         &progress,
                         &repository,
+                        &artwork,
                     )
                 }));
                 let phase = match result {
@@ -1361,9 +1541,9 @@ impl LibraryPort for LibraryAdapter {
             .scans
             .app_lock()?
             .get(task_id)
-            .map(|task| task.cancelled.clone())
+            .map(|task| task.cancellation.clone())
             .ok_or_else(|| AppError::InvalidArgument("scan task is not active".into()))?;
-        task.store(true, Ordering::Release);
+        task.cancel();
         Ok(())
     }
 
@@ -1583,12 +1763,11 @@ impl CacheAdapter {
         self.store.open(&entry.content_hash).map_err(Into::into)
     }
 
-    fn entry_for_track(&self, track: &TrackRefDto) -> AppResult<Option<CacheEntry>> {
-        let entries = self
-            .repository
+    fn entries_for_track(&self, track: &TrackRefDto) -> AppResult<Vec<CacheEntry>> {
+        self.repository
             .app_lock()?
-            .cache_entries_for(&MediaId::new(&track.id))?;
-        Ok(entries.into_iter().next())
+            .cache_entries_for(&MediaId::new(&track.id))
+            .map_err(Into::into)
     }
 
     fn remove_files(
@@ -1631,34 +1810,62 @@ impl CachePort for CacheAdapter {
 
     fn status(&self, track: &TrackRefDto) -> AppResult<CacheStatusDto> {
         validate_track_ref(track)?;
-        let Some(entry) = self.entry_for_track(track)? else {
+        let entries = self.entries_for_track(track)?;
+        if entries.is_empty() {
             return Ok(CacheStatusDto {
                 track: track.clone(),
                 quality: None,
+                cached_versions: 0,
                 status: CacheEntryStatusDto::Missing,
                 access_class: CacheAccessClassDto::Public,
                 owner_user_id: None,
                 last_validated_at: None,
             });
+        }
+        let cached_versions = u32::try_from(entries.len())
+            .map_err(|_| AppError::Unavailable("too many cached quality versions".into()))?;
+        let status = if entries
+            .iter()
+            .any(|entry| entry.state == CacheState::LockedEntitlement)
+        {
+            CacheEntryStatusDto::LockedEntitlement
+        } else if entries
+            .iter()
+            .any(|entry| entry.state == CacheState::Partial)
+        {
+            CacheEntryStatusDto::Caching
+        } else {
+            CacheEntryStatusDto::Ready
         };
-        let (access_class, owner_user_id) = match entry.access_class {
-            CacheAccessClass::Public => (CacheAccessClassDto::Public, None),
-            CacheAccessClass::AccountEntitled { owner_user_id } => (
-                CacheAccessClassDto::AccountEntitled,
-                Some(owner_user_id.to_string()),
-            ),
+        let owner_ids = entries
+            .iter()
+            .filter_map(|entry| match entry.access_class {
+                CacheAccessClass::Public => None,
+                CacheAccessClass::AccountEntitled { owner_user_id } => Some(owner_user_id),
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let access_class = if owner_ids.is_empty() {
+            CacheAccessClassDto::Public
+        } else {
+            CacheAccessClassDto::AccountEntitled
         };
+        let owner_user_id = (owner_ids.len() == 1)
+            .then(|| owner_ids.first().copied().map(|owner| owner.to_string()))
+            .flatten();
+        let quality = (entries.len() == 1).then(|| entries[0].quality.clone());
+        let last_validated_at = entries
+            .iter()
+            .filter_map(|entry| entry.last_validated_unix_ms)
+            .max()
+            .map(|value| value.to_string());
         Ok(CacheStatusDto {
             track: track.clone(),
-            quality: Some(entry.quality.clone()),
-            status: match entry.state {
-                CacheState::Available => CacheEntryStatusDto::Ready,
-                CacheState::LockedEntitlement => CacheEntryStatusDto::LockedEntitlement,
-                CacheState::Partial => CacheEntryStatusDto::Caching,
-            },
+            quality,
+            cached_versions,
+            status,
             access_class,
             owner_user_id,
-            last_validated_at: entry.last_validated_unix_ms.map(|value| value.to_string()),
+            last_validated_at,
         })
     }
 
@@ -2513,11 +2720,34 @@ impl NeteasePort for NeteaseAdapter {
 
     async fn home(&self) -> AppResult<NeteaseHomeDto> {
         let service = self.require_service()?;
-        let tracks = service.recommend_songs().await?;
-        let playlists = service.recommend_playlists().await?;
+        if self.login.app_lock()?.authenticated {
+            let tracks = service.recommend_songs().await?;
+            let playlists = service.recommend_playlists().await?;
+            return Ok(NeteaseHomeDto {
+                recommended_tracks: tracks.into_iter().map(netease_track_dto).collect(),
+                recommended_playlists: playlists.into_iter().map(netease_playlist_dto).collect(),
+                anonymous: false,
+                unavailable_sections: Vec::new(),
+            });
+        }
+        let explore = service.public_explore().await?;
         Ok(NeteaseHomeDto {
-            recommended_tracks: tracks.into_iter().map(netease_track_dto).collect(),
-            recommended_playlists: playlists.into_iter().map(netease_playlist_dto).collect(),
+            recommended_tracks: explore
+                .new_songs
+                .into_iter()
+                .map(netease_track_dto)
+                .collect(),
+            recommended_playlists: explore
+                .playlists
+                .into_iter()
+                .map(netease_playlist_dto)
+                .collect(),
+            anonymous: true,
+            unavailable_sections: explore
+                .unavailable_sections
+                .into_iter()
+                .map(|section| format!("{section:?}"))
+                .collect(),
         })
     }
 
@@ -3076,35 +3306,67 @@ impl PlaybackMediaBackend for NeteaseAdapter {
 
 fn scan_registered_roots(
     roots: &[PathBuf],
-    cancelled: &AtomicBool,
+    cancellation: &ScanCancellation,
     task_id: &str,
     progress: &ScanProgressSink,
     repository: &Repository,
+    artwork: &ContentAddressedArtwork,
 ) -> hyperplayer_engine::Result<bool> {
-    let reader = LoftyMetadataReader;
-    let mut pending: VecDeque<PathBuf> = roots.iter().cloned().collect();
+    let scanner = LibraryScanner::default();
     let mut completed = 0_u64;
-    while let Some(path) = pending.pop_front() {
-        if cancelled.load(Ordering::Acquire) {
+    for root in roots {
+        if cancellation.is_cancelled() {
             return Ok(false);
         }
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(_) => continue,
-        };
-        if metadata.file_type().is_symlink() {
-            continue;
-        }
-        if metadata.is_dir() {
-            if let Ok(entries) = fs::read_dir(&path) {
-                pending.extend(entries.filter_map(Result::ok).map(|entry| entry.path()));
+
+        let report = scanner.scan_with_cancel(std::slice::from_ref(root), cancellation)?;
+        let mut found = report
+            .tracks
+            .iter()
+            .map(|track| track.path.clone())
+            .collect::<Vec<_>>();
+        let cleanup_safe = preserve_failed_audio_paths(root, &report.failures, &mut found);
+        let cancelled = report.cancelled;
+        let tracks = report
+            .tracks
+            .into_iter()
+            .filter(|track| is_playable_library_audio(&track.path))
+            .collect::<Vec<_>>();
+        let failures = report
+            .failures
+            .into_iter()
+            .filter(|failure| !failure.path.is_file() || is_playable_library_audio(&failure.path))
+            .collect::<Vec<_>>();
+
+        for mut track in tracks {
+            if cancellation.is_cancelled() {
+                return Ok(false);
             }
-        } else if metadata.is_file() && is_supported_audio(&path) {
-            if let Ok(track) = reader.read(&path) {
-                repository
-                    .lock()
-                    .map_err(|_| hyperplayer_engine::EngineError::ActorUnavailable)?
-                    .upsert_track(&track)?;
+            if let Err(error) = store_scanned_artwork(&mut track, artwork) {
+                emit_scan_failure(
+                    task_id,
+                    completed,
+                    progress,
+                    &ScanFailure {
+                        path: track.path.clone(),
+                        message: format!("artwork: {error}"),
+                    },
+                );
+            }
+            if let Err(error) = repository
+                .lock()
+                .map_err(|_| hyperplayer_engine::EngineError::ActorUnavailable)?
+                .upsert_track(&track)
+            {
+                emit_scan_failure(
+                    task_id,
+                    completed,
+                    progress,
+                    &ScanFailure {
+                        path: track.path.clone(),
+                        message: format!("index: {error}"),
+                    },
+                );
             }
             completed = completed.saturating_add(1);
             progress(ScanProgressDto {
@@ -3114,8 +3376,127 @@ fn scan_registered_roots(
                 phase: "indexing".into(),
             });
         }
+
+        for failure in &failures {
+            emit_scan_failure(task_id, completed, progress, failure);
+        }
+        if cancelled || cancellation.is_cancelled() {
+            return Ok(false);
+        }
+        if cleanup_safe {
+            preserve_existing_library_paths(root, repository, &mut found)?;
+            repository
+                .lock()
+                .map_err(|_| hyperplayer_engine::EngineError::ActorUnavailable)?
+                .remove_missing_under(root, &found)?;
+        } else {
+            progress(ScanProgressDto {
+                task_id: task_id.to_owned(),
+                completed,
+                total: None,
+                phase: format!(
+                    "error:{}: missing-file cleanup skipped because the root was not fully readable",
+                    root.display()
+                ),
+            });
+        }
     }
     Ok(true)
+}
+
+fn preserve_existing_library_paths(
+    root: &Path,
+    repository: &Repository,
+    found: &mut Vec<PathBuf>,
+) -> hyperplayer_engine::Result<()> {
+    let repository = repository
+        .lock()
+        .map_err(|_| hyperplayer_engine::EngineError::ActorUnavailable)?;
+    let mut offset = 0;
+    loop {
+        let tracks = repository.list_tracks(500, offset)?;
+        let count = tracks.len();
+        for track in tracks {
+            if track.path.starts_with(root) {
+                if let Ok(metadata) = fs::symlink_metadata(&track.path) {
+                    if metadata.is_file() && !metadata.file_type().is_symlink() {
+                        found.push(track.path);
+                    }
+                }
+            }
+        }
+        if count < 500 {
+            return Ok(());
+        }
+        offset += 500;
+    }
+}
+
+fn is_playable_library_audio(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            hyperplayer_engine::audio::PLAYABLE_LOCAL_EXTENSIONS
+                .iter()
+                .any(|supported| extension.eq_ignore_ascii_case(supported))
+        })
+}
+
+fn store_scanned_artwork(
+    track: &mut LibraryTrack,
+    artwork: &ContentAddressedArtwork,
+) -> hyperplayer_engine::Result<()> {
+    match read_embedded_artwork(&track.path) {
+        Ok(Some(object)) => {
+            artwork.store(&object)?;
+            track.track.artwork_hash = Some(object.content_hash);
+            track.track.artwork_mime = Some(object.mime_type);
+            Ok(())
+        }
+        Ok(None) => {
+            track.track.artwork_hash = None;
+            track.track.artwork_mime = None;
+            Ok(())
+        }
+        Err(error) => {
+            track.track.artwork_hash = None;
+            track.track.artwork_mime = None;
+            Err(error)
+        }
+    }
+}
+
+fn preserve_failed_audio_paths(
+    root: &Path,
+    failures: &[ScanFailure],
+    found: &mut Vec<PathBuf>,
+) -> bool {
+    let mut cleanup_safe = true;
+    for failure in failures {
+        match fs::symlink_metadata(&failure.path) {
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                if failure.path.starts_with(root) {
+                    found.push(failure.path.clone());
+                }
+            }
+            _ => cleanup_safe = false,
+        }
+    }
+    cleanup_safe
+}
+
+fn emit_scan_failure(
+    task_id: &str,
+    completed: u64,
+    progress: &ScanProgressSink,
+    failure: &ScanFailure,
+) {
+    progress(ScanProgressDto {
+        task_id: task_id.to_owned(),
+        completed,
+        total: None,
+        phase: format!("error:{}: {}", failure.path.display(), failure.message),
+    });
 }
 
 fn canonical_directory(path: &Path) -> AppResult<PathBuf> {
@@ -3908,6 +4289,7 @@ mod tests {
             playback_history: Mutex::new(None),
             album_session: Mutex::new(None),
             prefetch_sender,
+            restored_media_pending: Mutex::new(false),
             operation: Mutex::new(()),
         }
     }
@@ -3953,6 +4335,38 @@ mod tests {
         wav.extend_from_slice(&data_size.to_le_bytes());
         wav.extend(samples.iter().flat_map(|sample| sample.to_le_bytes()));
         wav
+    }
+
+    fn tagged_mp3_with_artwork(artwork: &[u8]) -> Vec<u8> {
+        let mut picture = Vec::new();
+        picture.push(0);
+        picture.extend_from_slice(b"image/png\0");
+        picture.push(3);
+        picture.push(0);
+        picture.extend_from_slice(artwork);
+
+        let mut frame = Vec::new();
+        frame.extend_from_slice(b"APIC");
+        frame.extend_from_slice(&(picture.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&[0, 0]);
+        frame.extend_from_slice(&picture);
+
+        let size = frame.len() as u32;
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(b"ID3\x03\0\0");
+        encoded.extend_from_slice(&[
+            ((size >> 21) & 0x7f) as u8,
+            ((size >> 14) & 0x7f) as u8,
+            ((size >> 7) & 0x7f) as u8,
+            (size & 0x7f) as u8,
+        ]);
+        encoded.extend_from_slice(&frame);
+        for _ in 0..8 {
+            let mut audio_frame = [0_u8; 72];
+            audio_frame[..4].copy_from_slice(&[0xff, 0xe3, 0x18, 0xc0]);
+            encoded.extend_from_slice(&audio_frame);
+        }
+        encoded
     }
 
     fn playback_snapshot(item: QueueItem, position_ms: u64) -> PlaybackSnapshot {
@@ -4202,6 +4616,292 @@ mod tests {
     }
 
     #[test]
+    fn restored_local_queue_resolves_through_library_and_resumes_without_queue_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let first_path = root.path().join("restore-one.wav");
+        let second_path = root.path().join("restore-two.wav");
+        let mut audio = minimal_wav();
+        audio.extend(std::iter::repeat_n(0_u8, 16_000));
+        let data_size = (audio.len() - 44) as u32;
+        audio[4..8].copy_from_slice(&(36 + data_size).to_le_bytes());
+        audio[40..44].copy_from_slice(&data_size.to_le_bytes());
+        fs::write(&first_path, &audio).unwrap();
+        fs::write(&second_path, &audio).unwrap();
+        let repository = Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap()));
+        for (id, path) in [(7, &first_path), (8, &second_path)] {
+            repository
+                .lock()
+                .unwrap()
+                .upsert_track(&hyperplayer_engine::repository::LibraryTrack {
+                    track: local_engine_track(id, path.clone()),
+                    path: path.clone(),
+                    file_size: audio.len() as u64,
+                    modified_unix_ms: 0,
+                    sample_rate: Some(8_000),
+                    channels: Some(1),
+                    bitrate_kbps: None,
+                })
+                .unwrap();
+        }
+        let mut queue = PlaybackQueue::new(SHUFFLE_SEED);
+        queue.replace_context(
+            vec![
+                QueueItem::new(70, local_engine_track(7, first_path.clone())),
+                QueueItem::new(80, local_engine_track(8, second_path.clone())),
+            ],
+            0,
+        );
+        queue.set_mode(PlaybackMode::RepeatAll);
+        let original = queue.context_snapshot();
+        repository
+            .lock()
+            .unwrap()
+            .save_playback_session(&queue, 500, 1)
+            .unwrap();
+        let locations = Arc::new(LocationRegistry::in_memory().unwrap());
+        locations.register(root.path()).unwrap();
+        let resolver_root = tempfile::tempdir().unwrap();
+        let resolver = TrackResolver::new(
+            repository.clone(),
+            locations,
+            Arc::new(NeteaseAdapter::disabled(Arc::new(SettingsAdapter::new()))),
+            resolver_root.path().join("cache"),
+            resolver_root.path().join("temporary"),
+        )
+        .unwrap();
+        let handle = EngineHandle::spawn_with_output(
+            ENGINE_COMMAND_CAPACITY,
+            SHUFFLE_SEED,
+            Box::new(WavDecoderFactory),
+            Box::new(TestOutput(PcmFormat {
+                sample_rate: 8_000,
+                channels: 1,
+                sample_format: PcmSampleFormat::F32,
+            })),
+        )
+        .unwrap();
+        let (prefetch_sender, _prefetch_receiver) = std::sync::mpsc::sync_channel(8);
+        let adapter =
+            EngineAdapter::with_handle(handle, repository, true, prefetch_sender).unwrap();
+
+        let targets = adapter.restored_media_targets().unwrap();
+        assert_eq!(
+            targets.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [70, 80]
+        );
+        let mut resolved = Vec::new();
+        for (queue_id, track) in targets {
+            resolved.push((
+                queue_id,
+                tauri::async_runtime::block_on(resolver.resolve(&track)).unwrap(),
+            ));
+        }
+        adapter.attach_restored_media(resolved).unwrap();
+        let playing = adapter
+            .play_resolved(None, PlaybackContextDto::default())
+            .unwrap();
+
+        assert_eq!(playing.playback.status, PlaybackStatusDto::Playing);
+        assert!(playing.playback.position_ms >= 500);
+        assert_eq!(
+            playing
+                .queue
+                .context
+                .iter()
+                .map(|item| item.queue_item_id.as_str())
+                .collect::<Vec<_>>(),
+            ["70", "80"]
+        );
+        let engine = adapter.handle.snapshot().unwrap();
+        assert_eq!(engine.queue, original);
+    }
+
+    #[test]
+    fn missing_restored_local_file_keeps_queue_paused_at_saved_position() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("missing-after-restore.wav");
+        fs::write(&path, minimal_wav()).unwrap();
+        let repository = Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap()));
+        repository
+            .lock()
+            .unwrap()
+            .upsert_track(&hyperplayer_engine::repository::LibraryTrack {
+                track: local_engine_track(7, path.clone()),
+                path: path.clone(),
+                file_size: 44,
+                modified_unix_ms: 0,
+                sample_rate: Some(8_000),
+                channels: Some(1),
+                bitrate_kbps: None,
+            })
+            .unwrap();
+        let mut queue = PlaybackQueue::new(SHUFFLE_SEED);
+        queue.replace_context(
+            vec![QueueItem::new(70, local_engine_track(7, path.clone()))],
+            0,
+        );
+        repository
+            .lock()
+            .unwrap()
+            .save_playback_session(&queue, 333, 1)
+            .unwrap();
+        let locations = Arc::new(LocationRegistry::in_memory().unwrap());
+        locations.register(root.path()).unwrap();
+        fs::remove_file(&path).unwrap();
+        let resolver_root = tempfile::tempdir().unwrap();
+        let resolver = TrackResolver::new(
+            repository.clone(),
+            locations,
+            Arc::new(NeteaseAdapter::disabled(Arc::new(SettingsAdapter::new()))),
+            resolver_root.path().join("cache"),
+            resolver_root.path().join("temporary"),
+        )
+        .unwrap();
+        let handle = EngineHandle::spawn_with_output(
+            ENGINE_COMMAND_CAPACITY,
+            SHUFFLE_SEED,
+            Box::new(WavDecoderFactory),
+            Box::new(TestOutput(PcmFormat {
+                sample_rate: 8_000,
+                channels: 1,
+                sample_format: PcmSampleFormat::F32,
+            })),
+        )
+        .unwrap();
+        let (prefetch_sender, _prefetch_receiver) = std::sync::mpsc::sync_channel(8);
+        let adapter =
+            EngineAdapter::with_handle(handle, repository, true, prefetch_sender).unwrap();
+        let targets = adapter.restored_media_targets().unwrap();
+
+        assert!(tauri::async_runtime::block_on(resolver.resolve(&targets[0].1)).is_err());
+        let state = adapter.state().unwrap();
+        assert_eq!(state.status, PlaybackStatusDto::Paused);
+        assert_eq!(state.position_ms, 333);
+        assert_eq!(
+            adapter.snapshot().unwrap().current_item_id.as_deref(),
+            Some("70")
+        );
+    }
+
+    #[test]
+    fn restored_transition_targets_cover_three_tracks_repeat_all_and_previous_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let paths: Vec<_> = (1..=3)
+            .map(|id| {
+                let path = directory.path().join(format!("transition-{id}.wav"));
+                fs::write(&path, minimal_wav()).unwrap();
+                path
+            })
+            .collect();
+        let repository = Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap()));
+        let items: Vec<_> = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                QueueItem::new(
+                    (index as u64 + 1) * 10,
+                    local_engine_track(index as u64 + 1, path.clone()),
+                )
+            })
+            .collect();
+        let mut queue = PlaybackQueue::new(SHUFFLE_SEED);
+        queue.replace_context(items, 0);
+        queue.set_mode(PlaybackMode::RepeatAll);
+        queue.advance(false);
+        repository
+            .lock()
+            .unwrap()
+            .save_playback_session(&queue, 400, 1)
+            .unwrap();
+        let handle = EngineHandle::spawn_with_output(
+            ENGINE_COMMAND_CAPACITY,
+            SHUFFLE_SEED,
+            Box::new(WavDecoderFactory),
+            Box::new(TestOutput(PcmFormat {
+                sample_rate: 8_000,
+                channels: 1,
+                sample_format: PcmSampleFormat::F32,
+            })),
+        )
+        .unwrap();
+        let (prefetch_sender, _prefetch_receiver) = std::sync::mpsc::sync_channel(8);
+        let adapter =
+            EngineAdapter::with_handle(handle, repository, true, prefetch_sender).unwrap();
+
+        let next = adapter
+            .transition_media_targets(PlaybackTransition::Next { automatic: false })
+            .unwrap();
+        assert_eq!(
+            next.iter()
+                .map(|target| target.queue_id)
+                .collect::<Vec<_>>(),
+            [30, 10]
+        );
+        let previous = adapter
+            .transition_media_targets(PlaybackTransition::Previous)
+            .unwrap();
+        assert_eq!(
+            previous
+                .iter()
+                .map(|target| target.queue_id)
+                .collect::<Vec<_>>(),
+            [10, 20]
+        );
+        let snapshot = adapter.handle.snapshot().unwrap();
+        assert_eq!(snapshot.mode, PlaybackMode::RepeatAll);
+        assert_eq!(snapshot.queue.current.as_ref().unwrap().queue_id, 20);
+        assert_eq!(snapshot.queue.traversal_history[0].queue_id, 10);
+    }
+
+    #[test]
+    fn restored_shuffle_targets_are_stable_without_mutating_queue() {
+        let repository = Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap()));
+        let mut queue = PlaybackQueue::new(SHUFFLE_SEED);
+        queue.replace_context(
+            (1..=4)
+                .map(|id| {
+                    QueueItem::new(
+                        id * 10,
+                        local_engine_track(id, PathBuf::from(format!("{id}.wav"))),
+                    )
+                })
+                .collect(),
+            0,
+        );
+        queue.set_mode(PlaybackMode::Shuffle);
+        let original = queue.context_snapshot();
+        repository
+            .lock()
+            .unwrap()
+            .save_playback_session(&queue, 0, 1)
+            .unwrap();
+        let handle = EngineHandle::spawn_with_output(
+            ENGINE_COMMAND_CAPACITY,
+            SHUFFLE_SEED,
+            Box::new(WavDecoderFactory),
+            Box::new(TestOutput(PcmFormat {
+                sample_rate: 8_000,
+                channels: 1,
+                sample_format: PcmSampleFormat::F32,
+            })),
+        )
+        .unwrap();
+        let (prefetch_sender, _prefetch_receiver) = std::sync::mpsc::sync_channel(8);
+        let adapter =
+            EngineAdapter::with_handle(handle, repository, true, prefetch_sender).unwrap();
+
+        let first = adapter
+            .transition_media_targets(PlaybackTransition::Next { automatic: true })
+            .unwrap();
+        let second = adapter
+            .transition_media_targets(PlaybackTransition::Next { automatic: true })
+            .unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(adapter.handle.snapshot().unwrap().queue, original);
+    }
+
+    #[test]
     fn playback_and_queue_share_one_engine_state() {
         let directory = tempfile::tempdir().unwrap();
         let first = directory.path().join("one.wav");
@@ -4229,6 +4929,65 @@ mod tests {
             adapter.snapshot().unwrap().play_next[0].track.track_ref.id,
             "2"
         );
+    }
+
+    #[test]
+    fn cache_status_aggregates_all_quality_versions_and_remove_clears_them() {
+        let repository = Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap()));
+        let entries = [
+            CacheEntry {
+                content_id: MediaId::new("42"),
+                quality: "standard".into(),
+                content_hash: "public-hash".into(),
+                access_class: CacheAccessClass::Public,
+                entitlement_snapshot: None,
+                last_validated_unix_ms: Some(10),
+                official_source: "netease".into(),
+                state: CacheState::Available,
+            },
+            CacheEntry {
+                content_id: MediaId::new("42"),
+                quality: "lossless".into(),
+                content_hash: "private-hash".into(),
+                access_class: CacheAccessClass::AccountEntitled { owner_user_id: 7 },
+                entitlement_snapshot: Some(EntitlementSnapshot {
+                    product: "vip".into(),
+                    valid_until_unix_ms: Some(i64::MAX as u64),
+                    server_revision: Some("r1".into()),
+                }),
+                last_validated_unix_ms: Some(20),
+                official_source: "netease".into(),
+                state: CacheState::LockedEntitlement,
+            },
+        ];
+        for entry in &entries {
+            repository
+                .lock()
+                .unwrap()
+                .upsert_cache_entry(entry)
+                .unwrap();
+        }
+        let cache_root = tempfile::tempdir().unwrap();
+        let netease = Arc::new(NeteaseAdapter::disabled(Arc::new(SettingsAdapter::new())));
+        let adapter =
+            CacheAdapter::new(repository, netease, cache_root.path().to_path_buf()).unwrap();
+        let track = TrackRefDto {
+            id: "42".into(),
+            source: TrackSourceDto::Netease,
+        };
+
+        let status = adapter.status(&track).unwrap();
+        assert_eq!(status.cached_versions, 2);
+        assert_eq!(status.quality, None);
+        assert_eq!(status.status, CacheEntryStatusDto::LockedEntitlement);
+        assert_eq!(status.access_class, CacheAccessClassDto::AccountEntitled);
+        assert_eq!(status.owner_user_id.as_deref(), Some("7"));
+        assert_eq!(status.last_validated_at.as_deref(), Some("20"));
+
+        adapter.remove(&track).unwrap();
+        let status = adapter.status(&track).unwrap();
+        assert_eq!(status.cached_versions, 0);
+        assert_eq!(status.status, CacheEntryStatusDto::Missing);
     }
 
     #[test]
@@ -4424,6 +5183,192 @@ mod tests {
     }
 
     #[test]
+    fn registering_a_location_also_authorizes_engine_media_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let audio = root.path().join("song.wav");
+        fs::write(&audio, b"RIFF").unwrap();
+        let repository = Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap()));
+        repository
+            .lock()
+            .unwrap()
+            .upsert_track(&hyperplayer_engine::repository::LibraryTrack {
+                track: Track {
+                    id: MediaId::new("local:registered"),
+                    source: MediaSource::Local {
+                        path: audio.clone(),
+                    },
+                    title: "Song".into(),
+                    artists: vec![],
+                    album: None,
+                    album_id: None,
+                    artist_ids: vec![],
+                    artwork_hash: None,
+                    artwork_mime: None,
+                    duration_ms: None,
+                },
+                path: audio,
+                file_size: 4,
+                modified_unix_ms: 0,
+                sample_rate: None,
+                channels: None,
+                bitrate_kbps: None,
+            })
+            .unwrap();
+        let adapter = LibraryAdapter::new(
+            repository.clone(),
+            Arc::new(LocationRegistry::in_memory().unwrap()),
+            root.path().join("artwork"),
+        )
+        .unwrap();
+
+        adapter.register_location(root.path()).unwrap();
+
+        assert!(repository
+            .lock()
+            .unwrap()
+            .media_path(&MediaId::new("local:registered"))
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn production_scan_indexes_playable_files_stores_artwork_and_removes_missing_rows() {
+        let root = tempfile::tempdir().unwrap();
+        let audio = root.path().join("tagged.mp3");
+        let unsupported = root.path().join("not-playable.ogg");
+        let missing = root.path().join("missing.wav");
+        let artwork_bytes = b"\x89PNG\r\n\x1a\nscan-artwork";
+        fs::write(&audio, tagged_mp3_with_artwork(artwork_bytes)).unwrap();
+        fs::write(&unsupported, b"not valid ogg").unwrap();
+        let repository = Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap()));
+        {
+            let repository = repository.lock().unwrap();
+            repository
+                .upsert_track(&hyperplayer_engine::repository::LibraryTrack {
+                    track: local_engine_track(98, unsupported.clone()),
+                    path: unsupported.clone(),
+                    file_size: 0,
+                    modified_unix_ms: 0,
+                    sample_rate: None,
+                    channels: None,
+                    bitrate_kbps: None,
+                })
+                .unwrap();
+            repository
+                .upsert_track(&hyperplayer_engine::repository::LibraryTrack {
+                    track: local_engine_track(99, missing.clone()),
+                    path: missing,
+                    file_size: 0,
+                    modified_unix_ms: 0,
+                    sample_rate: None,
+                    channels: None,
+                    bitrate_kbps: None,
+                })
+                .unwrap();
+        }
+        let artwork_root = root.path().join("artwork");
+        let artwork = ContentAddressedArtwork::new(&artwork_root).unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let progress: ScanProgressSink =
+            Arc::new(move |event| captured.lock().unwrap().push(event));
+
+        assert!(scan_registered_roots(
+            &[root.path().to_path_buf()],
+            &ScanCancellation::default(),
+            "scan",
+            &progress,
+            &repository,
+            &artwork,
+        )
+        .unwrap());
+
+        let tracks = repository.lock().unwrap().list_tracks(10, 0).unwrap();
+        assert_eq!(tracks.len(), 2);
+        let scanned = tracks.iter().find(|track| track.path == audio).unwrap();
+        assert!(tracks.iter().any(|track| track.path == unsupported));
+        let artwork_hash = scanned.track.artwork_hash.as_ref().unwrap();
+        assert_eq!(
+            fs::read(artwork_root.join(artwork_hash)).unwrap(),
+            artwork_bytes
+        );
+        assert!(!events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event.phase.contains("not-playable.ogg")));
+    }
+
+    #[test]
+    fn production_scan_preserves_rows_when_cancelled() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("missing.wav");
+        let repository = Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap()));
+        repository
+            .lock()
+            .unwrap()
+            .upsert_track(&hyperplayer_engine::repository::LibraryTrack {
+                track: local_engine_track(99, missing.clone()),
+                path: missing,
+                file_size: 0,
+                modified_unix_ms: 0,
+                sample_rate: None,
+                channels: None,
+                bitrate_kbps: None,
+            })
+            .unwrap();
+        let cancellation = ScanCancellation::default();
+        cancellation.cancel();
+        let artwork = ContentAddressedArtwork::new(root.path().join("artwork")).unwrap();
+        let progress: ScanProgressSink = Arc::new(|_| {});
+
+        assert!(!scan_registered_roots(
+            &[root.path().to_path_buf()],
+            &cancellation,
+            "scan",
+            &progress,
+            &repository,
+            &artwork,
+        )
+        .unwrap());
+        assert_eq!(
+            repository.lock().unwrap().list_tracks(10, 0).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn production_scan_reports_each_malformed_playable_file() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("broken.mp3"), b"broken").unwrap();
+        fs::write(root.path().join("ignored.m4a"), b"broken").unwrap();
+        let repository = Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap()));
+        let artwork = ContentAddressedArtwork::new(root.path().join("artwork")).unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let progress: ScanProgressSink =
+            Arc::new(move |event| captured.lock().unwrap().push(event));
+
+        assert!(scan_registered_roots(
+            &[root.path().to_path_buf()],
+            &ScanCancellation::default(),
+            "scan",
+            &progress,
+            &repository,
+            &artwork,
+        )
+        .unwrap());
+
+        let events = events.lock().unwrap();
+        assert!(events.iter().any(|event| {
+            event.phase.starts_with("error:") && event.phase.contains("broken.mp3")
+        }));
+        assert!(!events
+            .iter()
+            .any(|event| event.phase.contains("ignored.m4a")));
+    }
+
+    #[test]
     fn scan_task_ids_are_uuids_and_same_root_is_limited() {
         let root = tempfile::tempdir().unwrap();
         let locations = Arc::new(LocationRegistry::in_memory().unwrap());
@@ -4437,7 +5382,7 @@ mod tests {
         adapter.scans.lock().unwrap().insert(
             Uuid::new_v4().to_string(),
             ActiveScan {
-                cancelled: Arc::new(AtomicBool::new(false)),
+                cancellation: Arc::new(ScanCancellation::default()),
                 roots: vec![root.path().canonicalize().unwrap()],
             },
         );

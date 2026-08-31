@@ -4,6 +4,12 @@ HyperPlayer Rust 引擎自有代码采用 Apache-2.0 许可证。下列生产依
 
 本清单由 `tests/check-js-licenses.mjs` 对 `pnpm licenses list --prod --json` 的结果执行名称覆盖校验。Rust 依赖由 `cargo-deny` 按 `deny.toml` 校验。
 
+## HyperSoundEngine 专项授权
+
+HyperPlayer 使用并修改 HyperSoundEngine v1.5.1（commit `f7017621b7d84005fbfed8a3c42a119487a17326`）中由 IceFireIcer 拥有权利的 DSP 核心、参数模型、预设、配置编码、规范和测试向量。该内容依据仓库根目录 `LICENSE-HSE-AUTHORIZATION.md` 的项目专项授权纳入 HyperPlayer，并随 HyperPlayer 以 Apache-2.0 分发。
+
+第三方素材、脉冲响应和 SOFA/HRTF 数据不包含在该专项授权内，只有在各自许可证完成审核后才可随应用分发。
+
 ## Rust MPL-2.0 依赖
 
 HyperPlayer 使用下列 MPL-2.0 包：

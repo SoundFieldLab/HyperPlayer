@@ -9,7 +9,7 @@ type SortKey = "title" | "artist" | "album" | "duration";
 type MenuState = { x: number; y: number; track: TrackDto } | null;
 const columnLabels = { title: "标题", artist: "歌手", album: "专辑", duration: "时长" } as const;
 
-export function TrackTable({ tracks, compact = false, playbackContext }: { tracks: TrackDto[]; compact?: boolean; playbackContext?: PlaybackContextDto }) {
+export function TrackTable({ tracks, compact = false, playbackContext, preserveOrder = false }: { tracks: TrackDto[]; compact?: boolean; playbackContext?: PlaybackContextDto; preserveOrder?: boolean }) {
   const { selectedTrackIds, playback, playTrack, enqueueTrack } = useAppStore();
   const [sort, setSort] = useState<{ key: SortKey; direction: 1 | -1 }>({ key: "title", direction: 1 });
   const [widths, setWidths] = useState(() => { try { return JSON.parse(localStorage.getItem("hyperplayer.track-columns") ?? "null") ?? { title: 260, artist: 160, album: 170 }; } catch { return { title: 260, artist: 160, album: 170 }; } });
@@ -21,11 +21,11 @@ export function TrackTable({ tracks, compact = false, playbackContext }: { track
   useEffect(() => { localStorage.setItem("hyperplayer.track-columns", JSON.stringify(widths)); }, [widths]);
 
   const visibleTracks = useMemo(() => tracks.filter((track) => !hidden.includes(track.id)), [hidden, tracks]);
-  const ordered = useMemo(() => [...visibleTracks].sort((a, b) => {
+  const ordered = useMemo(() => preserveOrder ? visibleTracks : [...visibleTracks].sort((a, b) => {
     const value = sort.key === "artist" ? a.artists.join(" ") : sort.key === "duration" ? a.durationMs : a[sort.key];
     const other = sort.key === "artist" ? b.artists.join(" ") : sort.key === "duration" ? b.durationMs : b[sort.key];
     return (typeof value === "number" ? value - (other as number) : value.localeCompare(other as string, "zh-CN")) * sort.direction;
-  }), [sort, visibleTracks]);
+  }), [preserveOrder, sort, visibleTracks]);
   const selected = ordered.filter((track) => selectedTrackIds.includes(track.id));
 
   const select = (track: TrackDto, event: Pick<React.MouseEvent | React.KeyboardEvent, "ctrlKey" | "metaKey" | "shiftKey">) => {
@@ -103,7 +103,7 @@ export function TrackTable({ tracks, compact = false, playbackContext }: { track
         select(next, event);
       }
     }}>
-      {!compact && <div className="track-header" role="row" style={{ gridTemplateColumns: template }}><span>#</span>{(["title", "artist", "album"] as const).map((key) => <button className="sortable-column" role="columnheader" key={key} onClick={() => sortBy(key)}>{columnLabels[key]}{sort.key === key && (sort.direction === 1 ? <CaretUp /> : <CaretDown />)}<i role="separator" aria-label={`调整${columnLabels[key]}列宽`} onPointerDown={(event) => resize(key, event)} /></button>)}<span>状态</span><button className="sortable-column" role="columnheader" onClick={() => sortBy("duration")}>时长{sort.key === "duration" && (sort.direction === 1 ? <CaretUp /> : <CaretDown />)}</button><span /></div>}
+      {!compact && <div className="track-header" role="row" style={{ gridTemplateColumns: template }}><span>#</span>{(["title", "artist", "album"] as const).map((key) => preserveOrder ? <span role="columnheader" key={key}>{columnLabels[key]}</span> : <button className="sortable-column" role="columnheader" key={key} onClick={() => sortBy(key)}>{columnLabels[key]}{sort.key === key && (sort.direction === 1 ? <CaretUp /> : <CaretDown />)}<i role="separator" aria-label={`调整${columnLabels[key]}列宽`} onPointerDown={(event) => resize(key, event)} /></button>)}<span>状态</span>{preserveOrder ? <span role="columnheader">时长</span> : <button className="sortable-column" role="columnheader" onClick={() => sortBy("duration")}>时长{sort.key === "duration" && (sort.direction === 1 ? <CaretUp /> : <CaretDown />)}</button>}<span /></div>}
       {ordered.map((track, index) => {
         const current = playback?.current?.id === track.id;
         return <div role="row" data-track-id={track.id} aria-selected={selectedTrackIds.includes(track.id)} tabIndex={0} key={track.id} className={`track-row ${selectedTrackIds.includes(track.id) ? "selected" : ""} ${current ? "current" : ""}`} style={{ gridTemplateColumns: template }} onClick={(event) => select(track, event)} onDoubleClick={() => void playTrack(track, playbackContext)} onContextMenu={(event) => { event.preventDefault(); if (!selectedTrackIds.includes(track.id)) select(track, event); setMenu({ x: event.clientX, y: event.clientY, track }); }} onKeyDown={(event) => { if (event.key === "Enter") void playTrack(track, playbackContext); }}>

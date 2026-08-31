@@ -256,7 +256,7 @@ export interface NeteasePlaylistDto {
   ownerName: string | null;
   description: string | null;
 }
-export interface NeteaseHomeDto { recommendedTracks: BackendTrackDto[]; recommendedPlaylists: NeteasePlaylistDto[]; }
+export interface NeteaseHomeDto { recommendedTracks: BackendTrackDto[]; recommendedPlaylists: NeteasePlaylistDto[]; anonymous: boolean; unavailableSections: string[]; }
 export interface NeteaseAlbumDetailDto { album: NeteaseAlbumDto; description: string | null; publishTimeMs: number | null; artist: NeteaseArtistDto | null; tracks: BackendTrackDto[]; }
 export interface NeteasePlaylistDetailDto { playlist: NeteasePlaylistDto; tracks: BackendTrackDto[]; }
 export interface NeteaseArtistSummaryDto { id: number; name: string; imageUrl: string | null; aliases: string[]; briefDescription: string | null; }
@@ -272,6 +272,22 @@ export interface NeteaseCommentPageDto { comments: NeteaseCommentDto[]; totalCou
 export interface NeteaseUserPageDto { users: NeteaseUserDto[]; nextCursor: string | null; }
 export interface NeteaseCloudSongDto { cloudId: number; track: BackendTrackDto; fileName: string | null; fileSize: number | null; }
 export interface NeteaseCloudPageDto { songs: NeteaseCloudSongDto[]; totalCount: number; hasMore: boolean; nextCursor: string | null; }
+
+export interface NeteaseMvDto {
+  id: number;
+  name: string;
+  coverUrl: string | null;
+  durationMs: number | null;
+  artists: NeteaseArtistDto[];
+  playCount: number | null;
+}
+export interface NeteaseMvPageDto { items: NeteaseMvDto[]; nextCursor: string | null; }
+export interface NeteaseMvDetailDto { mv: NeteaseMvDto; description: string | null; publishTime: string | null; favoriteCount: number | null; commentCount: number | null; }
+export interface NeteaseDjRadioDto { id: number; name: string; coverUrl: string | null; description: string | null; programCount: number | null; subscriberCount: number | null; category: string | null; }
+export interface NeteaseDjProgramDto { id: number; name: string; radio: NeteaseDjRadioDto; mainTrack: BackendTrackDto | null; durationMs: number | null; listenerCount: number | null; likedCount: number | null; createdAtMs: number | null; }
+export interface NeteaseDjPageDto { radios: NeteaseDjRadioDto[]; programs: NeteaseDjProgramDto[]; nextCursor: string | null; }
+export interface NeteaseChartDto { id: number; name: string; coverUrl: string | null; updateFrequency: string | null; description: string | null; previewTracks: BackendTrackDto[]; }
+export interface NeteaseTracksDto { tracks: BackendTrackDto[]; }
 
 export interface NeteaseImageDto {
   mimeType: string;
@@ -357,6 +373,8 @@ export interface BackendPlaybackProgressDto {
 
 export interface BackendCacheStatusDto {
   track: BackendTrackRefDto;
+  quality: string | null;
+  cachedVersions: number;
   status: "missing" | "queued" | "caching" | "ready" | "lockedEntitlement" | "failed";
   accessClass: "public" | "accountEntitled";
   ownerUserId: string | null;
@@ -413,6 +431,12 @@ export interface BridgeContract {
   libraryQueryFolders(search?: string, cursor?: string | null): Promise<EntityPageDto<LibraryFolderDto>>;
   libraryQueryRecent(cursor?: string | null): Promise<EntityPageDto<LibraryRecentDto>>;
   libraryQueryPlaylists(search?: string, cursor?: string | null): Promise<EntityPageDto<LibraryPlaylistDto>>;
+  libraryCreatePlaylist(name: string): Promise<LibraryPlaylistDto>;
+  libraryRenamePlaylist(id: string, name: string): Promise<LibraryPlaylistDto>;
+  libraryDeletePlaylist(id: string): Promise<void>;
+  libraryAddPlaylistTrack(playlistId: string, trackId: string): Promise<void>;
+  libraryRemovePlaylistTrack(playlistId: string, trackId: string): Promise<void>;
+  libraryReorderPlaylistTrack(playlistId: string, trackId: string, targetPosition: number): Promise<void>;
   libraryEntityTracks(kind: "album" | "artist" | "folder" | "playlist", id: string, cursor?: string | null): Promise<LibraryPageDto>;
   libraryArtwork(contentHash: string): Promise<LibraryArtworkDto>;
   libraryRereadTags(trackId: string): Promise<BackendTrackDto>;
@@ -424,6 +448,12 @@ export interface BridgeContract {
   libraryCancelScan(taskId: string): Promise<void>;
   neteaseStatus(): Promise<BackendNeteaseStatusDto>;
   neteaseSearch(query: string, kind?: NeteaseSearchKind, cursor?: string | null): Promise<NeteaseSearchPageDto>;
+  neteaseMvs(cursor?: string | null): Promise<NeteaseMvPageDto>;
+  neteaseMvDetail(id: number): Promise<NeteaseMvDetailDto>;
+  neteaseDjRadios(cursor?: string | null): Promise<NeteaseDjPageDto>;
+  neteaseDjPrograms(radioId: number, cursor?: string | null): Promise<NeteaseDjPageDto>;
+  neteaseCharts(): Promise<NeteaseChartDto[]>;
+  neteaseNewSongs(areaId?: number): Promise<NeteaseTracksDto>;
   neteaseHome(): Promise<NeteaseHomeDto>;
   neteaseAlbumDetail(id: number): Promise<NeteaseAlbumDetailDto>;
   neteasePlaylistDetail(id: number): Promise<NeteasePlaylistDetailDto>;
@@ -451,6 +481,7 @@ export interface BridgeContract {
   desktopLyricsSetClickThrough(enabled: boolean): Promise<void>;
   updaterStatus(): Promise<UpdaterStatusDto>;
   updaterCheck(): Promise<UpdateCheckDto>;
+  updaterUpdate(expectedVersion: string): Promise<boolean>;
   resolveClose(action: CloseDecision, remember: boolean): Promise<void>;
   subscribe(handlers: BridgeEventHandlers): Promise<Unlisten>;
 }

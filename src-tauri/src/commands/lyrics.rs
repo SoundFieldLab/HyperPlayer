@@ -7,7 +7,10 @@ use crate::{
     error::{AppError, AppResult, CommandResult},
     ports::{validate_track_ref, AppState, LyricsPort, SettingsPort},
 };
-use hyperplayer_engine::lyrics::{parse_lyrics_bundle, LyricsBundle, LyricsDocument, LyricsSource};
+use hyperplayer_engine::lyrics::{
+    load_local_lyrics, parse_lyrics_bundle, LyricsBundle, LyricsDocument, LyricsSource,
+};
+use hyperplayer_engine::model::MediaId;
 use hyperplayer_source_netease::{
     Lyrics, NeteaseService, ProductionConfig, ReqwestTransport, Session,
 };
@@ -18,15 +21,23 @@ use tauri::State;
 pub struct NeteaseLyricsAdapter {
     service: Option<NeteaseService<ReqwestTransport>>,
     settings: Arc<SettingsAdapter>,
+    repository: Arc<std::sync::Mutex<hyperplayer_engine::repository::SqliteRepository>>,
 }
 
 impl NeteaseLyricsAdapter {
-    pub fn new(settings: Arc<SettingsAdapter>) -> Self {
+    pub fn new(
+        settings: Arc<SettingsAdapter>,
+        repository: Arc<std::sync::Mutex<hyperplayer_engine::repository::SqliteRepository>>,
+    ) -> Self {
         let service = {
             let mut rng = OsRng;
             NeteaseService::production(ProductionConfig::default(), Session::new(&mut rng)).ok()
         };
-        Self { service, settings }
+        Self {
+            service,
+            settings,
+            repository,
+        }
     }
 
     #[cfg(test)]
@@ -34,6 +45,10 @@ impl NeteaseLyricsAdapter {
         Self {
             service: None,
             settings,
+            repository: Arc::new(std::sync::Mutex::new(
+                hyperplayer_engine::repository::SqliteRepository::in_memory()
+                    .expect("lyrics repository"),
+            )),
         }
     }
 
@@ -51,6 +66,37 @@ impl NeteaseLyricsAdapter {
 impl LyricsPort for NeteaseLyricsAdapter {
     async fn get(&self, track: &TrackRefDto) -> AppResult<LyricsPayloadDto> {
         validate_track_ref(track)?;
+        if track.source == TrackSourceDto::Local {
+            let (path, library_root) = self
+                .repository
+                .lock()
+                .map_err(|_| AppError::StateUnavailable)?
+                .media_path_with_root(&MediaId::new(&track.id))?
+                .ok_or_else(|| AppError::Unavailable("local track is not in the library".into()))?;
+            let embedded = match hyperplayer_engine::library::read_embedded_lyrics(&path) {
+                Ok(lyrics) => lyrics,
+                Err(hyperplayer_engine::EngineError::InvalidInput(message)) => {
+                    return Err(AppError::InvalidArgument(message));
+                }
+                Err(_) => None,
+            };
+            let local =
+                load_local_lyrics(&path, &library_root, embedded.as_deref()).map_err(|error| {
+                    AppError::Unavailable(format!("local lyrics could not be read: {error}"))
+                })?;
+            local.document.validate().map_err(|error| {
+                AppError::Unavailable(format!("invalid local lyrics timeline: {error:?}"))
+            })?;
+            return Ok(LyricsPayloadDto {
+                document: document_dto(local.document),
+                raw_original: String::new(),
+                raw_translation: String::new(),
+                raw_romanization: String::new(),
+                raw_word_synced: String::new(),
+                raw_word_synced_translation: String::new(),
+                raw_ttml: String::new(),
+            });
+        }
         if track.source != TrackSourceDto::Netease {
             return Err(AppError::Unavailable(
                 "local lyrics loading is not connected to the engine yet".into(),
@@ -209,6 +255,57 @@ mod tests {
         assert_eq!(payload.document.lines[0].end_ms, Some(3_000));
         assert_eq!(payload.document.lines[0].words.len(), 2);
         assert_eq!(payload.document.lines[0].words[1].start_ms, 1_500);
+    }
+
+    #[test]
+    fn local_sidecar_lyrics_load_only_through_registered_library_id() {
+        let root = tempfile::tempdir().unwrap();
+        let audio = root.path().join("song.wav");
+        std::fs::write(&audio, b"RIFF").unwrap();
+        std::fs::write(root.path().join("song.lrc"), "[00:01.00]local line").unwrap();
+        let repository = Arc::new(std::sync::Mutex::new(
+            hyperplayer_engine::repository::SqliteRepository::in_memory().unwrap(),
+        ));
+        {
+            let repo = repository.lock().unwrap();
+            repo.register_library_root(root.path()).unwrap();
+            repo.upsert_track(&hyperplayer_engine::repository::LibraryTrack {
+                track: hyperplayer_engine::Track {
+                    id: MediaId::new("local:test"),
+                    source: hyperplayer_engine::MediaSource::Local {
+                        path: audio.clone(),
+                    },
+                    title: "Song".into(),
+                    artists: vec![],
+                    album: None,
+                    album_id: None,
+                    artist_ids: vec![],
+                    artwork_hash: None,
+                    artwork_mime: None,
+                    duration_ms: Some(1_000),
+                },
+                path: audio.clone(),
+                file_size: 4,
+                modified_unix_ms: 0,
+                sample_rate: None,
+                channels: None,
+                bitrate_kbps: None,
+            })
+            .unwrap();
+        }
+        let adapter = NeteaseLyricsAdapter::new(Arc::new(SettingsAdapter::new()), repository);
+        let payload = tauri::async_runtime::block_on(adapter.get(&TrackRefDto {
+            id: "local:test".into(),
+            source: TrackSourceDto::Local,
+        }))
+        .unwrap();
+        assert_eq!(payload.document.source, "lrc");
+        assert_eq!(payload.document.lines[0].text, "local line");
+        assert!(tauri::async_runtime::block_on(adapter.get(&TrackRefDto {
+            id: audio.to_string_lossy().into_owned(),
+            source: TrackSourceDto::Local,
+        }))
+        .is_err());
     }
 
     #[test]

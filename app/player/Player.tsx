@@ -6,7 +6,7 @@ import {
   SpeakerSlash, Stop, Waveform,
 } from "@phosphor-icons/react";
 import { bridge } from "../bridge";
-import type { LyricsPayloadDto } from "../bridge/contracts";
+import type { BackendCacheStatusDto, LyricsPayloadDto, TrackDto } from "../bridge/contracts";
 import { Cover, formatTime, IconButton, RemoteNotice } from "../components/ui";
 import { useRemote } from "../hooks/useRemote";
 import { QueuePanel } from "../queue/QueuePanel";
@@ -98,6 +98,66 @@ function WaveformCanvas(): React.JSX.Element {
   return <div className="wave-pop"><canvas ref={ref} width={420} height={120}/><span>OUTPUT</span></div>;
 }
 
+function cacheErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") return error.message;
+  return error instanceof Error ? error.message : fallback;
+}
+
+type CacheControlState =
+  | { phase: "loading" }
+  | { phase: "ready"; data: BackendCacheStatusDto }
+  | { phase: "error"; message: string; retryAction: "cache" | "remove" | null };
+
+function ExpandedCacheControl({ track }: { track: TrackDto }): React.JSX.Element {
+  const generation = useRef(0);
+  const [state, setState] = useState<CacheControlState>({ phase: "loading" });
+
+  function loadStatus(): void {
+    const request = ++generation.current;
+    const trackRef = { id: track.id, source: track.source };
+    setState({ phase: "loading" });
+    void bridge.cacheStatus(trackRef).then((data) => {
+      if (request === generation.current) setState({ phase: "ready", data });
+    }).catch((error: unknown) => {
+      if (request === generation.current) setState({ phase: "error", message: cacheErrorMessage(error, "缓存状态查询失败"), retryAction: null });
+    });
+  }
+
+  useEffect(() => {
+    loadStatus();
+    return () => { generation.current += 1; };
+  }, [track.id, track.source]);
+
+  async function runAction(action: "cache" | "remove"): Promise<void> {
+    const request = ++generation.current;
+    const trackRef = { id: track.id, source: track.source };
+    setState({ phase: "loading" });
+    try {
+      if (action === "remove") await bridge.cacheRemove(trackRef);
+      else await bridge.cacheTrack(trackRef, track.quality);
+      if (request !== generation.current) return;
+      loadStatus();
+    } catch (error) {
+      if (request === generation.current) setState({ phase: "error", message: cacheErrorMessage(error, action === "remove" ? "移除缓存失败" : "缓存任务启动失败"), retryAction: action });
+    }
+  }
+
+  if (state.phase === "loading") return <button disabled><CloudArrowDown/>正在查询缓存</button>;
+  if (state.phase === "error") {
+    const retryAction = state.retryAction;
+    return <><button onClick={retryAction ? () => void runAction(retryAction) : loadStatus}><CloudArrowDown/>{retryAction ? "重试缓存" : "重试查询"}</button><span role="alert">{state.message}</span></>;
+  }
+
+  switch (state.data.status) {
+    case "missing": return <button onClick={() => void runAction("cache")}><CloudArrowDown/>缓存</button>;
+    case "failed": return <button onClick={() => void runAction("cache")}><CloudArrowDown/>重试缓存</button>;
+    case "queued": return <button disabled><CloudArrowDown/>已加入缓存队列</button>;
+    case "caching": return <button disabled><CloudArrowDown/>正在缓存</button>;
+    case "ready": return <button title={state.data.quality ? `已缓存 ${state.data.quality}` : `已缓存 ${state.data.cachedVersions} 个音质版本`} onClick={() => void runAction("remove")}><CloudArrowDown/>{state.data.cachedVersions > 1 ? `移除全部缓存版本（${state.data.cachedVersions}）` : "移除缓存"}</button>;
+    case "lockedEntitlement": return <><button disabled><CloudArrowDown/>权益缓存已锁定</button><span role="status">当前绑定账号的服务端权益验证通过后才能使用</span></>;
+  }
+}
+
 export function ExpandedPlayer(): React.JSX.Element | null {
   const { playback, setExpanded, overlay, setOverlay } = useAppStore();
   const [wave, setWave] = useState(false);
@@ -106,8 +166,8 @@ export function ExpandedPlayer(): React.JSX.Element | null {
   const track = playback.current;
 
   return <motion.div className="expanded-player" initial={{opacity:0,y:40}} animate={{opacity:1,y:0}} exit={{opacity:0,y:24}} transition={{duration:.38}} style={{"--cover":`url(${track.coverSeed})`} as React.CSSProperties}>
-    <div className="atmosphere"/><header><IconButton label="收起播放层" onClick={() => setExpanded(false)}><CaretDown/></IconButton><span>正在播放 · {track.source === "netease" ? "网易云" : "本地"}</span><div><IconButton label="波形" active={wave} onClick={() => setWave(!wave)}><Waveform/></IconButton><IconButton label="队列" active={overlay === "queue"} onClick={() => setOverlay(overlay === "queue" ? "none" : "queue")}><Queue/></IconButton><IconButton label="更多"><DotsThree/></IconButton></div></header>
-    <div className="player-stage"><section className="album-stage"><Cover src={track.coverSeed} alt={track.album}/><div className="stage-meta"><span className="eyebrow">{track.album} · {track.quality}</span><h1>{track.title}</h1><p>{track.artists.join(" / ")}</p><div><button><Heart/>喜欢</button><button><CloudArrowDown/>缓存</button></div></div>{wave && <WaveformCanvas/>}</section><section className="lyrics" onWheel={() => setFollow(false)}>{!follow && <button className="return-current" onClick={() => setFollow(true)}>回到当前歌词</button>}<LyricsContent follow={follow}/></section></div>
+    <div className="atmosphere"/><header><IconButton label="收起播放层" onClick={() => setExpanded(false)}><CaretDown/></IconButton><span>正在播放 · {track.source === "netease" ? "网易云" : "本地"}</span><div><IconButton label="波形" active={wave} onClick={() => setWave(!wave)}><Waveform/></IconButton><IconButton label="队列" active={overlay === "queue"} onClick={() => setOverlay(overlay === "queue" ? "none" : "queue")}><Queue/></IconButton><IconButton label="更多" disabled><DotsThree/></IconButton></div></header>
+    <div className="player-stage"><section className="album-stage"><Cover src={track.coverSeed} alt={track.album}/><div className="stage-meta"><span className="eyebrow">{track.album} · {track.quality}</span><h1>{track.title}</h1><p>{track.artists.join(" / ")}</p><div><button disabled><Heart/>喜欢</button><ExpandedCacheControl track={track}/></div></div>{wave && <WaveformCanvas/>}</section><section className="lyrics" onWheel={() => setFollow(false)}>{!follow && <button className="return-current" onClick={() => setFollow(true)}>回到当前歌词</button>}<LyricsContent follow={follow}/></section></div>
     <AnimatePresence>{overlay === "queue" && <><button aria-label="关闭队列" className="panel-scrim" onClick={() => setOverlay("none")}/><QueuePanel/></>}</AnimatePresence><PlayerDock/>
   </motion.div>;
 }

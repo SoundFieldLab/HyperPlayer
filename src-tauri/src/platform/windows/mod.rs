@@ -2,7 +2,7 @@ use crate::{
     dto::{FileAssociationRequestDto, IntegrationCapabilityDto, WindowsIntegrationStatusDto},
     error::{AppError, CommandResult},
     events,
-    ports::AppState,
+    ports::{AppState, PlaybackTransition},
 };
 use std::{
     path::Path,
@@ -265,18 +265,26 @@ fn handle_media_button(
 
     let state = app.state::<AppState>();
     let result = if button == Button::Play {
-        state
-            .services
-            .playback
-            .play_resolved(None, crate::dto::PlaybackContextDto::default())
+        tauri::async_runtime::block_on(crate::commands::playback::resume_resolved(
+            state.services.playback.as_ref(),
+            state.services.tracks.as_ref(),
+        ))
     } else if button == Button::Pause {
         state.services.playback.pause()
     } else if button == Button::Stop {
         state.services.playback.stop()
     } else if button == Button::Next {
-        state.services.playback.next()
+        tauri::async_runtime::block_on(crate::commands::playback::transition_resolved(
+            state.services.playback.as_ref(),
+            state.services.tracks.as_ref(),
+            PlaybackTransition::Next { automatic: false },
+        ))
     } else if button == Button::Previous {
-        state.services.playback.previous()
+        tauri::async_runtime::block_on(crate::commands::playback::transition_resolved(
+            state.services.playback.as_ref(),
+            state.services.tracks.as_ref(),
+            PlaybackTransition::Previous,
+        ))
     } else {
         return;
     };

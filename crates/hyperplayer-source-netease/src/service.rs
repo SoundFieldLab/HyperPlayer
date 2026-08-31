@@ -22,6 +22,26 @@ use crate::{
     Error, Result,
 };
 
+/// 匿名发现页的公共内容。各分区独立降级，不包含日推或私人 FM 等登录态数据。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicExplore {
+    pub playlists: Vec<PlaylistSummary>,
+    pub new_songs: Vec<Track>,
+    pub charts: Vec<ChartSummary>,
+    pub popular_artists: Vec<ArtistSummary>,
+    pub unavailable_sections: Vec<PublicExploreSection>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PublicExploreSection {
+    Playlists,
+    NewSongs,
+    Charts,
+    PopularArtists,
+}
+
 #[async_trait]
 pub trait Sleeper: Send + Sync {
     async fn sleep(&self, duration: Duration);
@@ -1451,6 +1471,155 @@ mod tests {
         assert_eq!(block_on(svc.charts()).unwrap()[0].preview_tracks[0].id, 21);
         assert_eq!(block_on(svc.new_songs(96)).unwrap()[0].id, 22);
         assert!(block_on(svc.new_songs(999)).is_err());
+    }
+
+    #[tokio::test]
+    async fn artist_overview_enriches_public_detail_description_and_fans() {
+        struct ArtistFake;
+        #[async_trait]
+        impl Transport for ArtistFake {
+            async fn execute(&self, request: HttpRequest) -> Result<crate::HttpResponse> {
+                let body = if request.url.contains("artist/42") {
+                    json!({"code":200,"artist":{"id":42,"name":"Artist"},"hotSongs":[]})
+                } else if request.url.contains("artist/head/info/get") {
+                    json!({"code":200,"data":{"briefDesc":"Brief"}})
+                } else if request.url.contains("artist/introduction") {
+                    json!({"code":200,"introduction":[{"txt":"First"},{"txt":"Second"}]})
+                } else if request.url.contains("artist/follow/count/get") {
+                    json!({"code":200,"data":{"fansCnt":1234}})
+                } else {
+                    panic!("unexpected artist request: {}", request.url);
+                };
+                response(body)
+            }
+        }
+        let mut rng = StdRng::seed_from_u64(21);
+        let service = NeteaseService::with_sleeper(ArtistFake, Session::new(&mut rng), NoSleep);
+
+        let overview = service.artist_overview(42).await.unwrap();
+
+        assert_eq!(overview.artist.brief_description.as_deref(), Some("Brief"));
+        assert_eq!(overview.introduction.as_deref(), Some("First\nSecond"));
+        assert_eq!(overview.fans_count, Some(1234));
+    }
+
+    #[tokio::test]
+    async fn artist_overview_keeps_base_when_optional_enrichment_fails() {
+        struct ArtistFallbackFake;
+        #[async_trait]
+        impl Transport for ArtistFallbackFake {
+            async fn execute(&self, request: HttpRequest) -> Result<crate::HttpResponse> {
+                if request.url.contains("artist/head/info/get")
+                    || request.url.contains("artist/introduction")
+                    || request.url.contains("artist/follow/count/get")
+                {
+                    Err(Error::Timeout)
+                } else {
+                    response(
+                        json!({"code":200,"artist":{"id":42,"name":"Artist","briefDesc":"Base"},"hotSongs":[]}),
+                    )
+                }
+            }
+        }
+        let mut rng = StdRng::seed_from_u64(22);
+        let service =
+            NeteaseService::with_sleeper(ArtistFallbackFake, Session::new(&mut rng), NoSleep);
+
+        let overview = service.artist_overview(42).await.unwrap();
+
+        assert_eq!(overview.artist.brief_description.as_deref(), Some("Base"));
+        assert!(overview.introduction.is_none());
+        assert!(overview.fans_count.is_none());
+    }
+
+    #[tokio::test]
+    async fn public_explore_uses_only_anonymous_public_sources() {
+        struct PublicExploreFake {
+            requests: Mutex<Vec<HttpRequest>>,
+        }
+        #[async_trait]
+        impl Transport for PublicExploreFake {
+            async fn execute(&self, request: HttpRequest) -> Result<crate::HttpResponse> {
+                self.requests.lock().unwrap().push(request.clone());
+                let body = if request.url.contains("personalized/playlist") {
+                    json!({"code":200,"result":[{"id":1,"name":"Public playlist"}]})
+                } else if request.url.contains("discovery/new/songs") {
+                    json!({"code":200,"data":[{"id":2,"name":"New song","ar":[],"al":{"id":0,"name":""}}]})
+                } else if request.url.contains("toplist/detail") {
+                    json!({"code":200,"list":[{"id":3,"name":"Chart"}]})
+                } else if request.url.contains("artist/top") {
+                    json!({"code":200,"artists":[{"id":4,"name":"Popular artist"}]})
+                } else {
+                    panic!("unexpected public explore request: {}", request.url);
+                };
+                response(body)
+            }
+        }
+        let mut rng = StdRng::seed_from_u64(20);
+        let svc = NeteaseService::with_sleeper(
+            PublicExploreFake {
+                requests: Mutex::new(Vec::new()),
+            },
+            Session::new(&mut rng),
+            NoSleep,
+        );
+
+        let explore = svc.public_explore().await.unwrap();
+
+        assert_eq!(explore.playlists[0].id, 1);
+        assert_eq!(explore.new_songs[0].id, 2);
+        assert_eq!(explore.charts[0].id, 3);
+        assert_eq!(explore.popular_artists[0].id, 4);
+        assert!(explore.unavailable_sections.is_empty());
+        let requests = svc.transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests.iter().all(|request| {
+            !request.url.contains("discovery/recommend/songs")
+                && !request.url.contains("discovery/recommend/resource")
+                && !request.url.contains("radio/get")
+        }));
+    }
+
+    #[test]
+    fn public_explore_degrades_failed_sections_and_reports_them() {
+        let svc = service(vec![
+            Err(Error::Timeout),
+            response(
+                json!({"code":200,"data":[{"id":2,"name":"New song","ar":[],"al":{"id":0,"name":""}}]}),
+            ),
+            response(json!({"code":502,"message":"chart unavailable"})),
+            response(json!({"code":200,"artists":[{"id":4,"name":"Popular artist"}]})),
+        ]);
+
+        let explore = block_on(svc.public_explore()).unwrap();
+
+        assert!(explore.playlists.is_empty());
+        assert_eq!(explore.new_songs[0].id, 2);
+        assert!(explore.charts.is_empty());
+        assert_eq!(explore.popular_artists[0].id, 4);
+        assert_eq!(
+            explore.unavailable_sections,
+            vec![
+                PublicExploreSection::Playlists,
+                PublicExploreSection::Charts,
+            ]
+        );
+    }
+
+    #[test]
+    fn public_explore_errors_when_every_public_source_fails() {
+        let svc = service(vec![
+            Err(Error::Timeout),
+            Err(Error::Timeout),
+            Err(Error::Timeout),
+            Err(Error::Timeout),
+        ]);
+
+        assert_eq!(
+            block_on(svc.public_explore()),
+            Err(Error::Transport("网易云公共发现内容暂不可用".into()))
+        );
+        assert_eq!(svc.transport.requests.lock().unwrap().len(), 4);
     }
 
     #[test]
