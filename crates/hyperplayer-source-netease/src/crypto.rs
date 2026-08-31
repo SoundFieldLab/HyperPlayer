@@ -26,7 +26,7 @@ fn aes128_ecb_encrypt(key: &[u8; 16], plaintext: &[u8]) -> Result<Vec<u8>> {
     let pad = 16 - (plaintext.len() % 16);
     let mut buf = plaintext.to_vec();
     buf.extend(std::iter::repeat_n(pad as u8, pad));
-    for chunk in buf.chunks_exact_mut(16) {
+    for chunk in buf.as_chunks_mut::<16>().0 {
         cipher.encrypt_block(chunk.into());
     }
     Ok(buf)
@@ -37,7 +37,7 @@ fn aes256_ecb_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
     let pad = 16 - (plaintext.len() % 16);
     let mut buf = plaintext.to_vec();
     buf.extend(std::iter::repeat_n(pad as u8, pad));
-    for chunk in buf.chunks_exact_mut(16) {
+    for chunk in buf.as_chunks_mut::<16>().0 {
         cipher.encrypt_block(chunk.into());
     }
     Ok(buf)
@@ -49,7 +49,7 @@ fn aes128_ecb_decrypt(key: &[u8; 16], ciphertext: &[u8]) -> Result<Vec<u8>> {
     }
     let cipher = Aes128::new_from_slice(key).map_err(|e| Error::Crypto(e.to_string()))?;
     let mut out = ciphertext.to_vec();
-    for chunk in out.chunks_exact_mut(16) {
+    for chunk in out.as_chunks_mut::<16>().0 {
         cipher.decrypt_block(chunk.into());
     }
     let pad = *out.last().unwrap() as usize;
@@ -215,8 +215,8 @@ fn gcm_encrypt(key: &[u8], iv: &[u8; 12], plain: &[u8]) -> Result<(Vec<u8>, [u8;
     auth.extend_from_slice(&((out.len() as u64) * 8).to_be_bytes());
     let mut y = 0u128;
     let h = u128::from_be_bytes(h);
-    for block in auth.chunks_exact(16) {
-        y = gf_mul(y ^ u128::from_be_bytes(block.try_into().unwrap()), h)
+    for block in auth.as_chunks::<16>().0 {
+        y = gf_mul(y ^ u128::from_be_bytes(*block), h)
     }
     let mut mask = j0;
     cipher.encrypt_block((&mut mask).into());
@@ -275,7 +275,7 @@ fn aes256_ecb_decrypt(key: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>> {
     }
     let cipher = Aes256::new_from_slice(key).map_err(|e| Error::Crypto(e.to_string()))?;
     let mut out = ciphertext.to_vec();
-    for c in out.chunks_exact_mut(16) {
+    for c in out.as_chunks_mut::<16>().0 {
         cipher.decrypt_block(c.into())
     }
     let p = *out.last().unwrap() as usize;

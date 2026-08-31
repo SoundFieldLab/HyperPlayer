@@ -869,7 +869,7 @@ mod tests {
         let mut body = v.to_string().into_bytes();
         let padding = 16 - body.len() % 16;
         body.extend(std::iter::repeat_n(padding as u8, padding));
-        for chunk in body.chunks_exact_mut(16) {
+        for chunk in body.as_chunks_mut::<16>().0 {
             cipher.encrypt_block(chunk.into());
         }
         Ok(crate::HttpResponse {
