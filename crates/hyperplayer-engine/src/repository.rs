@@ -206,6 +206,18 @@ pub struct CacheRepositoryStats {
     pub locked_entries: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntitlementCacheScope {
+    Owner(u64),
+    AllAccounts,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CacheEntitlementLockResult {
+    pub locked_entries: usize,
+    pub revoked_leases: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemovedCacheObject {
     pub content_hash: String,
@@ -337,6 +349,10 @@ impl SqliteRepository {
     }
 
     pub fn append_playback_history(&self, record: &PlaybackHistoryRecord) -> Result<()> {
+        self.start_playback_history(record).map(|_| ())
+    }
+
+    pub fn start_playback_history(&self, record: &PlaybackHistoryRecord) -> Result<u64> {
         self.connection.execute(
             "INSERT INTO playback_history(media_id, played_unix_ms, position_ms) VALUES (?1, ?2, ?3)",
             params![
@@ -345,6 +361,27 @@ impl SqliteRepository {
                 sqlite_integer(record.position_ms, "position_ms")?
             ],
         )?;
+        u64::try_from(self.connection.last_insert_rowid())
+            .map_err(|_| EngineError::InvalidInput("playback history id is invalid".into()))
+    }
+
+    pub fn update_playback_history_position(
+        &self,
+        history_id: u64,
+        position_ms: u64,
+    ) -> Result<()> {
+        let changed = self.connection.execute(
+            "UPDATE playback_history SET position_ms = ?2 WHERE id = ?1",
+            params![
+                sqlite_integer(history_id, "playback history id")?,
+                sqlite_integer(position_ms, "position_ms")?
+            ],
+        )?;
+        if changed == 0 {
+            return Err(EngineError::InvalidInput(
+                "playback history entry does not exist".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -972,6 +1009,40 @@ impl SqliteRepository {
             .map_err(Into::into)
     }
 
+    pub fn lock_account_entitled_cache_entries(
+        &mut self,
+        scope: EntitlementCacheScope,
+    ) -> Result<CacheEntitlementLockResult> {
+        let owner_user_id = match scope {
+            EntitlementCacheScope::Owner(owner_user_id) => {
+                Some(sqlite_integer(owner_user_id, "owner_user_id")?)
+            }
+            EntitlementCacheScope::AllAccounts => None,
+        };
+        let transaction = self.connection.transaction()?;
+        let revoked_leases = transaction.execute(
+            "DELETE FROM cache_leases
+             WHERE content_hash IN (
+                 SELECT content_hash FROM cache_entries
+                 WHERE access_class = 'account_entitled'
+                   AND (?1 IS NULL OR owner_user_id = ?1)
+             )",
+            params![owner_user_id],
+        )?;
+        let locked_entries = transaction.execute(
+            "UPDATE cache_entries SET state = 'locked_entitlement'
+             WHERE access_class = 'account_entitled'
+               AND (?1 IS NULL OR owner_user_id = ?1)
+               AND state <> 'locked_entitlement'",
+            params![owner_user_id],
+        )?;
+        transaction.commit()?;
+        Ok(CacheEntitlementLockResult {
+            locked_entries,
+            revoked_leases,
+        })
+    }
+
     pub fn remove_cache_entries_for(
         &mut self,
         content_id: &MediaId,
@@ -1550,6 +1621,176 @@ mod tests {
     }
 
     #[test]
+    fn locking_entitled_cache_for_owner_preserves_other_owners_and_public_entries() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let owner_hash = "1".repeat(64);
+        let other_hash = "2".repeat(64);
+        for hash in [&owner_hash, &other_hash] {
+            repository
+                .record_cache_object(
+                    &CacheObject {
+                        content_hash: hash.clone(),
+                        size_bytes: 1,
+                        path: PathBuf::from(hash),
+                    },
+                    1,
+                )
+                .unwrap();
+        }
+        let entitled_entry = |content_id: &str, owner_user_id, content_hash: &str| CacheEntry {
+            content_id: MediaId::new(content_id),
+            quality: "lossless".into(),
+            content_hash: content_hash.into(),
+            access_class: CacheAccessClass::AccountEntitled { owner_user_id },
+            entitlement_snapshot: Some(EntitlementSnapshot {
+                product: "vip".into(),
+                valid_until_unix_ms: Some(123_456),
+                server_revision: Some("rev-1".into()),
+            }),
+            last_validated_unix_ms: Some(123_000),
+            official_source: "netease".into(),
+            state: CacheState::Available,
+        };
+        let owner_entry = entitled_entry("owner", 42, &owner_hash);
+        let other_entry = entitled_entry("other", 7, &other_hash);
+        let public_entry = CacheEntry {
+            content_id: MediaId::new("public"),
+            quality: "lossless".into(),
+            content_hash: owner_hash.clone(),
+            access_class: CacheAccessClass::Public,
+            entitlement_snapshot: None,
+            last_validated_unix_ms: None,
+            official_source: "netease".into(),
+            state: CacheState::Available,
+        };
+        for entry in [&owner_entry, &other_entry, &public_entry] {
+            repository.upsert_cache_entry(entry).unwrap();
+        }
+        let lease = CacheLease::NextTrackPrefetch;
+        repository
+            .acquire_cache_lease(&owner_hash, &lease, 2)
+            .unwrap();
+        repository
+            .acquire_cache_lease(&other_hash, &lease, 2)
+            .unwrap();
+
+        let result = repository
+            .lock_account_entitled_cache_entries(EntitlementCacheScope::Owner(42))
+            .unwrap();
+
+        assert_eq!(
+            result,
+            CacheEntitlementLockResult {
+                locked_entries: 1,
+                revoked_leases: 1,
+            }
+        );
+        assert_eq!(
+            repository
+                .cache_entry(&owner_entry.content_id, &owner_entry.quality)
+                .unwrap()
+                .unwrap()
+                .state,
+            CacheState::LockedEntitlement
+        );
+        assert_eq!(
+            repository
+                .cache_entry(&other_entry.content_id, &other_entry.quality)
+                .unwrap()
+                .unwrap()
+                .state,
+            CacheState::Available
+        );
+        assert_eq!(
+            repository
+                .cache_entry(&public_entry.content_id, &public_entry.quality)
+                .unwrap()
+                .unwrap()
+                .state,
+            CacheState::Available
+        );
+        assert_eq!(repository.cache_lease_count(&owner_hash).unwrap(), 0);
+        assert_eq!(repository.cache_lease_count(&other_hash).unwrap(), 1);
+    }
+
+    #[test]
+    fn locking_all_entitled_cache_is_idempotent_and_revokes_all_matching_leases() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let first_hash = "3".repeat(64);
+        let second_hash = "4".repeat(64);
+        for hash in [&first_hash, &second_hash] {
+            repository
+                .record_cache_object(
+                    &CacheObject {
+                        content_hash: hash.clone(),
+                        size_bytes: 1,
+                        path: PathBuf::from(hash),
+                    },
+                    1,
+                )
+                .unwrap();
+        }
+        for (content_id, owner_user_id, content_hash, state) in [
+            ("first", 42, &first_hash, CacheState::Available),
+            ("second", 7, &second_hash, CacheState::Partial),
+        ] {
+            repository
+                .upsert_cache_entry(&CacheEntry {
+                    content_id: MediaId::new(content_id),
+                    quality: "lossless".into(),
+                    content_hash: content_hash.clone(),
+                    access_class: CacheAccessClass::AccountEntitled { owner_user_id },
+                    entitlement_snapshot: Some(EntitlementSnapshot {
+                        product: "vip".into(),
+                        valid_until_unix_ms: Some(123_456),
+                        server_revision: Some("rev-1".into()),
+                    }),
+                    last_validated_unix_ms: Some(123_000),
+                    official_source: "netease".into(),
+                    state,
+                })
+                .unwrap();
+            repository
+                .acquire_cache_lease(content_hash, &CacheLease::NextTrackPrefetch, 2)
+                .unwrap();
+        }
+
+        assert_eq!(
+            repository
+                .lock_account_entitled_cache_entries(EntitlementCacheScope::AllAccounts)
+                .unwrap(),
+            CacheEntitlementLockResult {
+                locked_entries: 2,
+                revoked_leases: 2,
+            }
+        );
+        for content_id in ["first", "second"] {
+            assert_eq!(
+                repository
+                    .cache_entry(&MediaId::new(content_id), "lossless")
+                    .unwrap()
+                    .unwrap()
+                    .state,
+                CacheState::LockedEntitlement
+            );
+        }
+        assert_eq!(repository.cache_lease_count(&first_hash).unwrap(), 0);
+        assert_eq!(repository.cache_lease_count(&second_hash).unwrap(), 0);
+        assert_eq!(
+            repository
+                .lock_account_entitled_cache_entries(EntitlementCacheScope::AllAccounts)
+                .unwrap(),
+            CacheEntitlementLockResult::default()
+        );
+        assert_eq!(
+            repository
+                .lock_account_entitled_cache_entries(EntitlementCacheScope::Owner(999))
+                .unwrap(),
+            CacheEntitlementLockResult::default()
+        );
+    }
+
+    #[test]
     fn album_session_counts_once_per_day_and_promotes_at_five() {
         let mut repository = SqliteRepository::in_memory().unwrap();
         let first = repository
@@ -1614,14 +1855,24 @@ mod tests {
                 position_ms: 12_345,
             })
             .unwrap();
+        let history_id = repository
+            .start_playback_history(&PlaybackHistoryRecord {
+                media_id: MediaId::new("track-session"),
+                played_unix_ms: 100,
+                position_ms: 0,
+            })
+            .unwrap();
+        repository
+            .update_playback_history_position(history_id, 5_432)
+            .unwrap();
 
         let restored = repository.load_playback_session().unwrap().unwrap();
         assert_eq!(restored.queue.context_snapshot(), queue.context_snapshot());
         assert_eq!(restored.position_ms, 12_345);
-        assert_eq!(
-            repository.playback_history(10).unwrap()[0].position_ms,
-            12_345
-        );
+        let history = repository.playback_history(10).unwrap();
+        assert_eq!(history[0].media_id, MediaId::new("track-session"));
+        assert_eq!(history[0].position_ms, 5_432);
+        assert_eq!(history[1].position_ms, 12_345);
     }
 
     #[test]

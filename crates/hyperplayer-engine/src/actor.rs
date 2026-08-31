@@ -376,6 +376,9 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
             }
             engine.media.insert(item.queue_id, media);
             machine.play_next(item);
+            if let Some(runtime) = runtime.as_mut() {
+                prime_next(machine, runtime, &engine.media);
+            }
             Ok(())
         }
         EngineCommand::Enqueue {
@@ -390,6 +393,9 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
             }
             engine.media.insert(item.queue_id, media);
             machine.enqueue(item, position);
+            if let Some(runtime) = runtime.as_mut() {
+                prime_next(machine, runtime, &engine.media);
+            }
             Ok(())
         }
         EngineCommand::Remove { queue_id } => {
@@ -399,6 +405,9 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
                 if let Some(runtime) = runtime.as_mut() {
                     runtime.stop()?;
                 }
+            }
+            if let Some(runtime) = runtime.as_mut() {
+                prime_next(machine, runtime, &engine.media);
             }
             Ok(())
         }
@@ -423,11 +432,18 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
                 .ok_or_else(|| {
                     EngineError::InvalidInput(format!("queue item does not exist: {queue_id}"))
                 })?;
-            machine.reorder(section, from, target_index)
+            machine.reorder(section, from, target_index)?;
+            if let Some(runtime) = runtime.as_mut() {
+                prime_next(machine, runtime, &engine.media);
+            }
+            Ok(())
         }
         EngineCommand::ClearPriority => {
             machine.clear_priority();
             retain_queued_media(machine, &mut engine.media);
+            if let Some(runtime) = runtime.as_mut() {
+                prime_next(machine, runtime, &engine.media);
+            }
             Ok(())
         }
         EngineCommand::ClearAll => {
@@ -459,6 +475,9 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
         }
         EngineCommand::SetMode(mode) => {
             machine.set_mode(mode);
+            if let Some(runtime) = runtime.as_mut() {
+                prime_next(machine, runtime, &engine.media);
+            }
             Ok(())
         }
         EngineCommand::Snapshot => Ok(()),
@@ -515,10 +534,14 @@ fn prime_next(
     runtime: &mut RuntimeCoordinator,
     media: &HashMap<u64, TrustedResolvedMedia>,
 ) {
-    if let Some(next) = machine.queue().peek_next(true) {
-        if let Some(resolved) = media.get(&next.queue_id) {
-            let _ = runtime.prime_standby(resolved, STANDBY_FRAMES);
-        }
+    let next = machine
+        .queue()
+        .peek_next(true)
+        .and_then(|next| media.get(&next.queue_id));
+    if let Some(resolved) = next {
+        let _ = runtime.prime_standby(resolved, STANDBY_FRAMES);
+    } else if runtime.standby().is_gapless_ready() {
+        let _ = runtime.take_standby_at_sample_boundary();
     }
 }
 
@@ -554,7 +577,7 @@ fn publish(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::WavDecoderFactory;
+    use crate::audio::{StandbyState, WavDecoderFactory};
     use crate::dsp::{PcmFormat, PcmSampleFormat};
     use crate::model::{MediaId, MediaSource, Track};
     use std::fs;
@@ -654,6 +677,120 @@ mod tests {
             wav.extend_from_slice(&sample.to_le_bytes());
         }
         wav
+    }
+
+    fn standby_queue_id(engine: &EngineRuntime) -> Option<u64> {
+        let track = match engine.audio.as_ref()?.standby() {
+            StandbyState::Primed { track, .. } => track,
+            _ => return None,
+        };
+        engine
+            .media
+            .iter()
+            .find_map(|(queue_id, media)| (&media.track == track).then_some(*queue_id))
+    }
+
+    #[test]
+    fn queue_changes_keep_standby_aligned_with_next() {
+        let dir = tempdir().unwrap();
+        let paths: Vec<_> = (1..=4)
+            .map(|id| {
+                let path = dir.path().join(format!("{id}.wav"));
+                fs::write(&path, wav(&[id as i16; 32])).unwrap();
+                path
+            })
+            .collect();
+        let items: Vec<_> = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| item(index as u64 + 1, path))
+            .collect();
+        let mut output = Some(Box::new(TestOutput {
+            format: format(),
+            state: Arc::new(Mutex::new(State::default())),
+            fail_start: false,
+        }) as Box<dyn AudioOutput>);
+        let mut engine = EngineRuntime {
+            machine: PlaybackMachine::new(1),
+            audio: None,
+            decoder_factory: Some(Box::new(WavDecoderFactory)),
+            output_factory: Some(Box::new(move |_format| {
+                output
+                    .take()
+                    .ok_or_else(|| EngineError::AudioBackend("test output already opened".into()))
+            })),
+            subscribers: Vec::new(),
+            media: HashMap::new(),
+            pending_restore: false,
+        };
+
+        apply(
+            &mut engine,
+            EngineCommand::LoadContext {
+                items: vec![items[0].clone()],
+                start_index: 0,
+                media: media(&items[0], &paths[0]),
+            },
+        )
+        .unwrap();
+        assert_eq!(standby_queue_id(&engine), None);
+
+        apply(
+            &mut engine,
+            EngineCommand::Enqueue {
+                item: items[1].clone(),
+                position: QueueInsertPosition::ContextEnd,
+                media: media(&items[1], &paths[1]),
+            },
+        )
+        .unwrap();
+        assert_eq!(standby_queue_id(&engine), Some(2));
+
+        apply(
+            &mut engine,
+            EngineCommand::Enqueue {
+                item: items[2].clone(),
+                position: QueueInsertPosition::PlayNext,
+                media: media(&items[2], &paths[2]),
+            },
+        )
+        .unwrap();
+        assert_eq!(standby_queue_id(&engine), Some(3));
+
+        apply(
+            &mut engine,
+            EngineCommand::PlayNext {
+                item: items[3].clone(),
+                media: media(&items[3], &paths[3]),
+            },
+        )
+        .unwrap();
+        apply(
+            &mut engine,
+            EngineCommand::Reorder {
+                queue_id: 4,
+                target_index: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(standby_queue_id(&engine), Some(4));
+
+        apply(&mut engine, EngineCommand::Remove { queue_id: 4 }).unwrap();
+        assert_eq!(standby_queue_id(&engine), Some(3));
+
+        apply(&mut engine, EngineCommand::ClearPriority).unwrap();
+        assert_eq!(standby_queue_id(&engine), Some(2));
+
+        apply(&mut engine, EngineCommand::SetMode(PlaybackMode::RepeatOne)).unwrap();
+        assert_eq!(standby_queue_id(&engine), Some(1));
+
+        apply(
+            &mut engine,
+            EngineCommand::SetMode(PlaybackMode::Sequential),
+        )
+        .unwrap();
+        apply(&mut engine, EngineCommand::Remove { queue_id: 2 }).unwrap();
+        assert_eq!(standby_queue_id(&engine), None);
     }
 
     #[test]
