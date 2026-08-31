@@ -189,7 +189,8 @@ mod tests {
                 "source": "local",
                 "title": "untrusted title",
                 "playable": true
-            }
+            },
+            "context": { "kind": "manual", "id": null }
         }));
         assert!(result.is_err());
     }

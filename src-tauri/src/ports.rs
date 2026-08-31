@@ -23,6 +23,7 @@ pub trait PlaybackPort: Send + Sync {
     fn play_resolved(
         &self,
         media: Option<hyperplayer_engine::TrustedResolvedMedia>,
+        context: PlaybackContextDto,
     ) -> AppResult<EngineSnapshotDto>;
     fn pause(&self) -> AppResult<EngineSnapshotDto>;
     fn stop(&self) -> AppResult<EngineSnapshotDto>;
@@ -193,7 +194,11 @@ impl AppServices {
         ));
         let settings = Arc::new(SettingsAdapter::open(app_data_dir.join("settings.json"))?);
         let credential_vault = crate::credential_vault::netease_credential_vault(app_data_dir)?;
-        let netease = Arc::new(NeteaseAdapter::new(settings.clone(), credential_vault)?);
+        let netease = Arc::new(NeteaseAdapter::new(
+            settings.clone(),
+            credential_vault,
+            repository.clone(),
+        )?);
         let cache_root = app_data_dir.join("cache");
         let cache = Arc::new(CacheAdapter::new(
             repository.clone(),

@@ -5,7 +5,7 @@ import {
 } from "@phosphor-icons/react";
 import { fallbackCover } from "../artwork";
 import { adaptTrack, bridge } from "../bridge";
-import type { BackendCacheStatusDto, LibraryAlbumDto, LibraryArtistDto, LibraryFolderDto, LibraryPlaylistDto, LibraryRecentDto, NeteaseLoginStartDto, NeteaseLoginStateDto, TrackDto, UpdateCheckDto } from "../bridge/contracts";
+import type { BackendCacheStatusDto, LibraryAlbumDto, LibraryArtistDto, LibraryFolderDto, LibraryPlaylistDto, LibraryRecentDto, NeteaseLoginStartDto, NeteaseLoginStateDto, PlaybackContextDto, TrackDto, UpdateCheckDto } from "../bridge/contracts";
 import { Cover, Page, RemoteNotice, SectionTitle } from "../components/ui";
 import { TrackTable } from "../components/TrackTable";
 import { useRemote } from "../hooks/useRemote";
@@ -15,8 +15,8 @@ import { SettingsView } from "./SettingsView";
 
 type GridItem = { id: string | number; title: string; sub: string; cover: string };
 
-function AppTrackTable({ tracks, compact = false }: { tracks: TrackDto[]; compact?: boolean }): React.JSX.Element {
-  return <TrackTable tracks={tracks} compact={compact}/>;
+function AppTrackTable({ tracks, compact = false, playbackContext }: { tracks: TrackDto[]; compact?: boolean; playbackContext?: PlaybackContextDto }): React.JSX.Element {
+  return <TrackTable tracks={tracks} compact={compact} playbackContext={playbackContext}/>;
 }
 
 function AlbumGrid({ items, artist = false, onSelect }: { items: GridItem[]; artist?: boolean; onSelect: (item: GridItem) => void }): React.JSX.Element {
@@ -34,7 +34,7 @@ function HomeView(): React.JSX.Element {
   const tracks = home.status === "ready" ? home.data.recommendedTracks.map(adaptTrack) : [];
   const fmTracks = fm.status === "ready" ? fm.data.tracks.map(adaptTrack) : [];
   return <Page title="网易云" subtitle="推荐与私人 FM 均来自已连接服务">
-    <div className="feature-row"><button onClick={() => fmTracks[0] && void useAppStore.getState().playTrack(fmTracks[0])} disabled={!fmTracks.length}><span className="fm-tile"><Broadcast weight="fill"/></span><span><b>私人 FM</b><small>{fmTracks.length ? `${fmTracks.length} 首待播` : "暂无可播放内容"}</small></span></button><button onClick={() => navigate("library")}><span className="date-tile"><Heart/></span><span><b>我的收藏</b><small>歌单、关注与云盘</small></span></button><button onClick={() => navigate("search")}><span className="new-tile"><MagnifyingGlass/></span><span><b>搜索网易云</b><small>歌曲、专辑与艺术家</small></span></button></div>
+    <div className="feature-row"><button onClick={() => fmTracks[0] && void useAppStore.getState().playTrack(fmTracks[0], { kind: "personalFm", id: null })} disabled={!fmTracks.length}><span className="fm-tile"><Broadcast weight="fill"/></span><span><b>私人 FM</b><small>{fmTracks.length ? `${fmTracks.length} 首待播` : "暂无可播放内容"}</small></span></button><button onClick={() => navigate("library")}><span className="date-tile"><Heart/></span><span><b>我的收藏</b><small>歌单、关注与云盘</small></span></button><button onClick={() => navigate("search")}><span className="new-tile"><MagnifyingGlass/></span><span><b>搜索网易云</b><small>歌曲、专辑与艺术家</small></span></button></div>
     <SectionTitle>推荐歌曲</SectionTitle><RemoteNotice state={home} empty="暂无推荐内容" retry={reloadHome}/>{tracks.length > 0 && <AppTrackTable tracks={tracks}/>} 
     <SectionTitle>私人 FM</SectionTitle><RemoteNotice state={fm} empty="私人 FM 暂无歌曲" retry={reloadFm}/>{fmTracks.length > 0 && <AppTrackTable tracks={fmTracks} compact/>}
     {home.status === "ready" && home.data.recommendedPlaylists.length > 0 && <><SectionTitle>推荐歌单</SectionTitle><div className="cover-grid">{home.data.recommendedPlaylists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("playlist", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/><span className="hover-play"><Play weight="fill"/></span></div><b>{item.name}</b><small>{item.ownerName || `${item.trackCount} 首`}</small></button>)}</div></>}
@@ -56,7 +56,7 @@ function SearchView(): React.JSX.Element {
     }, 250);
     return () => { active = false; window.clearTimeout(timer); };
   }, [domain, query]);
-  return <Page title="搜索" subtitle={`${domain === "netease" ? "网易云" : "本地曲库"}搜索结果`}><div className="search-page-input"><MagnifyingGlass/><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="歌曲、专辑或艺术家"/></div>{!query.trim() ? <div className="search-empty"><Command/><h2>搜索音乐</h2><p>输入关键词后从当前内容域查询。</p></div> : <><SectionTitle>歌曲</SectionTitle><RemoteNotice state={results} empty="没有找到歌曲"/>{results.status === "ready" && <AppTrackTable tracks={results.data}/>}</>}</Page>;
+  return <Page title="搜索" subtitle={`${domain === "netease" ? "网易云" : "本地曲库"}搜索结果`}><div className="search-page-input"><MagnifyingGlass/><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="歌曲、专辑或艺术家"/></div>{!query.trim() ? <div className="search-empty"><Command/><h2>搜索音乐</h2><p>输入关键词后从当前内容域查询。</p></div> : <><SectionTitle>歌曲</SectionTitle><RemoteNotice state={results} empty="没有找到歌曲"/>{results.status === "ready" && <AppTrackTable tracks={results.data} playbackContext={{ kind: "search", id: null }}/>}</>}</Page>;
 }
 
 function LibraryView(): React.JSX.Element {
@@ -152,7 +152,12 @@ function DetailView({ type }: { type: "album" | "artist" | "playlist" }): React.
   if (detail.status !== "ready") return <Page title={{ album: "专辑详情", artist: "艺术家详情", playlist: "歌单详情" }[type]} subtitle="读取网易云详情"><RemoteNotice state={detail} empty="详情中暂无曲目" retry={reload}/></Page>;
   const item = detail.data;
   const cover = item.cover || fallbackCover(String(detailId));
-  return <div className="page detail-page"><section className="detail-hero"><Cover src={cover} alt={item.title} className={type === "artist" ? "artist-cover" : ""}/><div><span className="eyebrow">{type === "artist" ? "艺术家" : type === "playlist" ? "歌单" : "专辑"}</span><h1>{item.title}</h1><p>{item.subtitle}</p>{item.description && <p className="detail-copy">{item.description}</p>}<div className="detail-actions"><button className="button primary" disabled={!item.tracks.length} onClick={() => item.tracks[0] && void playTrack(item.tracks[0])}><Play weight="fill"/>播放</button><button className="button secondary" disabled={!item.tracks.length} onClick={() => item.tracks.forEach((track) => void enqueueTrack(track))}><Queue/>加入队列</button></div></div></section><SectionTitle>{type === "artist" ? "热门歌曲" : "曲目"}</SectionTitle><AppTrackTable tracks={item.tracks}/>{type !== "artist" && <><SectionTitle>评论</SectionTitle><RemoteNotice state={comments} empty="暂无评论" retry={reloadComments}/>{comments.status === "ready" && <div className="comment-list">{comments.data.comments.map((comment) => <div key={comment.id}><User/><span><b>{comment.user?.nickname || "网易云用户"}</b><p>{comment.content}</p><small>{comment.timeText || `${comment.likedCount} 次赞`}</small></span></div>)}</div>}</>}</div>;
+  const playbackContext: PlaybackContextDto = type === "album"
+    ? { kind: "album", id: String(detailId) }
+    : type === "playlist"
+      ? { kind: "playlist", id: String(detailId) }
+      : { kind: "manual", id: null };
+  return <div className="page detail-page"><section className="detail-hero"><Cover src={cover} alt={item.title} className={type === "artist" ? "artist-cover" : ""}/><div><span className="eyebrow">{type === "artist" ? "艺术家" : type === "playlist" ? "歌单" : "专辑"}</span><h1>{item.title}</h1><p>{item.subtitle}</p>{item.description && <p className="detail-copy">{item.description}</p>}<div className="detail-actions"><button className="button primary" disabled={!item.tracks.length} onClick={() => item.tracks[0] && void playTrack(item.tracks[0], playbackContext)}><Play weight="fill"/>播放</button><button className="button secondary" disabled={!item.tracks.length} onClick={() => item.tracks.forEach((track) => void enqueueTrack(track))}><Queue/>加入队列</button></div></div></section><SectionTitle>{type === "artist" ? "热门歌曲" : "曲目"}</SectionTitle><AppTrackTable tracks={item.tracks} playbackContext={playbackContext}/>{type !== "artist" && <><SectionTitle>评论</SectionTitle><RemoteNotice state={comments} empty="暂无评论" retry={reloadComments}/>{comments.status === "ready" && <div className="comment-list">{comments.data.comments.map((comment) => <div key={comment.id}><User/><span><b>{comment.user?.nickname || "网易云用户"}</b><p>{comment.content}</p><small>{comment.timeText || `${comment.likedCount} 次赞`}</small></span></div>)}</div>}</>}</div>;
 }
 
 function AccountView(): React.JSX.Element {

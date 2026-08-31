@@ -55,7 +55,10 @@ pub fn get_playback(state: State<'_, AppState>) -> CommandResult<FrontendPlaybac
 #[tauri::command]
 pub fn set_playback(state: State<'_, AppState>, playing: bool) -> CommandResult<()> {
     let result = if playing {
-        state.services.playback.play_resolved(None)
+        state
+            .services
+            .playback
+            .play_resolved(None, crate::dto::PlaybackContextDto::default())
     } else {
         state.services.playback.pause()
     };

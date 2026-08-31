@@ -31,7 +31,7 @@ use hyperplayer_engine::{
     model::{MediaId, MediaSource, QueueItem, Track},
     playback::{PlaybackSnapshot, PlaybackState},
     queue::{PlaybackMode, PlaybackQueue, QueueInsertPosition},
-    repository::SqliteRepository,
+    repository::{PlaybackHistoryRecord, SqliteRepository},
     MediaHandle, TrustedResolvedMedia,
 };
 use hyperplayer_source_netease::{
@@ -98,6 +98,13 @@ struct EngineView {
     next_queue_id: u64,
 }
 
+struct PlaybackHistorySession {
+    queue_id: u64,
+    record_id: u64,
+    last_position_ms: u64,
+    last_persisted_position_ms: u64,
+}
+
 struct AlbumSessionState {
     album_id: String,
     current_queue_id: u64,
@@ -120,6 +127,8 @@ pub struct EngineAdapter {
     handle: EngineHandle,
     repository: Repository,
     view: Mutex<EngineView>,
+    playback_context: Mutex<PlaybackContextDto>,
+    playback_history: Mutex<Option<PlaybackHistorySession>>,
     album_session: Mutex<Option<AlbumSessionState>>,
     prefetch_sender: std::sync::mpsc::SyncSender<PrefetchRequest>,
     operation: Mutex<()>,
@@ -168,10 +177,55 @@ impl EngineAdapter {
                 volume: 1.0,
                 next_queue_id,
             }),
+            playback_context: Mutex::new(PlaybackContextDto::default()),
+            playback_history: Mutex::new(None),
             album_session: Mutex::new(None),
             prefetch_sender,
             operation: Mutex::new(()),
         })
+    }
+
+    fn validate_playback_context(
+        media: &TrustedResolvedMedia,
+        context: &PlaybackContextDto,
+    ) -> AppResult<()> {
+        match context.kind {
+            PlaybackContextKindDto::Album => {
+                let context_id = context
+                    .id
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        AppError::InvalidArgument("album playback context requires an id".into())
+                    })?;
+                if media.track.album_id.as_deref() != Some(context_id) {
+                    return Err(AppError::InvalidArgument(
+                        "album playback context does not match the resolved track".into(),
+                    ));
+                }
+            }
+            PlaybackContextKindDto::Playlist => {
+                if context
+                    .id
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(AppError::InvalidArgument(
+                        "playlist playback context requires an id".into(),
+                    ));
+                }
+            }
+            PlaybackContextKindDto::Manual
+            | PlaybackContextKindDto::Search
+            | PlaybackContextKindDto::PersonalFm => {
+                if context.id.is_some() {
+                    return Err(AppError::InvalidArgument(
+                        "this playback context must not include an id".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn command(&self, command: EngineCommand) -> AppResult<PlaybackSnapshot> {
@@ -209,6 +263,8 @@ impl EngineAdapter {
 
     fn execute(&self, command: EngineCommand) -> AppResult<EngineSnapshotDto> {
         let snapshot = self.command(command)?;
+        self.update_playback_history(&snapshot)?;
+        self.update_album_schedule(&snapshot)?;
         self.commit_snapshot(&snapshot)?;
         self.engine_dto(snapshot)
     }
@@ -225,12 +281,19 @@ impl EngineAdapter {
     }
 
     fn update_album_schedule(&self, snapshot: &PlaybackSnapshot) -> AppResult<()> {
+        let context = self.playback_context.app_lock()?.clone();
+        if context.kind != PlaybackContextKindDto::Album {
+            return self.clear_album_session();
+        }
         let Some(current) = snapshot.queue.current.as_ref() else {
             return self.clear_album_session();
         };
         let Some(album_id) = current.track.album_id.as_deref() else {
             return self.clear_album_session();
         };
+        if context.id.as_deref() != Some(album_id) {
+            return self.clear_album_session();
+        }
         let current_index = snapshot
             .queue
             .context
@@ -290,9 +353,10 @@ impl EngineAdapter {
         if matches!(snapshot.state, PlaybackState::Playing { .. })
             && position_ms >= state.last_position_ms
         {
-            state.effective_playback_ms = state
-                .effective_playback_ms
-                .saturating_add(position_ms - state.last_position_ms);
+            let delta = position_ms - state.last_position_ms;
+            if delta <= 2_000 {
+                state.effective_playback_ms = state.effective_playback_ms.saturating_add(delta);
+            }
         }
         state.last_position_ms = position_ms;
 
@@ -352,6 +416,83 @@ impl EngineAdapter {
         Ok(())
     }
 
+    fn finish_playback_history(&self) -> AppResult<()> {
+        let Some(session) = self.playback_history.app_lock()?.take() else {
+            return Ok(());
+        };
+        self.repository
+            .app_lock()?
+            .update_playback_history_position(session.record_id, session.last_position_ms)
+            .map_err(Into::into)
+    }
+
+    fn update_playback_history(&self, snapshot: &PlaybackSnapshot) -> AppResult<()> {
+        let Some(item) = snapshot.state.current() else {
+            return Ok(());
+        };
+        let position_ms = playback_position(&snapshot.state);
+        let mut history = self.playback_history.app_lock()?;
+        if history
+            .as_ref()
+            .is_some_and(|session| session.queue_id == item.queue_id)
+        {
+            let session = history.as_mut().expect("history session exists");
+            session.last_position_ms = match snapshot.state {
+                PlaybackState::Stopped { .. } | PlaybackState::Failed { .. } => {
+                    session.last_position_ms
+                }
+                _ => position_ms,
+            };
+            let terminal = matches!(
+                snapshot.state,
+                PlaybackState::Stopped { .. } | PlaybackState::Failed { .. }
+            );
+            let should_persist = terminal
+                || matches!(snapshot.state, PlaybackState::Paused { .. })
+                || session
+                    .last_position_ms
+                    .saturating_sub(session.last_persisted_position_ms)
+                    >= 5_000;
+            if should_persist {
+                self.repository
+                    .app_lock()?
+                    .update_playback_history_position(
+                        session.record_id,
+                        session.last_position_ms,
+                    )?;
+                session.last_persisted_position_ms = session.last_position_ms;
+            }
+            if terminal {
+                history.take();
+            }
+            return Ok(());
+        }
+
+        if let Some(previous) = history.take() {
+            self.repository
+                .app_lock()?
+                .update_playback_history_position(previous.record_id, previous.last_position_ms)?;
+        }
+        if !matches!(snapshot.state, PlaybackState::Playing { .. }) {
+            return Ok(());
+        }
+        let record_id =
+            self.repository
+                .app_lock()?
+                .start_playback_history(&PlaybackHistoryRecord {
+                    media_id: item.track.id.clone(),
+                    played_unix_ms: unix_millis(),
+                    position_ms,
+                })?;
+        *history = Some(PlaybackHistorySession {
+            queue_id: item.queue_id,
+            record_id,
+            last_position_ms: position_ms,
+            last_persisted_position_ms: position_ms,
+        });
+        Ok(())
+    }
+
     fn queue_dto(&self, snapshot: &PlaybackSnapshot) -> AppResult<QueueSnapshotDto> {
         Ok(QueueSnapshotDto {
             current_item_id: snapshot
@@ -381,8 +522,16 @@ impl PlaybackPort for EngineAdapter {
         self.snapshot_dto(self.handle.snapshot()?)
     }
 
-    fn play_resolved(&self, media: Option<TrustedResolvedMedia>) -> AppResult<EngineSnapshotDto> {
+    fn play_resolved(
+        &self,
+        media: Option<TrustedResolvedMedia>,
+        context: PlaybackContextDto,
+    ) -> AppResult<EngineSnapshotDto> {
         let _guard = self.operation.app_lock()?;
+        let has_new_media = media.is_some();
+        if let Some(media) = media.as_ref() {
+            Self::validate_playback_context(media, &context)?;
+        }
         let snapshot = if let Some(media) = media {
             let item = self.allocate_item(media.track.clone())?;
             self.command(EngineCommand::LoadContext {
@@ -404,6 +553,13 @@ impl PlaybackPort for EngineAdapter {
                 }
             }
         };
+        if has_new_media {
+            self.finish_playback_history()?;
+            *self.playback_context.app_lock()? = context;
+            self.clear_album_session()?;
+        }
+        self.update_playback_history(&snapshot)?;
+        self.update_album_schedule(&snapshot)?;
         self.commit_snapshot(&snapshot)?;
         self.engine_dto(snapshot)
     }
@@ -448,6 +604,7 @@ impl PlaybackPort for EngineAdapter {
     }
 
     fn event_dto(&self, event: EngineEvent) -> AppResult<(EngineEventKind, EngineSnapshotDto)> {
+        self.update_playback_history(&event.snapshot)?;
         self.update_album_schedule(&event.snapshot)?;
         self.commit_snapshot(&event.snapshot)?;
         Ok((event.kind, self.engine_dto(event.snapshot)?))
@@ -1093,10 +1250,24 @@ impl LibraryPort for LibraryAdapter {
 
     fn move_to_recycle_bin(&self, track_id: &str) -> AppResult<LibraryMutationResultDto> {
         validate_id(track_id, "trackId")?;
-        Err(AppError::Unavailable(
-            "moving media to the Windows Recycle Bin is not implemented; the file was not deleted"
-                .into(),
-        ))
+        let media_id = MediaId::new(track_id);
+        let path = self
+            .repository
+            .app_lock()?
+            .track_by_id(&media_id)?
+            .map(|record| record.path)
+            .ok_or_else(|| AppError::Unavailable("local track is not in the library".into()))?;
+        if !self.locations.contains_file(&path)? {
+            return Err(AppError::Unavailable(
+                "local track is outside every registered library location".into(),
+            ));
+        }
+        crate::platform::windows::move_file_to_recycle_bin(&path)?;
+        let removed = self.repository.app_lock()?.remove_track(&media_id)?;
+        Ok(LibraryMutationResultDto {
+            removed_from_library: removed,
+            moved_to_recycle_bin: true,
+        })
     }
 
     fn register_location(&self, path: &Path) -> AppResult<LibraryLocationDto> {
@@ -1507,23 +1678,24 @@ impl CachePort for CacheAdapter {
             .into_iter()
             .find(|track| track.id == song_id)
             .ok_or_else(|| AppError::Unavailable("NetEase track does not exist".into()))?;
-        if metadata.is_vip {
-            return Err(AppError::Unavailable(
-                "VIP cache requires a fresh account entitlement proof; none is available".into(),
-            ));
-        }
+        let (access_class, entitlement_snapshot, last_validated_unix_ms) = if metadata.is_vip {
+            let (user, vip) = self.netease.verify_account_entitlement().await?;
+            entitlement_cache_metadata(true, Some(&user), Some(&vip), unix_millis())?
+        } else {
+            entitlement_cache_metadata(false, None, None, unix_millis())?
+        };
         let play_info = service
             .song_url(
                 song_id,
                 cache_quality_preference(quality)?,
-                false,
+                metadata.is_vip,
                 Duration::from_secs(12),
             )
             .await?;
         let url = play_info.url.ok_or_else(|| {
             AppError::Unavailable("NetEase did not return an official playback URL".into())
         })?;
-        if play_info.free_trial_info.is_some() || play_info.is_paid_content {
+        if play_info.free_trial_info.is_some() || (play_info.is_paid_content && !metadata.is_vip) {
             return Err(AppError::Unavailable(
                 "trial or paid-content URLs cannot be cached as full tracks".into(),
             ));
@@ -1588,9 +1760,9 @@ impl CachePort for CacheAdapter {
             content_id: MediaId::new(&request.track.id),
             quality: play_info.level.as_str().into(),
             content_hash: content_hash.clone(),
-            access_class: CacheAccessClass::Public,
-            entitlement_snapshot: None,
-            last_validated_unix_ms: None,
+            access_class,
+            entitlement_snapshot,
+            last_validated_unix_ms,
             official_source: "netease".into(),
             state: CacheState::Available,
         };
@@ -1826,6 +1998,7 @@ pub struct NeteaseAdapter {
     vault: Arc<dyn CredentialVault>,
     device_id: String,
     settings: Arc<SettingsAdapter>,
+    repository: Repository,
     login: Mutex<LoginState>,
     pending_mutations: Mutex<HashMap<String, PendingMutation>>,
     session_gate: tokio::sync::Mutex<()>,
@@ -1833,13 +2006,18 @@ pub struct NeteaseAdapter {
 }
 
 impl NeteaseAdapter {
-    pub fn new(settings: Arc<SettingsAdapter>, vault: Arc<dyn CredentialVault>) -> AppResult<Self> {
-        Self::with_client(settings, vault, Client::builder().build().ok())
+    pub fn new(
+        settings: Arc<SettingsAdapter>,
+        vault: Arc<dyn CredentialVault>,
+        repository: Repository,
+    ) -> AppResult<Self> {
+        Self::with_client(settings, vault, repository, Client::builder().build().ok())
     }
 
     fn with_client(
         settings: Arc<SettingsAdapter>,
         vault: Arc<dyn CredentialVault>,
+        repository: Repository,
         client: Option<Client>,
     ) -> AppResult<Self> {
         let restored = Self::load_stored_session(vault.as_ref())?;
@@ -1873,6 +2051,7 @@ impl NeteaseAdapter {
             vault,
             device_id,
             settings,
+            repository,
             login: Mutex::new(LoginState {
                 authenticated,
                 secret: restored,
@@ -1908,12 +2087,26 @@ impl NeteaseAdapter {
         result
     }
 
+    fn lock_entitled_cache(&self, owner_user_id: Option<u64>) -> AppResult<()> {
+        let scope = owner_user_id.map_or(
+            hyperplayer_engine::repository::EntitlementCacheScope::AllAccounts,
+            hyperplayer_engine::repository::EntitlementCacheScope::Owner,
+        );
+        self.repository
+            .app_lock()?
+            .lock_account_entitled_cache_entries(scope)?;
+        Ok(())
+    }
+
     fn commit_authorized_session(&self, login: &mut LoginState, cookie: String) -> AppResult<()> {
         let secret = SecretSession {
             cookie,
             device_id: self.device_id.clone(),
             expires_at_ms: unix_millis().saturating_add(NETEASE_SESSION_TTL.as_millis() as u64),
         };
+        if login.authenticated {
+            self.lock_entitled_cache(login.user_id)?;
+        }
         if let Err(error) = self.persist_session(&secret) {
             if let Some(previous) = login.secret.as_ref() {
                 if let Some(service) = self.service.as_ref() {
@@ -1953,6 +2146,9 @@ impl NeteaseAdapter {
             vault,
             device_id: String::new(),
             settings,
+            repository: Arc::new(Mutex::new(
+                SqliteRepository::in_memory().expect("test repository"),
+            )),
             login: Mutex::new(LoginState::default()),
             pending_mutations: Mutex::new(HashMap::new()),
             session_gate: tokio::sync::Mutex::new(()),
@@ -1971,6 +2167,38 @@ impl NeteaseAdapter {
         self.service
             .as_ref()
             .ok_or_else(|| AppError::Unavailable("NetEase HTTP service is not configured".into()))
+    }
+
+    async fn verify_account_entitlement(&self) -> AppResult<(UserAccount, VipInfo)> {
+        self.require_authenticated()?;
+        let result = async {
+            let service = self.require_service()?;
+            let user = service.account().await?.ok_or_else(|| {
+                AppError::Unavailable("NetEase account session is not authenticated".into())
+            })?;
+            let vip = service.vip_info().await?;
+            Ok::<_, AppError>((user, vip))
+        }
+        .await;
+        let (user, vip) = match result {
+            Ok(value) => value,
+            Err(error) => {
+                let owner_user_id = self.login.app_lock()?.user_id;
+                self.lock_entitled_cache(owner_user_id)?;
+                self.entitlement.clear()?;
+                return Err(error);
+            }
+        };
+        let previous_owner = self.login.app_lock()?.user_id;
+        if previous_owner.is_some_and(|owner| owner != user.user_id) {
+            self.lock_entitled_cache(previous_owner)?;
+        }
+        self.entitlement.update_from_vip(&user, &vip)?;
+        let mut login = self.login.app_lock()?;
+        login.authenticated = true;
+        login.user_id = Some(user.user_id);
+        login.display_name = Some(user.nickname.clone());
+        Ok((user, vip))
     }
 
     fn authenticated_context(&self) -> AppResult<(u64, Option<u64>)> {
@@ -2326,30 +2554,8 @@ impl NeteasePort for NeteaseAdapter {
     }
 
     async fn account(&self) -> AppResult<NeteaseAccountDto> {
-        self.require_authenticated()?;
-        let result = async {
-            let service = self.require_service()?;
-            let user = service.account().await?.ok_or_else(|| {
-                AppError::Unavailable("NetEase account session is not authenticated".into())
-            })?;
-            let vip = service.vip_info().await?;
-            Ok::<_, AppError>((user, vip))
-        }
-        .await;
-        let (user, vip) = match result {
-            Ok(value) => value,
-            Err(error) => {
-                self.entitlement.clear()?;
-                return Err(error);
-            }
-        };
+        let (user, vip) = self.verify_account_entitlement().await?;
         let verified_at_ms = unix_millis();
-        self.entitlement.update_from_vip(&user, &vip)?;
-        let mut login = self.login.app_lock()?;
-        login.authenticated = true;
-        login.user_id = Some(user.user_id);
-        login.display_name = Some(user.nickname.clone());
-        drop(login);
         Ok(NeteaseAccountDto {
             user: netease_user_dto(user),
             vip: netease_vip_dto(vip, verified_at_ms),
@@ -2681,14 +2887,21 @@ impl NeteasePort for NeteaseAdapter {
     async fn logout(&self) -> AppResult<NeteaseStatusDto> {
         let _session_guard = self.session_gate.lock().await;
         self.vault.delete()?;
-        {
+        let was_authenticated;
+        let owner_user_id = {
             let mut login = self.login.app_lock()?;
+            was_authenticated = login.authenticated;
+            let owner_user_id = login.user_id;
             login.generation = login.generation.saturating_add(1);
             login.active_login_id = None;
             login.authenticated = false;
             login.user_id = None;
             login.display_name = None;
             login.secret = None;
+            owner_user_id
+        };
+        if was_authenticated {
+            self.lock_entitled_cache(owner_user_id)?;
         }
         if let Some(service) = &self.service {
             service.clear_user_cookie();
@@ -3549,6 +3762,48 @@ fn map_reqwest_error(error: reqwest::Error) -> hyperplayer_source_netease::Error
     }
 }
 
+fn entitlement_cache_metadata(
+    metadata_is_vip: bool,
+    user: Option<&UserAccount>,
+    vip: Option<&VipInfo>,
+    now_ms: u64,
+) -> AppResult<(
+    CacheAccessClass,
+    Option<hyperplayer_engine::cache::EntitlementSnapshot>,
+    Option<u64>,
+)> {
+    if !metadata_is_vip {
+        return Ok((CacheAccessClass::Public, None, None));
+    }
+    let user =
+        user.ok_or_else(|| AppError::Unavailable("NetEase VIP playback requires login".into()))?;
+    let vip = vip
+        .filter(|value| value.is_vip)
+        .ok_or_else(|| AppError::Unavailable("NetEase VIP entitlement was not confirmed".into()))?;
+    let valid_until_unix_ms = vip
+        .expire_time
+        .filter(|expires_at| *expires_at > now_ms)
+        .ok_or_else(|| {
+            AppError::Unavailable("NetEase VIP entitlement has no valid future expiry".into())
+        })?;
+    Ok((
+        CacheAccessClass::AccountEntitled {
+            owner_user_id: user.user_id,
+        },
+        Some(hyperplayer_engine::cache::EntitlementSnapshot {
+            product: "netease-vip".into(),
+            valid_until_unix_ms: Some(valid_until_unix_ms),
+            server_revision: Some(format!(
+                "netease:{}:{}:{}",
+                user.user_id,
+                vip.red_vip_level.unwrap_or_default(),
+                valid_until_unix_ms
+            )),
+        }),
+        Some(now_ms),
+    ))
+}
+
 fn authorized_official_url(play_info: &PlayInfo, account_entitled: bool) -> AppResult<&str> {
     let url = play_info.url.as_deref().ok_or_else(|| {
         AppError::Unavailable("NetEase did not return an official playback URL".into())
@@ -3649,6 +3904,8 @@ mod tests {
                 volume: 1.0,
                 next_queue_id: 1,
             }),
+            playback_context: Mutex::new(PlaybackContextDto::default()),
+            playback_history: Mutex::new(None),
             album_session: Mutex::new(None),
             prefetch_sender,
             operation: Mutex::new(()),
@@ -3698,6 +3955,89 @@ mod tests {
         wav
     }
 
+    fn playback_snapshot(item: QueueItem, position_ms: u64) -> PlaybackSnapshot {
+        let mut queue = PlaybackQueue::new(SHUFFLE_SEED);
+        queue.replace_context(vec![item.clone()], 0);
+        PlaybackSnapshot {
+            state: PlaybackState::Playing { item, position_ms },
+            mode: PlaybackMode::Sequential,
+            next: None,
+            priority_count: 0,
+            context_count: 1,
+            queue: queue.context_snapshot(),
+            revision: 1,
+        }
+    }
+
+    #[test]
+    fn playback_history_uses_one_row_per_queue_item_and_persists_pause_position() {
+        let adapter = test_engine();
+        let item = QueueItem::new(41, local_engine_track(1, PathBuf::from("history.wav")));
+        let first = playback_snapshot(item.clone(), 0);
+        adapter.update_playback_history(&first).unwrap();
+        let progress = playback_snapshot(item.clone(), 5_500);
+        adapter.update_playback_history(&progress).unwrap();
+        let mut paused = progress;
+        paused.state = PlaybackState::Paused {
+            item,
+            position_ms: 6_250,
+        };
+        adapter.update_playback_history(&paused).unwrap();
+
+        let history = adapter
+            .repository
+            .lock()
+            .unwrap()
+            .playback_history(10)
+            .unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].media_id, MediaId::new("1"));
+        assert_eq!(history[0].position_ms, 6_250);
+    }
+
+    #[test]
+    fn album_session_requires_explicit_matching_context_and_ignores_seek_jumps() {
+        let mut adapter = test_engine();
+        let (prefetch_sender, prefetch_receiver) = std::sync::mpsc::sync_channel(8);
+        adapter.prefetch_sender = prefetch_sender;
+        let mut track = local_engine_track(1, PathBuf::from("album.wav"));
+        track.album_id = Some("album-1".into());
+        let item = QueueItem::new(42, track);
+        let first = playback_snapshot(item.clone(), 1_000);
+
+        adapter.update_album_schedule(&first).unwrap();
+        assert!(adapter.album_session.lock().unwrap().is_none());
+        assert!(prefetch_receiver.try_recv().is_err());
+
+        *adapter.playback_context.lock().unwrap() = PlaybackContextDto {
+            kind: PlaybackContextKindDto::Album,
+            id: Some("album-1".into()),
+        };
+        adapter.update_album_schedule(&first).unwrap();
+        assert_eq!(prefetch_receiver.try_recv().unwrap().track.id, "1");
+        let jumped = playback_snapshot(item, 10_000);
+        adapter.update_album_schedule(&jumped).unwrap();
+        let session = adapter.album_session.lock().unwrap();
+        assert_eq!(session.as_ref().unwrap().effective_playback_ms, 0);
+    }
+
+    #[test]
+    fn playback_context_rejects_spoofed_album_ids() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("context.wav");
+        fs::write(&path, minimal_wav()).unwrap();
+        let mut media = local_engine_media(1, path);
+        media.track.album_id = Some("album-1".into());
+        assert!(EngineAdapter::validate_playback_context(
+            &media,
+            &PlaybackContextDto {
+                kind: PlaybackContextKindDto::Album,
+                id: Some("other-album".into()),
+            },
+        )
+        .is_err());
+    }
+
     #[test]
     fn album_context_schedules_next_and_records_five_minute_session() {
         let directory = tempfile::tempdir().unwrap();
@@ -3742,18 +4082,22 @@ mod tests {
                 QueueInsertPositionDto::ContextEnd,
             )
             .unwrap();
+        *adapter.playback_context.lock().unwrap() = PlaybackContextDto {
+            kind: PlaybackContextKindDto::Album,
+            id: Some("album-1".into()),
+        };
         let mut snapshot = adapter.handle.snapshot().unwrap();
         let item = snapshot.state.current().unwrap().clone();
-        snapshot.state = PlaybackState::Playing {
-            item: item.clone(),
-            position_ms: 0,
-        };
-        adapter.update_album_schedule(&snapshot).unwrap();
-        snapshot.state = PlaybackState::Playing {
-            item,
-            position_ms: QUALIFYING_PLAYBACK_MS,
-        };
-        adapter.update_album_schedule(&snapshot).unwrap();
+        for position_ms in 0..=QUALIFYING_PLAYBACK_MS {
+            if !position_ms.is_multiple_of(1_000) {
+                continue;
+            }
+            snapshot.state = PlaybackState::Playing {
+                item: item.clone(),
+                position_ms,
+            };
+            adapter.update_album_schedule(&snapshot).unwrap();
+        }
 
         let first_request = prefetch_receiver.try_recv().unwrap();
         let second_request = prefetch_receiver.try_recv().unwrap();
@@ -4238,6 +4582,7 @@ mod tests {
         let adapter = NeteaseAdapter::new(
             Arc::new(SettingsAdapter::new()),
             Arc::new(crate::credential_vault::MemoryCredentialVault::new(None)),
+            Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap())),
         )
         .unwrap();
         adapter.login.lock().unwrap().authenticated = true;
@@ -4329,7 +4674,12 @@ mod tests {
         })
         .unwrap();
         let vault = Arc::new(MemoryCredentialVault::new(Some(stored)));
-        let adapter = NeteaseAdapter::new(Arc::new(SettingsAdapter::new()), vault).unwrap();
+        let adapter = NeteaseAdapter::new(
+            Arc::new(SettingsAdapter::new()),
+            vault,
+            Arc::new(Mutex::new(SqliteRepository::in_memory().unwrap())),
+        )
+        .unwrap();
 
         let login = adapter.login.lock().unwrap();
         assert!(login.authenticated);
@@ -4402,12 +4752,59 @@ mod tests {
         )));
         let adapter =
             NeteaseAdapter::disabled_with_vault(Arc::new(SettingsAdapter::new()), vault.clone());
-        adapter.login.lock().unwrap().authenticated = true;
+        {
+            let mut login = adapter.login.lock().unwrap();
+            login.authenticated = true;
+            login.user_id = Some(42);
+        }
+        let content_hash = "5".repeat(64);
+        {
+            let repository = adapter.repository.lock().unwrap();
+            repository
+                .record_cache_object(
+                    &hyperplayer_engine::cache::CacheObject {
+                        content_hash: content_hash.clone(),
+                        size_bytes: 1,
+                        path: PathBuf::from(&content_hash),
+                    },
+                    1,
+                )
+                .unwrap();
+            repository
+                .upsert_cache_entry(&CacheEntry {
+                    content_id: MediaId::new("vip-track"),
+                    quality: "lossless".into(),
+                    content_hash: content_hash.clone(),
+                    access_class: CacheAccessClass::AccountEntitled { owner_user_id: 42 },
+                    entitlement_snapshot: Some(EntitlementSnapshot {
+                        product: "netease-vip".into(),
+                        valid_until_unix_ms: Some(unix_millis() + 60_000),
+                        server_revision: Some("revision".into()),
+                    }),
+                    last_validated_unix_ms: Some(unix_millis()),
+                    official_source: "netease".into(),
+                    state: CacheState::Available,
+                })
+                .unwrap();
+            repository
+                .acquire_cache_lease(&content_hash, &CacheLease::NextTrackPrefetch, unix_millis())
+                .unwrap();
+        }
 
         tauri::async_runtime::block_on(adapter.logout()).unwrap();
 
         assert!(vault.snapshot().is_none());
         assert!(!adapter.login.lock().unwrap().authenticated);
+        let repository = adapter.repository.lock().unwrap();
+        assert_eq!(
+            repository
+                .cache_entry(&MediaId::new("vip-track"), "lossless")
+                .unwrap()
+                .unwrap()
+                .state,
+            CacheState::LockedEntitlement
+        );
+        assert_eq!(repository.cache_lease_count(&content_hash).unwrap(), 0);
     }
 
     #[test]

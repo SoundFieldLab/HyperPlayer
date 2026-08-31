@@ -6,6 +6,7 @@ import type {
   BridgeContract,
   ContentDomain,
   PlaybackSnapshotDto,
+  PlaybackContextDto,
   QueueInsertPosition,
   TrackDto,
   Unlisten,
@@ -51,7 +52,7 @@ interface AppState {
   stop(): Promise<void>;
   next(): Promise<void>;
   previous(): Promise<void>;
-  playTrack(track: TrackDto): Promise<void>;
+  playTrack(track: TrackDto, context?: PlaybackContextDto): Promise<void>;
   seek(value: number): Promise<void>;
   setVolume(value: number): Promise<void>;
   setRepeat(value: PlaybackSnapshotDto["repeat"]): Promise<void>;
@@ -224,11 +225,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     try { const playback = await activeBridge.previous(); if (generation === transportGeneration) set({ playback }); }
     catch (error) { if (generation === transportGeneration) get().notifyError(error, "无法播放上一首"); }
   },
-  async playTrack(track) {
+  async playTrack(track, context) {
     const generation = ++transportGeneration;
     const previous = get().playback;
     try {
-      const playback = await activeBridge.play(trackRefOf(track));
+      const playback = await activeBridge.play(trackRefOf(track), context);
       if (generation === transportGeneration) set({ playback, selectedTrackIds: [track.id] });
     } catch (error) {
       if (generation !== transportGeneration) return;

@@ -36,13 +36,16 @@ pub async fn playback_play(
     state: State<'_, AppState>,
     request: Option<PlayTrackRequestDto>,
 ) -> CommandResult<PlaybackStateDto> {
-    let track = match request {
-        Some(request) => Some(super::command(
-            state.services.tracks.resolve(&request.track).await,
-        )?),
-        None => None,
+    let (track, context) = match request {
+        Some(request) => (
+            Some(super::command(
+                state.services.tracks.resolve(&request.track).await,
+            )?),
+            request.context,
+        ),
+        None => (None, crate::dto::PlaybackContextDto::default()),
     };
-    let snapshot = super::command(state.services.playback.play_resolved(track))?;
+    let snapshot = super::command(state.services.playback.play_resolved(track, context))?;
     emit(&app, snapshot)
 }
 

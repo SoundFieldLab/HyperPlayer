@@ -324,6 +324,22 @@ pub async fn netease_logout(
 ) -> CommandResult<NeteaseStatusDto> {
     require_main(&window)?;
     let status = super::command(state.services.netease.logout().await)?;
+    let current_is_netease = state
+        .services
+        .playback
+        .state()
+        .ok()
+        .and_then(|playback| playback.current_track)
+        .is_some_and(|track| track.track_ref.source == crate::dto::TrackSourceDto::Netease);
+    if current_is_netease {
+        let snapshot = super::command(state.services.playback.stop())?;
+        app.emit(events::ENGINE_SNAPSHOT_CHANGED, &snapshot)
+            .and_then(|_| app.emit(events::PLAYBACK_STATE_CHANGED, &snapshot.playback))
+            .and_then(|_| app.emit(events::QUEUE_CHANGED, &snapshot.queue))
+            .map_err(|error| {
+                crate::error::ErrorDto::from(crate::error::AppError::Window(error.to_string()))
+            })?;
+    }
     app.emit(events::NETEASE_STATUS_CHANGED, &status)
         .map_err(|error| {
             crate::error::ErrorDto::from(crate::error::AppError::Window(error.to_string()))

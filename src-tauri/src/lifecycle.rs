@@ -179,7 +179,10 @@ fn tray_play_pause<R: Runtime>(app: &tauri::AppHandle<R>) {
         if playback.status == PlaybackStatusDto::Playing {
             state.services.playback.pause()
         } else {
-            state.services.playback.play_resolved(None)
+            state
+                .services
+                .playback
+                .play_resolved(None, crate::dto::PlaybackContextDto::default())
         }
     });
     if let Ok(snapshot) = result {

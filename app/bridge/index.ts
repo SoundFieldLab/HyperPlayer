@@ -248,8 +248,8 @@ function tauriBridge(): BridgeContract {
       return { playback: snapshot(), settings: adaptSettings(value.settings), tasks: localTasks(value) };
     },
     async getPlayback() { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackGetState)); },
-    async play(track) {
-      const request = track ? { track } : null;
+    async play(track, context = { kind: "manual", id: null }) {
+      const request = track ? { track, context } : null;
       return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackPlay, { request }));
     },
     async pause() { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackPause)); },

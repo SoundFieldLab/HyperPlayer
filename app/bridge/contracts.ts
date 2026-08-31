@@ -72,6 +72,12 @@ export interface AppSettingsDto {
 
 export type BackendPlaybackStatus = "stopped" | "paused" | "playing" | "buffering" | "error";
 export type BackendRepeatMode = "sequential" | "repeatAll" | "repeatOne" | "shuffle";
+export type PlaybackContextKind = "manual" | "album" | "playlist" | "search" | "personalFm";
+
+export interface PlaybackContextDto {
+  kind: PlaybackContextKind;
+  id: string | null;
+}
 
 export interface BackendTrackDto {
   trackRef: BackendTrackRefDto;
@@ -386,7 +392,7 @@ export type Unlisten = () => void;
 export interface BridgeContract {
   bootstrap(): Promise<BridgeBootstrap>;
   getPlayback(): Promise<PlaybackSnapshotDto>;
-  play(track?: BackendTrackRefDto): Promise<PlaybackSnapshotDto>;
+  play(track?: BackendTrackRefDto, context?: PlaybackContextDto): Promise<PlaybackSnapshotDto>;
   pause(): Promise<PlaybackSnapshotDto>;
   stop(): Promise<PlaybackSnapshotDto>;
   next(): Promise<PlaybackSnapshotDto>;

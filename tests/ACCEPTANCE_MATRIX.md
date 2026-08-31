@@ -2,7 +2,7 @@
 
 更新时间：2026-08-31
 
-> 最近一次本地验证：前端 16 项、engine 56 项、网易云 Rust 38 项、Tauri 50 项测试通过；IPC 清单 66 个 command / 12 个 event 匹配；`cargo deny` advisories/licenses 通过；此前 `pnpm build` 已成功生成 x64 NSIS 与 MSI。验证后应清除 `node_modules`、`dist` 和全部 Rust `target` 缓存，因此复验可能需要先恢复依赖。
+> 最近一次本地验证：前端 16 项、engine 59 项、网易云 Rust 38 项、Tauri 59 项测试通过；IPC 清单 66 个 command / 12 个 event 匹配；`cargo deny` advisories/licenses 通过；此前 `pnpm build` 已成功生成 x64 NSIS 与 MSI。验证后应清除 `node_modules`、`dist` 和全部 Rust `target` 缓存，因此复验可能需要先恢复依赖。
 
 ## 自动化门禁
 

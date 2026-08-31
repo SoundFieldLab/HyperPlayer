@@ -92,10 +92,38 @@ pub struct SeekRequestDto {
     pub position_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum PlaybackContextKindDto {
+    Manual,
+    Album,
+    Playlist,
+    Search,
+    PersonalFm,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlaybackContextDto {
+    pub kind: PlaybackContextKindDto,
+    pub id: Option<String>,
+}
+
+impl Default for PlaybackContextDto {
+    fn default() -> Self {
+        Self {
+            kind: PlaybackContextKindDto::Manual,
+            id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlayTrackRequestDto {
     pub track: TrackRefDto,
+    #[serde(default)]
+    pub context: PlaybackContextDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
