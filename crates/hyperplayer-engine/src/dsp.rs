@@ -611,6 +611,24 @@ impl ProcessorChain {
         Ok(())
     }
 
+    pub fn restore_speculative_processing_to_safe_bypass(&mut self) -> Result<bool> {
+        let Some(fault) = self.speculative_processing_fault() else {
+            self.restore_speculative_processing()?;
+            return Ok(false);
+        };
+        let revision = self.active.revision;
+        let stream_frame = self
+            .active
+            .fault_stream_frame
+            .expect("a speculative DSP fault records its stream frame");
+        self.restore_speculative_processing()?;
+        self.active.fault = Some(fault);
+        self.active.fault_stream_frame = Some(stream_frame);
+        self.unreported_fault = Some((revision, fault, stream_frame));
+        self.execution_mode = ExecutionMode::SafeBypass;
+        Ok(true)
+    }
+
     pub fn commit_speculative_processing(&mut self) {
         self.has_runtime_checkpoint = false;
     }
@@ -931,6 +949,87 @@ mod tests {
         chain.process_applied(format(), &mut replay, 41).unwrap();
         assert!(chain.snapshot().fault.is_some());
         assert_eq!(chain.snapshot().fault_stream_frame, Some(41));
+    }
+
+    #[test]
+    fn speculative_fault_can_restore_state_and_latch_safe_bypass() {
+        struct OneShotNonFinite {
+            fail_next: bool,
+        }
+        impl PcmProcessor for OneShotNonFinite {
+            fn name(&self) -> &'static str {
+                "one-shot-non-finite"
+            }
+            fn create_runtime_checkpoint(&self) -> Option<Box<dyn Any + Send>> {
+                Some(Box::new(self.fail_next))
+            }
+            fn runtime_checkpoint_compatible(&self, state: &(dyn Any + Send)) -> bool {
+                state.is::<bool>()
+            }
+            fn save_runtime_state(&self, state: &mut (dyn Any + Send)) -> bool {
+                let Some(value) = state.downcast_mut::<bool>() else {
+                    return false;
+                };
+                *value = self.fail_next;
+                true
+            }
+            fn restore_runtime_state(&mut self, state: &(dyn Any + Send)) -> bool {
+                let Some(value) = state.downcast_ref::<bool>() else {
+                    return false;
+                };
+                self.fail_next = *value;
+                true
+            }
+            fn prepare(&mut self, _format: PcmFormat, _max_block_frames: usize) -> Result<()> {
+                Ok(())
+            }
+            fn process(&mut self, block: PcmBlock<'_>) -> Result<()> {
+                if self.fail_next {
+                    block.interleaved[0] = f32::NAN;
+                    self.fail_next = false;
+                }
+                Ok(())
+            }
+            fn reset(&mut self, _reason: ResetReason) {}
+            fn latency_frames(&self) -> u32 {
+                3
+            }
+            fn tail_frames(&self) -> u32 {
+                5
+            }
+        }
+
+        let prepared = PreparedProcessorChain::prepare(
+            9,
+            format(),
+            1,
+            vec![Box::new(OneShotNonFinite { fail_next: true })],
+        )
+        .unwrap();
+        let mut chain = ProcessorChain::from_prepared(prepared);
+        chain.begin_speculative_processing().unwrap();
+        let mut speculative = [0.25_f32, -0.25];
+        chain
+            .process_applied(format(), &mut speculative, 37)
+            .unwrap();
+
+        assert!(chain
+            .restore_speculative_processing_to_safe_bypass()
+            .unwrap());
+        let snapshot = chain.snapshot();
+        assert_eq!(snapshot.revision, 9);
+        assert!(snapshot.safe_bypass_active);
+        assert_eq!(snapshot.latency_frames, 0);
+        assert_eq!(snapshot.tail_frames, 0);
+        assert_eq!(snapshot.fault_stream_frame, Some(37));
+        let reported = chain.take_unreported_fault().unwrap();
+        assert_eq!(reported.0, 9);
+        assert_eq!(reported.1.processor_name, "one-shot-non-finite");
+        assert_eq!(reported.2, 37);
+
+        let mut bypassed = [0.5_f32, -0.5];
+        chain.process_applied(format(), &mut bypassed, 41).unwrap();
+        assert_eq!(bypassed, [0.5, -0.5]);
     }
 
     #[test]

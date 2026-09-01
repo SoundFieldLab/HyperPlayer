@@ -409,10 +409,12 @@ fn safe_bypass_transitions_and_recovery_allocate_nothing() {
         .process(format(), &mut samples, 0)
         .unwrap();
     assert!(speculative_fault.snapshot().safe_bypass_active);
-    speculative_fault.restore_speculative_processing().unwrap();
-    assert!(!speculative_fault.snapshot().safe_bypass_active);
-    assert!(speculative_fault.snapshot().fault.is_none());
-    assert!(speculative_fault.take_unreported_fault().is_none());
+    assert!(speculative_fault
+        .restore_speculative_processing_to_safe_bypass()
+        .unwrap());
+    assert!(speculative_fault.snapshot().safe_bypass_active);
+    assert!(speculative_fault.snapshot().fault.is_some());
+    assert!(speculative_fault.take_unreported_fault().is_some());
 
     active_fault.queue_prepared(recovery).unwrap();
     active_fault.process(format(), &mut samples, 384).unwrap();

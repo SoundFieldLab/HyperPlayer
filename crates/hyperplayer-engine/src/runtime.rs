@@ -794,11 +794,15 @@ impl RuntimeCoordinator {
             return Err(error);
         }
         if self.dsp.speculative_processing_fault().is_some() {
-            self.restore_standby_dsp_checkpoint()?;
+            self.dsp.restore_speculative_processing_to_safe_bypass()?;
+            self.standby_dsp_checkpointed = false;
             self.standby_pcm.clone_from(&self.standby_raw_pcm);
-            return Err(EngineError::AudioBackend(
-                "standby DSP processing failed".into(),
-            ));
+            let applied_revision = self.dsp.snapshot().revision;
+            self.standby
+                .as_mut()
+                .expect("standby survives synchronous DSP preparation")
+                .dsp_revision = Some(applied_revision);
+            return Ok(());
         }
         let applied_revision = self.dsp.snapshot().revision;
         self.standby_pcm = pcm;
@@ -1640,6 +1644,104 @@ mod tests {
             output_state.lock().unwrap().samples,
             vec![0.25, 0.25, 0.25, 0.25]
         );
+    }
+
+    #[test]
+    fn standby_dsp_fault_promotes_raw_pcm_in_safe_bypass() {
+        struct FaultOnSecondBlock {
+            calls: usize,
+        }
+
+        impl PcmProcessor for FaultOnSecondBlock {
+            fn name(&self) -> &'static str {
+                "fault-on-standby"
+            }
+            fn create_runtime_checkpoint(&self) -> Option<Box<dyn std::any::Any + Send>> {
+                Some(Box::new(self.calls))
+            }
+            fn runtime_checkpoint_compatible(&self, state: &(dyn std::any::Any + Send)) -> bool {
+                state.is::<usize>()
+            }
+            fn save_runtime_state(&self, state: &mut (dyn std::any::Any + Send)) -> bool {
+                let Some(calls) = state.downcast_mut::<usize>() else {
+                    return false;
+                };
+                *calls = self.calls;
+                true
+            }
+            fn restore_runtime_state(&mut self, state: &(dyn std::any::Any + Send)) -> bool {
+                let Some(calls) = state.downcast_ref::<usize>() else {
+                    return false;
+                };
+                self.calls = *calls;
+                true
+            }
+            fn prepare(&mut self, _format: PcmFormat, _max_block_frames: usize) -> Result<()> {
+                Ok(())
+            }
+            fn process(&mut self, block: PcmBlock<'_>) -> Result<()> {
+                self.calls += 1;
+                if self.calls == 2 {
+                    block.interleaved[0] = f32::NAN;
+                }
+                Ok(())
+            }
+            fn reset(&mut self, _reason: ResetReason) {}
+            fn latency_frames(&self) -> u32 {
+                7
+            }
+            fn tail_frames(&self) -> u32 {
+                11
+            }
+        }
+
+        let directory = tempdir().unwrap();
+        let current_path = directory.path().join("fault-current.wav");
+        let next_path = directory.path().join("fault-next.wav");
+        fs::write(&current_path, pcm16_wav(&[0])).unwrap();
+        fs::write(&next_path, pcm16_wav(&[8192, -8192])).unwrap();
+        let output_state = Arc::new(Mutex::new(OutputState::default()));
+        let output = RecordingOutput {
+            format: format(),
+            state: Arc::clone(&output_state),
+            max_write: usize::MAX,
+        };
+        let prepared = PreparedProcessorChain::prepare(
+            1,
+            format(),
+            DECODE_BUFFER_FRAMES,
+            vec![Box::new(FaultOnSecondBlock { calls: 0 })],
+        )
+        .unwrap();
+        let mut runtime = RuntimeCoordinator::new(Box::new(WavDecoderFactory), Box::new(output));
+        runtime.queue_prepared_dsp(prepared).unwrap();
+        runtime.load(&trusted_local(&current_path)).unwrap();
+        runtime.start().unwrap();
+
+        let next = trusted_local(&next_path);
+        let next_track = next.track.clone();
+        runtime.prime_standby(&next, 2).unwrap();
+        runtime.prepare_standby_dsp_after_active_tail().unwrap();
+
+        let snapshot = runtime.dsp_snapshot();
+        assert_eq!(snapshot.revision, 1);
+        assert!(snapshot.safe_bypass_active);
+        assert_eq!(snapshot.latency_frames, 0);
+        assert_eq!(snapshot.tail_frames, 0);
+        assert_eq!(snapshot.fault_stream_frame, Some(0));
+        assert_eq!(runtime.standby.as_ref().unwrap().dsp_revision, Some(1));
+        assert_eq!(
+            runtime.standby_pcm.iter().copied().collect::<Vec<_>>(),
+            vec![0.25, -0.25]
+        );
+        let fault = runtime.take_dsp_fault().unwrap();
+        assert_eq!(fault.0, 1);
+        assert_eq!(fault.1.processor_name, "fault-on-standby");
+        assert_eq!(fault.2, 0);
+
+        assert!(runtime.promote_standby(&next_track).unwrap());
+        runtime.pump_once().unwrap();
+        assert_eq!(output_state.lock().unwrap().samples, vec![0.0, 0.25, -0.25]);
     }
 
     #[test]

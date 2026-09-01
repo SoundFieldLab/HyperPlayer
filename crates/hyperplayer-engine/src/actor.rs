@@ -1138,7 +1138,9 @@ fn publish(
 mod tests {
     use super::*;
     use crate::audio::{StandbyState, WavDecoderFactory};
-    use crate::dsp::{PcmFormat, PcmSampleFormat};
+    use crate::dsp::{
+        PcmBlock, PcmFormat, PcmProcessor, PcmSampleFormat, PreparedProcessorChain, ResetReason,
+    };
     use crate::model::{MediaId, MediaSource, Track};
     use crate::telemetry::TelemetryActivity;
     use std::fs;
@@ -1441,6 +1443,149 @@ mod tests {
                 }
         }));
         assert_eq!(subscribers.len(), 1);
+    }
+
+    #[test]
+    fn standby_dsp_fault_publishes_diagnostics_without_failing_playback() {
+        struct FaultOnNonZero;
+
+        impl PcmProcessor for FaultOnNonZero {
+            fn name(&self) -> &'static str {
+                "fault-on-standby"
+            }
+            fn runtime_state_capability(&self) -> crate::dsp::RuntimeStateCapability {
+                crate::dsp::RuntimeStateCapability::Stateless
+            }
+            fn prepare(&mut self, _format: PcmFormat, _max_block_frames: usize) -> Result<()> {
+                Ok(())
+            }
+            fn process(&mut self, block: PcmBlock<'_>) -> Result<()> {
+                if block.interleaved.iter().any(|sample| *sample != 0.0) {
+                    block.interleaved[0] = f32::NAN;
+                }
+                Ok(())
+            }
+            fn reset(&mut self, _reason: ResetReason) {}
+            fn latency_frames(&self) -> u32 {
+                7
+            }
+            fn tail_frames(&self) -> u32 {
+                11
+            }
+        }
+
+        let directory = tempdir().unwrap();
+        let current_path = directory.path().join("fault-current.wav");
+        let next_path = directory.path().join("fault-next.wav");
+        fs::write(
+            &current_path,
+            wav(&vec![0; crate::runtime::DECODE_BUFFER_FRAMES * 2]),
+        )
+        .unwrap();
+        fs::write(&next_path, wav(&[8192, -8192])).unwrap();
+        let current = item(1, &current_path);
+        let next = item(2, &next_path);
+        let output_state = Arc::new(Mutex::new(State::default()));
+        let mut output = Some(Box::new(TestOutput {
+            format: format(),
+            state: Arc::clone(&output_state),
+            fail_start: false,
+        }) as Box<dyn AudioOutput>);
+        let mut engine = EngineRuntime {
+            machine: PlaybackMachine::new(1),
+            audio: None,
+            telemetry: TelemetryHub::new(),
+            decoder_factory: Some(Box::new(WavDecoderFactory)),
+            output_factory: Some(Box::new(move |_format| {
+                output
+                    .take()
+                    .ok_or_else(|| EngineError::AudioBackend("test output already opened".into()))
+            })),
+            subscribers: Vec::new(),
+            media: HashMap::new(),
+            pending_restore: false,
+            desired_dsp: None,
+            dsp_compiler: None,
+        };
+        let (event_sender, event_receiver) = mpsc::channel();
+        engine.subscribers.push(event_sender);
+
+        apply(
+            &mut engine,
+            EngineCommand::LoadContext {
+                items: vec![current.clone()],
+                start_index: 0,
+                media: media(&current, &current_path),
+            },
+        )
+        .unwrap();
+        apply(&mut engine, EngineCommand::Ready).unwrap();
+        engine
+            .audio
+            .as_mut()
+            .unwrap()
+            .queue_prepared_dsp(
+                PreparedProcessorChain::prepare(
+                    1,
+                    format(),
+                    crate::runtime::DECODE_BUFFER_FRAMES,
+                    vec![Box::new(FaultOnNonZero)],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        apply(
+            &mut engine,
+            EngineCommand::Enqueue {
+                item: next.clone(),
+                position: QueueInsertPosition::ContextEnd,
+                media: media(&next, &next_path),
+            },
+        )
+        .unwrap();
+
+        service_audio_tick(&mut engine);
+        assert!(matches!(
+            engine.machine.state(),
+            PlaybackState::Playing { item, .. } if item.queue_id == 1
+        ));
+        let dsp = engine.audio.as_ref().unwrap().dsp_snapshot();
+        assert_eq!(dsp.revision, 1);
+        assert!(dsp.safe_bypass_active);
+        assert_eq!(dsp.latency_frames, 0);
+        assert_eq!(dsp.tail_frames, 0);
+
+        service_audio_tick(&mut engine);
+        service_audio_tick(&mut engine);
+        assert!(matches!(
+            engine.machine.state(),
+            PlaybackState::Playing { item, .. } if item.queue_id == 2
+        ));
+        assert_eq!(
+            &output_state.lock().unwrap().samples[crate::runtime::DECODE_BUFFER_FRAMES * 2..],
+            &[0.25, -0.25]
+        );
+
+        let events = event_receiver.try_iter().collect::<Vec<_>>();
+        assert!(events
+            .iter()
+            .any(|event| event.kind == EngineEventKind::DspExecutionChanged));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event.kind,
+                EngineEventKind::DspProcessingFault {
+                    revision: 1,
+                    processor_name: "fault-on-standby",
+                    stream_frame: 0,
+                    safe_bypass_active: true,
+                    fallback_status: DspFallbackStatus::RustSafeBypass,
+                    ..
+                }
+            )
+        }));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event.snapshot.state, PlaybackState::Failed { .. })));
     }
 
     #[test]
