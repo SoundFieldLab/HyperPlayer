@@ -9,9 +9,12 @@
     "build": "tauri build",
     "build:debug": "tauri build --debug --no-bundle",
     "frontend:dev": "vite --host 127.0.0.1",
-    "frontend:build": "pnpm check:ipc && tsc -b && vite build",
+    "frontend:build": "pnpm check:ipc && pnpm check:hse-destination && tsc -b && vite build",
     "check:ipc": "node app/bridge/verify-contract.mjs",
     "check:hse-source": "node provenance/hse-v1.5.1/verify-source-manifest.mjs",
+    "check:hse-destination": "node scripts/verify-hse-destination-manifest.mjs",
+    "check:hse-vendor": "pnpm check:hse-source && pnpm check:hse-destination",
+    "update:hse-destination": "node scripts/verify-hse-destination-manifest.mjs --update",
     "check:hse-ts": "tsc -p shared/hse-ts-core/tsconfig.json --pretty false",
     "test": "vitest run"
   },

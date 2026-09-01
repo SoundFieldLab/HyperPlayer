@@ -28,6 +28,8 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Verify HSE vendored destination
+        run: pnpm check:hse-destination
       - name: Run frontend unit tests
         run: pnpm test
       - name: Build frontend assets for Tauri
