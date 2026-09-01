@@ -86,7 +86,7 @@ impl MidSideStage {
         assert!(interleaved.len() % 2 == 0, "交错立体声必须包含完整帧");
         let mg = self.mid_gain;
         let sg = self.side_gain;
-        for frame in interleaved.chunks_exact_mut(2) {
+        for frame in interleaved.as_chunks_mut::<2>().0 {
             let li = f64::from(frame[0]);
             let ri = f64::from(frame[1]);
             let m = (li + ri) * 0.5;

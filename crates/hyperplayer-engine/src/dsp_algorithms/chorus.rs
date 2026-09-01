@@ -193,13 +193,19 @@ impl PcmProcessor for ChorusProcessor {
         if !self.is_active() {
             return Ok(());
         }
-        for (index, frame) in block.interleaved.chunks_exact(2).enumerate() {
+        for (index, frame) in block.interleaved.as_chunks::<2>().0.iter().enumerate() {
             self.left[index] = frame[0];
             self.right[index] = frame[1];
         }
         self.effect
             .process_stereo(&mut self.left[..frames], &mut self.right[..frames]);
-        for (index, frame) in block.interleaved.chunks_exact_mut(2).enumerate() {
+        for (index, frame) in block
+            .interleaved
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             frame[0] = self.left[index];
             frame[1] = self.right[index];
         }
@@ -362,11 +368,15 @@ mod tests {
             mix: 1.0,
         });
         let mut left = input
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|frame| frame[0])
             .collect::<Vec<_>>();
         let mut right = input
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|frame| frame[1])
             .collect::<Vec<_>>();
         core.process_stereo(&mut left, &mut right);

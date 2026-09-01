@@ -146,30 +146,28 @@ pub(crate) mod ts_trig {
             if (hx as i32) > 0 {
                 let mut z = x - PIO2_1;
                 let y0;
-                let y1;
-                if ix != 0x3FF9_21FB {
+                let y1 = if ix != 0x3FF9_21FB {
                     // 33+53 位 π 足够
                     y0 = z - PIO2_1T;
-                    y1 = (z - y0) - PIO2_1T;
+                    (z - y0) - PIO2_1T
                 } else {
                     // 接近 π/2：用 33+33+53 位 π
                     z -= PIO2_2;
                     y0 = z - PIO2_2T;
-                    y1 = (z - y0) - PIO2_2T;
-                }
+                    (z - y0) - PIO2_2T
+                };
                 return (1, y0, y1);
             } else {
                 let mut z = x + PIO2_1;
                 let y0;
-                let y1;
-                if ix != 0x3FF9_21FB {
+                let y1 = if ix != 0x3FF9_21FB {
                     y0 = z + PIO2_1T;
-                    y1 = (z - y0) + PIO2_1T;
+                    (z - y0) + PIO2_1T
                 } else {
                     z += PIO2_2;
                     y0 = z + PIO2_2T;
-                    y1 = (z - y0) + PIO2_2T;
-                }
+                    (z - y0) + PIO2_2T
+                };
                 return (-1, y0, y1);
             }
         }
@@ -493,7 +491,7 @@ impl Fft {
             let quarter = len >> 2;
             let mut t = vec![0.0_f64; quarter * 6];
             let step = (2.0 * std::f64::consts::PI) / len as f64;
-            for (k, chunk) in t.chunks_exact_mut(6).enumerate() {
+            for (k, chunk) in t.as_chunks_mut::<6>().0.iter_mut().enumerate() {
                 let th = step * k as f64;
                 chunk[0] = ts_trig::cos(th);
                 chunk[1] = ts_trig::sin(th);

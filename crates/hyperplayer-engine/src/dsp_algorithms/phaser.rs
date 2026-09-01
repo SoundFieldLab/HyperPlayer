@@ -184,13 +184,19 @@ impl PcmProcessor for PhaserProcessor {
         if !self.is_active() {
             return Ok(());
         }
-        for (index, frame) in block.interleaved.chunks_exact(2).enumerate() {
+        for (index, frame) in block.interleaved.as_chunks::<2>().0.iter().enumerate() {
             self.left[index] = frame[0];
             self.right[index] = frame[1];
         }
         self.effect
             .process_stereo(&mut self.left[..frames], &mut self.right[..frames]);
-        for (index, frame) in block.interleaved.chunks_exact_mut(2).enumerate() {
+        for (index, frame) in block
+            .interleaved
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             frame[0] = self.left[index];
             frame[1] = self.right[index];
         }
@@ -330,8 +336,18 @@ mod tests {
             stages: 6.0,
         });
         let mut interleaved = signal(1_024);
-        let mut left: Vec<_> = interleaved.chunks_exact(2).map(|frame| frame[0]).collect();
-        let mut right: Vec<_> = interleaved.chunks_exact(2).map(|frame| frame[1]).collect();
+        let mut left: Vec<_> = interleaved
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|frame| frame[0])
+            .collect();
+        let mut right: Vec<_> = interleaved
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|frame| frame[1])
+            .collect();
         let mut offset = 0;
         for frames in [333, 333, 333, 25] {
             process(

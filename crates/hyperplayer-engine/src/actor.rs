@@ -1667,7 +1667,9 @@ mod tests {
         let first_samples = output_state.lock().unwrap().samples.clone();
         assert!(!first_samples.is_empty());
         assert!(first_samples
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .all(|frame| frame[0].to_bits() == frame[1].to_bits()));
 
         handle.request(EngineCommand::Stop).unwrap();

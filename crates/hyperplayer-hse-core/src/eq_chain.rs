@@ -1007,10 +1007,12 @@ mod tests {
         planar_right.process_mono(&mut expected_r);
 
         for (frame, (&left, &right)) in interleaved
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .zip(expected_l.iter().zip(&expected_r))
         {
-            assert_eq!(frame, [left, right]);
+            assert_eq!(*frame, [left, right]);
         }
     }
 
@@ -1035,10 +1037,12 @@ mod tests {
         original.process(&mut expected_l, &mut expected_r);
 
         for (frame, (&left, &right)) in interleaved
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .zip(expected_l.iter().zip(&expected_r))
         {
-            assert_eq!(frame, [left, right]);
+            assert_eq!(*frame, [left, right]);
         }
         assert_eq!(direct.states, original.states);
     }

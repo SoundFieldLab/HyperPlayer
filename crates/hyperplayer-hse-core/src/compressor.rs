@@ -361,21 +361,20 @@ fn run_loop(
         }
         // 2) dB 域软拐点三区公式（TS L98–L109，分支顺序即行为）。
         let level_db = 20.0 * (*env + 1e-12).log10();
-        let reduction: f64;
-        if c.knee <= 0.0 {
-            reduction = if level_db > c.thr {
+        let reduction: f64 = if c.knee <= 0.0 {
+            if level_db > c.thr {
                 (level_db - c.thr) * c.inv_ratio
             } else {
                 0.0
-            };
+            }
         } else if level_db < c.thr - c.knee_half {
-            reduction = 0.0;
+            0.0
         } else if level_db > c.thr + c.knee_half {
-            reduction = (level_db - c.thr) * c.inv_ratio;
+            (level_db - c.thr) * c.inv_ratio
         } else {
             let x = level_db - (c.thr - c.knee_half);
-            reduction = (c.inv_ratio * x * x) / c.two_knee;
-        }
+            (c.inv_ratio * x * x) / c.two_knee
+        };
         *reduction_db = -reduction;
         // 3) makeup + outputGain 补偿，左右同增益写回（TS L112–L114）。
         let g = 10.0_f64.powf(-reduction / 20.0) * c.gain_scale;

@@ -94,7 +94,7 @@ impl Surround3dProcessor {
         let sine = theta.sin();
         let scale = 0.5 + 0.5 * self.settings.distance;
 
-        for frame in samples.chunks_exact_mut(2) {
+        for frame in samples.as_chunks_mut::<2>().0.iter_mut() {
             let left = f64::from(frame[0]);
             let right = f64::from(frame[1]);
             frame[0] = ((left * cosine - right * sine) * scale) as f32;
@@ -251,7 +251,7 @@ mod tests {
         let (sine, cosine) = theta.sin_cos();
         let scale = 0.7;
         let mut expected = input;
-        for frame in expected.chunks_exact_mut(2) {
+        for frame in expected.as_chunks_mut::<2>().0.iter_mut() {
             let left = f64::from(frame[0]);
             let right = f64::from(frame[1]);
             frame[0] = ((left * cosine - right * sine) * scale) as f32;

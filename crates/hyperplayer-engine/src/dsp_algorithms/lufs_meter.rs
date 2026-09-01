@@ -316,7 +316,7 @@ impl PcmProcessor for LufsMeterProcessor {
                 "LUFS block exceeds the prepared frame capacity".into(),
             ));
         }
-        for (index, frame) in block.interleaved.chunks_exact(2).enumerate() {
+        for (index, frame) in block.interleaved.as_chunks::<2>().0.iter().enumerate() {
             self.left[index] = frame[0];
             self.right[index] = frame[1];
         }

@@ -185,7 +185,7 @@ impl Compressor {
             interleaved.len().is_multiple_of(2),
             "双声道交错缓冲长度必须为偶数"
         );
-        for frame in interleaved.chunks_exact_mut(2) {
+        for frame in interleaved.as_chunks_mut::<2>().0.iter_mut() {
             let (left, right) = frame.split_at_mut(1);
             self.inner.process(left, right);
         }
@@ -204,8 +204,10 @@ impl Compressor {
             "sidechain 帧数必须与主信号一致"
         );
         for (frame, side_frame) in interleaved
-            .chunks_exact_mut(2)
-            .zip(sidechain.chunks_exact(2))
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .zip(sidechain.as_chunks::<2>().0.iter())
         {
             let (left, right) = frame.split_at_mut(1);
             self.inner
@@ -305,7 +307,7 @@ mod tests {
         let mut adapter = Compressor::new(48_000.0).unwrap();
         planar.process_stereo(&mut planar_left, &mut planar_right);
         adapter.process_interleaved_stereo(&mut interleaved);
-        for (index, frame) in interleaved.chunks_exact(2).enumerate() {
+        for (index, frame) in interleaved.as_chunks::<2>().0.iter().enumerate() {
             assert_eq!(frame[0].to_bits(), planar_left[index].to_bits());
             assert_eq!(frame[1].to_bits(), planar_right[index].to_bits());
         }

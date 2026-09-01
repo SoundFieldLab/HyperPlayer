@@ -292,7 +292,7 @@ impl PcmProcessor for NightModeProcessor {
 
         self.compressor
             .process_interleaved_stereo(block.interleaved);
-        for (index, frame) in block.interleaved.chunks_exact(2).enumerate() {
+        for (index, frame) in block.interleaved.as_chunks::<2>().0.iter().enumerate() {
             self.left[index] = frame[0];
             self.right[index] = frame[1];
         }
@@ -300,7 +300,13 @@ impl PcmProcessor for NightModeProcessor {
             .process(self.shelf_coeffs, &mut self.left[..frames]);
         self.shelf_right
             .process(self.shelf_coeffs, &mut self.right[..frames]);
-        for (index, frame) in block.interleaved.chunks_exact_mut(2).enumerate() {
+        for (index, frame) in block
+            .interleaved
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             frame[0] = self.left[index];
             frame[1] = self.right[index];
         }
@@ -496,23 +502,31 @@ mod tests {
         compressor.process_interleaved_stereo(&mut expected);
         let coeffs = design_shelf(48_000, settings.amount).unwrap();
         let mut left = expected
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|frame| frame[0])
             .collect::<Vec<_>>();
         let mut right = expected
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|frame| frame[1])
             .collect::<Vec<_>>();
         MonoBiquadState::default().process(coeffs, &mut left);
         MonoBiquadState::default().process(coeffs, &mut right);
-        for (index, frame) in expected.chunks_exact_mut(2).enumerate() {
+        for (index, frame) in expected.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             frame[0] = left[index];
             frame[1] = right[index];
         }
 
         process(&mut processor, &mut actual);
         assert_eq!(actual, expected);
-        assert!(actual.chunks_exact(2).all(|frame| frame[1] == 0.0));
+        assert!(actual
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .all(|frame| frame[1] == 0.0));
     }
 
     #[test]

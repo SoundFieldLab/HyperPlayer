@@ -138,7 +138,7 @@ impl BassEnhancer {
             interleaved.len().is_multiple_of(2),
             "bass-enhancer 要求完整的交错立体声帧"
         );
-        for frame in interleaved.chunks_exact_mut(2) {
+        for frame in interleaved.as_chunks_mut::<2>().0.iter_mut() {
             let (left, right) = frame.split_at_mut(1);
             hse_core::Stage::process(&mut self.inner, left, right);
         }
@@ -259,7 +259,7 @@ mod tests {
         }
         let mut interleaved_facade = BassEnhancer::with_settings(44_100.0, settings).unwrap();
         interleaved_facade.process_interleaved_stereo(&mut interleaved);
-        for (index, frame) in interleaved.chunks_exact(2).enumerate() {
+        for (index, frame) in interleaved.as_chunks::<2>().0.iter().enumerate() {
             assert_eq!(frame, &[facade_left[index], facade_right[index]]);
         }
     }

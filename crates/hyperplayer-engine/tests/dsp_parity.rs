@@ -101,8 +101,10 @@ impl PcmProcessor for VectorCompressor {
         if self.derive_mono_sum {
             for (frame, side) in block
                 .interleaved
-                .chunks_exact(2)
-                .zip(self.sidechain.chunks_exact_mut(2))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .zip(self.sidechain.as_chunks_mut::<2>().0.iter_mut())
             {
                 let mono = (f64::from(frame[0]) + f64::from(frame[1])) as f32;
                 side.copy_from_slice(&[mono, mono]);
@@ -159,13 +161,19 @@ impl PcmProcessor for VectorBiquad {
 
     fn process(&mut self, block: PcmBlock<'_>) -> hyperplayer_engine::Result<()> {
         let frames = block.interleaved.len() / 2;
-        for (index, frame) in block.interleaved.chunks_exact(2).enumerate() {
+        for (index, frame) in block.interleaved.as_chunks::<2>().0.iter().enumerate() {
             self.left_buffer[index] = frame[0];
             self.right_buffer[index] = frame[1];
         }
         self.left.process_mono(&mut self.left_buffer[..frames]);
         self.right.process_mono(&mut self.right_buffer[..frames]);
-        for (index, frame) in block.interleaved.chunks_exact_mut(2).enumerate() {
+        for (index, frame) in block
+            .interleaved
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             frame[0] = self.left_buffer[index];
             frame[1] = self.right_buffer[index];
         }
@@ -507,8 +515,10 @@ fn read_segments(path: &Path, frames: usize) -> [Vec<f32>; 4] {
     let bytes = fs::read(path).unwrap();
     assert_eq!(bytes.len(), frames * 4 * size_of::<f32>());
     let samples = bytes
-        .chunks_exact(4)
-        .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| f32::from_le_bytes(*bytes))
         .collect::<Vec<_>>();
     std::array::from_fn(|segment| {
         let start = segment * frames;

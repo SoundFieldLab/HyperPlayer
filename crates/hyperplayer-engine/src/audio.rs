@@ -120,13 +120,13 @@ fn render_output_callback(
     output: &mut [f32],
 ) {
     let volume = f32::from_bits(volume_bits.load(Ordering::Relaxed));
-    let mut frames = output.chunks_exact_mut(2);
-    for frame in &mut frames {
+    let (frames, remainder) = output.as_chunks_mut::<2>();
+    for frame in frames {
         let [left, right] = ring.pop().unwrap_or([0.0, 0.0]);
         frame[0] = left * volume;
         frame[1] = right * volume;
     }
-    frames.into_remainder().fill(0.0);
+    remainder.fill(0.0);
 }
 
 fn select_output_sample_rate(ranges: &[(u32, u32)], default_rate: u32) -> Option<u32> {
@@ -257,7 +257,7 @@ impl AudioOutput for CpalAudioOutput {
             ));
         }
         let mut written = 0;
-        for frame in interleaved_pcm.chunks_exact(2) {
+        for frame in interleaved_pcm.as_chunks::<2>().0 {
             if self.ring.push([frame[0], frame[1]]).is_err() {
                 break;
             }

@@ -151,7 +151,7 @@ impl LoudnessNormalizationProcessor {
         };
         let alpha = 1.0 - (-(frames as f64 / f64::from(self.sample_rate)) / seconds).exp();
         self.gain += alpha * (10.0_f64.powf(gain_db / 20.0) - self.gain);
-        for frame in samples.chunks_exact_mut(2) {
+        for frame in samples.as_chunks_mut::<2>().0.iter_mut() {
             frame[0] = (f64::from(frame[0]) * self.gain) as f32;
             frame[1] = (f64::from(frame[1]) * self.gain) as f32;
         }
