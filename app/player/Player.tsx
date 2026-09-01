@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   CaretDown, Check, CloudArrowDown, DotsThree, Heart, Pause, Play, Queue, Repeat,
   RepeatOnce, Shuffle, SkipBack, SkipForward, SlidersHorizontal, SpeakerHigh,
-  SpeakerSlash, Stop, Waveform,
+  SpeakerSlash, Stop, MusicNotes, Waveform,
 } from "@phosphor-icons/react";
 import { bridge } from "../bridge";
 import type { BackendCacheStatusDto, LyricsPayloadDto, TrackDto } from "../bridge/contracts";
@@ -11,17 +11,17 @@ import { Cover, formatTime, IconButton, RemoteNotice } from "../components/ui";
 import { useRemote } from "../hooks/useRemote";
 import { QueuePanel } from "../queue/QueuePanel";
 import { useAppStore } from "../store";
+import { useMainWindowTelemetry } from "../visualization/telemetry";
+import { WaveformCanvas2D } from "../visualization/renderers";
 
 export function PlayerDock(): React.JSX.Element | null {
   const { playback, togglePlayback, stop, next, previous, seek, setVolume, setRepeat, setExpanded, setOverlay, overlay } = useAppStore();
   const [modeMenu, setModeMenu] = useState(false);
   const [volumeOpen, setVolumeOpen] = useState(false);
   const lastVolume = useRef(0.72);
-  if (!playback?.current) return null;
-
-  const track = playback.current;
-  const playing = playback.status === "playing";
-  const repeat = playback.repeat;
+  const track = playback?.current ?? null;
+  const playing = playback?.status === "playing";
+  const repeat = playback?.repeat ?? "sequence";
   const modes: Array<[typeof repeat, string, React.ReactNode]> = [
     ["sequence", "顺序播放", <Repeat/>], ["all", "列表循环", <Repeat weight="fill"/>],
     ["one", "单曲循环", <RepeatOnce/>], ["shuffle", "随机播放", <Shuffle/>],
@@ -38,7 +38,7 @@ export function PlayerDock(): React.JSX.Element | null {
     void setVolume(nextVolume);
   }
 
-  return <footer className="player-dock"><button className="now-playing" onClick={() => setExpanded(true)}><Cover src={track.coverSeed} alt=""/><span><b>{track.title}</b><small>{track.artists.join(" / ")} · {track.source === "netease" ? "网易云" : "本地"}</small></span><Heart/></button><div className="transport"><div><div className="mode-control"><IconButton label={`${currentMode[1]}，单击切换，右键选择`} active={playback.repeat !== "sequence"} onClick={cycleMode} className="mode-button">{currentMode[2]}</IconButton><button className="mode-menu-hit" aria-label="选择播放模式" onClick={() => setModeMenu(!modeMenu)} onContextMenu={(event) => { event.preventDefault(); setModeMenu(true); }}/>{modeMenu && <div className="mode-menu" role="menu">{modes.map(([id, label, icon]) => <button key={id} role="menuitemradio" aria-checked={playback.repeat === id} onClick={() => { void setRepeat(id); setModeMenu(false); }}>{icon}<span>{label}</span>{playback.repeat === id && <Check/>}</button>)}</div>}</div><IconButton label="上一首" onClick={() => void previous()}><SkipBack weight="fill"/></IconButton><button className="main-play" aria-label={playing ? "暂停" : "播放"} onClick={() => void togglePlayback()}>{playing ? <Pause weight="fill"/> : <Play weight="fill"/>}</button><IconButton label="停止" onClick={() => void stop()}><Stop weight="fill"/></IconButton><IconButton label="下一首" onClick={() => void next()}><SkipForward weight="fill"/></IconButton><IconButton label="展开播放层" onClick={() => setExpanded(true)}><CaretDown className="flip"/></IconButton></div><div className="progress-row"><span>{formatTime(playback.positionMs)}</span><input aria-label="播放进度" type="range" min={0} max={track.durationMs} value={playback.positionMs} onChange={(event) => void seek(Number(event.target.value))}/><span>{formatTime(track.durationMs)}</span></div></div><div className="dock-tools"><span className="quality">{track.quality}</span><IconButton label="DSP 规格待接入" disabled><SlidersHorizontal/></IconButton><IconButton label="播放队列" active={overlay === "queue"} onClick={() => setOverlay(overlay === "queue" ? "none" : "queue")}><Queue/></IconButton><div className="volume-control" onWheel={(event) => { event.preventDefault(); changeVolume(playback.volume + (event.deltaY < 0 ? .04 : -.04)); }}><IconButton label={playback.volume === 0 ? "取消静音" : `静音，当前音量 ${Math.round(playback.volume * 100)}%`} onClick={() => { setVolumeOpen(true); changeVolume(playback.volume === 0 ? lastVolume.current : 0); }}>{playback.volume === 0 ? <SpeakerSlash/> : <SpeakerHigh/>}</IconButton><input aria-label={`音量 ${Math.round(playback.volume * 100)}%`} className="volume" type="range" min={0} max={1} step={0.01} value={playback.volume} onChange={(event) => changeVolume(Number(event.target.value))}/>{volumeOpen && <div className="volume-popover"><b>输出音量</b><input aria-label="紧凑音量" type="range" min={0} max={1} step={.01} value={playback.volume} onChange={(event) => changeVolume(Number(event.target.value))}/><span>{Math.round(playback.volume * 100)}%</span><button disabled>输出设备信息不可用</button></div>}</div></div></footer>;
+  return <footer className={`player-dock ${track ? "" : "empty"}`}><button className="now-playing" onClick={() => track && setExpanded(true)} disabled={!track}>{track ? <Cover src={track.coverSeed} alt=""/> : <span className="empty-cover"><MusicNotes/></span>}<span><b>{track?.title ?? "选择一首歌曲"}</b><small>{track ? `${track.artists.join(" / ")} · ${track.source === "netease" ? "网易云" : "本地"}` : "播放控制将在载入曲目后启用"}</small></span><Heart/></button><div className="transport"><div><div className="mode-control"><IconButton label={`${currentMode[1]}，单击切换，右键选择`} active={repeat !== "sequence"} disabled={!track} onClick={cycleMode} className="mode-button">{currentMode[2]}</IconButton><button className="mode-menu-hit" aria-label="选择播放模式" disabled={!track} onClick={() => setModeMenu(!modeMenu)} onContextMenu={(event) => { event.preventDefault(); setModeMenu(true); }}/>{modeMenu && <div className="mode-menu" role="menu">{modes.map(([id, label, icon]) => <button key={id} role="menuitemradio" aria-checked={repeat === id} onClick={() => { void setRepeat(id); setModeMenu(false); }}>{icon}<span>{label}</span>{repeat === id && <Check/>}</button>)}</div>}</div><IconButton label="上一首" disabled={!track} onClick={() => void previous()}><SkipBack weight="fill"/></IconButton><button className="main-play" aria-label={playing ? "暂停" : "播放"} disabled={!track} onClick={() => void togglePlayback()}>{playing ? <Pause weight="fill"/> : <Play weight="fill"/>}</button><IconButton label="停止" disabled={!track} onClick={() => void stop()}><Stop weight="fill"/></IconButton><IconButton label="下一首" disabled={!track} onClick={() => void next()}><SkipForward weight="fill"/></IconButton></div><div className="progress-row"><span>{formatTime(playback?.positionMs ?? 0)}</span><input aria-label="播放进度" type="range" min={0} max={track?.durationMs ?? 1} value={playback?.positionMs ?? 0} disabled={!track} onChange={(event) => void seek(Number(event.target.value))}/><span>{formatTime(track?.durationMs ?? 0)}</span></div></div><div className="dock-tools"><span className="quality">{track?.quality ?? "LOSSLESS"}</span><IconButton label="音效工作台" onClick={() => useAppStore.getState().navigate("dsp")}><SlidersHorizontal/></IconButton><IconButton label="播放队列" active={overlay === "queue"} disabled={!track} onClick={() => setOverlay(overlay === "queue" ? "none" : "queue")}><Queue/></IconButton><div className="volume-control" onWheel={(event) => { if (!playback) return; event.preventDefault(); changeVolume(playback.volume + (event.deltaY < 0 ? .04 : -.04)); }}><IconButton label={!playback || playback.volume === 0 ? "取消静音" : `静音，当前音量 ${Math.round(playback.volume * 100)}%`} disabled={!playback} onClick={() => { if (!playback) return; setVolumeOpen(true); changeVolume(playback.volume === 0 ? lastVolume.current : 0); }}>{!playback || playback.volume === 0 ? <SpeakerSlash/> : <SpeakerHigh/>}</IconButton><input aria-label={`音量 ${Math.round((playback?.volume ?? 0) * 100)}%`} className="volume" type="range" min={0} max={1} step={0.01} value={playback?.volume ?? 0} disabled={!playback} onChange={(event) => changeVolume(Number(event.target.value))}/>{volumeOpen && playback && <div className="volume-popover"><b>输出音量</b><input aria-label="紧凑音量" type="range" min={0} max={1} step={.01} value={playback.volume} onChange={(event) => changeVolume(Number(event.target.value))}/><span>{Math.round(playback.volume * 100)}%</span><button disabled>输出设备信息不可用</button></div>}</div></div></footer>;
 }
 
 function KaraokeLine({ line, position }: { line: LyricsPayloadDto["document"]["lines"][number]; position: number }): React.JSX.Element {
@@ -76,26 +76,16 @@ export function LyricsContent({ compact = false, follow = false }: { compact?: b
   return <>{lines.map((line, index) => <div ref={index === active ? activeRef : undefined} key={`${line.startMs}-${index}`} className={index === active ? "current" : Math.abs(index - active) === 1 ? "near" : ""}><p><KaraokeLine line={line} position={position}/></p>{line.translation && <small>{line.translation}</small>}</div>)}</>;
 }
 
+function useWaveformTelemetry() {
+  const reduceMotion = useAppStore((state) => state.settings?.reduceMotion);
+  return useMainWindowTelemetry(() => bridge.createTelemetryTransport(), true, reduceMotion);
+}
+
 function WaveformCanvas(): React.JSX.Element {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    context.strokeStyle = "#ff761c";
-    context.lineWidth = 2;
-    context.beginPath();
-    for (let index = 0; index < 70; index += 1) {
-      const x = index * canvas.width / 69;
-      const amplitude = (Math.sin(index * .77) * .5 + .5) * 24 + 5;
-      context.moveTo(x, canvas.height / 2 - amplitude);
-      context.lineTo(x, canvas.height / 2 + amplitude);
-    }
-    context.stroke();
-  }, []);
-  return <div className="wave-pop"><canvas ref={ref} width={420} height={120}/><span>OUTPUT</span></div>;
+  const frame = useWaveformTelemetry();
+  return <div className="wave-pop">{frame?.waveform
+    ? <WaveformCanvas2D bins={frame.waveform} ariaLabel="实时立体声波形" />
+    : <div aria-label="波形暂无数据" style={{ height: 54, display: "grid", alignItems: "center" }}><span aria-hidden="true" style={{ display: "block", width: "100%", borderTop: "1px solid rgba(255, 255, 255, 0.22)" }} /></div>}<span>OUTPUT</span></div>;
 }
 
 function cacheErrorMessage(error: unknown, fallback: string): string {

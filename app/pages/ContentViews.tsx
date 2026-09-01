@@ -13,6 +13,8 @@ import { remoteFailure, remoteSuccess, type RemoteState } from "../remote";
 import { useAppStore } from "../store";
 import { SettingsView } from "./SettingsView";
 import { DiscoverView } from "./DiscoverView";
+import { MeterStrip, ResponseCurveSvg, SpectrumCanvas2D } from "../visualization/renderers";
+import { useMainWindowTelemetry } from "../visualization/telemetry";
 
 type GridItem = { id: string | number; title: string; sub: string; cover: string };
 
@@ -49,20 +51,21 @@ function AlbumGrid({ items, artist = false, onSelect }: { items: GridItem[]; art
 function HomeView(): React.JSX.Element {
   const domain = useAppStore((state) => state.domain);
   const navigate = useAppStore((state) => state.navigate);
-  const [home, reloadHome] = useRemote(() => domain === "netease" ? bridge.neteaseHome() : Promise.resolve({ recommendedTracks: [], recommendedPlaylists: [], anonymous: true, unavailableSections: [] }), [domain], (value) => value.recommendedTracks.length === 0 && value.recommendedPlaylists.length === 0);
-  const [fm, reloadFm] = useRemote(() => domain === "netease" && home.status === "ready" && !home.data.anonymous ? bridge.neteasePersonalFm() : Promise.resolve({ tracks: [] }), [domain, home.status === "ready" ? home.data.anonymous : true], (value) => value.tracks.length === 0);
-  if (domain === "local") {
-    return <Page title="本地音乐" subtitle="数据来自已连接的本地曲库"><div className="home-actions"><button className="button primary" onClick={() => navigate("library")}><MusicNotes/>打开本地曲库</button><button className="button secondary" onClick={() => navigate("recent")}><Heart/>最近播放</button><button className="button secondary" onClick={() => navigate("status")}><WifiHigh/>查看状态</button></div></Page>;
-  }
-  const tracks = home.status === "ready" ? home.data.recommendedTracks.map(adaptTrack) : [];
-  const fmTracks = fm.status === "ready" ? fm.data.tracks.map(adaptTrack) : [];
-  const anonymous = home.status === "ready" && home.data.anonymous;
-  return <Page title="网易云" subtitle={anonymous ? "未登录 · 正在展示公开发现内容" : "推荐与私人 FM 均来自已连接服务"}>
-    {home.status === "ready" && home.data.unavailableSections.length > 0 && <div className="notice"><Info/>部分公开内容暂不可用：{home.data.unavailableSections.join("、")}</div>}
-    <div className="feature-row"><button onClick={() => anonymous ? navigate("account") : fmTracks[0] && void useAppStore.getState().playTrack(fmTracks[0], { kind: "personalFm", id: null })} disabled={!anonymous && !fmTracks.length}><span className="fm-tile"><Broadcast weight="fill"/></span><span><b>{anonymous ? "登录使用私人 FM" : "私人 FM"}</b><small>{anonymous ? "扫码登录后获取个性化内容" : fmTracks.length ? `${fmTracks.length} 首待播` : "暂无可播放内容"}</small></span></button><button onClick={() => navigate("library")}><span className="date-tile"><Heart/></span><span><b>我的收藏</b><small>歌单、关注与云盘</small></span></button><button onClick={() => navigate("search")}><span className="new-tile"><MagnifyingGlass/></span><span><b>搜索网易云</b><small>歌曲、专辑与艺术家</small></span></button></div>
-    <SectionTitle>{anonymous ? "公开新歌" : "推荐歌曲"}</SectionTitle><RemoteNotice state={home} empty="暂无公开内容" retry={reloadHome}/>{tracks.length > 0 && <AppTrackTable tracks={tracks}/>}
-    {!anonymous && <><SectionTitle>私人 FM</SectionTitle><RemoteNotice state={fm} empty="私人 FM 暂无歌曲" retry={reloadFm}/>{fmTracks.length > 0 && <AppTrackTable tracks={fmTracks} compact/>}</>}
-    {home.status === "ready" && home.data.recommendedPlaylists.length > 0 && <><SectionTitle>{anonymous ? "公开歌单" : "推荐歌单"}</SectionTitle><div className="cover-grid">{home.data.recommendedPlaylists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("playlist", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/><span className="hover-play"><Play weight="fill"/></span></div><b>{item.name}</b><small>{item.ownerName || `${item.trackCount} 首`}</small></button>)}</div></>}
+  const [localTracks, reloadLocalTracks] = useRemote(
+    () => domain === "local" ? bridge.libraryQuery().then((page) => page.items.map(adaptTrack)) : Promise.resolve([]),
+    [domain],
+    (items) => domain === "local" && items.length === 0,
+  );
+  const [home, reloadHome] = useRemote(() => domain === "netease" ? bridge.neteaseHome() : Promise.resolve({ recommendedTracks: [], recommendedPlaylists: [], anonymous: true, unavailableSections: [] }), [domain], (value) => domain === "netease" && value.recommendedTracks.length === 0 && value.recommendedPlaylists.length === 0);
+  const tracks = domain === "local"
+    ? localTracks.status === "ready" ? localTracks.data : []
+    : home.status === "ready" ? home.data.recommendedTracks.map(adaptTrack) : [];
+  const state = domain === "local" ? localTracks : home;
+  return <Page title="我的喜欢" subtitle={domain === "local" ? "本地曲库中的常听曲目" : "来自网易云的实时推荐"} actions={<><button className="button primary" disabled={!tracks.length} onClick={() => tracks[0] && void useAppStore.getState().playTrack(tracks[0], { kind: "manual", id: null })}><Play weight="fill"/>播放全部</button><button className="button secondary" onClick={() => navigate(domain === "local" ? "folders" : "library")}><FolderOpen/>管理音乐</button></>}>
+    <div className="collection-summary"><div className="collection-art" aria-hidden="true"><Heart weight="fill"/></div><div><span className="eyebrow">COLLECTION</span><h2>{tracks.length ? `${tracks.length} 首歌曲` : "你的音乐收藏"}</h2><p>{domain === "local" ? "从本地曲库整理出的私人播放空间。" : "登录后可查看收藏歌单；当前列表来自推荐服务。"}</p></div><button className="round-play" aria-label="播放全部" disabled={!tracks.length} onClick={() => tracks[0] && void useAppStore.getState().playTrack(tracks[0], { kind: "manual", id: null })}><Play weight="fill"/></button></div>
+    <div className="collection-toolbar"><span>{domain === "local" ? "本地曲目" : "推荐曲目"}</span><button type="button" onClick={() => navigate("search")}><MagnifyingGlass/>筛选音乐</button></div>
+    <RemoteNotice state={state} empty="这里还没有可播放的音乐" retry={domain === "local" ? reloadLocalTracks : reloadHome}/>
+    {tracks.length > 0 && <AppTrackTable tracks={tracks} playbackContext={{ kind: "manual", id: null }} preserveOrder/>}
   </Page>;
 }
 
@@ -345,7 +348,34 @@ function StatusView(): React.JSX.Element {
   return <Page title="状态中心" subtitle="扫描、缓存、同步与更新"><SectionTitle>正在进行</SectionTitle>{tasks.length ? <div className="task-list">{tasks.map((task) => <div key={task.id}><span className={`task-icon ${task.state}`}>{task.kind === "scan" ? <Scan/> : task.kind === "cache" ? <CloudArrowDown/> : <WifiHigh/>}</span><span><b>{task.title}</b><small>{task.detail}</small>{task.progress !== null && <i className="progress"><i style={{width:`${task.progress * 100}%`}}/></i>}</span></div>)}</div> : <div className="remote-state empty"><Check/><b>没有后台任务</b><span>仅显示本次运行中由后端事件报告的任务。</span></div>}<SectionTitle>应用更新</SectionTitle><RemoteNotice state={updater} retry={reloadUpdater}/>{updater.status === "ready" && <div className="updater-row"><span><b>{updater.data.enabled ? "更新检查可用" : "更新器不可用"}</b><small>{updater.data.reason || "可检查新版本"}</small></span><button className="button secondary" disabled={!updater.data.enabled || check.status === "loading" || installing} onClick={() => void checkUpdate()}>检查更新</button></div>}{check.status === "ready" && <div className="notice"><Info/>{check.data.available ? <><span>发现版本 {check.data.version}</span><button className="button primary" disabled={installing} onClick={() => void installUpdate()}>{installing ? "安装中" : "下载并安装"}</button></> : `当前已是最新版本 ${check.data.currentVersion}`}</div>}{(check.status === "error" || check.status === "unavailable") && <RemoteNotice state={check}/>}</Page>;
 }
 
-function DspView(): React.JSX.Element { return <Page title="音效" subtitle="全局 DSP 工作台"><div className="dsp-empty"><SlidersHorizontal/><h2>音效工作台尚未开放</h2><p>真实 DSP 效果、参数模型与链路规格尚未确定。当前音频保持稳定旁路，不提供假均衡器或预设。</p><span><Check/>音频管线插入点已保留</span><span><Check/>旁路状态跨内容域共享</span><button className="button primary" disabled>规格待接入</button></div></Page>; }
+const FLAT_DSP_RESPONSE = [
+  { frequencyHz: 20, gainDb: 0 },
+  { frequencyHz: 20_000, gainDb: 0 },
+] as const;
+
+function DspWorkspaceView(): React.JSX.Element {
+  const playback = useAppStore((state) => state.playback);
+  const reduceMotion = useAppStore((state) => state.settings?.reduceMotion);
+  const frame = useMainWindowTelemetry(() => bridge.createTelemetryTransport(), true, reduceMotion);
+
+  const stages = [
+    ["03", "立体声场", "M/S Width", "已迁入"],
+    ["04", "参数均衡", "10-band Pre-EQ", "已迁入"],
+    ["06", "动态压缩", "Linked Stereo", "已迁入"],
+    ["14", "低频增强", "Virtual Bass", "已迁入"],
+  ];
+  return <Page title="音效工作台" subtitle="Rust 音频引擎是实际播放权威">
+    <section className="dsp-console">
+      <header><div><span className="eyebrow">ENGINE CHAIN</span><h2>{playback?.dsp.available ? "处理链在线" : "控制桥接中"}</h2><p>{playback?.dsp.available ? playback.dsp.label : "核心算法已迁入，界面参数将在完整 DspPort 接通后开放。"}</p></div><span className={`engine-indicator ${playback?.dsp.available ? "online" : ""}`}><i/>{playback?.dsp.available ? "LIVE" : "BYPASS"}</span></header>
+      <div className="dsp-chain" aria-label="已迁入 DSP 阶段">{stages.map(([index, title, detail, status]) => <article key={index}><span>{index}</span><div><b>{title}</b><small>{detail}</small></div><em>{status}</em></article>)}</div>
+      <div className="eq-preview" aria-label="参数均衡器只读预览"><div className="eq-axis"><span>+12</span><span>0 dB</span><span>-12</span></div><div className="eq-bands"><section style={{ gridColumn: "1 / -1", alignSelf: "stretch", display: "grid" }}><ResponseCurveSvg points={FLAT_DSP_RESPONSE} minGainDb={-12} maxGainDb={12} ariaLabel="固定 0 dB 参考响应"/><small>固定平直参考，不代表当前 DSP 配置</small></section></div></div>
+      <section aria-label="实时音频遥测">{frame?.spectrum
+        ? <SpectrumCanvas2D bins={frame.spectrum} ariaLabel="实时音频频谱"/>
+        : <div aria-label="频谱暂无数据"/>}<MeterStrip meters={frame?.meters ?? null}/></section>
+      <footer><div><b>默认参数保持直通</b><small>独立左右 EQ 状态 · 故障自动旁路 · Gapless 连续</small></div><button className="button secondary" disabled>参数控制尚未连接</button></footer>
+    </section>
+  </Page>;
+}
 
 export function CurrentView(): React.JSX.Element {
   const view = useAppStore((state) => state.view);
@@ -360,7 +390,7 @@ export function CurrentView(): React.JSX.Element {
     case "settings": return <SettingsView/>;
     case "cache": return <CacheView/>;
     case "status": return <StatusView/>;
-    case "dsp": return <DspView/>;
+    case "dsp": return <DspWorkspaceView/>;
     default: return <HomeView/>;
   }
 }

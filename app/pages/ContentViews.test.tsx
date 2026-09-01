@@ -17,6 +17,7 @@ vi.hoisted(() => {
 });
 
 const bridgeMocks = vi.hoisted(() => ({
+  createTelemetryTransport: vi.fn(),
   libraryQueryPlaylists: vi.fn(),
   libraryCreatePlaylist: vi.fn(),
   libraryRenamePlaylist: vi.fn(),
@@ -44,6 +45,8 @@ vi.mock("../bridge", async (importOriginal) => {
 
 import { CurrentView } from "./ContentViews";
 import { useAppStore } from "../store";
+import { makeTelemetryFrame } from "../visualization/telemetry/test-fixtures";
+import { TELEMETRY_VALID_RMS, TELEMETRY_VALID_SAMPLE_PEAK, TELEMETRY_VALID_SPECTRUM, TELEMETRY_VALID_WAVEFORM } from "../visualization/telemetry";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -70,12 +73,39 @@ async function settle(): Promise<void> {
   });
 }
 
+function canvasContext(): CanvasRenderingContext2D {
+  return {
+    clearRect: vi.fn(),
+    fillRect: vi.fn(),
+    setTransform: vi.fn(),
+    fillStyle: "",
+  } as unknown as CanvasRenderingContext2D;
+}
+
 describe("CurrentView 页面能力边界", () => {
   let container: HTMLDivElement;
   let root: Root;
+  let telemetryFrame: ((frame: ArrayBuffer | ArrayBufferView) => void) | undefined;
+  let telemetryTransport: {
+    open: ReturnType<typeof vi.fn>;
+    setRate: ReturnType<typeof vi.fn>;
+    acknowledge: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    useAppStore.getState().dispose();
+    useAppStore.setState(useAppStore.getInitialState(), true);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(canvasContext());
+    telemetryFrame = undefined;
+    telemetryTransport = {
+      open: vi.fn((_rate, onFrame) => { telemetryFrame = onFrame; }),
+      setRate: vi.fn(),
+      acknowledge: vi.fn(() => true),
+      close: vi.fn(),
+    };
+    bridgeMocks.createTelemetryTransport.mockReturnValue(telemetryTransport);
     bridgeMocks.libraryQueryPlaylists.mockResolvedValue({ items: [], nextCursor: null, total: 0 });
     bridgeMocks.libraryCreatePlaylist.mockResolvedValue({ id: "new", name: "通勤", trackCount: 0, updatedUnixMs: 1 });
     bridgeMocks.libraryRenamePlaylist.mockImplementation(async (id, name) => ({ id, name, trackCount: 2, updatedUnixMs: 2 }));
@@ -114,9 +144,13 @@ describe("CurrentView 页面能力边界", () => {
   });
 
   afterEach(async () => {
-    await act(async () => root.unmount());
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
     container.remove();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("renders the playlist empty state and creates a trimmed playlist", async () => {
@@ -336,7 +370,7 @@ describe("CurrentView 页面能力边界", () => {
   });
 
   it("plays and queues a DJ main track through existing store actions", async () => {
-    const result: PlaybackSnapshotDto = { current: null, currentQueueItemId: null, status: "paused", positionMs: 0, volume: 0.5, queue: [], nextUp: [], repeat: "sequence", dsp: { available: false, bypassed: true, label: "规格待接入" } };
+    const result: PlaybackSnapshotDto = { revision: 1, current: null, currentQueueItemId: null, status: "paused", positionMs: 0, volume: 0.5, queue: [], nextUp: [], repeat: "sequence", dsp: { available: false, bypassed: true, label: "规格待接入" } };
     const playTrack = vi.spyOn(useAppStore.getState(), "playTrack");
     const enqueueTrack = vi.spyOn(useAppStore.getState(), "enqueueTrack");
     bridgeMocks.neteaseDjRadios.mockResolvedValue({ radios: [{ id: 20, name: "公开电台", coverUrl: null, description: null, programCount: 1, subscriberCount: null, category: null }], programs: [], nextCursor: null });
@@ -356,13 +390,81 @@ describe("CurrentView 页面能力边界", () => {
     expect(enqueueTrack).toHaveBeenCalledWith(expect.objectContaining({ id: "dj-track", source: "netease" }), "playNext");
   });
 
-  it.each([
-    ["messages", "此功能当前不可用", "正式模式不会显示虚构未读消息。"],
-    ["dsp", "音效工作台尚未开放", "不提供假均衡器或预设。"],
-  ] as const)("renders the explicit %s unavailable placeholder", async (view, title, detail) => {
-    useAppStore.setState({ view });
+  it("renders the unavailable messages state and the implemented DSP overview", async () => {
+    await act(async () => { useAppStore.setState({ view: "messages" }); });
     await act(async () => root.render(<CurrentView />));
-    expect(container.textContent).toContain(title);
-    expect(container.textContent).toContain(detail);
+    expect(container.textContent).toContain("此功能当前不可用");
+    expect(container.textContent).toContain("正式模式不会显示虚构未读消息。");
+
+    await act(async () => { useAppStore.setState({ view: "dsp" }); });
+    await act(async () => root.render(<CurrentView />));
+    expect(container.textContent).toContain("音效工作台");
+    expect(container.textContent).toContain("参数均衡");
+    expect(container.textContent).toContain("独立左右 EQ 状态");
+    expect(container.textContent).toContain("参数控制尚未连接");
+  });
+
+  it("uses real telemetry with fallback renderers while keeping DSP controls honest", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    useAppStore.setState({ view: "dsp", playback: null });
+
+    await act(async () => root.render(<CurrentView />));
+    await settle();
+
+    expect(bridgeMocks.createTelemetryTransport).toHaveBeenCalledOnce();
+    expect(telemetryTransport.open).toHaveBeenCalledWith(30, expect.any(Function));
+    expect(container.querySelector('[aria-label="频谱暂无数据"]')).not.toBeNull();
+    expect(container.querySelector('canvas[aria-label="实时音频频谱"]')).toBeNull();
+    expect(container.querySelector('[role="group"][aria-label="RMS 和峰值仪表"]')).not.toBeNull();
+    expect(container.querySelector('svg[aria-label="固定 0 dB 参考响应"]')).not.toBeNull();
+
+    await act(async () => telemetryFrame?.(makeTelemetryFrame({
+      validityFlags: TELEMETRY_VALID_WAVEFORM | TELEMETRY_VALID_SAMPLE_PEAK | TELEMETRY_VALID_RMS | TELEMETRY_VALID_SPECTRUM,
+      meters: { rmsLeft: 0.5, rmsRight: 0.25 },
+    })));
+    expect(container.querySelector('canvas[aria-label="实时音频频谱"]')).not.toBeNull();
+    expect(Number(container.querySelector('[role="meter"][aria-label="左声道 RMS"]')?.getAttribute("aria-valuenow"))).toBeCloseTo(-6.02, 1);
+    expect(container.textContent).not.toContain("真峰值");
+    expect(container.textContent).not.toContain("限幅衰减");
+    expect(telemetryTransport.acknowledge).toHaveBeenCalledWith(4n, 9n, 12n);
+    expect(container.textContent).toContain("固定平直参考，不代表当前 DSP 配置");
+    expect(button(container, "参数控制尚未连接").disabled).toBe(true);
+    expect(container.textContent).not.toContain("当前均衡响应");
+  });
+
+  it("scales telemetry for visibility, focus, and reduced motion, then closes on unmount", async () => {
+    let motionListener: ((event: MediaQueryListEvent) => void) | undefined;
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: false,
+      media: "(prefers-reduced-motion: reduce)",
+      onchange: null,
+      addEventListener: vi.fn((_type, listener) => { motionListener = listener; }),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    useAppStore.setState({ view: "dsp" });
+
+    await act(async () => root.render(<CurrentView />));
+    await settle();
+    await act(async () => window.dispatchEvent(new Event("blur")));
+    expect(telemetryTransport.setRate).toHaveBeenLastCalledWith(15);
+
+    await act(async () => motionListener?.({ matches: true } as MediaQueryListEvent));
+    expect(telemetryTransport.setRate).toHaveBeenLastCalledWith(2);
+
+    visibility.mockReturnValue("hidden");
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    expect(telemetryTransport.setRate).toHaveBeenLastCalledWith(0);
+
+    await act(async () => root.unmount());
+    expect(telemetryTransport.close).toHaveBeenCalledOnce();
+    container.remove();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
   });
 });

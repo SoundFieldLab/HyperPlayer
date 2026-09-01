@@ -1,3 +1,5 @@
+import type { TelemetryTransport } from "../visualization/telemetry/session";
+
 export type ContentDomain = "netease" | "local";
 export type ThemeMode = "light" | "dark" | "system";
 export type MaterialVariant = "clean" | "atmosphere";
@@ -31,6 +33,7 @@ export interface QueueItemDto {
 }
 
 export interface PlaybackSnapshotDto {
+  revision: number;
   current: TrackDto | null;
   currentQueueItemId: string | null;
   status: PlaybackStatus;
@@ -40,6 +43,7 @@ export interface PlaybackSnapshotDto {
   nextUp: QueueItemDto[];
   repeat: "sequence" | "all" | "one" | "shuffle";
   dsp: { available: false; bypassed: true; label: "规格待接入" };
+  dspExecution: DspExecutionStatusDto;
 }
 
 export interface LibrarySummaryDto {
@@ -136,10 +140,38 @@ export interface BackendDspAvailabilityDto {
   reason: string;
 }
 
-export interface BackendBootstrapDto {
-  app: { appName: string; appVersion: string; platform: string; initialized: boolean };
+export interface BackendDspExecutionFaultDto {
+  revision: number;
+  processorIndex: number;
+  processorName: string;
+  kind: "processingFailed" | "nonFiniteOutput";
+  streamFrame: number;
+  safeBypassActive: boolean;
+  fallbackStatus: "rustSafeBypass";
+}
+
+export interface BackendDspExecutionStatusDto {
+  revision: number;
+  safeBypassActive: boolean;
+  fault: BackendDspExecutionFaultDto | null;
+}
+
+export interface DspExecutionStatusDto {
+  revision: number;
+  safeBypassActive: boolean;
+  fault: DspProcessingFaultDto | null;
+}
+
+export interface BackendEngineSnapshotDto {
+  revision: number;
   playback: BackendPlaybackStateDto;
   queue: BackendQueueSnapshotDto;
+  dspExecution: BackendDspExecutionStatusDto;
+}
+
+export interface BackendBootstrapDto {
+  app: { appName: string; appVersion: string; platform: string; initialized: boolean };
+  engine: BackendEngineSnapshotDto;
   settings: BackendSettingsDto;
   netease: BackendNeteaseStatusDto;
   dsp: BackendDspAvailabilityDto;
@@ -361,14 +393,41 @@ export interface UpdateCheckDto {
   notes: string | null;
 }
 
+export interface ShenzhenWeatherDto {
+  location: string;
+  observedAt: string;
+  temperatureC: number;
+  apparentTemperatureC: number;
+  relativeHumidityPercent: number;
+  weatherCode: number;
+  condition: string;
+  windSpeedKmh: number;
+  isDay: boolean;
+}
+
 export interface BridgeErrorDto {
   code: string;
   message: string;
 }
 
 export interface BackendPlaybackProgressDto {
+  revision: number;
   positionMs: number;
   durationMs: number | null;
+}
+
+export interface DspConfigurationRejectedDto {
+  revision: number;
+}
+
+export interface DspProcessingFaultDto {
+  revision: number;
+  processorIndex: number;
+  processorName: string;
+  kind: "processingFailed" | "nonFiniteOutput";
+  streamFrame: number;
+  safeBypassActive: boolean;
+  fallbackStatus: "rustSafeBypass";
 }
 
 export interface BackendCacheStatusDto {
@@ -402,6 +461,8 @@ export interface BridgeEventHandlers {
   settingsChanged?(settings: AppSettingsDto): void;
   cacheStatusChanged?(status: BackendCacheStatusDto): void;
   neteaseStatusChanged?(status: BackendNeteaseStatusDto): void;
+  dspConfigurationRejected?(failure: DspConfigurationRejectedDto): void;
+  dspProcessingFault?(fault: DspProcessingFaultDto): void;
   closeRequested?(request: BackendCloseRequestedDto): void;
 }
 
@@ -482,7 +543,9 @@ export interface BridgeContract {
   updaterStatus(): Promise<UpdaterStatusDto>;
   updaterCheck(): Promise<UpdateCheckDto>;
   updaterUpdate(expectedVersion: string): Promise<boolean>;
+  shenzhenWeather(): Promise<ShenzhenWeatherDto>;
   resolveClose(action: CloseDecision, remember: boolean): Promise<void>;
+  createTelemetryTransport(): TelemetryTransport;
   subscribe(handlers: BridgeEventHandlers): Promise<Unlisten>;
 }
 

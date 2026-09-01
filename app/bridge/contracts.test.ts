@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { adaptPlayback, adaptTrack, bridge, bridgeError, TAURI_COMMANDS } from "./index";
-import type { BackendPlaybackStateDto, BackendQueueSnapshotDto } from "./contracts";
+import { adaptPlayback, adaptTrack, bridge, bridgeError, createEngineSnapshotGate, TAURI_COMMANDS, TAURI_EVENTS } from "./index";
+import type { BackendDspExecutionStatusDto, BackendPlaybackStateDto, BackendQueueSnapshotDto, DspProcessingFaultDto } from "./contracts";
 
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
@@ -40,16 +40,22 @@ const queue: BackendQueueSnapshotDto = {
   revision: 3,
 };
 
+const healthyDsp = (revision: number): BackendDspExecutionStatusDto => ({
+  revision,
+  safeBypassActive: false,
+  fault: null,
+});
+
 describe("bridge contract adapters", () => {
   it("preserves stable queue item identities", () => {
-    const result = adaptPlayback(playback, queue);
+    const result = adaptPlayback({ revision: queue.revision, playback, queue, dspExecution: healthyDsp(0) });
     expect(result.currentQueueItemId).toBe("queue-current");
     expect(result.nextUp[0].queueItemId).toBe("queue-next");
     expect(result.queue[0].queueItemId).toBe("queue-context");
   });
 
   it("keeps trusted metadata separate from the command TrackRef", () => {
-    const result = adaptPlayback(playback, queue);
+    const result = adaptPlayback({ revision: queue.revision, playback, queue, dspExecution: healthyDsp(0) });
     expect(result.current).toMatchObject({ id: "track-1", source: "local", title: "Track" });
   });
 
@@ -68,13 +74,88 @@ describe("bridge contract adapters", () => {
     expect(bridgeError(new Error("network failed"))).toMatchObject({ code: "unknown", message: "network failed", unavailable: false });
   });
 
+  it("keeps atomic engine snapshots monotonic and scopes progress by revision", () => {
+    const gate = createEngineSnapshotGate();
+    const snapshot = (revision: number, positionMs: number) => ({
+      revision,
+      playback: { ...playback, positionMs },
+      queue: { ...queue, revision },
+      dspExecution: healthyDsp(4),
+    });
+
+    expect(gate.accept(snapshot(7, 70)).positionMs).toBe(70);
+    expect(gate.accept(snapshot(5, 50)).positionMs).toBe(70);
+    expect(gate.accept(snapshot(7, 71)).positionMs).toBe(70);
+    expect(gate.accept(snapshot(8, 80)).positionMs).toBe(80);
+    expect(gate.acceptProgress({ revision: 7, positionMs: 700, durationMs: 120_000 })).toBe("ignore");
+    expect(gate.acceptProgress({ revision: 8, positionMs: 800, durationMs: 120_000 })).toBe("apply");
+    expect(gate.current().positionMs).toBe(800);
+    expect(gate.accept(snapshot(8, 81)).positionMs).toBe(800);
+    expect(gate.acceptProgress({ revision: 9, positionMs: 900, durationMs: 120_000 })).toBe("resync");
+    expect(() => gate.accept({ ...snapshot(9, 90), queue: { ...queue, revision: 8 } })).toThrow("revisions do not match");
+  });
+
+  it("merges DSP execution status independently from playback revision", () => {
+    const gate = createEngineSnapshotGate();
+    const base = { revision: 7, playback, queue: { ...queue, revision: 7 }, dspExecution: healthyDsp(8) };
+    const fault = {
+      revision: 8,
+      processorIndex: 2,
+      processorName: "compressor",
+      kind: "nonFiniteOutput" as const,
+      streamFrame: 4096,
+      safeBypassActive: true,
+      fallbackStatus: "rustSafeBypass" as const,
+    };
+
+    gate.accept(base);
+    expect(gate.accept({ ...base, dspExecution: { revision: 8, safeBypassActive: true, fault: null } }).dspExecution).toEqual({
+      revision: 8,
+      safeBypassActive: true,
+      fault: null,
+    });
+    expect(gate.accept({ ...base, revision: 6, queue: { ...queue, revision: 6 }, dspExecution: { revision: 8, safeBypassActive: true, fault } })).toMatchObject({
+      revision: 7,
+      dspExecution: {
+        revision: 8,
+        safeBypassActive: true,
+        fault,
+      },
+    });
+    expect(gate.accept({ ...base, dspExecution: healthyDsp(8) }).dspExecution?.safeBypassActive).toBe(true);
+    expect(gate.accept({ ...base, dspExecution: healthyDsp(9) }).dspExecution).toEqual(healthyDsp(9));
+  });
+
   it("declares the Tauri-only bridge contract", () => {
     expect(typeof bridge.bootstrap).toBe("function");
     expect(typeof bridge.libraryPickLocation).toBe("function");
+    expect(typeof bridge.createTelemetryTransport).toBe("function");
+    expect(bridge.createTelemetryTransport()).not.toBe(bridge.createTelemetryTransport());
+  });
+
+  it("declares every backend event in the frontend manifest", () => {
+    expect(Object.values(TAURI_EVENTS)).toHaveLength(14);
+    expect(TAURI_EVENTS.dspConfigurationRejected).toBe("hyperplayer://dsp/configuration-rejected");
+    expect(TAURI_EVENTS.dspProcessingFault).toBe("hyperplayer://dsp/processing-fault");
+  });
+
+  it("contracts DSP processing faults as Rust safe-bypass diagnostics", () => {
+    const fault = {
+      revision: 8,
+      processorIndex: 2,
+      processorName: "compressor",
+      kind: "nonFiniteOutput",
+      streamFrame: 4096,
+      safeBypassActive: true,
+      fallbackStatus: "rustSafeBypass",
+    } satisfies DspProcessingFaultDto;
+
+    expect(fault).toMatchObject({ safeBypassActive: true, fallbackStatus: "rustSafeBypass" });
+    expect(fault).not.toHaveProperty("pcm");
   });
 
   it("declares every newly connected command", () => {
-    expect(Object.values(TAURI_COMMANDS)).toHaveLength(79);
+    expect(Object.values(TAURI_COMMANDS)).toHaveLength(84);
     expect(Object.values(TAURI_COMMANDS)).toEqual(expect.arrayContaining([
       "playback_stop", "playback_next", "playback_previous", "playback_set_repeat_mode",
       "library_overview", "library_query_tracks", "library_register_location", "library_start_scan", "library_cancel_scan",
@@ -84,7 +165,8 @@ describe("bridge contract adapters", () => {
       "netease_account", "netease_favorites", "netease_comments", "netease_follows", "netease_cloud", "netease_image", "netease_start_qr_login", "netease_poll_qr_login", "netease_logout",
       "cache_stats", "cache_status", "cache_track", "cache_remove", "cache_clear", "lyrics_get",
       "window_show", "window_hide", "window_close", "window_set_always_on_top", "desktop_lyrics_set_click_through",
-      "updater_status", "updater_check", "updater_update",
+      "updater_status", "updater_check", "updater_update", "shenzhen_weather",
+      "telemetry_subscribe", "telemetry_ack", "telemetry_set_activity", "telemetry_close",
     ]));
   });
 });

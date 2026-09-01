@@ -5,6 +5,7 @@ import type {
   BackgroundTaskDto,
   BridgeContract,
   ContentDomain,
+  DspProcessingFaultDto,
   PlaybackSnapshotDto,
   PlaybackContextDto,
   QueueInsertPosition,
@@ -37,6 +38,7 @@ interface AppState {
   settings: AppSettingsDto | null;
   tasks: BackgroundTaskDto[];
   closeRequest: BackendCloseRequestedDto | null;
+  dspDiagnostic: DspProcessingFaultDto | null;
   expandedPlayer: boolean;
   overlay: OverlayId;
   searchOpen: boolean;
@@ -100,6 +102,29 @@ function errorMessage(error: unknown, fallback = "无法连接到 HyperPlayer �
   return error instanceof Error ? error.message : fallback;
 }
 
+function newestPlayback(
+  bootstrap: PlaybackSnapshotDto,
+  event: PlaybackSnapshotDto | null,
+): PlaybackSnapshotDto {
+  return event && event.revision >= bootstrap.revision ? event : bootstrap;
+}
+
+function diagnosticForSnapshot(
+  snapshot: PlaybackSnapshotDto,
+  current: DspProcessingFaultDto | null,
+): DspProcessingFaultDto | null {
+  const { dspExecution } = snapshot;
+  if (dspExecution.safeBypassActive) return dspExecution.fault ?? current;
+  return current && dspExecution.revision <= current.revision ? current : null;
+}
+
+function acceptedPlaybackState(snapshot: PlaybackSnapshotDto, current: DspProcessingFaultDto | null) {
+  return {
+    playback: snapshot,
+    dspDiagnostic: diagnosticForSnapshot(snapshot, current),
+  };
+}
+
 let toastId = 0;
 let initGeneration = 0;
 let transportGeneration = 0;
@@ -129,6 +154,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   settings: null,
   tasks: [],
   closeRequest: null,
+  dspDiagnostic: null,
   expandedPlayer: false,
   overlay: "none",
   searchOpen: false,
@@ -149,22 +175,44 @@ export const useAppStore = create<AppState>((set, get) => ({
     let neteaseAuthenticated = false;
     try {
       pendingUnlisten = await activeBridge.subscribe({
-        playbackChanged: (playback) => { eventPlayback = playback; set({ playback }); },
-        queueChanged: (playback) => { eventPlayback = playback; set({ playback }); },
-        playbackProgress: ({ positionMs, durationMs }) => set((state) => state.playback ? {
-          playback: {
+        playbackChanged: (playback) => {
+          eventPlayback = playback;
+          set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+        },
+        queueChanged: (playback) => {
+          eventPlayback = playback;
+          set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+        },
+        playbackProgress: ({ revision, positionMs, durationMs }) => set((state) => {
+          if (!state.playback || state.playback.revision !== revision) return {};
+          const playback = {
             ...state.playback,
             positionMs,
             current: state.playback.current && durationMs !== null
               ? { ...state.playback.current, durationMs }
               : state.playback.current,
-          },
-        } : {}),
+          };
+          if (eventPlayback?.revision === revision) eventPlayback = playback;
+          return { playback };
+        }),
         settingsChanged: (settings) => { eventSettings = settings; set({ settings }); },
         scanProgress: (progress) => { scanEvents.push(progress); set((state) => ({ tasks: upsertScanTask(state.tasks, progress) })); },
         neteaseStatusChanged: (status) => {
           neteaseAuthenticated = status.authenticated;
           set((state) => ({ tasks: status.authenticated ? state.tasks.filter((task) => task.id !== "netease-login") : state.tasks }));
+        },
+        dspConfigurationRejected: ({ revision }) => get().notifyError(
+          new Error(`DSP 配置 revision ${revision} 未能准备`),
+          "DSP 配置未能准备",
+        ),
+        dspProcessingFault: (dspDiagnostic) => {
+          const acceptedRevision = get().playback?.dspExecution.revision ?? 0;
+          if (dspDiagnostic.revision < acceptedRevision) return;
+          set({ dspDiagnostic });
+          get().notifyError(
+            new Error(`DSP revision ${dspDiagnostic.revision} 的 ${dspDiagnostic.processorName} 处理失败，播放正通过 Rust 安全旁路继续`),
+            "DSP 处理失败，播放正通过 Rust 安全旁路继续",
+          );
         },
         closeRequested: (closeRequest) => set({ closeRequest }),
       });
@@ -172,16 +220,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       const initial = await activeBridge.bootstrap();
       if (generation !== initGeneration) { pendingUnlisten(); return; }
       const tasks = scanEvents.reduce(upsertScanTask, initial.tasks);
-      set({
+      const playback = newestPlayback(initial.playback, eventPlayback);
+      set((state) => ({
         ...initial,
-        playback: eventPlayback ?? initial.playback,
+        ...acceptedPlaybackState(playback, state.dspDiagnostic),
         settings: eventSettings ?? initial.settings,
         tasks: neteaseAuthenticated ? tasks.filter((task) => task.id !== "netease-login") : tasks,
         unlisten: pendingUnlisten,
         ready: true,
         initStatus: "ready",
         initError: null,
-      });
+      }));
     } catch (error) {
       pendingUnlisten?.();
       if (generation === initGeneration) set({ unlisten: null, ready: false, initStatus: "error", initError: errorMessage(error) });
@@ -303,27 +352,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ playback: { ...previous, status: playing ? "playing" : "paused" } });
     try {
       const playback = playing ? await activeBridge.play() : await activeBridge.pause();
-      if (generation === transportGeneration) set({ playback });
+      if (generation === transportGeneration) set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
     } catch (error) {
       if (generation !== transportGeneration) return;
       set({ playback: previous });
       get().notifyError(error, "播放状态更新失败");
-      void activeBridge.getPlayback().then((playback) => { if (generation === transportGeneration) set({ playback }); }).catch(() => undefined);
+      void activeBridge.getPlayback().then((playback) => {
+        if (generation === transportGeneration) {
+          set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+        }
+      }).catch(() => undefined);
     }
   },
   async stop() {
     const generation = ++transportGeneration;
-    try { const playback = await activeBridge.stop(); if (generation === transportGeneration) set({ playback }); }
+    try {
+      const playback = await activeBridge.stop();
+      if (generation === transportGeneration) set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+    }
     catch (error) { if (generation === transportGeneration) get().notifyError(error, "停止播放失败"); }
   },
   async next() {
     const generation = ++transportGeneration;
-    try { const playback = await activeBridge.next(); if (generation === transportGeneration) set({ playback }); }
+    try {
+      const playback = await activeBridge.next();
+      if (generation === transportGeneration) set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+    }
     catch (error) { if (generation === transportGeneration) get().notifyError(error, "无法播放下一首"); }
   },
   async previous() {
     const generation = ++transportGeneration;
-    try { const playback = await activeBridge.previous(); if (generation === transportGeneration) set({ playback }); }
+    try {
+      const playback = await activeBridge.previous();
+      if (generation === transportGeneration) set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+    }
     catch (error) { if (generation === transportGeneration) get().notifyError(error, "无法播放上一首"); }
   },
   async playTrack(track, context) {
@@ -331,7 +393,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const previous = get().playback;
     try {
       const playback = await activeBridge.play(trackRefOf(track), context);
-      if (generation === transportGeneration) set({ playback, selectedTrackIds: [track.id] });
+      if (generation === transportGeneration) {
+        set((state) => ({
+          ...acceptedPlaybackState(playback, state.dspDiagnostic),
+          selectedTrackIds: [track.id],
+        }));
+      }
     } catch (error) {
       if (generation !== transportGeneration) return;
       if (previous) set({ playback: previous });
@@ -344,12 +411,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (previous) set({ playback: { ...previous, positionMs } });
     try {
       const playback = await activeBridge.seek(positionMs);
-      if (generation === transportGeneration) set({ playback });
+      if (generation === transportGeneration) set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
     } catch (error) {
       if (generation !== transportGeneration) return;
       if (previous) set({ playback: previous });
       get().notifyError(error, "跳转播放进度失败");
-      void activeBridge.getPlayback().then((playback) => { if (generation === transportGeneration) set({ playback }); }).catch(() => undefined);
+      void activeBridge.getPlayback().then((playback) => {
+        if (generation === transportGeneration) {
+          set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+        }
+      }).catch(() => undefined);
     }
   },
   async setVolume(volume) {
@@ -358,11 +429,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (previous) set({ playback: { ...previous, volume } });
     try {
       const playback = await activeBridge.setVolume(volume);
-      if (generation === volumeGeneration) set({ playback });
+      if (generation === volumeGeneration) set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
     } catch (error) {
       if (generation !== volumeGeneration) return;
       if (previous) set({ playback: previous });
-      void activeBridge.getPlayback().then((playback) => { if (generation === volumeGeneration) set({ playback }); }).catch(() => undefined);
+      void activeBridge.getPlayback().then((playback) => {
+        if (generation === volumeGeneration) {
+          set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+        }
+      }).catch(() => undefined);
       get().notifyError(error, "调整音量失败");
     }
   },
@@ -370,7 +445,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const generation = ++transportGeneration;
     const previous = get().playback;
     if (previous) set({ playback: { ...previous, repeat } });
-    try { const playback = await activeBridge.setRepeatMode(repeat); if (generation === transportGeneration) set({ playback }); }
+    try {
+      const playback = await activeBridge.setRepeatMode(repeat);
+      if (generation === transportGeneration) set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+    }
     catch (error) { if (generation === transportGeneration) { if (previous) set({ playback: previous }); get().notifyError(error, "切换播放模式失败"); } }
   },
   async setSettings(patch) {
@@ -388,19 +466,31 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   async enqueueTrack(track, position = "contextEnd") {
-    try { set({ playback: await activeBridge.enqueue(trackRefOf(track), position) }); }
+    try {
+      const playback = await activeBridge.enqueue(trackRefOf(track), position);
+      set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+    }
     catch (error) { get().notifyError(error, "无法将歌曲加入队列"); }
   },
   async removeQueueItem(queueItemId) {
-    try { set({ playback: await activeBridge.removeQueueItem(queueItemId) }); }
+    try {
+      const playback = await activeBridge.removeQueueItem(queueItemId);
+      set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+    }
     catch (error) { get().notifyError(error, "无法移除队列歌曲"); }
   },
   async reorderQueueItem(queueItemId, targetIndex) {
-    try { set({ playback: await activeBridge.reorderQueueItem(queueItemId, targetIndex) }); }
+    try {
+      const playback = await activeBridge.reorderQueueItem(queueItemId, targetIndex);
+      set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+    }
     catch (error) { get().notifyError(error, "无法调整队列顺序"); }
   },
   async clearQueue(scope) {
-    try { set({ playback: await activeBridge.clearQueue(scope) }); }
+    try {
+      const playback = await activeBridge.clearQueue(scope);
+      set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+    }
     catch (error) { get().notifyError(error, "无法清空播放队列"); }
   },
   async resolveClose(action, remember) {

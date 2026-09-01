@@ -1,11 +1,13 @@
 import { fallbackCover } from "../artwork";
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type Event } from "@tauri-apps/api/event";
+import { createTauriTelemetryTransport } from "../visualization/telemetry/tauri-transport";
 import type {
   AppSettingsDto,
   BackendBootstrapDto,
   BackendCacheStatusDto,
   BackendCloseRequestedDto,
+  BackendEngineSnapshotDto,
   BackendNeteaseStatusDto,
   BackendPlaybackProgressDto,
   BackendPlaybackStateDto,
@@ -19,6 +21,8 @@ import type {
   BridgeEventHandlers,
   CacheStatsDto,
   CloseDecision,
+  DspConfigurationRejectedDto,
+  DspProcessingFaultDto,
   LibraryAlbumDto,
   LibraryArtistDto,
   LibraryArtworkDto,
@@ -56,6 +60,7 @@ import type {
   PlaybackSnapshotDto,
   QueueInsertPosition,
   QueueItemDto,
+  ShenzhenWeatherDto,
   TaskAcceptedDto,
   TrackDto,
   Unlisten,
@@ -63,6 +68,11 @@ import type {
   UpdaterStatusDto,
   WindowKind,
 } from "./contracts";
+import type { TelemetryTransport } from "../visualization/telemetry/session";
+
+type TauriBridgeContract = BridgeContract & {
+  createTelemetryTransport(): TelemetryTransport;
+};
 
 export const TAURI_COMMANDS = {
   bootstrap: "bootstrap",
@@ -143,6 +153,11 @@ export const TAURI_COMMANDS = {
   updaterStatus: "updater_status",
   updaterCheck: "updater_check",
   updaterUpdate: "updater_update",
+  shenzhenWeather: "shenzhen_weather",
+  telemetrySubscribe: "telemetry_subscribe",
+  telemetryAck: "telemetry_ack",
+  telemetrySetActivity: "telemetry_set_activity",
+  telemetryClose: "telemetry_close",
   windowResolveClose: "window_resolve_close",
 } as const;
 
@@ -159,6 +174,8 @@ export const TAURI_EVENTS = {
   mediaKeyPressed: "hyperplayer://windows/media-key-pressed",
   updaterStatusChanged: "hyperplayer://updater/status-changed",
   engineSnapshotChanged: "hyperplayer://engine/snapshot-changed",
+  dspConfigurationRejected: "hyperplayer://dsp/configuration-rejected",
+  dspProcessingFault: "hyperplayer://dsp/processing-fault",
 } as const;
 
 const materialKey = "hyperplayer.material";
@@ -213,8 +230,10 @@ function settingsRequest(patch: Partial<AppSettingsDto>): Partial<BackendSetting
   return request;
 }
 
-export function adaptPlayback(state: BackendPlaybackStateDto, queue: BackendQueueSnapshotDto): PlaybackSnapshotDto {
+export function adaptPlayback(snapshot: BackendEngineSnapshotDto): PlaybackSnapshotDto {
+  const { playback: state, queue } = snapshot;
   return {
+    revision: snapshot.revision,
     current: state.currentTrack ? adaptTrack(state.currentTrack) : null,
     currentQueueItemId: queue.currentItemId,
     status: state.status === "error" || state.status === "stopped" ? "unavailable" : state.status,
@@ -224,6 +243,11 @@ export function adaptPlayback(state: BackendPlaybackStateDto, queue: BackendQueu
     nextUp: queue.playNext.map(adaptQueueItem),
     repeat: { sequential: "sequence", repeatAll: "all", repeatOne: "one", shuffle: "shuffle" }[state.repeatMode] as PlaybackSnapshotDto["repeat"],
     dsp: { available: false, bypassed: true, label: "规格待接入" },
+    dspExecution: {
+      revision: snapshot.dspExecution.revision,
+      safeBypassActive: snapshot.dspExecution.safeBypassActive,
+      fault: snapshot.dspExecution.fault,
+    },
   };
 }
 
@@ -243,43 +267,85 @@ export function bridgeError(error: unknown): { code: string; message: string; un
   return { code: "unknown", message, unavailable: false };
 }
 
-function tauriBridge(): BridgeContract {
-  let playbackState: BackendPlaybackStateDto | null = null;
-  let queueState: BackendQueueSnapshotDto = { currentItemId: null, playNext: [], context: [], revision: 0 };
-  let playbackEventVersion = 0;
+export function createEngineSnapshotGate() {
+  let engineState: BackendEngineSnapshotDto | null = null;
 
-  const snapshot = () => {
-    if (!playbackState) throw new Error("Playback state is not initialized");
-    return adaptPlayback(playbackState, queueState);
+  const dspSeverity = (status: BackendEngineSnapshotDto["dspExecution"]) =>
+    status.fault ? 2 : status.safeBypassActive ? 1 : 0;
+
+  const mergeDspExecution = (
+    current: BackendEngineSnapshotDto["dspExecution"],
+    candidate: BackendEngineSnapshotDto["dspExecution"],
+  ) => {
+    if (candidate.revision > current.revision) return candidate;
+    if (candidate.revision < current.revision) return current;
+    return dspSeverity(candidate) > dspSeverity(current) ? candidate : current;
   };
-  const updatePlayback = (state: BackendPlaybackStateDto) => { playbackState = state; return snapshot(); };
-  const updateQueue = (queue: BackendQueueSnapshotDto) => { queueState = queue; return snapshot(); };
-  const invokeQueue = async (command: string, args?: Record<string, unknown>) => updateQueue(await invoke<BackendQueueSnapshotDto>(command, args));
+
+  return {
+    accept(candidate: BackendEngineSnapshotDto): PlaybackSnapshotDto {
+      if (candidate.queue.revision !== candidate.revision) {
+        throw new Error("Engine snapshot revisions do not match");
+      }
+      if (!engineState) {
+        engineState = candidate;
+      } else {
+        const dspExecution = mergeDspExecution(engineState.dspExecution, candidate.dspExecution);
+        if (candidate.revision > engineState.revision) {
+          engineState = { ...candidate, dspExecution };
+        } else if (dspExecution !== engineState.dspExecution) {
+          engineState = { ...engineState, dspExecution };
+        }
+      }
+      if (!engineState) throw new Error("Playback state is not initialized");
+      return adaptPlayback(engineState);
+    },
+    current(): PlaybackSnapshotDto {
+      if (!engineState) throw new Error("Playback state is not initialized");
+      return adaptPlayback(engineState);
+    },
+    acceptProgress(progress: BackendPlaybackProgressDto): "apply" | "ignore" | "resync" {
+      if (!engineState || progress.revision > engineState.revision) return "resync";
+      if (progress.revision < engineState.revision) return "ignore";
+      engineState = {
+        ...engineState,
+        playback: {
+          ...engineState.playback,
+          positionMs: progress.positionMs,
+          durationMs: progress.durationMs,
+        },
+      };
+      return "apply";
+    },
+  };
+}
+
+function tauriBridge(): TauriBridgeContract {
+  const engineGate = createEngineSnapshotGate();
+
+  const invokeEngine = async (command: string, args?: Record<string, unknown>) =>
+    engineGate.accept(await invoke<BackendEngineSnapshotDto>(command, args));
 
   return {
     async bootstrap() {
-      const observedPlaybackVersion = playbackEventVersion;
-      const observedQueueRevision = queueState.revision;
       const value = await invoke<BackendBootstrapDto>(TAURI_COMMANDS.bootstrap);
-      if (playbackEventVersion === observedPlaybackVersion) playbackState = value.playback;
-      if (queueState.revision === observedQueueRevision && value.queue.revision >= queueState.revision) queueState = value.queue;
-      return { playback: snapshot(), settings: adaptSettings(value.settings), tasks: localTasks(value) };
+      return { playback: engineGate.accept(value.engine), settings: adaptSettings(value.settings), tasks: localTasks(value) };
     },
-    async getPlayback() { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackGetState)); },
+    async getPlayback() { return invokeEngine(TAURI_COMMANDS.playbackGetState); },
     async play(track, context = { kind: "manual", id: null }) {
       const request = track ? { track, context } : null;
-      return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackPlay, { request }));
+      return invokeEngine(TAURI_COMMANDS.playbackPlay, { request });
     },
-    async pause() { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackPause)); },
-    async stop() { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackStop)); },
-    async next() { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackNext)); },
-    async previous() { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackPrevious)); },
+    async pause() { return invokeEngine(TAURI_COMMANDS.playbackPause); },
+    async stop() { return invokeEngine(TAURI_COMMANDS.playbackStop); },
+    async next() { return invokeEngine(TAURI_COMMANDS.playbackNext); },
+    async previous() { return invokeEngine(TAURI_COMMANDS.playbackPrevious); },
     async setRepeatMode(mode) {
       const backendMode = { sequence: "sequential", all: "repeatAll", one: "repeatOne", shuffle: "shuffle" }[mode];
-      return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackSetRepeatMode, { mode: backendMode }));
+      return invokeEngine(TAURI_COMMANDS.playbackSetRepeatMode, { mode: backendMode });
     },
-    async seek(positionMs) { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackSeek, { request: { positionMs } })); },
-    async setVolume(volume) { return updatePlayback(await invoke<BackendPlaybackStateDto>(TAURI_COMMANDS.playbackSetVolume, { request: { volume } })); },
+    async seek(positionMs) { return invokeEngine(TAURI_COMMANDS.playbackSeek, { request: { positionMs } }); },
+    async setVolume(volume) { return invokeEngine(TAURI_COMMANDS.playbackSetVolume, { request: { volume } }); },
     async getSettings() { return adaptSettings(await invoke<BackendSettingsDto>(TAURI_COMMANDS.settingsGet)); },
     async updateSettings(patch) {
       if (patch.material !== undefined) localStorage.setItem(materialKey, patch.material);
@@ -287,10 +353,10 @@ function tauriBridge(): BridgeContract {
       if (Object.keys(request).length === 0) return { ...(await this.getSettings()), material: patch.material ?? getMaterial() };
       return { ...adaptSettings(await invoke<BackendSettingsDto>(TAURI_COMMANDS.settingsUpdate, { request })), material: patch.material ?? getMaterial() };
     },
-    async enqueue(track, position: QueueInsertPosition) { return invokeQueue(TAURI_COMMANDS.queueEnqueue, { request: { track, position } }); },
-    async removeQueueItem(queueItemId) { return invokeQueue(TAURI_COMMANDS.queueRemove, { request: { queueItemId } }); },
-    async reorderQueueItem(queueItemId, targetIndex) { return invokeQueue(TAURI_COMMANDS.queueReorder, { request: { queueItemId, targetIndex } }); },
-    async clearQueue(scope) { return invokeQueue(scope === "all" ? TAURI_COMMANDS.queueClearAll : TAURI_COMMANDS.queueClearPlayNext); },
+    async enqueue(track, position: QueueInsertPosition) { return invokeEngine(TAURI_COMMANDS.queueEnqueue, { request: { track, position } }); },
+    async removeQueueItem(queueItemId) { return invokeEngine(TAURI_COMMANDS.queueRemove, { request: { queueItemId } }); },
+    async reorderQueueItem(queueItemId, targetIndex) { return invokeEngine(TAURI_COMMANDS.queueReorder, { request: { queueItemId, targetIndex } }); },
+    async clearQueue(scope) { return invokeEngine(scope === "all" ? TAURI_COMMANDS.queueClearAll : TAURI_COMMANDS.queueClearPlayNext); },
     async libraryOverview() { return invoke<LibraryOverviewDto>(TAURI_COMMANDS.libraryOverview); },
     async libraryQuery(search, cursor = null) {
       return invoke<LibraryPageDto>(TAURI_COMMANDS.libraryQueryTracks, { request: { search: search?.trim() || null, page: { cursor, limit: 100 } } });
@@ -356,18 +422,40 @@ function tauriBridge(): BridgeContract {
     async updaterStatus() { return invoke<UpdaterStatusDto>(TAURI_COMMANDS.updaterStatus); },
     async updaterCheck() { return invoke<UpdateCheckDto>(TAURI_COMMANDS.updaterCheck); },
     async updaterUpdate(expectedVersion) { return invoke<boolean>(TAURI_COMMANDS.updaterUpdate, { expectedVersion }); },
+    async shenzhenWeather() { return invoke<ShenzhenWeatherDto>(TAURI_COMMANDS.shenzhenWeather); },
     async resolveClose(action: CloseDecision, remember) { await invoke(TAURI_COMMANDS.windowResolveClose, { request: { action, remember } }); },
+    createTelemetryTransport() {
+      return createTauriTelemetryTransport({
+        invoke,
+        createChannel: (onmessage) => new Channel(onmessage),
+        commands: {
+          subscribe: TAURI_COMMANDS.telemetrySubscribe,
+          acknowledge: TAURI_COMMANDS.telemetryAck,
+          setActivity: TAURI_COMMANDS.telemetrySetActivity,
+          close: TAURI_COMMANDS.telemetryClose,
+        },
+      });
+    },
     async subscribe(handlers: BridgeEventHandlers): Promise<Unlisten> {
       const listeners: Unlisten[] = [];
       const add = async <T>(event: string, handler: (event: Event<T>) => void) => { listeners.push(await listen<T>(event, handler)); };
       try {
-        await add<BackendPlaybackStateDto>(TAURI_EVENTS.playbackStateChanged, ({ payload }) => { playbackEventVersion += 1; handlers.playbackChanged?.(updatePlayback(payload)); });
-        await add<BackendPlaybackProgressDto>(TAURI_EVENTS.playbackProgress, ({ payload }) => handlers.playbackProgress?.(payload));
-        await add<BackendQueueSnapshotDto>(TAURI_EVENTS.queueChanged, ({ payload }) => { queueState = payload; if (playbackState) handlers.queueChanged?.(snapshot()); });
+        await add<BackendEngineSnapshotDto>(TAURI_EVENTS.engineSnapshotChanged, ({ payload }) => handlers.playbackChanged?.(engineGate.accept(payload)));
+        await add<BackendPlaybackProgressDto>(TAURI_EVENTS.playbackProgress, ({ payload }) => {
+          const decision = engineGate.acceptProgress(payload);
+          if (decision === "ignore") return;
+          if (decision === "resync") {
+            void invokeEngine(TAURI_COMMANDS.playbackGetState).then((playback) => handlers.playbackChanged?.(playback)).catch(() => undefined);
+            return;
+          }
+          handlers.playbackProgress?.(payload);
+        });
         await add<BackendScanProgressDto>(TAURI_EVENTS.libraryScanProgress, ({ payload }) => handlers.scanProgress?.(payload));
         await add<BackendSettingsDto>(TAURI_EVENTS.settingsChanged, ({ payload }) => handlers.settingsChanged?.(adaptSettings(payload)));
         await add<BackendCacheStatusDto>(TAURI_EVENTS.cacheStatusChanged, ({ payload }) => handlers.cacheStatusChanged?.(payload));
         await add<BackendNeteaseStatusDto>(TAURI_EVENTS.neteaseStatusChanged, ({ payload }) => handlers.neteaseStatusChanged?.(payload));
+        await add<DspConfigurationRejectedDto>(TAURI_EVENTS.dspConfigurationRejected, ({ payload }) => handlers.dspConfigurationRejected?.(payload));
+        await add<DspProcessingFaultDto>(TAURI_EVENTS.dspProcessingFault, ({ payload }) => handlers.dspProcessingFault?.(payload));
         await add<BackendCloseRequestedDto>(TAURI_EVENTS.closeRequested, ({ payload }) => handlers.closeRequested?.(payload));
       } catch (error) {
         listeners.forEach((unlisten) => unlisten());
@@ -378,4 +466,4 @@ function tauriBridge(): BridgeContract {
   };
 }
 
-export const bridge: BridgeContract = tauriBridge();
+export const bridge: TauriBridgeContract = tauriBridge();

@@ -88,7 +88,7 @@ export function TrackTable({ tracks, compact = false, playbackContext, preserveO
     ].filter(Boolean) as Array<{ id: string; label: string; icon: typeof Play; danger?: boolean; run: () => void }>;
   };
 
-  const template = `38px minmax(180px,${widths.title}px) minmax(110px,${widths.artist}px) minmax(110px,${widths.album}px) 120px 58px 40px`;
+  const template = `34px minmax(180px,${widths.title}px) minmax(110px,${widths.artist}px) minmax(110px,${widths.album}px) 120px 58px 44px`;
   return <div className={`advanced-track-wrap ${compact ? "compact" : ""}`}>
     {!compact && <div className="table-options"><button onClick={resetColumns}>恢复默认列宽</button></div>}
     {selected.length > 1 && <div className="batch-bar" role="toolbar" aria-label={`已选择 ${selected.length} 首歌曲`}><b>已选择 {selected.length} 首</b><button onClick={() => selected.forEach((track) => void enqueueTrack(track, "playNext"))}><Queue />下一首播放</button><button onClick={() => selected.forEach((track) => void enqueueTrack(track))}><ListPlus />加入队列</button><button onClick={() => removeWithUndo(selected)}><X />移除</button></div>}

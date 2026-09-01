@@ -1,7 +1,9 @@
+import { StrictMode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BackendCacheStatusDto, PlaybackSnapshotDto, TrackDto } from "../bridge/contracts";
+import type { TelemetryTransport } from "../visualization/telemetry";
 
 vi.hoisted(() => {
   const values = new Map<string, string>();
@@ -21,6 +23,7 @@ const bridgeMocks = vi.hoisted(() => ({
   cacheTrack: vi.fn(),
   cacheRemove: vi.fn(),
   lyricsGet: vi.fn(),
+  createTelemetryTransport: vi.fn(),
 }));
 
 vi.mock("../bridge", async (importOriginal) => {
@@ -28,8 +31,15 @@ vi.mock("../bridge", async (importOriginal) => {
   return { ...actual, bridge: { ...actual.bridge, ...bridgeMocks } };
 });
 
-import { ExpandedPlayer } from "./Player";
+vi.mock("../visualization/renderers", () => ({
+  WaveformCanvas2D: ({ bins, ariaLabel }: { bins: readonly unknown[]; ariaLabel?: string }) => (
+    <canvas aria-label={ariaLabel} data-bin-count={bins.length} />
+  ),
+}));
+
+import { ExpandedPlayer, PlayerDock } from "./Player";
 import { useAppStore } from "../store";
+import { makeTelemetryFrame } from "../visualization/telemetry/test-fixtures";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,6 +57,7 @@ const track = (id: string, quality: TrackDto["quality"] = "无损"): TrackDto =>
 });
 
 const playback = (current: TrackDto): PlaybackSnapshotDto => ({
+  revision: 1,
   current,
   currentQueueItemId: `queue-${current.id}`,
   status: "playing",
@@ -90,12 +101,52 @@ async function settle(): Promise<void> {
   });
 }
 
+describe("PlayerDock 固定播放栏", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    useAppStore.getState().dispose();
+    useAppStore.setState(useAppStore.getInitialState(), true);
+    useAppStore.setState({ playback: null, overlay: "none" });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+    container.remove();
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the transport visible and disabled before a track is loaded", async () => {
+    await act(async () => root.render(<PlayerDock />));
+    expect(container.textContent).toContain("选择一首歌曲");
+    expect(container.querySelector(".player-dock.empty")).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="播放"]')?.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="停止"]')?.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="播放队列"]')?.disabled).toBe(true);
+  });
+});
+
 describe("ExpandedPlayer 缓存控制", () => {
   let container: HTMLDivElement;
   let root: Root;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    useAppStore.getState().dispose();
+    useAppStore.setState(useAppStore.getInitialState(), true);
+    bridgeMocks.createTelemetryTransport.mockImplementation((): TelemetryTransport => ({
+      open: vi.fn(),
+      setRate: vi.fn(),
+      acknowledge: vi.fn(() => true),
+      close: vi.fn(),
+    }));
     bridgeMocks.cacheStatus.mockResolvedValue(status("first", "missing"));
     bridgeMocks.cacheTrack.mockResolvedValue({ taskId: "cache-first", accepted: true });
     bridgeMocks.cacheRemove.mockResolvedValue(undefined);
@@ -110,8 +161,12 @@ describe("ExpandedPlayer 缓存控制", () => {
   });
 
   afterEach(async () => {
-    await act(async () => root.unmount());
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
     container.remove();
+    vi.restoreAllMocks();
   });
 
   it.each([
@@ -213,5 +268,77 @@ describe("ExpandedPlayer 缓存控制", () => {
 
     expect(bridgeMocks.cacheTrack).toHaveBeenCalledTimes(2);
     expect(bridgeMocks.cacheTrack).toHaveBeenLastCalledWith({ id: "first", source: "netease" }, "无损");
+  });
+
+  it("keeps Stop available for a loaded track", async () => {
+    await act(async () => root.render(<ExpandedPlayer />));
+    await settle();
+    const stopButton = container.querySelector<HTMLButtonElement>('button[aria-label="停止"]');
+    expect(stopButton?.disabled).toBe(false);
+  });
+
+  it("opens waveform telemetry, renders decoded bins, and closes it on unmount", async () => {
+    let onFrame: ((frame: ArrayBuffer | ArrayBufferView) => void) | undefined;
+    const transport: TelemetryTransport = {
+      open: vi.fn((_rate, handler) => { onFrame = handler; }),
+      setRate: vi.fn(),
+      acknowledge: vi.fn(() => true),
+      close: vi.fn(),
+    };
+    bridgeMocks.createTelemetryTransport.mockReturnValue(transport);
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    await act(async () => root.render(<ExpandedPlayer />));
+    await settle();
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="波形"]')?.click());
+    await settle();
+    expect(bridgeMocks.createTelemetryTransport).toHaveBeenCalledOnce();
+    expect(transport.open).toHaveBeenCalledWith(30, expect.any(Function));
+    expect(container.querySelector('[aria-label="波形暂无数据"]')).not.toBeNull();
+
+    await act(async () => onFrame?.(makeTelemetryFrame()));
+    expect(container.querySelector('canvas[aria-label="实时立体声波形"]')?.getAttribute("data-bin-count")).toBe("64");
+    expect(transport.acknowledge).toHaveBeenCalledWith(4n, 9n, 12n);
+
+    await act(async () => window.dispatchEvent(new Event("blur")));
+    expect(transport.setRate).toHaveBeenCalledWith(15);
+    await act(async () => root.unmount());
+    await settle();
+    expect(transport.close).toHaveBeenCalledOnce();
+    root = createRoot(container);
+  });
+
+  it("reuses one telemetry session across the StrictMode effect probe", async () => {
+    const transport: TelemetryTransport = {
+      open: vi.fn(),
+      setRate: vi.fn(),
+      acknowledge: vi.fn(() => true),
+      close: vi.fn(),
+    };
+    bridgeMocks.createTelemetryTransport.mockReturnValue(transport);
+    await act(async () => root.render(<StrictMode><ExpandedPlayer /></StrictMode>));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="波形"]')?.click());
+    await settle();
+
+    expect(bridgeMocks.createTelemetryTransport).toHaveBeenCalledOnce();
+    expect(transport.open).toHaveBeenCalledOnce();
+    expect(transport.close).not.toHaveBeenCalled();
+  });
+
+  it("keeps the empty baseline when waveform telemetry is unavailable", async () => {
+    const transport: TelemetryTransport = {
+      open: vi.fn().mockRejectedValue(new Error("telemetry unavailable")),
+      setRate: vi.fn(),
+      acknowledge: vi.fn(() => true),
+      close: vi.fn(),
+    };
+    bridgeMocks.createTelemetryTransport.mockReturnValue(transport);
+    await act(async () => root.render(<ExpandedPlayer />));
+    await settle();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="波形"]')?.click());
+    await settle();
+
+    expect(container.querySelector('[aria-label="波形暂无数据"]')).not.toBeNull();
+    expect(container.querySelector('canvas[aria-label="实时立体声波形"]')).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,9 +7,9 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 vi.mock("./player/Player", () => ({ ExpandedPlayer: () => null, PlayerDock: () => null }));
 
-const storage = (() => {
+const storage = vi.hoisted(() => {
   const values = new Map<string, string>();
-  return {
+  const localStorageMock = {
     clear: () => values.clear(),
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => values.set(key, value),
@@ -17,32 +17,44 @@ const storage = (() => {
     key: (index: number) => [...values.keys()][index] ?? null,
     get length() { return values.size; },
   } satisfies Storage;
-})();
-Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: localStorageMock });
+  return localStorageMock;
+});
 Object.defineProperty(globalThis, "matchMedia", {
   configurable: true,
   value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
 });
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
 
+import App from "./App";
+import { SidebarNav, Titlebar } from "./shell/Navigation";
+import { useAppStore } from "./store";
+
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
 beforeEach(() => {
   storage.clear();
-  vi.resetModules();
+  useAppStore.getState().dispose();
+  useAppStore.setState(useAppStore.getInitialState(), true);
 });
 
 afterEach(async () => {
-  if (root) await act(async () => root?.unmount());
-  container?.remove();
+  const mountedRoot = root;
   root = null;
+  if (mountedRoot) {
+    await act(async () => {
+      mountedRoot.unmount();
+      await Promise.resolve();
+    });
+  }
+  container?.remove();
   container = null;
+  vi.restoreAllMocks();
 });
 
 describe("content-domain navigation history", () => {
   it("restores independent detail-aware back and forward stacks per domain", async () => {
-    const { useAppStore } = await import("./store");
     const store = useAppStore.getState();
 
     store.navigate("playlist", 101);
@@ -67,7 +79,6 @@ describe("content-domain navigation history", () => {
   });
 
   it("keeps string local entities distinct from numeric NetEase details across domain switches", async () => {
-    const { useAppStore } = await import("./store");
 
     useAppStore.getState().navigate("playlist", 42);
     useAppStore.getState().setDomain("local");
@@ -91,7 +102,6 @@ describe("content-domain navigation history", () => {
     ["folders", "folder", "folder:E:/Music/Live"],
     ["playlists", "playlist", "playlist:550e8400-e29b-41d4-a716-446655440012"],
   ] as const)("stores %s details with string IDs and entity kind", async (view, detailKind, detailId) => {
-    const { useAppStore } = await import("./store");
 
     useAppStore.getState().setDomain("local");
     useAppStore.getState().navigate(view);
@@ -102,7 +112,6 @@ describe("content-domain navigation history", () => {
   });
 
   it("clears only the active forward stack and caps history at 20 entries", async () => {
-    const { useAppStore } = await import("./store");
 
     useAppStore.getState().navigate("search");
     useAppStore.getState().navigate("playlist", 1);
@@ -123,7 +132,6 @@ describe("content-domain navigation history", () => {
   });
 
   it("does not mutate playback, queue-bearing state, or overlays during traversal", async () => {
-    const { useAppStore } = await import("./store");
     const playback = { marker: "shared-playback" } as never;
     useAppStore.setState({ playback, overlay: "queue", expandedPlayer: true, searchOpen: true });
     useAppStore.getState().navigate("album", 9);
@@ -141,17 +149,34 @@ describe("content-domain navigation history", () => {
     expect(shared()).toEqual(before);
   });
 
+  it("renders the top navigation and grouped music sidebar", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => root?.render(
+      createElement("div", null, createElement(Titlebar), createElement(SidebarNav)),
+    ));
+    expect(container.textContent).toContain("HyperPlayer");
+    expect(container.textContent).toContain("音乐馆");
+    expect(container.textContent).toContain("你的音乐");
+    expect(container.textContent).toContain("发现音乐");
+    expect(container.textContent).toContain("我的歌单");
+    expect(container.querySelector('[aria-haspopup="dialog"]')).not.toBeNull();
+    const settingsButton = [...container.querySelectorAll("button")].find((item) => item.textContent?.includes("设置"));
+    expect(settingsButton).toBeDefined();
+    await act(async () => settingsButton?.click());
+    expect(useAppStore.getState().view).toBe("settings");
+  });
+
   it("enables and invokes both titlebar history controls", async () => {
-    const React = await import("react");
-    const { useAppStore } = await import("./store");
-    const { Titlebar } = await import("./shell/Navigation");
     useAppStore.getState().navigate("album", 7);
     useAppStore.getState().back();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
 
-    await act(async () => root?.render(React.createElement(Titlebar)));
+    await act(async () => root?.render(createElement(Titlebar)));
     const back = container.querySelector<HTMLButtonElement>('button[aria-label="返回"]');
     const forward = container.querySelector<HTMLButtonElement>('button[aria-label="前进"]');
     expect(back?.disabled).toBe(true);
@@ -160,12 +185,9 @@ describe("content-domain navigation history", () => {
     await act(async () => forward?.click());
     expect(useAppStore.getState()).toMatchObject({ view: "album", detailId: 7 });
     expect(back?.disabled).toBe(false);
-  }, 15_000);
+  });
 
   it("maps Alt+Left and Alt+Right to history while preserving Escape priority", async () => {
-    const React = await import("react");
-    const { useAppStore } = await import("./store");
-    const { default: App } = await import("./App");
     const init = vi.fn(async () => undefined);
     const dispose = vi.fn();
     useAppStore.setState({ ready: true, onboarding: true, init, dispose });
@@ -173,7 +195,7 @@ describe("content-domain navigation history", () => {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    await act(async () => root?.render(React.createElement(App)));
+    await act(async () => root?.render(createElement(App)));
 
     await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, cancelable: true })));
     expect(useAppStore.getState()).toMatchObject({ view: "home", detailId: null });

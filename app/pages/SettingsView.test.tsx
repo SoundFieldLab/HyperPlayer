@@ -136,9 +136,9 @@ describe("SettingsView 更新器与不可用状态", () => {
     await settle();
 
     await act(async () => button(container, "音频与 DSP").click());
-    expect(container.textContent).toContain("DSP 规格待接入");
-    expect(container.textContent).toContain("自动选择 · 只读");
-    expect(button(container, "打开音效工作台").disabled).toBe(true);
+    expect(container.textContent).toContain("DSP 核心接入中");
+    expect(container.textContent).toContain("4 个阶段");
+    expect(container.textContent).toContain("Rust Engine");
 
     await act(async () => button(container, "系统集成").click());
     expect(container.textContent).toContain("系统独占输出");

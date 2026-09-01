@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettingsDto, BridgeContract, BridgeEventHandlers, PlaybackSnapshotDto, Unlisten } from "./bridge/contracts";
+import type { TelemetryTransport } from "./visualization/telemetry";
 
 const memoryStorage = (() => {
   const values = new Map<string, string>();
@@ -26,6 +27,7 @@ const settings: AppSettingsDto = {
 };
 
 const playback: PlaybackSnapshotDto = {
+  revision: 1,
   current: null,
   currentQueueItemId: null,
   status: "paused",
@@ -35,6 +37,7 @@ const playback: PlaybackSnapshotDto = {
   nextUp: [],
   repeat: "sequence",
   dsp: { available: false, bypassed: true, label: "规格待接入" },
+  dspExecution: { revision: 0, safeBypassActive: false, fault: null },
 };
 
 function deferred<T>() {
@@ -119,7 +122,14 @@ function mockBridge(overrides: Partial<BridgeContract> = {}): BridgeContract {
     updaterStatus: vi.fn(async () => ({ enabled: false, reason: "disabled" })),
     updaterCheck: vi.fn(async () => ({ available: false, version: null, currentVersion: "0.1.0", notes: null })),
     updaterUpdate: vi.fn(async (_expectedVersion) => false),
+    shenzhenWeather: vi.fn(async () => ({ location: "深圳", observedAt: "2026-09-01T12:30", temperatureC: 31, apparentTemperatureC: 35, relativeHumidityPercent: 72, weatherCode: 1, condition: "多云", windSpeedKmh: 8, isDay: true })),
     resolveClose: vi.fn(async () => undefined),
+    createTelemetryTransport: vi.fn((): TelemetryTransport => ({
+      open: vi.fn(),
+      setRate: vi.fn(),
+      acknowledge: vi.fn(),
+      close: vi.fn(),
+    })),
     subscribe: vi.fn(async () => (() => undefined) as Unlisten),
     ...overrides,
   };
@@ -167,12 +177,13 @@ describe("app store", () => {
     const init = useAppStore.getState().init();
     await Promise.resolve();
     handlers.settingsChanged?.({ ...settings, theme: "dark" });
-    handlers.playbackChanged?.({ ...playback, volume: 0.9 });
+    handlers.playbackChanged?.({ ...playback, revision: 2, volume: 0.9 });
+    handlers.playbackProgress?.({ revision: 2, positionMs: 450, durationMs: null });
     initial.resolve({ playback, settings, tasks: [] });
     await init;
 
     expect(useAppStore.getState().settings?.theme).toBe("dark");
-    expect(useAppStore.getState().playback?.volume).toBe(0.9);
+    expect(useAppStore.getState().playback).toMatchObject({ revision: 2, volume: 0.9, positionMs: 450 });
   });
 
   it("commits only the latest seek response", async () => {
@@ -223,6 +234,73 @@ describe("app store", () => {
     await useAppStore.getState().next();
 
     expect(useAppStore.getState().toasts.at(-1)?.message).toBe("服务离线");
+  });
+
+  it("surfaces asynchronous DSP preparation rejection with its revision", async () => {
+    let handlers: BridgeEventHandlers = {};
+    const testBridge = mockBridge({
+      subscribe: vi.fn(async (nextHandlers) => { handlers = nextHandlers; return () => undefined; }),
+    });
+    const { setBridgeForTests, useAppStore } = await import("./store");
+    setBridgeForTests(testBridge);
+
+    await useAppStore.getState().init();
+    handlers.dspConfigurationRejected?.({ revision: 7 });
+    expect(useAppStore.getState().toasts.at(-1)?.message).toBe("DSP 配置 revision 7 未能准备");
+
+    const fault = {
+      revision: 8,
+      processorIndex: 2,
+      processorName: "compressor",
+      kind: "nonFiniteOutput" as const,
+      streamFrame: 4096,
+      safeBypassActive: true,
+      fallbackStatus: "rustSafeBypass" as const,
+    };
+    handlers.dspProcessingFault?.(fault);
+    expect(useAppStore.getState().dspDiagnostic).toEqual(fault);
+    expect(useAppStore.getState().toasts.at(-1)?.message).toBe("DSP revision 8 的 compressor 处理失败，播放正通过 Rust 安全旁路继续");
+
+    handlers.playbackChanged?.({
+      ...playback,
+      revision: 9,
+      dspExecution: { revision: 8, safeBypassActive: true, fault: { ...fault } },
+    });
+    expect(useAppStore.getState().dspDiagnostic).toEqual(fault);
+
+    handlers.playbackChanged?.({
+      ...playback,
+      revision: 9,
+      dspExecution: { revision: 9, safeBypassActive: false, fault: null },
+    });
+    expect(useAppStore.getState().dspDiagnostic).toBeNull();
+
+    handlers.dspProcessingFault?.(fault);
+    expect(useAppStore.getState().dspDiagnostic).toBeNull();
+  });
+
+  it("restores a safe-bypass diagnostic from bootstrap", async () => {
+    const fault = {
+      revision: 8,
+      processorIndex: 2,
+      processorName: "compressor",
+      kind: "nonFiniteOutput" as const,
+      streamFrame: 4096,
+      safeBypassActive: true,
+      fallbackStatus: "rustSafeBypass" as const,
+    };
+    const bypassed = {
+      ...playback,
+      dspExecution: { revision: 8, safeBypassActive: true, fault },
+    };
+    const testBridge = mockBridge({ bootstrap: vi.fn(async () => ({ playback: bypassed, settings, tasks: [] })) });
+    const { setBridgeForTests, useAppStore } = await import("./store");
+    setBridgeForTests(testBridge);
+
+    await useAppStore.getState().init();
+
+    expect(useAppStore.getState().dspDiagnostic).toEqual(fault);
+    expect(useAppStore.getState().toasts).toEqual([]);
   });
 
   it("commits only the latest volume and settings responses", async () => {
