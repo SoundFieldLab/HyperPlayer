@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "module": "delay",
+  "case": "case2",
+  "sampleRate": 8000,
+  "blockSize": 17,
+  "channels": 2,
+  "frames": 211,
+  "params": {
+    "enabled": true,
+    "delayMs": 0.1875,
+    "feedback": 0.6,
+    "mix": 0.75
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  },
+  "notes": "1.5 样本分数延迟，覆盖线性插值、读后写和 7 帧尾块。"
+}

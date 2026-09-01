@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "module": "phaser",
+  "case": "case3",
+  "sampleRate": 8000,
+  "blockSize": 31,
+  "channels": 2,
+  "frames": 1003,
+  "params": {
+    "enabled": true,
+    "rateHz": 0.01,
+    "depth": 0,
+    "feedback": 0,
+    "mix": 0,
+    "stages": 2.49
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  },
+  "notes": "参数下界、stages=2.49 舍入到 2、mix=0 音频逐位恒等但状态继续推进。"
+}

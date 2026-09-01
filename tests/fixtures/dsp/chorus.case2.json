@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "module": "chorus",
+  "case": "case2",
+  "sampleRate": 48000,
+  "blockSize": 333,
+  "channels": 2,
+  "frames": 12000,
+  "params": {
+    "enabled": true,
+    "rateHz": 4,
+    "depthMs": 5,
+    "mix": 0.5
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  },
+  "notes": "采用 HSE 官方 mod-effects.case3 的 Chorus 参数与输入，独立排除 Flanger；333 帧块和 12 帧尾块。"
+}

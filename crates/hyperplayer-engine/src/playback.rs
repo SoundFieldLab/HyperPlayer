@@ -1,3 +1,4 @@
+use crate::dsp::ProcessorFaultKind;
 use crate::error::{EngineError, Result};
 use crate::model::QueueItem;
 use crate::queue::{
@@ -54,6 +55,22 @@ impl PlaybackState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DspExecutionFault {
+    pub revision: u64,
+    pub processor_index: usize,
+    pub processor_name: String,
+    pub kind: ProcessorFaultKind,
+    pub stream_frame: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DspExecutionSnapshot {
+    pub revision: u64,
+    pub safe_bypass_active: bool,
+    pub fault: Option<DspExecutionFault>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlaybackSnapshot {
     pub state: PlaybackState,
     pub mode: PlaybackMode,
@@ -62,6 +79,7 @@ pub struct PlaybackSnapshot {
     pub context_count: usize,
     pub queue: QueueContextSnapshot,
     pub revision: u64,
+    pub dsp_execution: DspExecutionSnapshot,
 }
 
 #[derive(Clone, Debug)]
@@ -97,6 +115,7 @@ impl PlaybackMachine {
             context_count: self.queue.context().len(),
             queue: self.queue.context_snapshot(),
             revision: self.revision,
+            dsp_execution: DspExecutionSnapshot::default(),
         }
     }
 
@@ -136,6 +155,7 @@ impl PlaybackMachine {
             item,
             position_ms: 0,
         };
+        self.bump_revision();
         Ok(())
     }
 
@@ -145,6 +165,7 @@ impl PlaybackMachine {
             state => return Err(invalid(state, "pause")),
         };
         self.state = PlaybackState::Paused { item, position_ms };
+        self.bump_revision();
         Ok(())
     }
 
@@ -154,6 +175,7 @@ impl PlaybackMachine {
             state => return Err(invalid(state, "resume")),
         };
         self.state = PlaybackState::Playing { item, position_ms };
+        self.bump_revision();
         Ok(())
     }
 
@@ -168,6 +190,7 @@ impl PlaybackMachine {
                 ..
             } => {
                 *current = position_ms;
+                self.bump_revision();
                 Ok(())
             }
             state => Err(invalid(state, "seek")),
@@ -194,6 +217,7 @@ impl PlaybackMachine {
             .cloned()
             .ok_or_else(|| invalid(&self.state, "stop"))?;
         self.state = PlaybackState::Stopped { item };
+        self.bump_revision();
         Ok(())
     }
 
@@ -202,6 +226,11 @@ impl PlaybackMachine {
             item: self.state.current().cloned(),
             reason: reason.into(),
         };
+        self.bump_revision();
+    }
+
+    pub fn touch_revision(&mut self) {
+        self.bump_revision();
     }
 
     pub fn set_mode(&mut self, mode: PlaybackMode) {
@@ -313,6 +342,26 @@ fn invalid(state: &PlaybackState, command: &'static str) -> EngineError {
 mod tests {
     use super::*;
     use crate::model::test_item;
+
+    #[test]
+    fn discrete_state_changes_advance_revision_but_progress_does_not() {
+        let mut machine = PlaybackMachine::new(7);
+        machine.load_context(vec![test_item(1)], 0).unwrap();
+        let loaded = machine.snapshot().revision;
+        machine.ready().unwrap();
+        assert_eq!(machine.snapshot().revision, loaded + 1);
+        let playing = machine.snapshot().revision;
+        machine.update_position(100).unwrap();
+        assert_eq!(machine.snapshot().revision, playing);
+        machine.seek(200).unwrap();
+        assert_eq!(machine.snapshot().revision, playing + 1);
+        machine.pause().unwrap();
+        machine.resume().unwrap();
+        machine.stop().unwrap();
+        assert_eq!(machine.snapshot().revision, playing + 4);
+        machine.fail("failure");
+        assert_eq!(machine.snapshot().revision, playing + 5);
+    }
 
     #[test]
     fn validates_transitions_and_preserves_position() {

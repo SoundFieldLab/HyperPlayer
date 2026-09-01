@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "module": "night-mode",
+  "case": "case4",
+  "sampleRate": 44100,
+  "blockSize": 257,
+  "channels": 2,
+  "frames": 8234,
+  "params": {
+    "enabled": true,
+    "amount": 10,
+    "compressor": {
+      "enabled": false,
+      "thresholdDb": -30,
+      "ratio": 8,
+      "kneeDb": 0,
+      "attackMs": 0.2,
+      "releaseMs": 300,
+      "makeupDb": -2,
+      "outputGain": 2,
+      "sidechainEnabled": false
+    }
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  },
+  "notes": "满强度、硬 knee、44.1 kHz 与 10 帧尾块。"
+}

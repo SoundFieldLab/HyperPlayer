@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "module": "night-mode",
+  "case": "case1",
+  "sampleRate": 48000,
+  "blockSize": 128,
+  "channels": 2,
+  "frames": 1025,
+  "params": {
+    "enabled": true,
+    "amount": 0,
+    "compressor": {
+      "enabled": false,
+      "thresholdDb": -20,
+      "ratio": 4,
+      "kneeDb": 6,
+      "attackMs": 10,
+      "releaseMs": 150,
+      "makeupDb": 0,
+      "outputGain": 1,
+      "sidechainEnabled": false
+    }
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  },
+  "notes": "enabled=true 且 amount=0 的逐位旁路，包含 1 帧尾块。"
+}

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "module": "phaser",
+  "case": "case4",
+  "sampleRate": 96000,
+  "blockSize": 511,
+  "channels": 2,
+  "frames": 4099,
+  "params": {
+    "enabled": true,
+    "rateHz": 3.25,
+    "depth": 0.35,
+    "feedback": 0.72,
+    "mix": 0.63,
+    "stages": 2.5
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  },
+  "notes": "96 kHz、stages=2.5 舍入到 3、反馈与 11 帧尾块。"
+}

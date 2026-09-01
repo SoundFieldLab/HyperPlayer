@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "module": "flanger",
+  "case": "case2",
+  "sampleRate": 8000,
+  "blockSize": 31,
+  "channels": 2,
+  "frames": 1003,
+  "params": {
+    "enabled": true,
+    "rateHz": 20,
+    "depthMs": 50,
+    "feedback": 0.98,
+    "mix": 1
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  },
+  "notes": "参数上界，负半周触发 d<1 整环旧槽，最大反馈与 11 帧尾块。"
+}

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "module": "delay",
+  "case": "case3",
+  "sampleRate": 32,
+  "blockSize": 9,
+  "channels": 2,
+  "frames": 70,
+  "params": {
+    "enabled": true,
+    "delayMs": 0,
+    "feedback": 0.98,
+    "mix": 1
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  },
+  "notes": "delayMs=0 的整环旧槽读取语义、最大反馈和纯 wet，包含 7 帧尾块。"
+}

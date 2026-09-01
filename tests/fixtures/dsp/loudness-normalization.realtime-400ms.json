@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "module": "loudness-normalization",
+  "case": "realtime-400ms",
+  "sampleRate": 48000,
+  "blockSize": 128,
+  "channels": 2,
+  "frames": 24576,
+  "params": {
+    "enabled": true,
+    "targetLufs": -14,
+    "maxGainDb": 9,
+    "minGainDb": -9,
+    "useRealtimeMeter": true,
+    "externalGainDb": 0
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "notes": "HSE v1.5.1 官方 engine-chain.lufs-normalization-400ms 向量原样复用；前 19200 帧无完整读数保持 0 dB，下一块开始按首个读数驱动 3 秒平滑。"
+}

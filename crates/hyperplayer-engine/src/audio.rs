@@ -2,13 +2,12 @@ use crate::dsp::PcmFormat;
 use crate::error::{EngineError, Result};
 use crate::media::TrustedResolvedMedia;
 use crate::model::Track;
+use crossbeam_queue::ArrayQueue;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
 pub const PLAYABLE_LOCAL_EXTENSIONS: &[&str] = &["wav", "flac", "mp3"];
 
@@ -99,6 +98,9 @@ pub trait AudioOutput: Send {
     fn pause(&mut self) -> Result<()>;
     fn stop(&mut self) -> Result<()>;
     fn write(&mut self, interleaved_pcm: &[f32]) -> Result<usize>;
+    fn check_health(&self) -> Result<()> {
+        Ok(())
+    }
     fn set_volume(&mut self, volume: f32) -> Result<()> {
         if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
             return Err(EngineError::InvalidInput(
@@ -112,22 +114,42 @@ pub trait AudioOutput: Send {
     }
 }
 
-struct RingState {
-    samples: VecDeque<f32>,
-    closed: bool,
+fn render_output_callback(
+    ring: &ArrayQueue<[f32; 2]>,
+    volume_bits: &AtomicU32,
+    output: &mut [f32],
+) {
+    let volume = f32::from_bits(volume_bits.load(Ordering::Relaxed));
+    let mut frames = output.chunks_exact_mut(2);
+    for frame in &mut frames {
+        let [left, right] = ring.pop().unwrap_or([0.0, 0.0]);
+        frame[0] = left * volume;
+        frame[1] = right * volume;
+    }
+    frames.into_remainder().fill(0.0);
 }
 
-struct SharedRing {
-    state: Mutex<RingState>,
-    space_available: Condvar,
-    capacity: usize,
+fn select_output_sample_rate(ranges: &[(u32, u32)], default_rate: u32) -> Option<u32> {
+    for preferred in [default_rate, 48_000] {
+        if ranges
+            .iter()
+            .any(|(minimum, maximum)| (*minimum..=*maximum).contains(&preferred))
+        {
+            return Some(preferred);
+        }
+    }
+    ranges
+        .iter()
+        .flat_map(|(minimum, maximum)| [*minimum, *maximum])
+        .min_by_key(|rate| rate.abs_diff(default_rate))
 }
 
 pub struct CpalAudioOutput {
     format: PcmFormat,
-    ring: Arc<SharedRing>,
+    ring: Arc<ArrayQueue<[f32; 2]>>,
     volume_bits: Arc<AtomicU32>,
-    stream_error: Arc<Mutex<Option<String>>>,
+    stream_failed: Arc<AtomicBool>,
+    stopped: bool,
     stream: cpal::Stream,
 }
 
@@ -144,38 +166,33 @@ impl CpalAudioOutput {
         let device = host
             .default_output_device()
             .ok_or_else(|| EngineError::AudioBackend("no default output device".into()))?;
-        let supported = device
+        let default_rate = device
+            .default_output_config()
+            .map_err(audio_backend)?
+            .sample_rate();
+        let ranges = device
             .supported_output_configs()
             .map_err(audio_backend)?
-            .any(|range| {
-                range.channels() == format.channels
-                    && range.sample_format() == cpal::SampleFormat::F32
-                    && range.min_sample_rate() <= format.sample_rate
-                    && range.max_sample_rate() >= format.sample_rate
-            });
-        if !supported {
-            return Err(EngineError::Unsupported(format!(
-                "output device does not support F32 {} Hz / {} channels",
-                format.sample_rate, format.channels
-            )));
-        }
+            .filter(|range| {
+                range.channels() == 2 && range.sample_format() == cpal::SampleFormat::F32
+            })
+            .map(|range| (range.min_sample_rate(), range.max_sample_rate()))
+            .collect::<Vec<_>>();
+        let sample_rate = select_output_sample_rate(&ranges, default_rate).ok_or_else(|| {
+            EngineError::Unsupported("output device has no stereo F32 format".into())
+        })?;
+        let format = PcmFormat {
+            sample_rate,
+            channels: 2,
+            sample_format: crate::dsp::PcmSampleFormat::F32,
+        };
 
-        let capacity = capacity_frames
-            .checked_mul(usize::from(format.channels))
-            .ok_or_else(|| EngineError::InvalidInput("audio ring capacity overflow".into()))?;
-        let ring = Arc::new(SharedRing {
-            state: Mutex::new(RingState {
-                samples: VecDeque::with_capacity(capacity),
-                closed: false,
-            }),
-            space_available: Condvar::new(),
-            capacity,
-        });
+        let ring = Arc::new(ArrayQueue::new(capacity_frames));
         let callback_ring = Arc::clone(&ring);
         let volume_bits = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
         let callback_volume = Arc::clone(&volume_bits);
-        let stream_error = Arc::new(Mutex::new(None));
-        let callback_error = Arc::clone(&stream_error);
+        let stream_failed = Arc::new(AtomicBool::new(false));
+        let callback_failed = Arc::clone(&stream_failed);
         let config = cpal::StreamConfig {
             channels: format.channels,
             sample_rate: format.sample_rate,
@@ -185,19 +202,10 @@ impl CpalAudioOutput {
             .build_output_stream(
                 config,
                 move |data: &mut [f32], _| {
-                    let volume = f32::from_bits(callback_volume.load(Ordering::Relaxed));
-                    let mut state = callback_ring
-                        .state
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    for sample in data {
-                        *sample = state.samples.pop_front().unwrap_or(0.0) * volume;
-                    }
-                    callback_ring.space_available.notify_all();
+                    render_output_callback(&callback_ring, &callback_volume, data);
                 },
-                move |error| {
-                    *callback_error.lock().unwrap_or_else(|e| e.into_inner()) =
-                        Some(error.to_string());
+                move |_error| {
+                    callback_failed.store(true, Ordering::Release);
                 },
                 None,
             )
@@ -206,7 +214,8 @@ impl CpalAudioOutput {
             format,
             ring,
             volume_bits,
-            stream_error,
+            stream_failed,
+            stopped: true,
             stream,
         })
     }
@@ -219,12 +228,9 @@ impl AudioOutput for CpalAudioOutput {
 
     fn start(&mut self) -> Result<()> {
         use cpal::traits::StreamTrait;
-        self.ring
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .closed = false;
-        self.stream.play().map_err(audio_backend)
+        self.stream.play().map_err(audio_backend)?;
+        self.stopped = false;
+        Ok(())
     }
 
     fn pause(&mut self) -> Result<()> {
@@ -235,44 +241,39 @@ impl AudioOutput for CpalAudioOutput {
     fn stop(&mut self) -> Result<()> {
         use cpal::traits::StreamTrait;
         self.stream.pause().map_err(audio_backend)?;
-        let mut state = self.ring.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.samples.clear();
-        state.closed = true;
-        self.ring.space_available.notify_all();
+        while self.ring.pop().is_some() {}
+        self.stopped = true;
         Ok(())
     }
 
     fn write(&mut self, interleaved_pcm: &[f32]) -> Result<usize> {
-        if let Some(error) = self
-            .stream_error
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
-            return Err(EngineError::AudioBackend(error));
-        }
-        let deadline = Instant::now() + Duration::from_millis(100);
-        let mut state = self.ring.state.lock().unwrap_or_else(|e| e.into_inner());
-        while state.samples.len() == self.ring.capacity && !state.closed {
-            let now = Instant::now();
-            if now >= deadline {
-                return Ok(0);
-            }
-            let (next, _) = self
-                .ring
-                .space_available
-                .wait_timeout(state, deadline - now)
-                .unwrap_or_else(|e| e.into_inner());
-            state = next;
-        }
-        if state.closed {
+        self.check_health()?;
+        if self.stopped {
             return Err(EngineError::AudioBackend("audio output is stopped".into()));
         }
-        let written = interleaved_pcm
-            .len()
-            .min(self.ring.capacity - state.samples.len());
-        state.samples.extend(&interleaved_pcm[..written]);
+        if !interleaved_pcm.len().is_multiple_of(2) {
+            return Err(EngineError::InvalidInput(
+                "audio output requires complete stereo frames".into(),
+            ));
+        }
+        let mut written = 0;
+        for frame in interleaved_pcm.chunks_exact(2) {
+            if self.ring.push([frame[0], frame[1]]).is_err() {
+                break;
+            }
+            written += 2;
+        }
         Ok(written)
+    }
+
+    fn check_health(&self) -> Result<()> {
+        if self.stream_failed.swap(false, Ordering::AcqRel) {
+            Err(EngineError::AudioBackend(
+                "audio output stream failed".into(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     fn set_volume(&mut self, volume: f32) -> Result<()> {
@@ -286,12 +287,7 @@ impl AudioOutput for CpalAudioOutput {
     }
 
     fn buffered_samples(&self) -> usize {
-        self.ring
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .samples
-            .len()
+        self.ring.len().saturating_mul(2)
     }
 }
 
@@ -333,6 +329,7 @@ struct WavDecoder {
     data_position: u64,
     encoding: WavEncoding,
     block_align: u16,
+    read_buffer: Vec<u8>,
 }
 
 #[derive(Clone, Copy)]
@@ -434,6 +431,7 @@ impl WavDecoder {
             data_position: 0,
             encoding,
             block_align,
+            read_buffer: Vec::new(),
         })
     }
 }
@@ -457,11 +455,12 @@ impl Decoder for WavDecoder {
         if sample_count == 0 {
             return Ok(0);
         }
-        let mut bytes = vec![0_u8; sample_count * bytes_per_sample];
-        self.file.read_exact(&mut bytes)?;
+        let byte_count = sample_count * bytes_per_sample;
+        self.read_buffer.resize(byte_count, 0);
+        self.file.read_exact(&mut self.read_buffer)?;
         for (sample, encoded) in output[..sample_count]
             .iter_mut()
-            .zip(bytes.chunks_exact(bytes_per_sample))
+            .zip(self.read_buffer.chunks_exact(bytes_per_sample))
         {
             *sample = match self.encoding {
                 WavEncoding::Pcm16 => {
@@ -470,7 +469,7 @@ impl Decoder for WavDecoder {
                 WavEncoding::Float32 => f32::from_le_bytes(encoded.try_into().unwrap()),
             };
         }
-        self.data_position += bytes.len() as u64;
+        self.data_position += byte_count as u64;
         Ok(sample_count)
     }
 
@@ -900,6 +899,49 @@ mod tests {
         0x00, 0x00, 0x00, 0xff, 0xf8, 0x69, 0x08, 0x00, 0x03, 0x14, 0x40, 0x00, 0x02, 0xb6, 0x4f,
         0x40, 0x02, 0xc2, 0x0c, 0x4b, 0x9d,
     ];
+
+    #[test]
+    fn output_callback_drains_lock_free_ring_and_zero_fills_underrun() {
+        let ring = ArrayQueue::new(2);
+        ring.push([0.5, -0.25]).unwrap();
+        let volume = AtomicU32::new(0.5_f32.to_bits());
+        let mut output = [9.0_f32; 4];
+
+        render_output_callback(&ring, &volume, &mut output);
+
+        assert_eq!(output, [0.25, -0.125, 0.0, 0.0]);
+        assert!(ring.is_empty());
+    }
+
+    #[test]
+    fn output_callback_zero_fills_an_incomplete_device_buffer_tail() {
+        let ring = ArrayQueue::new(1);
+        ring.push([0.5, -0.25]).unwrap();
+        let volume = AtomicU32::new(1.0_f32.to_bits());
+        let mut output = [9.0_f32; 3];
+
+        render_output_callback(&ring, &volume, &mut output);
+
+        assert_eq!(output, [0.5, -0.25, 0.0]);
+        assert!(ring.is_empty());
+    }
+
+    #[test]
+    fn output_format_prefers_default_then_48khz_then_nearest_boundary() {
+        assert_eq!(
+            select_output_sample_rate(&[(44_100, 96_000)], 44_100),
+            Some(44_100)
+        );
+        assert_eq!(
+            select_output_sample_rate(&[(48_000, 48_000)], 44_100),
+            Some(48_000)
+        );
+        assert_eq!(
+            select_output_sample_rate(&[(32_000, 32_000), (96_000, 96_000)], 44_100),
+            Some(32_000)
+        );
+        assert_eq!(select_output_sample_rate(&[], 48_000), None);
+    }
 
     #[test]
     fn probes_and_decodes_real_mp3_without_using_extension() {

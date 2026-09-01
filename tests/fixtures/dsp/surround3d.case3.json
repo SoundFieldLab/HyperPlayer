@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "module": "surround3d",
+  "case": "case3",
+  "sampleRate": 48000,
+  "blockSize": 64,
+  "channels": 2,
+  "frames": 321,
+  "params": {
+    "enabled": true,
+    "distance": 0.4,
+    "speed": 0,
+    "angle": 90,
+    "direction": 1
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "notes": "由固定 HSE v1.5.1 commit f7017621b7d84005fbfed8a3c42a119487a17326 正式 HyperSoundEngine 构建生成；静态 90 度旋转与 distance 电平缩放，包含短尾块。"
+}

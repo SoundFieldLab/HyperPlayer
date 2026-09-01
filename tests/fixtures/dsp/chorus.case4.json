@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "module": "chorus",
+  "case": "case4",
+  "sampleRate": 44100,
+  "blockSize": 257,
+  "channels": 2,
+  "frames": 2057,
+  "params": {
+    "enabled": true,
+    "rateHz": 0.01,
+    "depthMs": 17.25,
+    "mix": 0
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  },
+  "notes": "rate 下界、分数 depth、mix=0 音频逐位恒等但 ring/phase 继续推进，含 1 帧尾块。"
+}

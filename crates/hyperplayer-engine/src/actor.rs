@@ -1,19 +1,34 @@
 use crate::audio::{AudioOutput, CpalAudioOutput, DecoderFactory, LocalDecoderFactory};
+use crate::dsp::{PcmFormat, PreparedProcessorChain};
+use crate::dsp_algorithms::{prepare_dsp_chain, validate_dsp_config, DspConfig};
 use crate::error::{EngineError, Result};
 use crate::media::TrustedResolvedMedia;
 use crate::model::QueueItem;
-use crate::playback::{PlaybackMachine, PlaybackSnapshot, PlaybackState};
+use crate::playback::{
+    DspExecutionFault, DspExecutionSnapshot, PlaybackMachine, PlaybackSnapshot, PlaybackState,
+};
 use crate::queue::{
     PlaybackMode, PlaybackQueue, QueueContextSnapshot, QueueInsertPosition, QueueSection,
 };
 use crate::runtime::{PumpResult, RuntimeCoordinator};
+use crate::telemetry::{TelemetryHub, TelemetrySubscriber};
+use crossbeam_queue::ArrayQueue;
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const ACTOR_TICK: Duration = Duration::from_millis(5);
 const STANDBY_FRAMES: usize = 4096;
+
+fn playback_output_format(source: crate::dsp::PcmFormat) -> crate::dsp::PcmFormat {
+    crate::dsp::PcmFormat {
+        sample_rate: source.sample_rate,
+        channels: 2,
+        sample_format: crate::dsp::PcmSampleFormat::F32,
+    }
+}
 
 pub enum EngineCommand {
     LoadContext {
@@ -26,6 +41,10 @@ pub enum EngineCommand {
     Resume,
     Seek(u64),
     SetVolume(f32),
+    ConfigureDsp {
+        revision: u64,
+        config: DspConfig,
+    },
     Stop,
     Next {
         automatic: bool,
@@ -70,6 +89,24 @@ pub enum EngineEventKind {
     Progress,
     StateChanged,
     AutomaticTransitionRequested,
+    DspExecutionChanged,
+    DspConfigurationRejected {
+        revision: u64,
+    },
+    DspProcessingFault {
+        revision: u64,
+        processor_index: usize,
+        processor_name: &'static str,
+        kind: crate::dsp::ProcessorFaultKind,
+        stream_frame: u64,
+        safe_bypass_active: bool,
+        fallback_status: DspFallbackStatus,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DspFallbackStatus {
+    RustSafeBypass,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,20 +117,156 @@ pub struct EngineEvent {
 
 type Envelope = (EngineCommand, SyncSender<Result<PlaybackSnapshot>>);
 type OutputFactory = Box<dyn FnMut(crate::dsp::PcmFormat) -> Result<Box<dyn AudioOutput>> + Send>;
+type DspCompileResult = (u64, Result<PreparedProcessorChain>);
+
+struct DspCompilerState {
+    pending: Option<(u64, PcmFormat, DspConfig)>,
+    shutdown: bool,
+}
+
+struct DspCompiler {
+    state: Arc<(Mutex<DspCompilerState>, Condvar)>,
+    ready: Arc<ArrayQueue<DspCompileResult>>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl DspCompiler {
+    fn spawn() -> Result<Self> {
+        let state = Arc::new((
+            Mutex::new(DspCompilerState {
+                pending: None,
+                shutdown: false,
+            }),
+            Condvar::new(),
+        ));
+        let worker_state = Arc::clone(&state);
+        let ready = Arc::new(ArrayQueue::new(1));
+        let worker_ready = Arc::clone(&ready);
+        let worker = thread::Builder::new()
+            .name("hyperplayer-dsp-compiler".into())
+            .spawn(move || loop {
+                let request = {
+                    let (lock, wake) = &*worker_state;
+                    let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+                    while state.pending.is_none() && !state.shutdown {
+                        state = wake.wait(state).unwrap_or_else(|error| error.into_inner());
+                    }
+                    if state.shutdown {
+                        break;
+                    }
+                    state.pending.take().expect("pending request was checked")
+                };
+                let (revision, format, config) = request;
+                let result = prepare_dsp_chain(
+                    revision,
+                    format,
+                    crate::runtime::DECODE_BUFFER_FRAMES,
+                    config,
+                );
+                let (lock, _) = &*worker_state;
+                let state = lock.lock().unwrap_or_else(|error| error.into_inner());
+                if state.shutdown {
+                    break;
+                }
+                let superseded = state
+                    .pending
+                    .as_ref()
+                    .is_some_and(|(pending_revision, _, _)| *pending_revision > revision);
+                if superseded {
+                    continue;
+                }
+                let _older_ready = worker_ready.pop();
+                let _ = worker_ready.push((revision, result));
+            })?;
+        Ok(Self {
+            state,
+            ready,
+            worker: Some(worker),
+        })
+    }
+
+    fn submit(&self, revision: u64, format: PcmFormat, config: DspConfig) {
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+        state.pending = Some((revision, format, config));
+        let _superseded_ready = self.ready.pop();
+        wake.notify_one();
+    }
+
+    fn try_recv(&self) -> Option<DspCompileResult> {
+        self.ready.pop()
+    }
+}
+
+impl Drop for DspCompiler {
+    fn drop(&mut self) {
+        let (lock, wake) = &*self.state;
+        lock.lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .shutdown = true;
+        wake.notify_one();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
 
 struct EngineRuntime {
     machine: PlaybackMachine,
     audio: Option<RuntimeCoordinator>,
+    telemetry: TelemetryHub,
     decoder_factory: Option<Box<dyn DecoderFactory>>,
     output_factory: Option<OutputFactory>,
-    subscribers: Vec<SyncSender<EngineEvent>>,
+    subscribers: Vec<mpsc::Sender<EngineEvent>>,
     media: HashMap<u64, TrustedResolvedMedia>,
     pending_restore: bool,
+    desired_dsp: Option<(u64, DspConfig)>,
+    dsp_compiler: Option<DspCompiler>,
+}
+
+impl EngineRuntime {
+    fn dsp_execution_snapshot(&self) -> DspExecutionSnapshot {
+        dsp_execution_snapshot(self.audio.as_ref())
+    }
+
+    fn snapshot(&self) -> PlaybackSnapshot {
+        let mut snapshot = self.machine.snapshot();
+        snapshot.dsp_execution = self.dsp_execution_snapshot();
+        snapshot
+    }
+}
+
+fn dsp_execution_snapshot(runtime: Option<&RuntimeCoordinator>) -> DspExecutionSnapshot {
+    let Some(runtime) = runtime else {
+        return DspExecutionSnapshot::default();
+    };
+    let dsp = runtime.dsp_snapshot();
+    DspExecutionSnapshot {
+        revision: dsp.revision,
+        safe_bypass_active: dsp.safe_bypass_active,
+        fault: dsp.fault.map(|fault| DspExecutionFault {
+            revision: dsp.revision,
+            processor_index: fault.processor_index,
+            processor_name: fault.processor_name.into(),
+            kind: fault.kind,
+            stream_frame: dsp.fault_stream_frame.unwrap_or(dsp.applied_at_frame),
+        }),
+    }
+}
+
+fn snapshot_with_dsp(
+    machine: &PlaybackMachine,
+    runtime: Option<&RuntimeCoordinator>,
+) -> PlaybackSnapshot {
+    let mut snapshot = machine.snapshot();
+    snapshot.dsp_execution = dsp_execution_snapshot(runtime);
+    snapshot
 }
 
 pub struct EngineHandle {
     sender: SyncSender<Envelope>,
-    event_sender: SyncSender<SyncSender<EngineEvent>>,
+    event_sender: SyncSender<mpsc::Sender<EngineEvent>>,
+    telemetry: TelemetryHub,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -139,6 +312,8 @@ impl EngineHandle {
         }
         let (sender, receiver) = mpsc::sync_channel(capacity);
         let (event_sender, event_receiver) = mpsc::sync_channel(capacity);
+        let telemetry = TelemetryHub::new();
+        let actor_telemetry = telemetry.clone();
         let worker = thread::Builder::new()
             .name("hyperplayer-engine".into())
             .spawn(move || {
@@ -148,11 +323,13 @@ impl EngineHandle {
                     PlaybackMachine::new(shuffle_seed),
                     decoder_factory,
                     output_factory,
+                    actor_telemetry,
                 )
             })?;
         Ok(Self {
             sender,
             event_sender,
+            telemetry,
             worker: Some(worker),
         })
     }
@@ -178,7 +355,7 @@ impl EngineHandle {
                 "event subscription capacity must be greater than zero".into(),
             ));
         }
-        let (sender, receiver) = mpsc::sync_channel(capacity);
+        let (sender, receiver) = mpsc::channel();
         self.event_sender
             .try_send(sender)
             .map_err(|error| match error {
@@ -186,6 +363,10 @@ impl EngineHandle {
                 TrySendError::Disconnected(_) => EngineError::ActorUnavailable,
             })?;
         Ok(receiver)
+    }
+
+    pub fn subscribe_telemetry(&self) -> TelemetrySubscriber {
+        self.telemetry.subscribe()
     }
 
     pub fn shutdown(mut self) -> Result<()> {
@@ -209,113 +390,185 @@ impl Drop for EngineHandle {
 
 fn run_actor(
     receiver: Receiver<Envelope>,
-    event_receiver: Receiver<SyncSender<EngineEvent>>,
+    event_receiver: Receiver<mpsc::Sender<EngineEvent>>,
     machine: PlaybackMachine,
     decoder_factory: Box<dyn DecoderFactory>,
     output_factory: OutputFactory,
+    telemetry: TelemetryHub,
 ) {
     let mut engine = EngineRuntime {
         machine,
         audio: None,
+        telemetry,
         decoder_factory: Some(decoder_factory),
         output_factory: Some(output_factory),
         subscribers: Vec::new(),
         media: HashMap::new(),
         pending_restore: false,
+        desired_dsp: None,
+        dsp_compiler: Some(DspCompiler::spawn().expect("DSP compiler thread must start")),
     };
+    let mut next_tick = Instant::now() + ACTOR_TICK;
     loop {
         while let Ok(subscriber) = event_receiver.try_recv() {
             engine.subscribers.push(subscriber);
         }
-        match receiver.recv_timeout(ACTOR_TICK) {
+        let wait = next_tick.saturating_duration_since(Instant::now());
+        match receiver.recv_timeout(wait) {
             Ok((command, reply)) => {
                 let shutdown = matches!(command, EngineCommand::Shutdown);
-                let result = apply(&mut engine, command).map(|()| engine.machine.snapshot());
+                let result = apply(&mut engine, command).map(|()| engine.snapshot());
                 let _ = reply.send(result);
                 if shutdown {
                     break;
                 }
             }
-            Err(RecvTimeoutError::Timeout) => {
-                if matches!(engine.machine.state(), PlaybackState::Playing { .. }) {
-                    if let Some(runtime) = engine.audio.as_mut() {
-                        match runtime.pump_once() {
-                            Ok(PumpResult::Progress { position_ms }) => {
-                                if engine.machine.update_position(position_ms).is_ok() {
-                                    publish(
-                                        &mut engine.subscribers,
-                                        EngineEventKind::Progress,
-                                        engine.machine.snapshot(),
-                                    );
-                                }
-                            }
-                            Ok(PumpResult::Pending) => {}
-                            Ok(PumpResult::Eof { output_drained }) => {
-                                if engine.machine.queue().peek_next(true).is_some() {
-                                    let expected_queue_id = engine
-                                        .machine
-                                        .queue()
-                                        .peek_next(true)
-                                        .expect("checked next queue item")
-                                        .queue_id;
-                                    let needs_hydration = automatic_transition_needs_hydration(
-                                        &engine.machine,
-                                        &engine.media,
-                                    );
-                                    let kind = if needs_hydration {
-                                        let _ = runtime.pause();
-                                        let _ = engine.machine.pause();
-                                        EngineEventKind::AutomaticTransitionRequested
-                                    } else {
-                                        let prior = engine.machine.state().clone();
-                                        match advance_and_start(
-                                            &mut engine.machine,
-                                            runtime,
-                                            &engine.media,
-                                            true,
-                                            expected_queue_id,
-                                        ) {
-                                            Ok(()) => EngineEventKind::StateChanged,
-                                            Err(_) => {
-                                                restore_current_runtime(
-                                                    &mut engine.machine,
-                                                    runtime,
-                                                    &engine.media,
-                                                    &prior,
-                                                );
-                                                EngineEventKind::AutomaticTransitionRequested
-                                            }
-                                        }
-                                    };
-                                    publish(
-                                        &mut engine.subscribers,
-                                        kind,
-                                        engine.machine.snapshot(),
-                                    );
-                                } else if output_drained {
-                                    let _ = runtime.stop();
-                                    let _ = engine.machine.stop();
-                                    publish(
-                                        &mut engine.subscribers,
-                                        EngineEventKind::StateChanged,
-                                        engine.machine.snapshot(),
-                                    );
-                                }
-                            }
-                            Err(error) => {
-                                let _ = runtime.stop();
-                                engine.machine.fail(error.to_string());
-                                publish(
-                                    &mut engine.subscribers,
-                                    EngineEventKind::StateChanged,
-                                    engine.machine.snapshot(),
-                                );
-                            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        if Instant::now() >= next_tick {
+            service_audio_tick(&mut engine);
+            next_tick = Instant::now() + ACTOR_TICK;
+        }
+    }
+}
+
+fn service_audio_tick(engine: &mut EngineRuntime) {
+    accept_compiled_dsp(engine);
+    if !matches!(engine.machine.state(), PlaybackState::Playing { .. }) {
+        return;
+    }
+    let Some(runtime) = engine.audio.as_mut() else {
+        return;
+    };
+    let before_dsp = runtime.dsp_snapshot();
+    let result = runtime.pump_once();
+    let after_dsp = runtime.dsp_snapshot();
+    if before_dsp.revision != after_dsp.revision
+        || before_dsp.safe_bypass_active != after_dsp.safe_bypass_active
+        || before_dsp.fault != after_dsp.fault
+    {
+        publish(
+            &mut engine.subscribers,
+            EngineEventKind::DspExecutionChanged,
+            snapshot_with_dsp(&engine.machine, Some(runtime)),
+        );
+    }
+    if let Some((revision, fault, stream_frame)) = runtime.take_dsp_fault() {
+        let safe_bypass_active = runtime.dsp_snapshot().safe_bypass_active;
+        publish(
+            &mut engine.subscribers,
+            EngineEventKind::DspProcessingFault {
+                revision,
+                processor_index: fault.processor_index,
+                processor_name: fault.processor_name,
+                kind: fault.kind,
+                stream_frame,
+                safe_bypass_active,
+                fallback_status: DspFallbackStatus::RustSafeBypass,
+            },
+            snapshot_with_dsp(&engine.machine, Some(runtime)),
+        );
+    }
+    match result {
+        Ok(PumpResult::Progress { position_ms }) => {
+            if engine.machine.update_position(position_ms).is_ok() {
+                publish(
+                    &mut engine.subscribers,
+                    EngineEventKind::Progress,
+                    snapshot_with_dsp(&engine.machine, Some(runtime)),
+                );
+            }
+        }
+        Ok(PumpResult::Pending) => {}
+        Ok(PumpResult::Eof { output_drained }) => {
+            if engine.machine.queue().peek_next(true).is_some() {
+                let expected_queue_id = engine
+                    .machine
+                    .queue()
+                    .peek_next(true)
+                    .expect("checked next queue item")
+                    .queue_id;
+                let needs_hydration =
+                    automatic_transition_needs_hydration(&engine.machine, &engine.media);
+                let kind = if needs_hydration {
+                    let _ = runtime.pause();
+                    let _ = engine.machine.pause();
+                    EngineEventKind::AutomaticTransitionRequested
+                } else {
+                    let prior = engine.machine.state().clone();
+                    match advance_and_start(
+                        &mut engine.machine,
+                        runtime,
+                        &engine.media,
+                        true,
+                        expected_queue_id,
+                    ) {
+                        Ok(()) => EngineEventKind::StateChanged,
+                        Err(_) => {
+                            restore_current_runtime(
+                                &mut engine.machine,
+                                runtime,
+                                &engine.media,
+                                &prior,
+                            );
+                            EngineEventKind::AutomaticTransitionRequested
                         }
                     }
-                }
+                };
+                publish(
+                    &mut engine.subscribers,
+                    kind,
+                    snapshot_with_dsp(&engine.machine, Some(runtime)),
+                );
+            } else if output_drained {
+                let _ = runtime.stop();
+                let _ = engine.machine.stop();
+                publish(
+                    &mut engine.subscribers,
+                    EngineEventKind::StateChanged,
+                    snapshot_with_dsp(&engine.machine, Some(runtime)),
+                );
             }
-            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        Err(error) => {
+            let _ = runtime.stop();
+            engine.machine.fail(error.to_string());
+            publish(
+                &mut engine.subscribers,
+                EngineEventKind::StateChanged,
+                snapshot_with_dsp(&engine.machine, Some(runtime)),
+            );
+        }
+    }
+}
+
+fn accept_compiled_dsp(engine: &mut EngineRuntime) {
+    let Some(compiler) = engine.dsp_compiler.as_ref() else {
+        return;
+    };
+    let desired_revision = engine
+        .desired_dsp
+        .as_ref()
+        .map_or(0, |(revision, _)| *revision);
+    while let Some((revision, result)) = compiler.try_recv() {
+        if revision != desired_revision {
+            continue;
+        }
+        let accepted = result.and_then(|prepared| {
+            engine
+                .audio
+                .as_mut()
+                .ok_or_else(|| EngineError::InvalidInput("no playback context is loaded".into()))?
+                .queue_prepared_dsp(prepared)
+        });
+        if accepted.is_err() {
+            let snapshot = engine.snapshot();
+            publish(
+                &mut engine.subscribers,
+                EngineEventKind::DspConfigurationRejected { revision },
+                snapshot,
+            );
         }
     }
 }
@@ -345,21 +598,18 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
             engine.media.clear();
             engine.media.insert(item.queue_id, media.clone());
             if runtime.is_none() {
-                let factory = engine
-                    .decoder_factory
-                    .take()
-                    .ok_or(EngineError::ActorUnavailable)?;
-                let probe = factory.open(&media)?;
-                let output = engine
-                    .output_factory
-                    .as_mut()
-                    .ok_or(EngineError::ActorUnavailable)?(
-                    probe.descriptor().format
-                )?;
-                engine.output_factory = None;
-                *runtime = Some(RuntimeCoordinator::new(factory, output));
-            }
-            if let Err(error) = runtime.as_mut().unwrap().load(&media) {
+                if let Err(error) = initialize_runtime(
+                    runtime,
+                    &mut engine.decoder_factory,
+                    &mut engine.output_factory,
+                    engine.desired_dsp.as_ref(),
+                    engine.telemetry.clone(),
+                    &media,
+                ) {
+                    engine.machine.fail(error.to_string());
+                    return Err(error);
+                }
+            } else if let Err(error) = runtime.as_mut().unwrap().load(&media) {
                 machine.fail(error.to_string());
                 return Err(error);
             }
@@ -386,7 +636,36 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
             let actual = runtime_mut(runtime)?.seek(position_ms)?;
             machine.seek(actual)
         }
-        EngineCommand::SetVolume(volume) => runtime_mut(runtime)?.set_volume(volume),
+        EngineCommand::SetVolume(volume) => {
+            runtime_mut(runtime)?.set_volume(volume)?;
+            machine.touch_revision();
+            Ok(())
+        }
+        EngineCommand::ConfigureDsp { revision, config } => {
+            let newest_revision = engine
+                .desired_dsp
+                .as_ref()
+                .map_or(0, |(revision, _)| *revision);
+            if revision == 0 || revision <= newest_revision {
+                return Err(EngineError::InvalidInput(
+                    "DSP configuration revision must increase monotonically".into(),
+                ));
+            }
+            validate_dsp_config(&config)?;
+            if let Some(runtime) = runtime.as_mut() {
+                if matches!(machine.state(), PlaybackState::Playing { .. }) {
+                    if let Some(compiler) = engine.dsp_compiler.as_ref() {
+                        compiler.submit(revision, runtime.output_format(), config.clone());
+                    } else {
+                        runtime.configure_dsp(revision, config.clone())?;
+                    }
+                } else {
+                    runtime.configure_dsp(revision, config.clone())?;
+                }
+            }
+            engine.desired_dsp = Some((revision, config));
+            Ok(())
+        }
         EngineCommand::Stop => {
             runtime_mut(runtime)?.stop()?;
             machine.stop()
@@ -548,6 +827,51 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
     }
 }
 
+fn initialize_runtime(
+    runtime: &mut Option<RuntimeCoordinator>,
+    decoder_factory: &mut Option<Box<dyn DecoderFactory>>,
+    output_factory: &mut Option<OutputFactory>,
+    desired_dsp: Option<&(u64, DspConfig)>,
+    telemetry: TelemetryHub,
+    media: &TrustedResolvedMedia,
+) -> Result<()> {
+    let factory = decoder_factory
+        .take()
+        .ok_or(EngineError::ActorUnavailable)?;
+    let probe = match factory.open(media) {
+        Ok(probe) => probe,
+        Err(error) => {
+            *decoder_factory = Some(factory);
+            return Err(error);
+        }
+    };
+    let output_format = playback_output_format(probe.descriptor().format);
+    let output = match output_factory
+        .as_mut()
+        .ok_or(EngineError::ActorUnavailable)?(output_format)
+    {
+        Ok(output) => output,
+        Err(error) => {
+            *decoder_factory = Some(factory);
+            return Err(error);
+        }
+    };
+    let mut coordinator = RuntimeCoordinator::with_telemetry(factory, output, telemetry);
+    let initialized = (|| {
+        if let Some((revision, config)) = desired_dsp.cloned() {
+            coordinator.configure_dsp(revision, config)?;
+        }
+        coordinator.load_opened(probe)
+    })();
+    if let Err(error) = initialized {
+        *decoder_factory = Some(coordinator.into_decoder_factory());
+        return Err(error);
+    }
+    *output_factory = None;
+    *runtime = Some(coordinator);
+    Ok(())
+}
+
 fn start_restored(engine: &mut EngineRuntime) -> Result<()> {
     let (item, position_ms) = match engine.machine.state() {
         PlaybackState::Paused { item, position_ms } => (item.clone(), *position_ms),
@@ -561,21 +885,19 @@ fn start_restored(engine: &mut EngineRuntime) -> Result<()> {
     let resolved = engine.media.get(&item.queue_id).ok_or_else(|| {
         EngineError::InvalidInput("restored queue media must be resolved before playback".into())
     })?;
-    if engine.audio.is_none() {
-        let factory = engine
-            .decoder_factory
-            .take()
-            .ok_or(EngineError::ActorUnavailable)?;
-        let probe = factory.open(resolved)?;
-        let output = engine
-            .output_factory
-            .as_mut()
-            .ok_or(EngineError::ActorUnavailable)?(probe.descriptor().format)?;
-        engine.output_factory = None;
-        engine.audio = Some(RuntimeCoordinator::new(factory, output));
+    if let Some(runtime) = engine.audio.as_mut() {
+        runtime.load(resolved)?;
+    } else {
+        initialize_runtime(
+            &mut engine.audio,
+            &mut engine.decoder_factory,
+            &mut engine.output_factory,
+            engine.desired_dsp.as_ref(),
+            engine.telemetry.clone(),
+            resolved,
+        )?;
     }
-    let runtime = engine.audio.as_mut().expect("audio runtime initialized");
-    runtime.load(resolved)?;
+    let runtime = runtime_mut(&mut engine.audio)?;
     let actual_position_ms = runtime.seek(position_ms)?;
     runtime.start()?;
     engine.machine.seek(actual_position_ms)?;
@@ -804,15 +1126,12 @@ fn runtime_mut(runtime: &mut Option<RuntimeCoordinator>) -> Result<&mut RuntimeC
 }
 
 fn publish(
-    subscribers: &mut Vec<SyncSender<EngineEvent>>,
+    subscribers: &mut Vec<mpsc::Sender<EngineEvent>>,
     kind: EngineEventKind,
     snapshot: PlaybackSnapshot,
 ) {
     let event = EngineEvent { kind, snapshot };
-    subscribers.retain(|subscriber| match subscriber.try_send(event.clone()) {
-        Ok(()) | Err(TrySendError::Full(_)) => true,
-        Err(TrySendError::Disconnected(_)) => false,
-    });
+    subscribers.retain(|subscriber| subscriber.send(event.clone()).is_ok());
 }
 
 #[cfg(test)]
@@ -821,6 +1140,7 @@ mod tests {
     use crate::audio::{StandbyState, WavDecoderFactory};
     use crate::dsp::{PcmFormat, PcmSampleFormat};
     use crate::model::{MediaId, MediaSource, Track};
+    use crate::telemetry::TelemetryActivity;
     use std::fs;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
@@ -954,6 +1274,7 @@ mod tests {
         let mut engine = EngineRuntime {
             machine: PlaybackMachine::new(1),
             audio: None,
+            telemetry: TelemetryHub::new(),
             decoder_factory: Some(Box::new(WavDecoderFactory)),
             output_factory: Some(Box::new(move |_format| {
                 output
@@ -963,6 +1284,8 @@ mod tests {
             subscribers: Vec::new(),
             media: HashMap::new(),
             pending_restore: false,
+            desired_dsp: None,
+            dsp_compiler: None,
         };
 
         apply(
@@ -1032,6 +1355,420 @@ mod tests {
         .unwrap();
         apply(&mut engine, EngineCommand::Remove { queue_id: 2 }).unwrap();
         assert_eq!(standby_queue_id(&engine), None);
+    }
+
+    #[test]
+    fn asynchronous_prepare_failure_publishes_rejected_revision() {
+        let compiler = DspCompiler::spawn().unwrap();
+        compiler.submit(
+            7,
+            PcmFormat {
+                sample_rate: 48_000,
+                channels: 1,
+                sample_format: PcmSampleFormat::F32,
+            },
+            DspConfig::default(),
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        let result = loop {
+            if let Some(result) = compiler.try_recv() {
+                break result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "DSP compile timed out"
+            );
+            std::thread::yield_now();
+        };
+        assert_eq!(result.0, 7);
+        assert!(result.1.is_err());
+    }
+
+    #[test]
+    fn critical_events_survive_progress_backlog_without_disconnect() {
+        let (sender, receiver) = mpsc::channel();
+        let mut subscribers = vec![sender];
+        let machine = PlaybackMachine::new(1);
+        for _ in 0..32 {
+            publish(
+                &mut subscribers,
+                EngineEventKind::Progress,
+                machine.snapshot(),
+            );
+        }
+        publish(
+            &mut subscribers,
+            EngineEventKind::StateChanged,
+            machine.snapshot(),
+        );
+        publish(
+            &mut subscribers,
+            EngineEventKind::DspConfigurationRejected { revision: 7 },
+            machine.snapshot(),
+        );
+        publish(
+            &mut subscribers,
+            EngineEventKind::DspProcessingFault {
+                revision: 8,
+                processor_index: 2,
+                processor_name: "compressor",
+                kind: crate::dsp::ProcessorFaultKind::NonFiniteOutput,
+                stream_frame: 4096,
+                safe_bypass_active: true,
+                fallback_status: DspFallbackStatus::RustSafeBypass,
+            },
+            machine.snapshot(),
+        );
+
+        let events = receiver.try_iter().collect::<Vec<_>>();
+        assert_eq!(events.len(), 35);
+        assert!(events
+            .iter()
+            .any(|event| event.kind == EngineEventKind::StateChanged));
+        assert!(events.iter().any(|event| {
+            event.kind == EngineEventKind::DspConfigurationRejected { revision: 7 }
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind
+                == EngineEventKind::DspProcessingFault {
+                    revision: 8,
+                    processor_index: 2,
+                    processor_name: "compressor",
+                    kind: crate::dsp::ProcessorFaultKind::NonFiniteOutput,
+                    stream_frame: 4096,
+                    safe_bypass_active: true,
+                    fallback_status: DspFallbackStatus::RustSafeBypass,
+                }
+        }));
+        assert_eq!(subscribers.len(), 1);
+    }
+
+    #[test]
+    fn output_open_failure_preserves_factories_for_retry() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("retry-output.wav");
+        fs::write(&path, wav(&[1, 2, 3, 4])).unwrap();
+        let attempts = Arc::new(Mutex::new(0_usize));
+        let attempts_for_factory = Arc::clone(&attempts);
+        let output_state = Arc::new(Mutex::new(State::default()));
+        let output_state_for_factory = Arc::clone(&output_state);
+        let mut engine = EngineRuntime {
+            machine: PlaybackMachine::new(1),
+            audio: None,
+            telemetry: TelemetryHub::new(),
+            decoder_factory: Some(Box::new(WavDecoderFactory)),
+            output_factory: Some(Box::new(move |format| {
+                let mut attempts = attempts_for_factory.lock().unwrap();
+                *attempts += 1;
+                if *attempts == 1 {
+                    return Err(EngineError::AudioBackend("device unavailable".into()));
+                }
+                Ok(Box::new(TestOutput {
+                    format,
+                    state: Arc::clone(&output_state_for_factory),
+                    fail_start: false,
+                }))
+            })),
+            subscribers: Vec::new(),
+            media: HashMap::new(),
+            pending_restore: false,
+            desired_dsp: None,
+            dsp_compiler: None,
+        };
+        let current = item(1, &path);
+        let load = || EngineCommand::LoadContext {
+            items: vec![current.clone()],
+            start_index: 0,
+            media: media(&current, &path),
+        };
+
+        assert!(apply(&mut engine, load()).is_err());
+        assert!(engine.decoder_factory.is_some());
+        assert!(engine.output_factory.is_some());
+        assert!(matches!(
+            engine.machine.state(),
+            PlaybackState::Failed { .. }
+        ));
+
+        apply(&mut engine, load()).unwrap();
+        assert!(engine.audio.is_some());
+        assert!(engine.decoder_factory.is_none());
+        assert!(engine.output_factory.is_none());
+        apply(&mut engine, EngineCommand::Ready).unwrap();
+        assert!(matches!(
+            engine.machine.state(),
+            PlaybackState::Playing { .. }
+        ));
+        assert_eq!(*attempts.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn dsp_compiler_coalesces_pending_and_ready_results_to_latest_revision() {
+        let compiler = DspCompiler::spawn().unwrap();
+        let format = PcmFormat {
+            sample_rate: 48_000,
+            channels: 2,
+            sample_format: PcmSampleFormat::F32,
+        };
+        for revision in 1..=3 {
+            compiler.submit(revision, format, DspConfig::default());
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        let result = loop {
+            if let Some(result) = compiler.try_recv() {
+                break result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "DSP compile timed out"
+            );
+            std::thread::yield_now();
+        };
+        assert_eq!(result.0, 3);
+        assert_eq!(result.1.unwrap().snapshot().revision, 3);
+    }
+
+    #[test]
+    fn playing_actor_compiles_only_latest_revision_and_applies_it_on_next_block() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("async-dsp.wav");
+        fs::write(
+            &path,
+            wav(&vec![8192; crate::runtime::DECODE_BUFFER_FRAMES * 4]),
+        )
+        .unwrap();
+        let output_state = Arc::new(Mutex::new(State::default()));
+        let output = Box::new(TestOutput {
+            format: PcmFormat {
+                sample_rate: 1_000,
+                channels: 2,
+                sample_format: PcmSampleFormat::F32,
+            },
+            state: output_state,
+            fail_start: false,
+        }) as Box<dyn AudioOutput>;
+        let mut output = Some(output);
+        let mut engine = EngineRuntime {
+            machine: PlaybackMachine::new(1),
+            audio: None,
+            telemetry: TelemetryHub::new(),
+            decoder_factory: Some(Box::new(WavDecoderFactory)),
+            output_factory: Some(Box::new(move |_| {
+                output
+                    .take()
+                    .ok_or_else(|| EngineError::AudioBackend("test output already opened".into()))
+            })),
+            subscribers: Vec::new(),
+            media: HashMap::new(),
+            pending_restore: false,
+            desired_dsp: None,
+            dsp_compiler: Some(DspCompiler::spawn().unwrap()),
+        };
+        let current = item(1, &path);
+        apply(
+            &mut engine,
+            EngineCommand::LoadContext {
+                items: vec![current.clone()],
+                start_index: 0,
+                media: media(&current, &path),
+            },
+        )
+        .unwrap();
+        apply(&mut engine, EngineCommand::Ready).unwrap();
+        for revision in 1..=3 {
+            apply(
+                &mut engine,
+                EngineCommand::ConfigureDsp {
+                    revision,
+                    config: DspConfig::default(),
+                },
+            )
+            .unwrap();
+        }
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            accept_compiled_dsp(&mut engine);
+            if engine
+                .audio
+                .as_ref()
+                .is_some_and(|runtime| runtime.dsp_snapshot().pending_revision == Some(3))
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "DSP compile timed out"
+            );
+            std::thread::yield_now();
+        }
+        let runtime = engine.audio.as_mut().unwrap();
+        assert_eq!(runtime.dsp_snapshot().revision, 0);
+        runtime.pump_once().unwrap();
+        assert_eq!(runtime.dsp_snapshot().revision, 3);
+        assert_eq!(runtime.dsp_snapshot().pending_revision, None);
+    }
+
+    #[test]
+    fn pre_load_and_stopped_dsp_updates_are_latest_wins_with_stereo_output() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mono-first.wav");
+        fs::write(&path, wav(&[1, 2, 3, 4])).unwrap();
+        let requested_formats = Arc::new(Mutex::new(Vec::new()));
+        let requested_formats_for_factory = Arc::clone(&requested_formats);
+        let output_state = Arc::new(Mutex::new(State::default()));
+        let output_state_for_factory = Arc::clone(&output_state);
+        let handle = EngineHandle::spawn_with(
+            16,
+            1,
+            Box::new(WavDecoderFactory),
+            Box::new(move |format| {
+                requested_formats_for_factory.lock().unwrap().push(format);
+                Ok(Box::new(TestOutput {
+                    format,
+                    state: Arc::clone(&output_state_for_factory),
+                    fail_start: false,
+                }))
+            }),
+        )
+        .unwrap();
+
+        assert!(handle
+            .request(EngineCommand::ConfigureDsp {
+                revision: 0,
+                config: DspConfig::default(),
+            })
+            .is_err());
+        for revision in 1..=3 {
+            handle
+                .request(EngineCommand::ConfigureDsp {
+                    revision,
+                    config: DspConfig::default(),
+                })
+                .unwrap();
+        }
+        assert!(handle
+            .request(EngineCommand::ConfigureDsp {
+                revision: 3,
+                config: DspConfig::default(),
+            })
+            .is_err());
+
+        let current = item(1, &path);
+        handle
+            .request(EngineCommand::LoadContext {
+                items: vec![current.clone()],
+                start_index: 0,
+                media: media(&current, &path),
+            })
+            .unwrap();
+        assert_eq!(requested_formats.lock().unwrap()[0].channels, 2);
+        handle.request(EngineCommand::Ready).unwrap();
+        let first_samples = output_state.lock().unwrap().samples.clone();
+        assert!(!first_samples.is_empty());
+        assert!(first_samples
+            .chunks_exact(2)
+            .all(|frame| frame[0].to_bits() == frame[1].to_bits()));
+
+        handle.request(EngineCommand::Stop).unwrap();
+        for revision in 4..=6 {
+            handle
+                .request(EngineCommand::ConfigureDsp {
+                    revision,
+                    config: DspConfig::default(),
+                })
+                .unwrap();
+        }
+        handle
+            .request(EngineCommand::LoadContext {
+                items: vec![current.clone()],
+                start_index: 0,
+                media: media(&current, &path),
+            })
+            .unwrap();
+        handle.request(EngineCommand::Ready).unwrap();
+        handle.shutdown().unwrap();
+    }
+
+    #[test]
+    fn handle_telemetry_subscription_shares_the_runtime_producer() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("telemetry.wav");
+        fs::write(&path, wav(&[8192; 64])).unwrap();
+        let handle = EngineHandle::spawn_with_output(
+            8,
+            1,
+            Box::new(WavDecoderFactory),
+            Box::new(TestOutput {
+                format: PcmFormat {
+                    sample_rate: 30,
+                    channels: 2,
+                    sample_format: PcmSampleFormat::F32,
+                },
+                state: Arc::new(Mutex::new(State::default())),
+                fail_start: false,
+            }),
+        )
+        .unwrap();
+        let telemetry = handle.subscribe_telemetry();
+        telemetry.set_activity(TelemetryActivity::Active30Hz);
+        let current = item(1, &path);
+        handle
+            .request(EngineCommand::LoadContext {
+                items: vec![current.clone()],
+                start_index: 0,
+                media: media(&current, &path),
+            })
+            .unwrap();
+        handle.request(EngineCommand::Ready).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while telemetry.latest().is_none() {
+            assert!(Instant::now() < deadline, "telemetry publication timed out");
+            thread::yield_now();
+        }
+        handle.shutdown().unwrap();
+    }
+
+    #[test]
+    fn actor_accepts_group_one_dsp_configuration_after_runtime_creation() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("dsp.wav");
+        fs::write(&path, wav(&[1; 64])).unwrap();
+        let handle = EngineHandle::spawn_with_output(
+            8,
+            1,
+            Box::new(WavDecoderFactory),
+            Box::new(TestOutput {
+                format: PcmFormat {
+                    sample_rate: 1_000,
+                    channels: 2,
+                    sample_format: PcmSampleFormat::F32,
+                },
+                state: Arc::new(Mutex::new(State::default())),
+                fail_start: false,
+            }),
+        )
+        .unwrap();
+        let current = item(1, &path);
+        handle
+            .request(EngineCommand::LoadContext {
+                items: vec![current.clone()],
+                start_index: 0,
+                media: media(&current, &path),
+            })
+            .unwrap();
+        handle
+            .request(EngineCommand::ConfigureDsp {
+                revision: 1,
+                config: DspConfig {
+                    stereo_width: 0.0,
+                    ..DspConfig::default()
+                },
+            })
+            .unwrap();
+        handle.request(EngineCommand::Ready).unwrap();
+        handle.shutdown().unwrap();
     }
 
     #[test]
@@ -1196,7 +1933,7 @@ mod tests {
                     && matches!(event.snapshot.state, PlaybackState::Playing { ref item, .. } if item.queue_id == 2)
                 {
                     assert_eq!(event.snapshot.queue.current.as_ref().unwrap().queue_id, 2);
-                    assert_eq!(event.snapshot.revision, 3);
+                    assert_eq!(event.snapshot.revision, 5);
                     saw_second = true;
                     break;
                 }
@@ -1403,6 +2140,7 @@ mod tests {
         let mut engine = EngineRuntime {
             machine: PlaybackMachine::new(1),
             audio: None,
+            telemetry: TelemetryHub::new(),
             decoder_factory: Some(Box::new(WavDecoderFactory)),
             output_factory: Some(Box::new(move |_format| {
                 output
@@ -1412,6 +2150,8 @@ mod tests {
             subscribers: Vec::new(),
             media: HashMap::new(),
             pending_restore: false,
+            desired_dsp: None,
+            dsp_compiler: None,
         };
 
         apply(
@@ -1423,7 +2163,7 @@ mod tests {
             },
         )
         .unwrap();
-        let before = engine.machine.snapshot();
+        let before = engine.snapshot();
         apply(
             &mut engine,
             EngineCommand::AttachResolvedMedia {
@@ -1434,7 +2174,7 @@ mod tests {
             },
         )
         .unwrap();
-        let attached = engine.machine.snapshot();
+        let attached = engine.snapshot();
         assert_eq!(attached.queue, restored_queue);
         assert_eq!(attached.revision, before.revision);
         assert!(matches!(
@@ -1446,7 +2186,7 @@ mod tests {
         ));
 
         apply(&mut engine, EngineCommand::Resume).unwrap();
-        let resumed = engine.machine.snapshot();
+        let resumed = engine.snapshot();
         assert!(matches!(
             resumed.state,
             PlaybackState::Playing {
@@ -1475,6 +2215,7 @@ mod tests {
         let mut engine = EngineRuntime {
             machine: PlaybackMachine::new(1),
             audio: None,
+            telemetry: TelemetryHub::new(),
             decoder_factory: Some(Box::new(WavDecoderFactory)),
             output_factory: Some(Box::new(move |_format| {
                 output
@@ -1484,6 +2225,8 @@ mod tests {
             subscribers: Vec::new(),
             media: HashMap::new(),
             pending_restore: false,
+            desired_dsp: None,
+            dsp_compiler: None,
         };
         apply(
             &mut engine,
@@ -1536,6 +2279,7 @@ mod tests {
         let mut engine = EngineRuntime {
             machine: PlaybackMachine::new(1),
             audio: None,
+            telemetry: TelemetryHub::new(),
             decoder_factory: Some(Box::new(WavDecoderFactory)),
             output_factory: Some(Box::new(|_| {
                 Err(EngineError::AudioBackend("output must not open".into()))
@@ -1543,6 +2287,8 @@ mod tests {
             subscribers: Vec::new(),
             media: HashMap::new(),
             pending_restore: false,
+            desired_dsp: None,
+            dsp_compiler: None,
         };
         apply(
             &mut engine,
@@ -1591,6 +2337,7 @@ mod tests {
         let mut engine = EngineRuntime {
             machine: PlaybackMachine::new(1),
             audio: None,
+            telemetry: TelemetryHub::new(),
             decoder_factory: Some(Box::new(WavDecoderFactory)),
             output_factory: Some(Box::new(move |_| {
                 output
@@ -1600,6 +2347,8 @@ mod tests {
             subscribers: Vec::new(),
             media: HashMap::new(),
             pending_restore: false,
+            desired_dsp: None,
+            dsp_compiler: None,
         };
         apply(
             &mut engine,
@@ -1640,7 +2389,7 @@ mod tests {
         )
         .unwrap();
 
-        let snapshot = engine.machine.snapshot();
+        let snapshot = engine.snapshot();
         assert_eq!(snapshot.mode, PlaybackMode::RepeatAll);
         assert_eq!(snapshot.queue.current.as_ref().unwrap().queue_id, 3);
         assert_eq!(
@@ -1686,6 +2435,7 @@ mod tests {
         let mut engine = EngineRuntime {
             machine: PlaybackMachine::new(1),
             audio: None,
+            telemetry: TelemetryHub::new(),
             decoder_factory: Some(Box::new(WavDecoderFactory)),
             output_factory: Some(Box::new(|_| {
                 Ok(Box::new(TestOutput {
@@ -1697,6 +2447,8 @@ mod tests {
             subscribers: Vec::new(),
             media: HashMap::new(),
             pending_restore: false,
+            desired_dsp: None,
+            dsp_compiler: None,
         };
         apply(
             &mut engine,
@@ -1716,7 +2468,7 @@ mod tests {
         .unwrap();
         apply(&mut engine, EngineCommand::Resume).unwrap();
         apply(&mut engine, EngineCommand::Pause).unwrap();
-        let before = engine.machine.snapshot();
+        let before = engine.snapshot();
 
         assert!(apply(
             &mut engine,
@@ -1727,9 +2479,9 @@ mod tests {
         )
         .is_err());
 
-        let after = engine.machine.snapshot();
+        let after = engine.snapshot();
         assert_eq!(after.queue, original);
-        assert_eq!(after.revision, before.revision);
+        assert!(after.revision > before.revision);
         assert!(matches!(
             after.state,
             PlaybackState::Paused {

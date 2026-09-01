@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "module": "night-mode",
+  "case": "case3",
+  "sampleRate": 48000,
+  "blockSize": 333,
+  "channels": 2,
+  "frames": 12345,
+  "params": {
+    "enabled": true,
+    "amount": 8,
+    "compressor": {
+      "enabled": false,
+      "thresholdDb": -24,
+      "ratio": 5,
+      "kneeDb": 8,
+      "attackMs": 4,
+      "releaseMs": 120,
+      "makeupDb": 1.5,
+      "outputGain": 0.25,
+      "sidechainEnabled": true
+    }
+  },
+  "tolerance": {
+    "kind": "relative",
+    "value": 0.000001,
+    "floor": 1e-9
+  },
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  },
+  "notes": "amount=8；base sidechain 与 outputGain 被 Night 忽略；333 帧跨块与尾块。"
+}
