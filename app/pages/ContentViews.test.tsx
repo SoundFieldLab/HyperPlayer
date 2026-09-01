@@ -370,7 +370,7 @@ describe("CurrentView 页面能力边界", () => {
   });
 
   it("plays and queues a DJ main track through existing store actions", async () => {
-    const result: PlaybackSnapshotDto = { revision: 1, current: null, currentQueueItemId: null, status: "paused", positionMs: 0, volume: 0.5, queue: [], nextUp: [], repeat: "sequence", dsp: { available: false, bypassed: true, label: "规格待接入" } };
+    const result: PlaybackSnapshotDto = { revision: 1, current: null, currentQueueItemId: null, status: "paused", positionMs: 0, volume: 0.5, queue: [], nextUp: [], repeat: "sequence", dsp: { available: false, bypassed: true, label: "规格待接入" }, dspExecution: { revision: 0, safeBypassActive: false, fault: null } };
     const playTrack = vi.spyOn(useAppStore.getState(), "playTrack");
     const enqueueTrack = vi.spyOn(useAppStore.getState(), "enqueueTrack");
     bridgeMocks.neteaseDjRadios.mockResolvedValue({ radios: [{ id: 20, name: "公开电台", coverUrl: null, description: null, programCount: 1, subscriberCount: null, category: null }], programs: [], nextCursor: null });

@@ -67,6 +67,7 @@ const playback = (current: TrackDto): PlaybackSnapshotDto => ({
   nextUp: [],
   repeat: "sequence",
   dsp: { available: false, bypassed: true, label: "规格待接入" },
+  dspExecution: { revision: 0, safeBypassActive: false, fault: null },
 });
 
 function status(id: string, value: BackendCacheStatusDto["status"]): BackendCacheStatusDto {

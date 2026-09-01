@@ -57,6 +57,7 @@ const playback: PlaybackSnapshotDto = {
   nextUp: [],
   repeat: "sequence",
   dsp: { available: false, bypassed: true, label: "规格待接入" },
+  dspExecution: { revision: 0, safeBypassActive: false, fault: null },
 };
 
 function deferred<T>() {
@@ -97,6 +98,7 @@ describe("CommandPalette 命令中心", () => {
     const request = deferred<ShenzhenWeatherDto>();
     await act(async () => root.render(<CommandPalette loadWeather={() => request.promise} now={() => new Date("2026-09-01T08:05:00+08:00")}/>));
     expect(container.textContent).toContain("08:05");
+    expect(container.textContent).toContain("9月1日星期二");
     expect(container.textContent).toContain("正在获取天气");
     expect(container.textContent).toContain("深圳夜曲");
     expect(container.textContent).toContain("1 个后台任务进行中");
