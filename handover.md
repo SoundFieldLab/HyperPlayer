@@ -2,11 +2,11 @@
 
 更新时间：2026-09-01
 
-> 本文件记录当前未提交工作树的事实状态。它覆盖产品、HSE/DSP、telemetry、UI、缓存、网易云、音频和测试证据；`handover-visualization.md` 保留可视化专项细节，但其中部分“未完成”描述已被后续实现覆盖。
+> 本文件记录当前事实状态。它覆盖产品、HSE/DSP、telemetry、UI、缓存、网易云、音频和测试证据；`handover-visualization.md` 保留可视化专项细节，其中部分"未完成"描述已被后续实现覆盖。
 
 ## 1. 一句话结论
 
-HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播放器主干，并完成本地播放/曲库/队列/歌词、部分网易云、D23/D24、部分缓存、真实 DSP runtime、HSE v1.5.1 核心 vendoring、14 个生产处理器和 HPTM v2 可视化基础。
+HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播放器主干，并完成本地播放/曲库/队列/歌词、部分网易云、D23/D24、部分缓存、真实 DSP runtime、HSE v1.5.1 核心 vendoring（含 destination hash gate）、14 个生产处理器和 HPTM v2 端到端 telemetry 链路。
 
 **项目仍未达到 v1 全功能完成。** 当前主要缺口包括：
 
@@ -17,7 +17,7 @@ HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播�
 - 网易云仍有较多路由、UI 工作流和受控账号外部验收缺口；
 - 当前 UI 三列深色重排未经最终 WebView2 多尺寸/双主题验收，用户已明确认为当前排版退化；
 - vGPU/WebGPU 尚未真正接入；
-- 当前工作树很大且未提交，不能用旧 CI 结果代表当前状态。
+- 主线已推送至 `origin/main`（`8fbc457`）；最新一轮高风险修复（HPTM 跨层协议、standby DSP fault 降级、vendored destination gate）已完成并通过全部本地门禁，但仍在工作树待提交。
 
 功能完成必须满足完整证据链：
 
@@ -38,24 +38,22 @@ HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播�
 ## 2. 当前 Git 与工作树状态
 
 - 当前分支：`main`
-- 当前 HEAD：`2fa069c5f76de0c708d4eab8500f0c7c335c2b99`
-- 当前工作树不是一个小补丁：约 45 个 tracked 文件有修改，约 270 个 untracked 文件。
-- 大量核心新增内容仍未跟踪/未提交，包括：
-  - `crates/hyperplayer-hse-core/`
-  - `crates/hyperplayer-hrtf-core/`
-  - `shared/hse-ts-core/`
-  - `provenance/hse-v1.5.1/`
-  - `crates/hyperplayer-engine/src/dsp_algorithms/`
-  - `crates/hyperplayer-engine/src/telemetry.rs`
-  - `app/dsp/`
-  - `app/visualization/`
-  - `tests/fixtures/dsp/`
-  - `third_party_licenses/`
-  - `src-tauri/src/commands/telemetry.rs`
-- `src-tauri/gen/` 是 Tauri 生成物，仍未跟踪，正式提交时必须排除。
-- `vgpu-diagnostic.tmp` 仅含文本 `vgpu diagnostic`，不是一次真实 vGPU 诊断结果；正式提交前应按用户意图决定是否保留。
-- `git diff --check` 当前无空白错误，仅有 Windows CRLF 转换提示。
-- 不得整体恢复当前工作树；其中包含多轮尚未提交的真实功能实现。
+- 当前 HEAD：`8fbc457 fix(engine): satisfy Rust 1.98 strict Clippy`
+- `main` 与 `origin/main` 在 `8fbc457` 同步（ahead/behind `0/0`）。
+- 本轮三项修复已在工作树完成、全部门禁通过，但尚未提交：
+  - HPTM v2 固定帧跨层协议修复：`crates/hyperplayer-engine/src/telemetry.rs`、`src-tauri/src/commands/telemetry.rs`、`app/visualization/telemetry/*`
+  - standby speculative DSP fault 非致命降级：`crates/hyperplayer-engine/src/{dsp,runtime,actor}.rs`、`crates/hyperplayer-engine/tests/dsp_realtime_invariants.rs`
+  - vendored destination manifest/hash gate：`scripts/verify-hse-destination-manifest.mjs`、`provenance/hse-v1.5.1/DESTINATION-MANIFEST.json`、`package.json`、`.github/workflows/quality.yml`
+- `docs/启动页面定调文件.md`（启动页 Splash 定调需求 v2）已按用户要求纳入 git 追踪。
+- 最近已推送的关键提交：
+  - `8790ac8 chore(hse): vendor authorized DSP reference cores`
+  - `8427872 feat(engine): integrate DSP pipeline and telemetry`
+  - `7e26ccd feat(desktop): expose engine telemetry and weather`
+  - `6fecaeb feat(ui): redesign player and add visualizations`
+  - `265fcd0 docs: record DSP and visualization implementation`
+  - `a6f861a fix(ui): stabilize Shenzhen time and test fixtures`
+  - `8fbc457 fix(engine): satisfy Rust 1.98 strict Clippy`
+- `src-tauri/gen/`、`*.tmp`、`dist/`、`node_modules/` 和 Rust `target/` 已按生成物/缓存忽略。
 
 历史已合并基线：
 
@@ -65,8 +63,6 @@ HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播�
 4. `39de988 feat: close library and anonymous discovery workflows`
 5. `0be5403 Merge pull request #2 from SoundFieldLab/feat/p0-netease-runtime-closure`
 6. `2fa069c docs: record vgpu visualization policy`
-
-旧 GitHub Quality/Licenses 绿灯只覆盖已提交基线，不覆盖当前未提交工作树。
 
 ---
 
@@ -79,6 +75,7 @@ HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播�
 | 产品范围、里程碑、D21/D29/D30/D31 | `docs/需求基线.md`、`docs/定调决策记录.md` |
 | Tauri / Rust / 曲库所有权 | `docs/adr/0004-rust-owns-library.md`、`docs/adr/0005-tauri2-react-rust.md` |
 | UI 信息架构与视觉基线 | `docs/UI设计基线.md`、`docs/UI定调决策记录.md` |
+| 启动页 Splash 定调 | `docs/启动页面定调文件.md` |
 | 网易云 Cleanroom | `docs/音源-网易云-行为规范.md`、`src/audio-source/netease/` oracle |
 | 自动化与外部验收 | `tests/ACCEPTANCE_MATRIX.md` |
 | HSE 使用、修改、融合和分发 | `LICENSE-HSE-AUTHORIZATION.md` |
@@ -98,7 +95,7 @@ HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播�
 
 ---
 
-## 4. HSE v1.5.1 正式 vendoring 状态
+## 4. HSE v1.5.1 vendoring 与完整性状态
 
 ### 4.1 固定来源
 
@@ -134,15 +131,15 @@ TypeScript：
 - `NOTICE`、`THIRD_PARTY_NOTICES.md` 和 `third_party_licenses/V8-BSD-3-Clause.txt` 已补 HSE、V8/fdlibm、sofar/libmysofa/KD-tree 归属。
 - 没有复制 SOFA/HRTF 数据集；Stage 22 数据许可仍是外部阻塞。
 
-### 4.3 重要来源/完整性缺口
+### 4.3 Destination manifest/hash gate（已完成）
 
-当前 SOURCE-MANIFEST 主要验证固定上游 checkout。vendored Rust 目标端已经增加大量 HyperPlayer 所需的状态 snapshot/copy/restore API 和测试，但目标端改动尚没有完整 destination hash manifest 或可复现 patch series。
-
-后续必须增加：
-
-- 每个 vendored 文件的 source hash 与 destination hash；
-- 变更分类：relocation、license notice、lint policy、runtime checkpoint API、test-only、algorithm change；
-- 校验脚本必须对未登记的目标端 drift 失败。
+- `provenance/hse-v1.5.1/DESTINATION-MANIFEST.json` 覆盖三个 destination root：`crates/hyperplayer-hse-core`、`crates/hyperplayer-hrtf-core`、`shared/hse-ts-core`，共 89 个文件；aggregate SHA-256：
+  `799cb79c1f5361628856f483b1380cd7aec463e96abd5c20c33dd2a5790f5923`
+- 每文件记录 source path/hash 与 destination hash，并标注 adaptation 分类（relocation、license-notice、lint-policy、runtime-checkpoint-api、test-only、algorithm-change）。
+- 哈希统一对 CRLF→LF 规范化后的字节计算，不依赖 `core.autocrlf`；路径为仓库相对 `/` 分隔并稳定排序；vendored 根目录校验为真实目录且不逃逸仓库（symlink/junction 拒绝）。
+- `pnpm check:hse-destination` 只读校验：缺失、未登记新增、hash 漂移、排序/重复/schema/source 映射漂移均失败；`pnpm update:hse-destination` 为显式重建。
+- 门禁接线：`pnpm frontend:build` 与 CI quality workflow 均执行 `check:hse-destination`；`pnpm check:hse-vendor` 为 source+destination 联合审计（source 依赖 gitignored 的 clean checkout，不进入默认构建）。
+- 故障注入自测通过：篡改、新增、删除受保护文件均被正确拒绝。
 
 ---
 
@@ -175,7 +172,7 @@ TypeScript：
 13, 15, 16, 17, 18, 20, 21, 22
 ```
 
-因此不是“还剩 10 个阶段”，而是**8 个 stage 编号尚未进入当前 HyperPlayer 生产链**。
+因此不是"还剩 10 个阶段"，而是**8 个 stage 编号尚未进入当前 HyperPlayer 生产链**。
 
 ### 5.2 已直接委托 vendored HSE Rust core 的部分
 
@@ -251,6 +248,7 @@ HyperPlayer adapter 仍负责：
 - safe bypass 下有效 latency/tail 为 0。
 - fault transition、重复 bypass、checkpoint、restore、revision recovery 均有零分配门禁。
 - 非 gapless terminal drain 最大 12 秒；被截断长尾最后 2 秒淡出。
+- **standby speculative fault 非致命降级（本轮完成）**：DSP 层新增原子 API `restore_speculative_processing_to_safe_bypass()`，回滚 speculative processor state 后重新锁存本次 fault/revision/stream frame 并保持 SafeBypass；runtime 使用 raw standby PCM 标记该 standby 已按当前 revision 准备并返回成功，下一曲照常在采样边界晋升；actor 发出 `DspExecutionChanged` + `DspProcessingFault`，播放不进入 `Failed`。已覆盖 ProcessorChain、runtime、actor 三层与零分配回归。
 
 ### 5.6 安全旁路跨层状态
 
@@ -272,7 +270,6 @@ HyperPlayer adapter 仍负责：
 仍需进一步复审：
 
 - public trait 理论上仍允许 processor 在 preflight 通过后于 restore 时返回 false，generic rollback 协议无法回滚已经恢复的前序 processor；当前 production processor 实现约束使该路径应不可达，但接口层仍可进一步收紧。
-- speculative standby DSP fault 的降级语义需要端到端复核：历史审查指出它可能恢复 checkpoint 后返回 `AudioBackend` 并让 actor 将播放置为 failed，而不是继续 safe bypass；必须以当前代码重新测试后才能宣称已解决。
 
 ### 5.7 DSP availability / UI bridge 仍然错误
 
@@ -368,26 +365,22 @@ TS 重复实现缺口：
 
 Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为 0 且 validity 不启用。
 
-### 7.2 HPTM v2
+### 7.2 HPTM v2（跨层已修复）
 
 - 固定帧 780 bytes，小于 1 KiB。
 - header 含 magic/version/validity、epoch、sequence、accepted sample frame、DSP revision、sample rate、bin count。
 - waveform、spectrum 保留区和 7 个 meter scalar 使用固定布局。
 - `u64` 在 Tauri control DTO 中使用十进制字符串，前端使用 `bigint`。
 
-当前专项测试已通过，但只证明各层局部行为：
+本轮统一后的协议语义：
 
-- Engine telemetry 10 项。
-- Runtime accepted-prefix telemetry 1 项。
-- Tauri producer→command 单项转发测试通过，但其 fixture 不是 Engine `TelemetryFrame::encode()` 在 spectrum unavailable 情况下产生的真实 header/count 组合。
+- Tauri 严格按固定 780-byte 布局校验，不再按 declared count 推导帧长；复用 Engine 侧常量。
+- count 只表达对应区域 availability，并校验 validity/count 一致性。
+- known validity mask 明确排除 LUFS bit（v2 布局未分配该字段）；设置未知位或保留区非零（header 46..48、reserved spectrum 560..752）的帧在 Tauri/TS 双端拒绝。
+- activity 降为 0 Hz 时保留已发送帧的 ACK 窗口，迟到 ACK 不再导致 session 被误关闭；新增暂停→ACK→恢复回归。
+- 跨层测试已存在：真实 `TelemetryFrame::encode()` → Tauri parse/session 原样转发 → 前端 strict decode（spectrum/true peak/limiter 保持 `null`）。
 
-**当前真实跨层协议存在确定缺陷：**
-
-- Engine 在 spectrum unavailable 时写 `spectrum_count=0`，但仍编码固定 780 bytes；
-- Tauri `parse_identity()` 按 declared bin count 重算 payload 长度，得到 588 bytes，并拒绝实际 780-byte frame；
-- 因此当前 Engine 真实 frame 会在 Tauri 边界被丢弃，无法送达 WebView2；现有各层单测没有覆盖这一真实组合。
-
-必须先统一 fixed-frame 与 declared-count 语义，并增加“Engine `TelemetryFrame::encode()` → Tauri `parse_identity`/forward → frontend decode”的跨层测试。在修复前，只能说 producer、session 和 renderer 组件分别存在，不能说实时可视化链路端到端可用。
+遗留（P2）：Rust 编码器 → TS 解码器的受版本控制 golden bytes 跨语言向量测试尚未建立；正式 WebView2 实时 waveform/meter 多尺寸验收仍待执行。
 
 ### 7.3 Tauri telemetry session
 
@@ -420,11 +413,11 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 - ResponseCurve SVG。
 - MeterStrip；当前只应显示真实 sample peak/RMS。
 
-页面组件已接线，但受上述 Tauri wire 缺陷影响，当前真实 Engine frame 尚不能端到端到达：
+页面组件已接线，真实 Engine frame 协议层已可端到端到达 WebView：
 
 - Expanded Player：设计上只在用户打开 waveform 时申请 telemetry；无 frame 时显示基线，不伪造。
 - DSP 页面：设计上显示 meter；无 spectrum 时显示 unavailable；response curve 只是固定 0 dB 参考线；参数控件仍禁用。
-- 当前只能确认 UI fallback 行为和局部测试，不能确认实时 waveform/meter 在正式 WebView2 中可用。
+- 剩余为验收缺口：正式 Tauri/WebView2 中的实时 waveform/meter 多尺寸/双主题确认仍未执行。
 
 ### 7.5 vGPU 状态
 
@@ -440,7 +433,7 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 
 ## 8. UI 当前状态与已知视觉问题
 
-用户已明确反馈：最近另一会话加入的 UI 排版“变得很差，不如以前”。本轮已启动 UI 修复代理，但代理被停止，**没有完成 UI 修复**。
+用户已明确反馈：最近另一会话加入的 UI 排版"变得很差，不如以前"。本轮已启动 UI 修复代理，但代理被停止，**没有完成 UI 修复**。
 
 当前主要风险：
 
@@ -506,7 +499,7 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 - D24 album context/session tracking 基础。
 - `mv_play_url`、similar MV、top MV source API 已存在。
 
-上述“存在”不等于完整分页、mutation、typed bridge、UI 和外部验收均完成。
+上述"存在"不等于完整分页、mutation、typed bridge、UI 和外部验收均完成。
 
 未完成：
 
@@ -567,22 +560,21 @@ D30 尚未完成：
 
 ## 13. 当前测试与构建证据
 
-### 13.1 本会话当前工作树的通过证据
+### 13.1 本轮修复后的通过证据
 
-以下命令于 2026-09-01、`main` HEAD `2fa069c5f76de0c708d4eab8500f0c7c335c2b99` 加当前未提交工作树上执行。结果文件位于本地 ZCode session exec 输出中，提交后应由 CI 重新建立可公开复现的证据。
-
-Rust crates workspace，使用：
+以下命令于 2026-09-01 在含本轮三项修复的工作树上执行（尚未提交）。Rust crates workspace 使用本地默认工具链（与 CI 固定的 Rust 1.98 行为一致，提交前应按 §16 清单用 `+1.98.0` 复跑）：
 
 ```text
-cargo test --manifest-path crates/Cargo.toml --workspace --all-targets --all-features --locked
+cargo fmt --manifest-path crates/Cargo.toml --all -- --check
 cargo clippy --manifest-path crates/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --manifest-path crates/Cargo.toml --workspace --all-targets --all-features --locked
 ```
 
 当前通过：
 
-- HyperPlayer engine lib：226 passed
+- HyperPlayer engine lib：229 passed（含新增 standby fault 三层回归）
 - Rust DSP parity：2 passed，其中主 suite 覆盖 53 vectors
-- DSP realtime invariants：7 passed
+- DSP realtime invariants：7 passed（safe-bypass 零分配覆盖新的原子降级 API）
 - HRTF core：33 passed，1 ignored（需要用户提供 SOFA asset）
 - HRTF realtime allocation：5 passed
 - HRTF renderer features：10 passed
@@ -600,122 +592,91 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets --al
 
 当前通过：
 
-- Tauri lib：112 passed
+- Tauri lib：114 passed（含真实 Engine encode → parse/forward 跨层测试与 0 Hz 迟到 ACK 回归）
 - Tauri main：0 tests
 - strict Clippy：通过
 
 Frontend 当前明确证据：
 
 ```text
-pnpm test -- --maxWorkers=1
+pnpm test
+pnpm frontend:build
 ```
 
 - 15 test files passed
-- 165 tests passed
-- serial/single-worker baseline 通过
+- 170 tests passed（含 LUFS bit 拒绝、reserved spectrum 非零拒绝）
+- IPC contract：84 commands / 14 events matched
+- TypeScript project build 通过
+- Vite production build 通过；仅保留既有的单 chunk 超过 500 kB 警告
 
 其他当前通过证据：
 
-- NetEase Rust 独立 workspace：49 passed；strict Clippy 通过。
-- NetEase TypeScript oracle：当前 strict typecheck 通过。
-- `pnpm check:hse-source`：通过，84 files / aggregate SHA-256 固定。
+- `pnpm check:hse-destination`：89 个 destination 文件验证通过（aggregate SHA-256 见 §4.3）。
+- `pnpm check:hse-source`：84 source files / aggregate SHA-256 固定。
 - `pnpm check:hse-ts`：通过。
+- NetEase TypeScript oracle：当前 strict typecheck 通过。
 - JavaScript production license audit：15 records accepted。
 - `cargo deny`：advisories/licenses/bans/sources 通过，仅 duplicate/unmatched allow warnings。
-- IPC verifier 最近显示 84 frontend-declared commands / 14 events matched；该 verifier 是单向覆盖检查，Rust 实际注册 command 更多，不能视为所有 Rust command 都有 typed frontend bridge。
+- IPC verifier 是单向覆盖检查，Rust 实际注册 command 更多，不能视为所有 Rust command 都有 typed frontend bridge。
 - 静态 DSP vector 文件数：53 JSON + 53 `.f32`。
 
-### 13.2 当前未通过或未完成的验证
+### 13.2 当前未完成的验证
 
-`pnpm frontend:build` 最近失败，原因是 3 个测试 fixture 没有补新必填字段 `PlaybackSnapshotDto.dspExecution`：
+Vitest 转译不做完整 TypeScript typecheck，因此必须同时保留 `pnpm test` 与 `pnpm frontend:build` 两道门禁。
 
-- `app/overlays/CommandPalette.test.tsx`
-- `app/pages/ContentViews.test.tsx`
-- `app/player/Player.test.tsx`
+尚未对当前工作树运行或完成：
 
-注意：Vitest 转译不做完整 TypeScript typecheck，因此 165 tests 通过不等于 `tsc -b` 通过。
-
-需要修复 fixture 后重新运行：
-
-```text
-pnpm frontend:build
-pnpm exec tsc -p tests/oracle-tsconfig.json --pretty false
-pnpm check:hse-ts
-pnpm check:hse-source
-```
-
-尚未对当前最终工作树运行：
-
+- `+1.98.0` 工具链下的完整门禁复跑（提交前必须执行）
 - 完整 `pnpm build` / Tauri release bundle
 - 当前 NSIS/MSI 最终重建
-- 当前 Tauri/WebView2 多尺寸截图验收
+- 当前 Tauri/WebView2 多尺寸截图验收（含实时 waveform/meter）
 - vGPU/WebGPU/device-loss/pixel tests（因为 vGPU 尚未接入）
-- 当前工作树 GitHub CI
+- 本轮提交后的 GitHub Actions 结果
 
 前端并发稳定性：
 
-- single-worker 165 项通过。
-- 默认并行历史上 `navigation.test.ts` 可能超过 15 秒并出现 overlapping `act()`，虽然近期一次 focused run 曾 165 全过；不能宣称完全稳定。
-- 不应为该问题修改导航业务逻辑；应优化 test cleanup/async lifecycle 或配置 file parallelism/timeout。
+- 本轮默认并行 170 项通过。
+- 历史上 `navigation.test.ts` 曾超过 15 秒并出现 overlapping `act()`；本轮未复现，但长期稳定性仍需由后续 CI 观察。
+- 不应为该问题修改导航业务逻辑；若再次出现，应优化 test cleanup/async lifecycle 或配置 file parallelism/timeout。
 
 ---
 
 ## 14. 当前高优先级未修复问题
 
-### P0 / 高风险
-
-1. **speculative standby DSP fault 当前会中断播放**
-   - 当前 `runtime.rs` 在检测到 standby speculative DSP fault 后恢复 checkpoint 和 raw PCM，但随后明确返回 `AudioBackend("standby DSP processing failed")`。
-   - actor 的 audio tick 错误路径会 stop runtime 并将 playback 置为 error；restore 还可能抹掉 structured fault，最终只剩通用播放失败。
-   - 必须改成可观察的 Rust safe-bypass transition 并继续 promotion，且增加 active EOF → standby fault → raw/bypass promotion → 播放连续 → fault diagnostic 的端到端测试。
-
-2. **目标端 provenance 不完整**
-   - 当前 manifest 验证上游 source selection，不完整验证 vendored destination 修改。
-   - 需要 destination manifest / patch series / destination hashes。
-
-3. **前端 build 当前失败**
-   - 3 个 `PlaybackSnapshotDto` fixture 缺 `dspExecution`。
-   - 必须修复后重新建立 build baseline。
-
 ### P1 / 中风险
 
-4. **TS 核心重复**
+1. **TS 核心重复**
    - `shared/hse-ts-core` 已 vendored，但 parity 仍使用 `app/dsp` 手工副本。
    - 应将 parity 和 preview 改用 shared core，删除重复 algorithm bodies。
 
-5. **vector provenance 不完整**
+2. **vector provenance 不完整**
    - 29/53 缺 structured source。
 
-6. **HSE core constructor 直接 API 边界**
+3. **HSE core constructor 直接 API 边界**
    - Delay/Chorus/Flanger core constructor 在未 set_params 前不完全复现 TS default。
    - 极大 finite sample rate 可能造成 pathological allocation/overflow。
    - HyperPlayer façade 当前受保护，但 core public API 应修正或收窄。
 
-7. **LUFS 标准模式缺失**
+4. **LUFS 标准模式缺失**
    - 当前只应标记为 HSE v1.5.1 compatibility；需要新增标准模式。
 
-8. **DSP availability 假状态**
+5. **DSP availability 假状态**
    - bootstrap/frontend 仍写 unavailable/BYPASS。
 
-9. **配置拒绝缺原因**
+6. **配置拒绝缺原因**
    - `DspConfigurationRejected` 仅含 revision；应增加稳定错误码、脱敏 reason、可选 stage。
 
-10. **HPTM fixed-frame/count 不一致导致真实 telemetry 被 Tauri 丢弃**
-    - Engine 在 spectrum unavailable 时生成固定 780-byte frame，并声明 `spectrum_count=0`。
-    - Tauri `parse_identity()` 按 count 推导 588-byte expected size，因此拒绝真实 frame。
-    - 必须统一 wire schema，并增加真实 Engine encoded frame 的跨层 parse/forward/decode 测试。
-
-11. **BSD 分发文本需再审计**
-    - 已有 attribution 和 V8 license；libmysofa/KD-tree 的完整 BSD 条款是否随 installer 分发仍需确认。
+7. **BSD 分发文本需再审计**
+   - 已有 attribution 和 V8 license；libmysofa/KD-tree 的完整 BSD 条款是否随 installer 分发仍需确认。
 
 ### P2 / 已知但非阻塞
 
-12. 默认并行前端测试偶发 timeout/act 污染。
-13. UI light theme 被 redesign.css 深色硬编码破坏。
-14. 当前三列 shell 未做正式 WebView2 视觉验收。
-15. 右侧 next-up row 的队列行为需确认。
-16. HSE 完整 22-stage library 已有但 production 只接 14 processors。
-17. HSE core/TS/provenance/new vectors 大量仍 untracked。
+8. HPTM Rust 编码器 → TS 解码器的 golden bytes 跨语言向量测试未建立（本轮审查建议）。
+9. 默认并行前端测试历史上出现过 timeout/act 污染，本轮未复现。
+10. UI light theme 被 redesign.css 深色硬编码破坏。
+11. 当前三列 shell 未做正式 WebView2 视觉验收。
+12. 右侧 next-up row 的队列行为需确认。
+13. HSE 完整 22-stage library 已有但 production 只接 14 processors。
 
 ---
 
@@ -773,23 +734,21 @@ pnpm check:hse-source
 
 下个会话建议严格按以下顺序：
 
-1. 先为当前两个确定的 P0 写失败回归并修复：HPTM fixed-frame/count 跨层拒绝、speculative standby DSP fault fatal playback。
-2. 修复 3 个缺 `dspExecution` 的 TS fixtures，恢复 `pnpm frontend:build`。
-3. 建立 vendored destination manifest/hash gate。
-4. 将 parity 从 `app/dsp` 切到 `shared/hse-ts-core`，删除重复 TS 算法。
-5. 为全部 53 vectors 补 structured provenance 和生成器。
-6. 修复 DSP availability 假状态，并设计正式 DspPort。
-7. 继续 Stage 1/2/7 core 化，再接 Stage 13、15–18、20–22。
-8. 单独处理 UI 排版修复并做 Tauri/WebView2 多尺寸验收。
-9. 当前跨层工作形成可审查提交后，再推进 D30、decoder/device、网易云剩余能力。
+1. 将 parity 从 `app/dsp` 切到 `shared/hse-ts-core`，删除重复 TS 算法。
+2. 为全部 53 vectors 补 structured provenance 和生成器。
+3. 修复 DSP availability 假状态，并设计正式 DspPort。
+4. 继续 Stage 1/2/7 core 化，再接 Stage 13、15–18、20–22。
+5. 单独处理 UI 排版修复并做 Tauri/WebView2 多尺寸验收。
+6. 补建 HPTM Rust→TS golden bytes 跨语言向量测试。
+7. 当前跨层工作形成可审查提交后，再推进 D30、decoder/device、网易云剩余能力。
 
 提交前必须逐项执行并记录：
 
 ```text
 cd crates
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --all-targets --all-features --locked
+cargo +1.98.0 fmt --all -- --check
+cargo +1.98.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo +1.98.0 test --workspace --all-targets --all-features --locked
 
 cd ../crates/hyperplayer-source-netease
 cargo fmt --all -- --check
@@ -802,10 +761,10 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-targets --all-features --locked
 
 cd ..
-pnpm test -- --maxWorkers=1
+TZ=UTC pnpm test
 pnpm frontend:build
+pnpm check:hse-destination
 pnpm exec tsc -p tests/oracle-tsconfig.json --pretty false
-pnpm check:hse-source
 pnpm check:hse-ts
 node tests/check-js-licenses.mjs
 cargo deny --manifest-path crates/Cargo.toml --config deny.toml check advisories licenses bans sources
@@ -814,9 +773,8 @@ pnpm build
 
 还必须：
 
-- 排除 `src-tauri/gen/`。
-- 核对 `vgpu-diagnostic.tmp` 是否属于用户要求的正式文件。
-- 对当前工作树重新运行 CI；旧 main 绿灯不算当前证据。
+- 继续排除 `src-tauri/gen/` 与本地 `.tmp` 诊断文件。
+- 每轮提交后运行对应 CI 等价命令；远端 workflow 结果与本地证据分开记录。
 - 不把测试、计划或 vendored library 存在误报为产品全功能完成。
 
 ---
@@ -831,7 +789,7 @@ pnpm build
 - UI：需要当前最终代码的正式 Tauri/WebView2 明暗主题、多尺寸和辅助窗口逐页确认。
 - 性能/资源基线：需要按定调在 M1/M6 实测空闲/播放内存、冷启动、安装体积和长期播放稳定性；不设拍脑袋硬指标，但不能跳过测量。
 
-缺少外部资源时，只能标记“代码完成、外部验收阻塞”，不能标记“功能完成”。
+缺少外部资源时，只能标记"代码完成、外部验收阻塞"，不能标记"功能完成"。
 
 ---
 
