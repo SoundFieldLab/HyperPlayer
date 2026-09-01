@@ -7,6 +7,11 @@ use crate::{
     error::{AppError, AppResult, CommandResult},
     ports::{AppState, TelemetryFrame, TelemetryPort, TelemetrySubscription},
 };
+use hyperplayer_engine::telemetry::{
+    SPECTRUM_BINS, TELEMETRY_FRAME_ENCODED_SIZE, TELEMETRY_KNOWN_VALIDITY_FLAGS,
+    TELEMETRY_VALID_SPECTRUM, TELEMETRY_VALID_WAVEFORM, TELEMETRY_WIRE_MAGIC,
+    TELEMETRY_WIRE_VERSION, WAVEFORM_BINS,
+};
 use std::{
     collections::HashMap,
     sync::{
@@ -20,17 +25,15 @@ use tauri::{ipc::Channel, ipc::InvokeResponseBody, State, WebviewWindow};
 use uuid::Uuid;
 
 const MAX_SESSIONS: usize = 2;
-const WIRE_HEADER_BYTES: usize = 48;
-const WIRE_TRAILER_BYTES: usize = 7 * size_of::<f32>();
-const MIN_FRAME_BYTES: u32 = (WIRE_HEADER_BYTES + WIRE_TRAILER_BYTES) as u32;
+const MIN_FRAME_BYTES: u32 = TELEMETRY_FRAME_ENCODED_SIZE as u32;
 const MAX_FRAME_BYTES: u32 = 1024;
 const MIN_FRAMES_PER_SECOND: u16 = 1;
 const MAX_FRAMES_PER_SECOND: u16 = 30;
-const WIRE_MAGIC: [u8; 4] = *b"HPTM";
-const WIRE_VERSION: u16 = 2;
 const EPOCH_OFFSET: usize = 8;
 const SEQUENCE_OFFSET: usize = 16;
 const DSP_REVISION_OFFSET: usize = 32;
+const SPECTRUM_OFFSET: usize = 560;
+const METERS_OFFSET: usize = 752;
 
 static NEXT_SESSION_EPOCH: AtomicU64 = AtomicU64::new(1);
 
@@ -156,10 +159,9 @@ impl TelemetrySession {
         let mut flow = self.flow.lock().map_err(|_| AppError::StateUnavailable)?;
         flow.rate_hz = rate_hz;
         flow.next_send_at = Instant::now();
-        let should_wake = rate_hz == 0 || (flow.in_flight.is_none() && flow.pending.is_some());
+        let should_wake = rate_hz != 0 && flow.in_flight.is_none() && flow.pending.is_some();
         if rate_hz == 0 {
             flow.pending = None;
-            flow.in_flight = None;
         }
         drop(flow);
         if should_wake {
@@ -391,21 +393,24 @@ fn validate_activity_rate(rate_hz: u8) -> AppResult<()> {
 }
 
 fn parse_identity(payload: &[u8]) -> AppResult<FrameIdentity> {
-    let waveform_bins = payload.get(44).copied().map(usize::from);
-    let spectrum_bins = payload.get(45).copied().map(usize::from);
-    let declared_size = waveform_bins
-        .zip(spectrum_bins)
-        .and_then(|(waveform, spectrum)| {
-            WIRE_HEADER_BYTES
-                .checked_add(waveform.checked_mul(8)?)?
-                .checked_add(spectrum.checked_mul(2)?)?
-                .checked_add(WIRE_TRAILER_BYTES)
-        });
-    if payload.len() < WIRE_HEADER_BYTES
-        || payload.len() > MAX_FRAME_BYTES as usize
-        || declared_size != Some(payload.len())
-        || payload.get(..4) != Some(WIRE_MAGIC.as_slice())
-        || read_u16(payload, 4) != Some(WIRE_VERSION)
+    let validity = read_u16(payload, 6);
+    let waveform_count = payload.get(44).copied().map(usize::from);
+    let spectrum_count = payload.get(45).copied().map(usize::from);
+    let waveform_available = validity.map(|flags| flags & TELEMETRY_VALID_WAVEFORM != 0);
+    let spectrum_available = validity.map(|flags| flags & TELEMETRY_VALID_SPECTRUM != 0);
+    if payload.len() != TELEMETRY_FRAME_ENCODED_SIZE
+        || payload.get(..4) != Some(TELEMETRY_WIRE_MAGIC.as_slice())
+        || read_u16(payload, 4) != Some(TELEMETRY_WIRE_VERSION)
+        || validity.is_none_or(|flags| flags & !TELEMETRY_KNOWN_VALIDITY_FLAGS != 0)
+        || waveform_count
+            != waveform_available.map(|available| if available { WAVEFORM_BINS } else { 0 })
+        || spectrum_count
+            != spectrum_available.map(|available| if available { SPECTRUM_BINS } else { 0 })
+        || read_u16(payload, 46) != Some(0)
+        || (!spectrum_available.unwrap_or(false)
+            && payload
+                .get(SPECTRUM_OFFSET..METERS_OFFSET)
+                .is_none_or(|bytes| bytes.iter().any(|byte| *byte != 0)))
     {
         return Err(AppError::InvalidArgument(
             "telemetry frame is not a valid HPTM v2 frame".into(),
@@ -552,7 +557,8 @@ pub fn telemetry_close(
 mod tests {
     use super::*;
     use hyperplayer_engine::telemetry::{
-        SPECTRUM_BINS, TELEMETRY_FRAME_ENCODED_SIZE, WAVEFORM_BINS,
+        TelemetryFrame as EngineTelemetryFrame, TELEMETRY_FRAME_ENCODED_SIZE, TELEMETRY_VALID_RMS,
+        TELEMETRY_VALID_SAMPLE_PEAK, TELEMETRY_VALID_WAVEFORM,
     };
     use std::sync::{atomic::AtomicUsize, mpsc::Receiver};
 
@@ -595,17 +601,20 @@ mod tests {
     }
 
     impl FakePort {
-        fn publish(&self, epoch: u64, sequence: u64, revision: u64, marker: u8) {
-            let mut payload = vec![0; TELEMETRY_FRAME_ENCODED_SIZE];
-            payload[..4].copy_from_slice(&WIRE_MAGIC);
-            payload[4..6].copy_from_slice(&WIRE_VERSION.to_le_bytes());
-            payload[EPOCH_OFFSET..EPOCH_OFFSET + 8].copy_from_slice(&epoch.to_le_bytes());
-            payload[SEQUENCE_OFFSET..SEQUENCE_OFFSET + 8].copy_from_slice(&sequence.to_le_bytes());
-            payload[DSP_REVISION_OFFSET..DSP_REVISION_OFFSET + 8]
-                .copy_from_slice(&revision.to_le_bytes());
-            payload[44] = WAVEFORM_BINS as u8;
-            payload[45] = SPECTRUM_BINS as u8;
-            payload[TELEMETRY_FRAME_ENCODED_SIZE - 1] = marker;
+        fn publish(&self, epoch: u64, sequence: u64, revision: u64, marker: i16) {
+            let mut frame = EngineTelemetryFrame {
+                validity_flags: TELEMETRY_VALID_WAVEFORM
+                    | TELEMETRY_VALID_SAMPLE_PEAK
+                    | TELEMETRY_VALID_RMS,
+                epoch,
+                sequence,
+                sample_frame: sequence,
+                dsp_revision: revision,
+                sample_rate: 48_000,
+                ..EngineTelemetryFrame::default()
+            };
+            frame.waveform_min[0][0] = marker;
+            let payload = frame.encode().to_vec();
             (self.sink.lock().unwrap().as_ref().unwrap())(TelemetryFrame { payload });
         }
     }
@@ -708,7 +717,7 @@ mod tests {
                 sequence: 10
             }
         );
-        assert_eq!(first[TELEMETRY_FRAME_ENCODED_SIZE - 1], 1);
+        assert_eq!(i16::from_le_bytes(first[48..50].try_into().unwrap()), 1);
 
         port.publish(4, 11, 7, 2);
         port.publish(4, 12, 7, 3);
@@ -735,7 +744,7 @@ mod tests {
                 sequence: 12
             }
         );
-        assert_eq!(latest[TELEMETRY_FRAME_ENCODED_SIZE - 1], 3);
+        assert_eq!(i16::from_le_bytes(latest[48..50].try_into().unwrap()), 3);
     }
 
     #[test]
@@ -769,7 +778,7 @@ mod tests {
                 sequence: 0
             }
         );
-        assert_eq!(next[TELEMETRY_FRAME_ENCODED_SIZE - 1], 3);
+        assert_eq!(i16::from_le_bytes(next[48..50].try_into().unwrap()), 3);
     }
 
     #[test]
@@ -790,6 +799,54 @@ mod tests {
         assert!(!sessions.acknowledge("main", ack(3, 5, 6)).unwrap().accepted);
         assert!(sessions.acknowledge("main", ack(3, 5, 7)).unwrap().accepted);
         assert!(!sessions.acknowledge("main", ack(3, 5, 7)).unwrap().accepted);
+    }
+
+    #[test]
+    fn pausing_keeps_the_sent_frame_acknowledgeable_and_resumes_the_session() {
+        let sessions = TelemetrySessions::new();
+        let port = FakePort::default();
+        let (session, receiver) = subscribe(&sessions, &port, "main");
+        port.publish(3, 5, 7, 1);
+        receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        sessions
+            .set_activity(
+                "main",
+                TelemetryActivityRequestDto {
+                    session_id: session.session_id.clone(),
+                    epoch: session.epoch,
+                    rate_hz: 0,
+                },
+            )
+            .unwrap();
+        assert!(
+            sessions
+                .acknowledge(
+                    "main",
+                    TelemetryAckRequestDto {
+                        session_id: session.session_id.clone(),
+                        epoch: 3,
+                        sequence: 5,
+                        revision: 7,
+                    },
+                )
+                .unwrap()
+                .accepted
+        );
+
+        sessions
+            .set_activity(
+                "main",
+                TelemetryActivityRequestDto {
+                    session_id: session.session_id,
+                    epoch: session.epoch,
+                    rate_hz: 30,
+                },
+            )
+            .unwrap();
+        port.publish(3, 6, 7, 2);
+        let resumed = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(parse_identity(&resumed).unwrap().ordering.sequence, 6);
     }
 
     #[test]
@@ -966,19 +1023,63 @@ mod tests {
     }
 
     #[test]
-    fn accepts_variable_hptm_frame_size_from_declared_counts() {
-        let mut payload = vec![0; WIRE_HEADER_BYTES + 8 + 2 + WIRE_TRAILER_BYTES];
-        payload[..4].copy_from_slice(&WIRE_MAGIC);
-        payload[4..6].copy_from_slice(&WIRE_VERSION.to_le_bytes());
-        payload[EPOCH_OFFSET..EPOCH_OFFSET + 8].copy_from_slice(&9_u64.to_le_bytes());
-        payload[SEQUENCE_OFFSET..SEQUENCE_OFFSET + 8].copy_from_slice(&10_u64.to_le_bytes());
-        payload[DSP_REVISION_OFFSET..DSP_REVISION_OFFSET + 8]
-            .copy_from_slice(&11_u64.to_le_bytes());
-        payload[44] = 1;
-        payload[45] = 1;
-        assert_eq!(parse_identity(&payload).unwrap().dsp_revision, 11);
-        payload.push(0);
-        assert!(parse_identity(&payload).is_err());
+    fn parses_real_engine_fixed_frames_and_rejects_invalid_header_contract() {
+        let base = EngineTelemetryFrame {
+            validity_flags: TELEMETRY_VALID_WAVEFORM
+                | TELEMETRY_VALID_SAMPLE_PEAK
+                | TELEMETRY_VALID_RMS,
+            epoch: 9,
+            sequence: 10,
+            sample_frame: 480,
+            dsp_revision: 11,
+            sample_rate: 48_000,
+            ..EngineTelemetryFrame::default()
+        }
+        .encode();
+        assert_eq!(base.len(), TELEMETRY_FRAME_ENCODED_SIZE);
+        assert_eq!(base[44], 64);
+        assert_eq!(base[45], 0);
+        assert_eq!(parse_identity(&base).unwrap().dsp_revision, 11);
+
+        for corrupt in [
+            |payload: &mut [u8]| payload[6..8].copy_from_slice(&(1_u16 << 15).to_le_bytes()),
+            |payload: &mut [u8]| payload[6..8].copy_from_slice(&(1_u16 << 6).to_le_bytes()),
+            |payload: &mut [u8]| payload[44] = 63,
+            |payload: &mut [u8]| payload[45] = 96,
+            |payload: &mut [u8]| payload[46] = 1,
+            |payload: &mut [u8]| payload[SPECTRUM_OFFSET] = 1,
+        ] {
+            let mut payload = base;
+            corrupt(&mut payload);
+            assert!(parse_identity(&payload).is_err());
+        }
+
+        let spectrum = EngineTelemetryFrame {
+            validity_flags: TELEMETRY_VALID_WAVEFORM
+                | TELEMETRY_VALID_SAMPLE_PEAK
+                | TELEMETRY_VALID_RMS
+                | hyperplayer_engine::telemetry::TELEMETRY_VALID_SPECTRUM,
+            ..EngineTelemetryFrame::default()
+        }
+        .encode();
+        assert_eq!(spectrum[45], 96);
+        assert!(parse_identity(&spectrum).is_ok());
+    }
+
+    #[test]
+    fn forwards_real_engine_encoding_through_session_unchanged() {
+        let sessions = TelemetrySessions::new();
+        let port = FakePort::default();
+        let (_, receiver) = subscribe(&sessions, &port, "main");
+        port.publish(4, 10, 7, 23);
+
+        let forwarded = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(forwarded.len(), TELEMETRY_FRAME_ENCODED_SIZE);
+        assert_eq!(forwarded[45], 0);
+        assert_eq!(
+            i16::from_le_bytes(forwarded[48..50].try_into().unwrap()),
+            23
+        );
     }
 
     #[test]

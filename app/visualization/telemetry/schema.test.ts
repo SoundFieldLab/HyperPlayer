@@ -70,9 +70,11 @@ describe("decodeTelemetryFrame", () => {
     ["bad magic", (view: DataView) => view.setUint32(0, 0, true)],
     ["bad version", (view: DataView) => view.setUint16(4, TELEMETRY_VERSION + 1, true)],
     ["unknown validity flag", (view: DataView) => view.setUint16(6, 1 << 15, true)],
+    ["unallocated LUFS validity flag", (view: DataView) => view.setUint16(6, 1 << 6, true)],
     ["wrong waveform count", (view: DataView) => view.setUint8(44, TELEMETRY_WAVEFORM_BINS - 1)],
     ["wrong spectrum count", (view: DataView) => view.setUint8(45, TELEMETRY_SPECTRUM_BINS - 1)],
     ["nonzero reserved", (view: DataView) => view.setUint16(46, 1, true)],
+    ["nonzero reserved spectrum", (view: DataView) => view.setUint16(560, 1, true)],
     ["zero sample rate", (view: DataView) => view.setUint32(40, 0, true)],
     ["inverted waveform range", (view: DataView) => {
       view.setInt16(48, 1, true);
@@ -83,6 +85,33 @@ describe("decodeTelemetryFrame", () => {
     const binary = makeTelemetryFrame();
     corrupt(new DataView(binary));
     expect(() => decodeTelemetryFrame(binary)).toThrow();
+  });
+
+  it("treats zero counts as unavailable fixed-layout sections", () => {
+    const binary = makeTelemetryFrame({
+      validityFlags: TELEMETRY_VALID_SAMPLE_PEAK | TELEMETRY_VALID_RMS,
+      spectrum: Array(TELEMETRY_SPECTRUM_BINS).fill(0),
+    });
+    const view = new DataView(binary);
+    view.setInt16(48, 12_345, true);
+
+    const frame = decodeTelemetryFrame(binary);
+    expect(binary.byteLength).toBe(TELEMETRY_FRAME_BYTES);
+    expect(view.getUint8(44)).toBe(0);
+    expect(view.getUint8(45)).toBe(0);
+    expect(frame.waveform).toBeNull();
+    expect(frame.spectrum).toBeNull();
+  });
+
+  it.each([
+    ["waveform count without validity", 44, TELEMETRY_WAVEFORM_BINS],
+    ["spectrum count without validity", 45, TELEMETRY_SPECTRUM_BINS],
+  ])("rejects %s", (_label, offset, count) => {
+    const binary = makeTelemetryFrame({
+      validityFlags: TELEMETRY_VALID_SAMPLE_PEAK | TELEMETRY_VALID_RMS,
+    });
+    new DataView(binary).setUint8(offset, count);
+    expect(() => decodeTelemetryFrame(binary)).toThrow(/count/);
   });
 
   it("keeps unavailable HPTM sections absent instead of decoding placeholders", () => {

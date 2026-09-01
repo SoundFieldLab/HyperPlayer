@@ -11,9 +11,13 @@ export const TELEMETRY_VALID_RMS = 1 << 2;
 export const TELEMETRY_VALID_SPECTRUM = 1 << 3;
 export const TELEMETRY_VALID_TRUE_PEAK = 1 << 4;
 export const TELEMETRY_VALID_LIMITER_REDUCTION = 1 << 5;
-export const TELEMETRY_VALID_LUFS = 1 << 6;
 
-const TELEMETRY_KNOWN_VALIDITY_FLAGS = (1 << 7) - 1;
+const TELEMETRY_KNOWN_VALIDITY_FLAGS = TELEMETRY_VALID_WAVEFORM
+  | TELEMETRY_VALID_SAMPLE_PEAK
+  | TELEMETRY_VALID_RMS
+  | TELEMETRY_VALID_SPECTRUM
+  | TELEMETRY_VALID_TRUE_PEAK
+  | TELEMETRY_VALID_LIMITER_REDUCTION;
 
 const HEADER_BYTES = 48;
 const WAVEFORM_ARRAY_BYTES = TELEMETRY_WAVEFORM_BINS * 2;
@@ -95,6 +99,9 @@ export function decodeTelemetryFrame(input: ArrayBuffer | ArrayBufferView): Tele
   if (view.getUint8(44) !== (waveformAvailable ? TELEMETRY_WAVEFORM_BINS : 0)) fail("Telemetry waveform count does not match validity");
   if (view.getUint8(45) !== (spectrumAvailable ? TELEMETRY_SPECTRUM_BINS : 0)) fail("Telemetry spectrum count does not match validity");
   if (view.getUint16(46, true) !== 0) fail("Telemetry frame reserved field must be zero");
+  if (!spectrumAvailable && bytes.subarray(SPECTRUM_OFFSET, METERS_OFFSET).some((byte) => byte !== 0)) {
+    fail("Telemetry reserved spectrum area must be zero");
+  }
 
   const sampleRate = view.getUint32(40, true);
   if (sampleRate === 0) fail("Telemetry sample rate must be positive");

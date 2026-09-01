@@ -58,14 +58,21 @@ export function makeTelemetryFrame(options: FrameOptions = {}): ArrayBuffer {
     view.setInt16(48 + arrayBytes * 3 + index * 2, 16_384, true);
   }
 
-  const spectrum = options.spectrum ?? Array.from(
-    { length: TELEMETRY_SPECTRUM_BINS },
-    (_, index) => Math.round(index / (TELEMETRY_SPECTRUM_BINS - 1) * 65_535),
-  );
-  if (spectrum.length !== TELEMETRY_SPECTRUM_BINS) {
-    throw new RangeError(`Fixture spectrum must contain ${TELEMETRY_SPECTRUM_BINS} bins`);
+  const spectrumAvailable = (validityFlags & (1 << 3)) !== 0;
+  if (spectrumAvailable) {
+    const spectrum = options.spectrum ?? Array.from(
+      { length: TELEMETRY_SPECTRUM_BINS },
+      (_, index) => Math.round(index / (TELEMETRY_SPECTRUM_BINS - 1) * 65_535),
+    );
+    if (spectrum.length !== TELEMETRY_SPECTRUM_BINS) {
+      throw new RangeError(`Fixture spectrum must contain ${TELEMETRY_SPECTRUM_BINS} bins`);
+    }
+    spectrum.forEach((value, index) => view.setUint16(560 + index * 2, value, true));
+  } else {
+    for (let index = 0; index < TELEMETRY_SPECTRUM_BINS; index += 1) {
+      view.setUint16(560 + index * 2, 0, true);
+    }
   }
-  spectrum.forEach((value, index) => view.setUint16(560 + index * 2, value, true));
 
   const meters = { ...DEFAULT_METERS, ...options.meters };
   Object.values(meters).forEach((value, index) => view.setFloat32(752 + index * 4, value ?? 0, true));

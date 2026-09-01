@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 pub const TELEMETRY_TAP: &str = "post_dsp_pre_output_gain";
+pub const TELEMETRY_WIRE_MAGIC: [u8; 4] = *b"HPTM";
+pub const TELEMETRY_WIRE_VERSION: u16 = 2;
 pub const WAVEFORM_BINS: usize = 64;
 pub const SPECTRUM_BINS: usize = 96;
 pub const TELEMETRY_FRAME_ENCODED_SIZE: usize = 780;
@@ -18,7 +20,12 @@ pub const TELEMETRY_VALID_RMS: u16 = 1 << 2;
 pub const TELEMETRY_VALID_SPECTRUM: u16 = 1 << 3;
 pub const TELEMETRY_VALID_TRUE_PEAK: u16 = 1 << 4;
 pub const TELEMETRY_VALID_LIMITER_REDUCTION: u16 = 1 << 5;
-pub const TELEMETRY_VALID_LUFS: u16 = 1 << 6;
+pub const TELEMETRY_KNOWN_VALIDITY_FLAGS: u16 = TELEMETRY_VALID_WAVEFORM
+    | TELEMETRY_VALID_SAMPLE_PEAK
+    | TELEMETRY_VALID_RMS
+    | TELEMETRY_VALID_SPECTRUM
+    | TELEMETRY_VALID_TRUE_PEAK
+    | TELEMETRY_VALID_LIMITER_REDUCTION;
 const BASIC_VALIDITY_FLAGS: u16 =
     TELEMETRY_VALID_WAVEFORM | TELEMETRY_VALID_SAMPLE_PEAK | TELEMETRY_VALID_RMS;
 
@@ -87,8 +94,12 @@ impl TelemetryFrame {
     pub fn encode(&self) -> [u8; TELEMETRY_FRAME_ENCODED_SIZE] {
         let mut output = [0_u8; TELEMETRY_FRAME_ENCODED_SIZE];
         let mut offset = 0;
-        put(&mut output, &mut offset, b"HPTM");
-        put(&mut output, &mut offset, &2_u16.to_le_bytes());
+        put(&mut output, &mut offset, &TELEMETRY_WIRE_MAGIC);
+        put(
+            &mut output,
+            &mut offset,
+            &TELEMETRY_WIRE_VERSION.to_le_bytes(),
+        );
         put(&mut output, &mut offset, &self.validity_flags.to_le_bytes());
         for value in [
             self.epoch,
@@ -530,11 +541,27 @@ mod tests {
     }
 
     #[test]
-    fn binary_frame_is_fixed_and_under_one_kibibyte() {
-        let encoded = TelemetryFrame::default().encode();
-        assert_eq!(encoded.len(), TELEMETRY_FRAME_ENCODED_SIZE);
-        assert!(encoded.len() <= 1024);
-        assert_eq!(&encoded[..4], b"HPTM");
+    fn binary_frame_is_fixed_and_counts_describe_availability() {
+        let unavailable = TelemetryFrame {
+            validity_flags: TELEMETRY_VALID_SAMPLE_PEAK | TELEMETRY_VALID_RMS,
+            ..TelemetryFrame::default()
+        }
+        .encode();
+        assert_eq!(unavailable.len(), TELEMETRY_FRAME_ENCODED_SIZE);
+        assert!(unavailable.len() <= 1024);
+        assert_eq!(&unavailable[..4], &TELEMETRY_WIRE_MAGIC);
+        assert_eq!(unavailable[44], 0);
+        assert_eq!(unavailable[45], 0);
+        assert_eq!(&unavailable[46..48], &[0, 0]);
+
+        let available = TelemetryFrame {
+            validity_flags: TELEMETRY_VALID_WAVEFORM | TELEMETRY_VALID_SPECTRUM,
+            ..TelemetryFrame::default()
+        }
+        .encode();
+        assert_eq!(available.len(), TELEMETRY_FRAME_ENCODED_SIZE);
+        assert_eq!(available[44], WAVEFORM_BINS as u8);
+        assert_eq!(available[45], SPECTRUM_BINS as u8);
     }
 
     #[test]
