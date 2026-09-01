@@ -1,0 +1,16 @@
+[package]
+name = "hyperplayer-hrtf-core"
+description = "HyperSoundEngine HRTF spatial geometry core"
+version = "1.5.1"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["HyperSoundEngine Contributors"]
+repository = "https://github.com/IceFireIcer/HyperSoundEngine"
+publish = false
+
+[lib]
+name = "hrtf_core"
+
+[dependencies]
+rustfft = "6.4.1"
+sofar = { version = "0.3.0", default-features = false }

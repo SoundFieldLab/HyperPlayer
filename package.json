@@ -11,6 +11,8 @@
     "frontend:dev": "vite --host 127.0.0.1",
     "frontend:build": "pnpm check:ipc && tsc -b && vite build",
     "check:ipc": "node app/bridge/verify-contract.mjs",
+    "check:hse-source": "node provenance/hse-v1.5.1/verify-source-manifest.mjs",
+    "check:hse-ts": "tsc -p shared/hse-ts-core/tsconfig.json --pretty false",
     "test": "vitest run"
   },
   "dependencies": {

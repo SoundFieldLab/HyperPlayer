@@ -23,7 +23,7 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 ## 工作流程约束
 
 - **2026-08-30 用户已解除正式代码禁令并要求全量实现**：可创建 Tauri 2 应用、React UI、commands/capabilities、Rust 引擎/曲库和网易云 Rust Cleanroom 实现
-- **DSP 全量接入（2026-08-31 用户定调）**：以 HyperSoundEngine v1.5.1（commit `f7017621b7d84005fbfed8a3c42a119487a17326`）为完整 DSP 核心输入，迁入 22 阶段 Rust/TS 能力、参数、预设、配置编码和一致性测试；Rust 为实际播放权威，不复用 HSE UI/browser host/service/WASAPI。权利人 IceFireIcer 已授予 HyperPlayer 专项修改、融合及 Apache-2.0 分发授权，见 `LICENSE-HSE-AUTHORIZATION.md`；第三方 IR、素材和 SOFA/HRTF 数据仍须单独审计
+- **DSP 全量接入（2026-08-31 用户定调）**：以 HyperSoundEngine v1.5.1（commit `f7017621b7d84005fbfed8a3c42a119487a17326`）为完整 DSP 核心输入，迁入 22 阶段 Rust/TS 能力、参数、预设、配置编码和一致性测试；Rust 为实际播放权威，不复用 HSE UI/browser host/service/WASAPI。HSE 自带 Rust 核心是已按 TS 参照编写并验证、但尚未实际融合播放器的代码；后续以该 Rust 核心为算法迁移首要来源，TS 作为独立行为 oracle，优先原样迁移/裁剪已有 Rust 算法，只增加 HyperPlayer 的 `PcmProcessor`、revision、checkpoint、tail 和实时线程适配层，不重复手写已有内核。权利人 IceFireIcer 已授予 HyperPlayer 专项修改、融合及 Apache-2.0 分发授权，见 `LICENSE-HSE-AUTHORIZATION.md`；第三方 IR、素材和 SOFA/HRTF 数据仍须单独审计
 - **D25 保守默认（2026-08-31 用户授权工程定调）**：默认容量 10 GiB（可配置 2–100 GiB），到上限清理至 90%，保护最近 100 个不同远程曲目；Public 离线证明最长 7 天，AccountEntitled 离线永远 fail closed；整专补齐默认 standard、单并发、AC/非计费网络/磁盘保留条件满足时运行
 - 仍按现行定调与 ADR 实施；所有新增依赖须满足许可证约束，网易云实现继续严格遵守 Cleanroom 与模块隔离
 - 所有规划文件写入 `docs/`（已 gitignore）：需求、决策记录、ADR、术语表和协议规范

@@ -1,0 +1,481 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "tag": "v1.5.1",
+    "tagObject": "3602b86906e6a345baaf6e87fe559f80ed399cc4",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326",
+    "repository": "https://github.com/IceFireIcer/HyperSoundEngine.git"
+  },
+  "authorization": "../../LICENSE-HSE-AUTHORIZATION.md",
+  "sourceCheckout": {
+    "defaultRelativePath": "../../temp/hse-v1.5.1",
+    "note": "Paths and hashes are derived from this source checkout, never from a vendor destination."
+  },
+  "selections": [
+    {
+      "name": "hse-core",
+      "originalPath": "HyperSoundEngineRust/crates/hse-core",
+      "includes": [
+        "Cargo.toml",
+        "src/**/*.rs",
+        "tests/**/*.rs"
+      ]
+    },
+    {
+      "name": "hrtf-core",
+      "originalPath": "HyperSoundEngineRust/crates/hrtf-core",
+      "includes": [
+        "Cargo.toml",
+        "src/**/*.rs",
+        "tests/**/*.rs"
+      ]
+    },
+    {
+      "name": "selected TypeScript core",
+      "originalPaths": [
+        "src/analysis/**/*.ts",
+        "src/dsp/**/*.ts",
+        "src/engine/**/*.ts",
+        "src/spatial/**/*.ts",
+        "src/index.ts",
+        "src/interfaces.ts",
+        "src/types.ts"
+      ],
+      "excludes": [
+        "src/spatial/test/**"
+      ]
+    },
+    {
+      "name": "shared source fixtures",
+      "originalPaths": [
+        "specs/engine/vectors/default-params.48000.json",
+        "specs/engine/vectors/scenes.48000.json",
+        "specs/io/vectors/wav-standard.json"
+      ]
+    }
+  ],
+  "destinationAdaptations": [
+    {
+      "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/params.rs",
+      "adaptation": "Relocated fixture include_str! path to ../tests/fixtures/engine/default-params.48000.json."
+    },
+    {
+      "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/scenes.rs",
+      "adaptation": "Relocated fixture include_str! path to ../tests/fixtures/engine/scenes.48000.json."
+    },
+    {
+      "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/wav.rs",
+      "adaptation": "Relocated fixture include_str! path to ../tests/fixtures/io/wav-standard.json."
+    },
+    {
+      "sourcePath": "src/index.ts",
+      "adaptation": "Scoped the destination index by removing exports for unselected offline and WAV I/O modules."
+    },
+    {
+      "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/fft.rs",
+      "adaptation": "Restored the mandatory 'Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.' fdlibm notice and 'Copyright 2016 the V8 project authors. All rights reserved.' notice before the copied ts_trig implementation; algorithm code is unchanged."
+    }
+  ],
+  "exclusions": [
+    {
+      "category": "UI",
+      "paths": [
+        "ui/**"
+      ]
+    },
+    {
+      "category": "browser host and worklet",
+      "paths": [
+        "src/browser.ts",
+        "src/integration/**",
+        "src/worklet.ts",
+        "src/worklet/**"
+      ]
+    },
+    {
+      "category": "service",
+      "paths": [
+        "HyperSoundEngineRust/crates/hse-service/**"
+      ]
+    },
+    {
+      "category": "WASAPI",
+      "paths": [
+        "HyperSoundEngineRust/crates/hse-wasapi/**"
+      ]
+    },
+    {
+      "category": "N-API",
+      "paths": [
+        "HyperSoundEngineRust/crates/hse-napi/**"
+      ]
+    },
+    {
+      "category": "WASM",
+      "paths": [
+        "HyperSoundEngineRust/crates/hse-wasm/**",
+        "HyperSoundEngineRust/web/**"
+      ]
+    },
+    {
+      "category": "build artifacts and dependencies",
+      "paths": [
+        "dist/**",
+        "node_modules/**",
+        "HyperSoundEngineRust/target/**"
+      ]
+    },
+    {
+      "category": "SOFA/HRTF datasets and other binary assets",
+      "paths": [
+        "**/*.sofa",
+        "**/*.hrtf",
+        "**/*.bin"
+      ]
+    }
+  ],
+  "hashAlgorithm": "SHA-256",
+  "aggregateFormat": "<lowercase-sha256><two spaces><source-path><LF>, sorted by source-path",
+  "aggregateSha256": "06fa8e8df5524d855b91fbbcb018072587a517d056576b2017c7a6665a2f72c5",
+  "fileCount": 84,
+  "files": [
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/Cargo.toml",
+      "sha256": "a2aed4fd6ace8d3c6949700c08b689f6299921297320767fbdff0ec669524d62"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/src/grid.rs",
+      "sha256": "7371251a7db8a1c53345d9aa54dfc9fcaeda22d839cbb5205d008f79cb2da2bf"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/src/interpolation.rs",
+      "sha256": "cdb7de6d186ce26c08bb7892750df5b0f8c367a274ed3ad4d73ea99ba8515993"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/src/lib.rs",
+      "sha256": "95ca73c2c5750af5e8b1d1cb98fd900126e0fe4e48b3a0035b8b26af426becb2"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/src/model.rs",
+      "sha256": "67b006e9d4912b55c548b9b133f5aa1510d156ac67bf727d219150b2b875c640"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/src/partitioned.rs",
+      "sha256": "61c30c8102df543154d7c75120c9fe150299794ed7e981feb8f86c9e5e37e7b2"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/src/renderer.rs",
+      "sha256": "7dd2cc85bb6413ea469edd813a0e62733e2a999939f17a9f1bcd269c609be4e7"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/src/room.rs",
+      "sha256": "92c95ce6b31c4d9a4e087c56f225f67176f526c809d617232c6cb645f0cd80f6"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/src/sofa.rs",
+      "sha256": "bc83b6ea50682ec2e712f79785a5a957f6491bc9fc76a7a6147bfa8bd2e6c4c1"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/src/world.rs",
+      "sha256": "165e0cac82f08c221642f408b427e393c2f5851b358d490bd855361066fc7246"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/tests/realtime_alloc.rs",
+      "sha256": "658e4f18e667132e44ddf9736502f54a1c1b5bacc03f6a36b4b99de979a37730"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hrtf-core/tests/renderer_features.rs",
+      "sha256": "04072025a102c91e91e9508ac3c94fb7c34c26719bf2ef48b3f7913965e48a66"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/Cargo.toml",
+      "sha256": "b00118724e1562442d78d0656ebedd87b71bf8c4653d6b69ed4145fc77b4c904"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/bass_enhancer.rs",
+      "sha256": "a1a162e665167a0896060f77b1003e8cdc6200be2528bad52ca29c0f6675d702"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/biquad.rs",
+      "sha256": "b3997c80c4090b417b110303dbfbb2513776006a549b735bacfa4f0367ae5e19"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/compressor.rs",
+      "sha256": "49ee3beb5bb096517c2086c1a2db0ce73d0f0edb97b9aa3681d8b76a9f68a9c2"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/convolver.rs",
+      "sha256": "59f3bcd4afada1e8f0c4d5e1833dde851bc5ffde04a2a36b0836695f65e7888b"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/deesser.rs",
+      "sha256": "9de6e73f8e9bbca2bdadd4e1ed3b7cb81e53d6c32a8e245c3b1a52b9f081008c"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/dynamic_eq.rs",
+      "sha256": "a42959a38c443a95e9c03567002400aaa3687b282619c208dfa071e8600a9ffd"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/engine_chain.rs",
+      "sha256": "54ccfa12f69d5a192f419abf1b025b8121423923e01d0cdd73ef4822a9c58073"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/eq_chain.rs",
+      "sha256": "f9bcfe35101a8fccdda5b9d362b69b55c04bc6e6fc0cc35d9bb6bad3ac8c5011"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/fdn_reverb.rs",
+      "sha256": "7332d0f78425a8cf3de3840f79773c920f442784bc84bfe9cffe9613cec757e8"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/fft.rs",
+      "sha256": "e8adc42c228390b0d9ab1d5be1086b539f89ff4390192c51da2d107d6c535d7a"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/hse_stretch.rs",
+      "sha256": "1e9ecce30a45599686d4e43c355e31613485206be6accb86769ca251629acb0b"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/lib.rs",
+      "sha256": "8f20c5d5bf6f94ba00936fc541c3aea24bb8f239ab1ed2ef5537828547659cfd"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/limiter.rs",
+      "sha256": "b6031c6f29cfa93dda234341b843e62c7c4e6cf7411e1ba100427e5ac0de37a6"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/loudness_comp.rs",
+      "sha256": "b3a7e22c221e6808f1b76d2104e40de4244c0ddc0b6dd0f9e14d5b94bbbbd372"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/lufs_meter.rs",
+      "sha256": "f6f8205d60488c8011b31048a242c5fd9dbc08c152cfbcb3318ea3a8486f02e4"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/mid_side.rs",
+      "sha256": "31a92fb111c1f0f0f05c9de4b8f24e8874c34d5d5de4cc8d5e8a18e116857ddb"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/mod_effects.rs",
+      "sha256": "50c6b06d61a00102a5334230d43a77a06db61c290a121b5a42c00a2a4b180b7a"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/modulation_matrix.rs",
+      "sha256": "8667329f5264e5ae257bbfe6f85ad396d10ef2bd370fcca2af0d49f65bfc7a32"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/params.rs",
+      "sha256": "162bd8ca39c73e883fd160b629ad4b54747815de0bdb3c59ba101cfd753fbafe"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/reverb_simple.rs",
+      "sha256": "7fd8c2d912d954f6fbe879e6ca08fa89c595ec8d9a99811d89028f4a0c5158d8"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/scenes.rs",
+      "sha256": "8f846569951a4e05bbc56cf759c06ac6bd76dd351cb44b1c52b0d045621a9fc4"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/share_codec.rs",
+      "sha256": "f720459164a6a57ef510be42d7935311a8561020e79689566080939d98bd9ef4"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/src/wav.rs",
+      "sha256": "f3153a2cbceb4cd346c211c144b70d1d0925e7cdc0daec6c7d064c6494bc1b44"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/tests/phase4_param_scan.rs",
+      "sha256": "59bbc0fd044bc990a2549afd44d1005e99e4ad3b04e4a34f8cd17e96f0460c7a"
+    },
+    {
+      "path": "HyperSoundEngineRust/crates/hse-core/tests/realtime_alloc.rs",
+      "sha256": "c9d0702a40b8ca3f65bd3e3a8542323fdcd9901a1dc6e8607a9f594694432df1"
+    },
+    {
+      "path": "specs/engine/vectors/default-params.48000.json",
+      "sha256": "263b3ec31aa401f8ce9a5c5485f0920275667cd4f13268dcd82311d8c2f32f8f"
+    },
+    {
+      "path": "specs/engine/vectors/scenes.48000.json",
+      "sha256": "042ed95ecf91edfe52ad798f829dec6fa84ce4b61534eda0eb40eb29d54d79cd"
+    },
+    {
+      "path": "specs/io/vectors/wav-standard.json",
+      "sha256": "430c7b525124c84d1e69c323aa81a91c58f851aa94926af46e30051f8f26c4cd"
+    },
+    {
+      "path": "src/analysis/HseHearingTest.ts",
+      "sha256": "dc56de4b5cff1369b4e03548c1a23245445877fb1c5b71012e1de4e778cf337c"
+    },
+    {
+      "path": "src/analysis/Spectrum.ts",
+      "sha256": "5d485ba991d2d47f276e3ab71759145f3551b330f84d0c67d439ffa7ba7ae82a"
+    },
+    {
+      "path": "src/dsp/BassEnhancer.ts",
+      "sha256": "d9d1f7dd5088785e6f2c4cb94e43120b95383443055ab9179a34d37d34ac19bb"
+    },
+    {
+      "path": "src/dsp/biquad.ts",
+      "sha256": "6f3b1919688d19e13c8f6cbc3c05af713b7a04fc6459b0e9f7a4b6d5bb12f823"
+    },
+    {
+      "path": "src/dsp/Compressor.ts",
+      "sha256": "6d39f51015f7d34d571ddbb6a558396518837a7a948ffd575a766519b7d42386"
+    },
+    {
+      "path": "src/dsp/Convolver.ts",
+      "sha256": "394c3cbc383aba02013749e37ebdaf96f7c8e7844402d307c07fde0e5bd1267b"
+    },
+    {
+      "path": "src/dsp/Deesser.ts",
+      "sha256": "8b37f2ddb1db8d0eeab8d9aa8259c90244c3be89c58d5fceed2a6f1ad1595153"
+    },
+    {
+      "path": "src/dsp/DynamicEq.ts",
+      "sha256": "0d9833fc80301f1c63e03f64bf30dee930109ae26cc9d5ab0bde4b8fc3ba20c4"
+    },
+    {
+      "path": "src/dsp/EqChain.ts",
+      "sha256": "1af41ee6380db26221af5e9c7f919056782d4b83c6a1f587bbb9d558b972970f"
+    },
+    {
+      "path": "src/dsp/FdnReverb.ts",
+      "sha256": "d0b02ac6d7ac18df4c6e5599044ba39dd2df7ba485793e5003de70263923e900"
+    },
+    {
+      "path": "src/dsp/features.ts",
+      "sha256": "cd4045b09c9022a6845ebf710b7761bf2c9d725d747b127cc9461dba50925202"
+    },
+    {
+      "path": "src/dsp/fft.ts",
+      "sha256": "3854c5cc980e19164ea68f4dda9ac4ddc953841bceb0106682a9353288aedca1"
+    },
+    {
+      "path": "src/dsp/HseAudioBus.ts",
+      "sha256": "4d6b57902f8f6e4729c7380c5592df5a7f1e91574a118f5bf8340ec6cfa0bc62"
+    },
+    {
+      "path": "src/dsp/HseStretch.ts",
+      "sha256": "26d6cdb5981e73dfe6cbe6570f4de3beb49d4352e04b22e429d515c1f5a4ca6e"
+    },
+    {
+      "path": "src/dsp/Limiter.ts",
+      "sha256": "5136403022b085e0f3162b9fad46a07b639fbf33082d8cafeadded160e96e1cf"
+    },
+    {
+      "path": "src/dsp/LoudnessComp.ts",
+      "sha256": "291ee3957bf2dd798d21c1d3d4047317dd5d961515d8f2529d59e78dc6e1df74"
+    },
+    {
+      "path": "src/dsp/LufsMeter.ts",
+      "sha256": "f3861899f9fbcfacc9631346a7a73fff925227b61fb35734a6e98ba4e421434c"
+    },
+    {
+      "path": "src/dsp/MidSide.ts",
+      "sha256": "7aba685f51772b11054ddcf57fada9e4ee5358e14a6203dc7751761d62ef6cad"
+    },
+    {
+      "path": "src/dsp/ModEffects.ts",
+      "sha256": "2b7bb2ab1e44af3974ed79c118af60985164ee407b760e5dbeef70d9adbc5dec"
+    },
+    {
+      "path": "src/dsp/modulation.ts",
+      "sha256": "3425e0c431d4a7bcce36b93c6ddfe24c3123606940864fddb429c5c2b05faa6c"
+    },
+    {
+      "path": "src/dsp/PitchYin.ts",
+      "sha256": "806b9972f0f23b96ecf2f45f6cf13b50290121a2bd329f9b67c5a282f248c896"
+    },
+    {
+      "path": "src/dsp/Resampler.ts",
+      "sha256": "5f24d4e5f69ac84d9f96d2d0817f8aa4fa695cec60d68eaa5cd30ce3f95ad42c"
+    },
+    {
+      "path": "src/dsp/ReverbSimple.ts",
+      "sha256": "8cf22224c7a42c701d3ce690de1c50438b82001201d5dc57d1c59eb63623ab7f"
+    },
+    {
+      "path": "src/engine/factory.ts",
+      "sha256": "684e6496771ba66bb46a8f9493965580dded77dd2198258bf3c27e63163d4e85"
+    },
+    {
+      "path": "src/engine/HyperSoundEngine.ts",
+      "sha256": "46d0415fa921af1050ed171edd038e57894958d1a75b5c9ef723c9eebff81019"
+    },
+    {
+      "path": "src/engine/ScenePresets.ts",
+      "sha256": "62f44d39f3163afeaa3bdf391804f3ac674ddce386bd0834159a6a763f696add"
+    },
+    {
+      "path": "src/engine/ShareCodec.ts",
+      "sha256": "0ab69f48a0484a0c6d638c19c301c79585cff7d72a717ffbfd52b8a47500fd1a"
+    },
+    {
+      "path": "src/index.ts",
+      "sha256": "df72d05e1825102b1822a411bb71f026225a2c797a6a9f9ab5fd7db6cf2469ef"
+    },
+    {
+      "path": "src/interfaces.ts",
+      "sha256": "56a044b18e0f969e7bb21ab4c4ad50a6719b2b3667636f5f7c802736d51882cd"
+    },
+    {
+      "path": "src/spatial/ambienceMixer.ts",
+      "sha256": "628809d93a3badbdd745f2615b3155e8fbed1a026889959c19e091e2937ded78"
+    },
+    {
+      "path": "src/spatial/ambisonics.ts",
+      "sha256": "37cc73ed9dc25b1094c790588b0a8e5b53e51ea7de5ed13afc7c0802f4a0431f"
+    },
+    {
+      "path": "src/spatial/analyticHrtf.ts",
+      "sha256": "2b784b0f497be48cc17840151e7580208c4f603ce043e58add77ff06b895ba04"
+    },
+    {
+      "path": "src/spatial/controller.ts",
+      "sha256": "978e3cdae497f56d80ab74ef6738d86c126f8dc6adcdd1b5c00984ce810de316"
+    },
+    {
+      "path": "src/spatial/hrtfInterp.ts",
+      "sha256": "35ae72f793e35affd6f6ac3056055c06add0783776319d19096ec8b019c09b0f"
+    },
+    {
+      "path": "src/spatial/keymap.ts",
+      "sha256": "2720488516020ed67c32c17a44968e2265f07ec3939915e8b3878d326eae2d34"
+    },
+    {
+      "path": "src/spatial/layouts.ts",
+      "sha256": "ed5c76eb6200b9d32acb777f9aeb0453cdcb9b4d87cf341344b7e412d708414d"
+    },
+    {
+      "path": "src/spatial/roomSim.ts",
+      "sha256": "7d76e89297b5d0b7c5f30e2087aa5e6aa3c8e6104963d3725bfebbd1acc8e6f8"
+    },
+    {
+      "path": "src/spatial/scenes.ts",
+      "sha256": "8dd3f2ec722178451b6d85a6b0806237377ee0a8bf01dc9d577324839c3ef52f"
+    },
+    {
+      "path": "src/spatial/SpatialBackend.ts",
+      "sha256": "2c378949de956fcc38722f66173dba85d00f543a5ff4ee60149c06b01d732222"
+    },
+    {
+      "path": "src/spatial/TimeConvolver.ts",
+      "sha256": "42fcb721daa202b2662d620a21acba2c0387f83a5301546c39736dfd4649f506"
+    },
+    {
+      "path": "src/spatial/TsConvolverBackend.ts",
+      "sha256": "8b2747439495f39c7d50556b6c4c841566d7d6a0671d9840ae2499fa3824cffb"
+    },
+    {
+      "path": "src/spatial/types.ts",
+      "sha256": "d7fccc588cd3e78f5baa588ae491517477f1c491271370054ec5878a5598ae25"
+    },
+    {
+      "path": "src/types.ts",
+      "sha256": "5a1626225d3e1281a1f9774b7a4e280b04fe5dc62e96bae2545d3929916db90c"
+    }
+  ]
+}

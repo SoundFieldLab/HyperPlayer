@@ -1,3 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["hyperplayer-engine"]
+members = [
+    "hyperplayer-engine",
+    "hyperplayer-hse-core",
+    "hyperplayer-hrtf-core",
+]

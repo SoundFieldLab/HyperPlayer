@@ -8,3 +8,11 @@ See the LICENSE file in the repository root for the complete license terms.
 
 Third-party components retain their respective copyright notices and license terms.
 A generated third-party attribution inventory will be maintained before distribution.
+
+Portions derived from HyperSoundEngine v1.5.1, Copyright IceFireIcer, used under a project-specific authorization.
+
+The HyperSoundEngine-derived FFT implementation contains V8/fdlibm-derived code.
+Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+Copyright 2016 the V8 project authors. All rights reserved.
+Copyright 2006-2011, the V8 project authors. All rights reserved.
+See THIRD_PARTY_NOTICES.md and third_party_licenses/V8-BSD-3-Clause.txt.
