@@ -12,6 +12,16 @@ use tauri::{
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 
+pub fn handle_window_event<R: Runtime>(window: &tauri::Window<R>, event: &WindowEvent) {
+    if matches!(event, WindowEvent::Destroyed) {
+        if let Some(state) = window.try_state::<AppState>() {
+            state
+                .telemetry_sessions
+                .close_window_sessions(window.label());
+        }
+    }
+}
+
 pub fn install<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     install_tray(app)?;
     install_main_window_close_handler(app);
@@ -31,18 +41,11 @@ fn install_progress_forwarder<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::R
         .name("hyperplayer-progress-forwarder".into())
         .spawn(move || {
             let mut next_emit = Instant::now();
-            while let Ok(mut event) = receiver.recv() {
-                if event.kind == hyperplayer_engine::EngineEventKind::Progress {
-                    let wait = next_emit.saturating_duration_since(Instant::now());
-                    if !wait.is_zero() {
-                        std::thread::sleep(wait);
-                    }
-                    while let Ok(newer) = receiver.try_recv() {
-                        event = newer;
-                        if event.kind == hyperplayer_engine::EngineEventKind::StateChanged {
-                            break;
-                        }
-                    }
+            while let Ok(event) = receiver.recv() {
+                if event.kind == hyperplayer_engine::EngineEventKind::Progress
+                    && Instant::now() < next_emit
+                {
+                    continue;
                 }
                 if event.kind == hyperplayer_engine::EngineEventKind::AutomaticTransitionRequested {
                     let state = app.state::<AppState>();
@@ -72,6 +75,7 @@ fn install_progress_forwarder<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::R
                 match kind {
                     hyperplayer_engine::EngineEventKind::Progress => {
                         let progress = crate::dto::PlaybackProgressDto {
+                            revision: snapshot.revision,
                             position_ms: snapshot.playback.position_ms,
                             duration_ms: snapshot.playback.duration_ms,
                         };
@@ -80,13 +84,60 @@ fn install_progress_forwarder<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::R
                         }
                         next_emit = Instant::now() + PROGRESS_INTERVAL;
                     }
-                    hyperplayer_engine::EngineEventKind::StateChanged => {
+                    hyperplayer_engine::EngineEventKind::StateChanged
+                    | hyperplayer_engine::EngineEventKind::DspExecutionChanged => {
                         if emit_engine_snapshot(&app, &snapshot).is_err() {
                             break;
                         }
                     }
                     hyperplayer_engine::EngineEventKind::AutomaticTransitionRequested => {
                         unreachable!("automatic transitions are handled before event conversion")
+                    }
+                    hyperplayer_engine::EngineEventKind::DspConfigurationRejected { revision } => {
+                        if app
+                            .emit(
+                                events::DSP_CONFIGURATION_REJECTED,
+                                crate::dto::DspConfigurationRejectedDto { revision },
+                            )
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    hyperplayer_engine::EngineEventKind::DspProcessingFault {
+                        revision,
+                        processor_index,
+                        processor_name,
+                        kind,
+                        stream_frame,
+                        safe_bypass_active,
+                        fallback_status,
+                    } => {
+                        if app
+                            .emit(
+                                events::DSP_PROCESSING_FAULT,
+                                crate::dto::DspProcessingFaultDto {
+                                    revision,
+                                    processor_index,
+                                    processor_name: processor_name.into(),
+                                    kind: match kind {
+                                        hyperplayer_engine::dsp::ProcessorFaultKind::ProcessingFailed => "processingFailed",
+                                        hyperplayer_engine::dsp::ProcessorFaultKind::NonFiniteOutput => "nonFiniteOutput",
+                                    }
+                                    .into(),
+                                    stream_frame,
+                                    safe_bypass_active,
+                                    fallback_status: match fallback_status {
+                                        hyperplayer_engine::actor::DspFallbackStatus::RustSafeBypass => {
+                                            crate::dto::DspFallbackStatusDto::RustSafeBypass
+                                        }
+                                    },
+                                },
+                            )
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                 }
             }

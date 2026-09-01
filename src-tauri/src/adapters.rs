@@ -14,7 +14,8 @@ use crate::{
     ports::{
         validate_id, validate_page, validate_track_ref, CachePort, LibraryPort, NeteasePort,
         PlaybackMediaTarget, PlaybackPort, PlaybackTransition, QueuePort, ScanProgressSink,
-        SettingsPort, TrackResolverPort,
+        SettingsPort, TelemetryFrame as PortTelemetryFrame, TelemetryPort, TelemetrySink,
+        TelemetrySubscription, TrackResolverPort,
     },
 };
 use async_trait::async_trait;
@@ -33,6 +34,7 @@ use hyperplayer_engine::{
     playback::{PlaybackSnapshot, PlaybackState},
     queue::{PlaybackMode, PlaybackQueue, QueueInsertPosition},
     repository::{LibraryTrack, PlaybackHistoryRecord, SqliteRepository},
+    telemetry::{TelemetryActivity, TELEMETRY_FRAME_ENCODED_SIZE},
     MediaHandle, TrustedResolvedMedia,
 };
 use hyperplayer_source_netease::{
@@ -49,7 +51,10 @@ use std::{
     io::{Read, Seek, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -59,8 +64,6 @@ use zeroize::Zeroize;
 
 #[cfg(test)]
 use hyperplayer_source_netease::{Album, Artist, PlaylistSummary};
-#[cfg(test)]
-use std::sync::atomic::Ordering;
 
 const ENGINE_COMMAND_CAPACITY: usize = 64;
 const SHUFFLE_SEED: u64 = 0x4859_5045_5250_4c59;
@@ -133,6 +136,71 @@ pub struct EngineAdapter {
     prefetch_sender: std::sync::mpsc::SyncSender<PrefetchRequest>,
     restored_media_pending: Mutex<bool>,
     operation: Mutex<()>,
+    telemetry_activity: Arc<TelemetryActivityCoordinator>,
+}
+
+#[derive(Default)]
+struct TelemetryActivityCoordinator {
+    next_id: AtomicU64,
+    rates: Mutex<HashMap<u64, u8>>,
+    effective_rate: AtomicU8,
+}
+
+impl TelemetryActivityCoordinator {
+    fn register(&self) -> AppResult<u64> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.rates.app_lock()?.insert(id, 0);
+        Ok(id)
+    }
+
+    fn update(&self, id: u64, rate_hz: u8) -> AppResult<()> {
+        let mut rates = self.rates.app_lock()?;
+        let rate = rates
+            .get_mut(&id)
+            .ok_or_else(|| AppError::Unavailable("telemetry subscription is closed".into()))?;
+        *rate = rate_hz;
+        self.effective_rate.store(
+            rates.values().copied().max().unwrap_or(0),
+            Ordering::Release,
+        );
+        Ok(())
+    }
+
+    fn unregister(&self, id: u64) {
+        if let Ok(mut rates) = self.rates.lock() {
+            rates.remove(&id);
+            self.effective_rate.store(
+                rates.values().copied().max().unwrap_or(0),
+                Ordering::Release,
+            );
+        }
+    }
+}
+
+struct EngineTelemetrySubscription {
+    id: u64,
+    activity: Arc<TelemetryActivityCoordinator>,
+    cancelled: Arc<AtomicBool>,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl TelemetrySubscription for EngineTelemetrySubscription {
+    fn set_activity(&self, rate_hz: u8) -> AppResult<()> {
+        telemetry_activity(rate_hz)?;
+        self.activity.update(self.id, rate_hz)
+    }
+}
+
+impl Drop for EngineTelemetrySubscription {
+    fn drop(&mut self) {
+        self.activity.unregister(self.id);
+        self.cancelled.store(true, Ordering::Release);
+        if let Ok(mut worker) = self.worker.lock() {
+            if let Some(worker) = worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
 }
 
 impl EngineAdapter {
@@ -185,6 +253,7 @@ impl EngineAdapter {
             prefetch_sender,
             restored_media_pending: Mutex::new(has_restored_queue),
             operation: Mutex::new(()),
+            telemetry_activity: Arc::new(TelemetryActivityCoordinator::default()),
         })
     }
 
@@ -259,9 +328,40 @@ impl EngineAdapter {
     }
 
     fn engine_dto(&self, snapshot: PlaybackSnapshot) -> AppResult<EngineSnapshotDto> {
+        let revision = snapshot.revision;
         let playback = self.snapshot_dto(snapshot.clone())?;
         let queue = self.queue_dto(&snapshot)?;
-        Ok(EngineSnapshotDto { playback, queue })
+        let safe_bypass_active = snapshot.dsp_execution.safe_bypass_active;
+        debug_assert_eq!(revision, queue.revision);
+        Ok(EngineSnapshotDto {
+            revision,
+            playback,
+            queue,
+            dsp_execution: DspExecutionStatusDto {
+                revision: snapshot.dsp_execution.revision,
+                safe_bypass_active,
+                fault: snapshot
+                    .dsp_execution
+                    .fault
+                    .map(|fault| DspProcessingFaultDto {
+                        revision: fault.revision,
+                        processor_index: fault.processor_index,
+                        processor_name: fault.processor_name,
+                        kind: match fault.kind {
+                            hyperplayer_engine::dsp::ProcessorFaultKind::ProcessingFailed => {
+                                "processingFailed"
+                            }
+                            hyperplayer_engine::dsp::ProcessorFaultKind::NonFiniteOutput => {
+                                "nonFiniteOutput"
+                            }
+                        }
+                        .into(),
+                        stream_frame: fault.stream_frame,
+                        safe_bypass_active,
+                        fallback_status: DspFallbackStatusDto::RustSafeBypass,
+                    }),
+            },
+        })
     }
 
     fn execute(&self, command: EngineCommand) -> AppResult<EngineSnapshotDto> {
@@ -525,6 +625,10 @@ impl PlaybackPort for EngineAdapter {
         self.snapshot_dto(self.handle.snapshot()?)
     }
 
+    fn engine_snapshot(&self) -> AppResult<EngineSnapshotDto> {
+        self.engine_dto(self.handle.snapshot()?)
+    }
+
     fn play_resolved(
         &self,
         media: Option<TrustedResolvedMedia>,
@@ -684,6 +788,61 @@ impl PlaybackPort for EngineAdapter {
         self.update_album_schedule(&event.snapshot)?;
         self.commit_snapshot(&event.snapshot)?;
         Ok((event.kind, self.engine_dto(event.snapshot)?))
+    }
+}
+
+impl TelemetryPort for EngineAdapter {
+    fn subscribe(&self, sink: TelemetrySink) -> AppResult<Box<dyn TelemetrySubscription>> {
+        let subscriber = self.handle.subscribe_telemetry();
+        let id = self.telemetry_activity.register()?;
+        let activity = self.telemetry_activity.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = cancelled.clone();
+        let worker_activity = activity.clone();
+        let worker = thread::Builder::new()
+            .name(format!("hyperplayer-engine-telemetry-{id}"))
+            .spawn(move || {
+                while !worker_cancelled.load(Ordering::Acquire) {
+                    let rate_hz = worker_activity.effective_rate.load(Ordering::Acquire);
+                    subscriber.set_activity(
+                        telemetry_activity(rate_hz).unwrap_or(TelemetryActivity::Inactive),
+                    );
+                    if let Some(frame) = subscriber.latest() {
+                        let encoded = frame.encode();
+                        debug_assert_eq!(encoded.len(), TELEMETRY_FRAME_ENCODED_SIZE);
+                        sink(PortTelemetryFrame {
+                            payload: encoded.to_vec(),
+                        });
+                    } else {
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                }
+            });
+        let worker = match worker {
+            Ok(worker) => worker,
+            Err(error) => {
+                activity.unregister(id);
+                return Err(error.into());
+            }
+        };
+        Ok(Box::new(EngineTelemetrySubscription {
+            id,
+            activity,
+            cancelled,
+            worker: Mutex::new(Some(worker)),
+        }))
+    }
+}
+
+fn telemetry_activity(rate_hz: u8) -> AppResult<TelemetryActivity> {
+    match rate_hz {
+        0 => Ok(TelemetryActivity::Inactive),
+        2 => Ok(TelemetryActivity::Minimal2Hz),
+        15 => Ok(TelemetryActivity::Reduced15Hz),
+        30 => Ok(TelemetryActivity::Active30Hz),
+        _ => Err(AppError::InvalidArgument(
+            "rateHz must be one of 0, 2, 15, or 30".into(),
+        )),
     }
 }
 
@@ -1602,7 +1761,7 @@ impl SettingsAdapter {
 
 fn default_settings() -> SettingsDto {
     SettingsDto {
-        theme: ThemeDto::Light,
+        theme: ThemeDto::Dark,
         dynamic_color: true,
         reduce_motion: false,
         reduce_transparency: false,
@@ -4291,6 +4450,7 @@ mod tests {
             prefetch_sender,
             restored_media_pending: Mutex::new(false),
             operation: Mutex::new(()),
+            telemetry_activity: Arc::new(TelemetryActivityCoordinator::default()),
         }
     }
 
@@ -4380,7 +4540,35 @@ mod tests {
             context_count: 1,
             queue: queue.context_snapshot(),
             revision: 1,
+            dsp_execution: Default::default(),
         }
+    }
+
+    #[test]
+    fn telemetry_activity_uses_highest_live_subscription_rate() {
+        let activity = TelemetryActivityCoordinator::default();
+        let first = activity.register().unwrap();
+        let second = activity.register().unwrap();
+        activity.update(first, 30).unwrap();
+        activity.update(second, 2).unwrap();
+        assert_eq!(activity.effective_rate.load(Ordering::Acquire), 30);
+        activity.unregister(first);
+        assert_eq!(activity.effective_rate.load(Ordering::Acquire), 2);
+        activity.unregister(second);
+        assert_eq!(activity.effective_rate.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn engine_snapshot_uses_one_authoritative_revision() {
+        let adapter = test_engine();
+        let item = QueueItem::new(41, local_engine_track(1, PathBuf::from("snapshot.wav")));
+        let mut snapshot = playback_snapshot(item, 250);
+        snapshot.dsp_execution.revision = 8;
+        let dto = adapter.engine_dto(snapshot).unwrap();
+        assert_eq!(dto.revision, dto.queue.revision);
+        assert_eq!(dto.revision, 1);
+        assert_eq!(dto.dsp_execution.revision, 8);
+        assert_eq!(dto.playback.position_ms, 250);
     }
 
     #[test]

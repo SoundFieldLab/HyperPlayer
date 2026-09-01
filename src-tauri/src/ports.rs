@@ -17,6 +17,20 @@ use uuid::Uuid;
 const LOCATION_TICKET_TTL: Duration = Duration::from_secs(60);
 
 pub type ScanProgressSink = Arc<dyn Fn(ScanProgressDto) + Send + Sync>;
+pub type TelemetrySink = Arc<dyn Fn(TelemetryFrame) + Send + Sync>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TelemetryFrame {
+    pub payload: Vec<u8>,
+}
+
+pub trait TelemetrySubscription: Send + Sync {
+    fn set_activity(&self, rate_hz: u8) -> AppResult<()>;
+}
+
+pub trait TelemetryPort: Send + Sync {
+    fn subscribe(&self, sink: TelemetrySink) -> AppResult<Box<dyn TelemetrySubscription>>;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlaybackTransition {
@@ -32,6 +46,7 @@ pub struct PlaybackMediaTarget {
 
 pub trait PlaybackPort: Send + Sync {
     fn state(&self) -> AppResult<PlaybackStateDto>;
+    fn engine_snapshot(&self) -> AppResult<EngineSnapshotDto>;
     fn play_resolved(
         &self,
         media: Option<hyperplayer_engine::TrustedResolvedMedia>,
@@ -214,6 +229,7 @@ pub struct AppServices {
     pub netease: Arc<dyn NeteasePort>,
     pub lyrics: Arc<dyn LyricsPort>,
     pub tracks: Arc<dyn TrackResolverPort>,
+    pub telemetry: Arc<dyn TelemetryPort>,
 }
 
 impl AppServices {
@@ -269,7 +285,7 @@ impl AppServices {
         let artwork_root = app_data_dir.join("artwork");
         Ok(Self {
             playback: engine.clone(),
-            queue: engine,
+            queue: engine.clone(),
             library: Arc::new(LibraryAdapter::new(
                 repository.clone(),
                 locations,
@@ -280,6 +296,7 @@ impl AppServices {
             netease,
             lyrics,
             tracks,
+            telemetry: engine,
         })
     }
 
@@ -329,7 +346,7 @@ impl AppServices {
         ));
         Ok(Self {
             playback: engine.clone(),
-            queue: engine,
+            queue: engine.clone(),
             library: Arc::new(LibraryAdapter::new(
                 repository.clone(),
                 locations,
@@ -340,6 +357,7 @@ impl AppServices {
             netease,
             lyrics,
             tracks,
+            telemetry: engine,
         })
     }
 }
@@ -371,6 +389,7 @@ fn spawn_prefetch_worker(
 
 pub struct AppState {
     pub services: AppServices,
+    pub telemetry_sessions: crate::commands::telemetry::TelemetrySessions,
     pub exit_requested: Mutex<bool>,
     location_tickets: Mutex<HashMap<String, LocationTicket>>,
 }
@@ -385,6 +404,7 @@ impl AppState {
     pub fn new(app_data_dir: &Path) -> AppResult<Self> {
         Ok(Self {
             services: AppServices::new(app_data_dir)?,
+            telemetry_sessions: crate::commands::telemetry::TelemetrySessions::new(),
             exit_requested: Mutex::new(false),
             location_tickets: Mutex::new(HashMap::new()),
         })
@@ -438,6 +458,7 @@ impl AppState {
     pub fn in_memory() -> AppResult<Self> {
         Ok(Self {
             services: AppServices::in_memory()?,
+            telemetry_sessions: crate::commands::telemetry::TelemetrySessions::new(),
             exit_requested: Mutex::new(false),
             location_tickets: Mutex::new(HashMap::new()),
         })

@@ -1,7 +1,6 @@
 use crate::{
     dto::{
-        EngineSnapshotDto, PlayTrackRequestDto, PlaybackStateDto, RepeatModeDto, SeekRequestDto,
-        SetVolumeRequestDto,
+        EngineSnapshotDto, PlayTrackRequestDto, RepeatModeDto, SeekRequestDto, SetVolumeRequestDto,
     },
     error::{AppResult, CommandResult},
     events,
@@ -9,12 +8,8 @@ use crate::{
 };
 use tauri::{AppHandle, Emitter, State};
 
-fn emit(app: &AppHandle, snapshot: EngineSnapshotDto) -> CommandResult<PlaybackStateDto> {
+fn emit(app: &AppHandle, snapshot: EngineSnapshotDto) -> CommandResult<EngineSnapshotDto> {
     app.emit(events::ENGINE_SNAPSHOT_CHANGED, &snapshot)
-        .map_err(|error| {
-            crate::error::ErrorDto::from(crate::error::AppError::Window(error.to_string()))
-        })?;
-    app.emit(events::QUEUE_CHANGED, &snapshot.queue)
         .map_err(|error| {
             crate::error::ErrorDto::from(crate::error::AppError::Window(error.to_string()))
         })?;
@@ -22,12 +17,16 @@ fn emit(app: &AppHandle, snapshot: EngineSnapshotDto) -> CommandResult<PlaybackS
         .map_err(|error| {
             crate::error::ErrorDto::from(crate::error::AppError::Window(error.to_string()))
         })?;
-    Ok(snapshot.playback)
+    app.emit(events::QUEUE_CHANGED, &snapshot.queue)
+        .map_err(|error| {
+            crate::error::ErrorDto::from(crate::error::AppError::Window(error.to_string()))
+        })?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
-pub fn playback_get_state(state: State<'_, AppState>) -> CommandResult<PlaybackStateDto> {
-    super::command(state.services.playback.state())
+pub fn playback_get_state(state: State<'_, AppState>) -> CommandResult<EngineSnapshotDto> {
+    super::command(state.services.playback.engine_snapshot())
 }
 
 #[tauri::command]
@@ -35,7 +34,7 @@ pub async fn playback_play(
     app: AppHandle,
     state: State<'_, AppState>,
     request: Option<PlayTrackRequestDto>,
-) -> CommandResult<PlaybackStateDto> {
+) -> CommandResult<EngineSnapshotDto> {
     let (track, context) = match request {
         Some(request) => (
             Some(super::command(
@@ -123,7 +122,7 @@ pub(crate) async fn transition_resolved(
 pub async fn playback_pause(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> CommandResult<PlaybackStateDto> {
+) -> CommandResult<EngineSnapshotDto> {
     emit(&app, super::command(state.services.playback.pause())?)
 }
 
@@ -131,7 +130,7 @@ pub async fn playback_pause(
 pub fn playback_stop(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> CommandResult<PlaybackStateDto> {
+) -> CommandResult<EngineSnapshotDto> {
     emit(&app, super::command(state.services.playback.stop())?)
 }
 
@@ -139,7 +138,7 @@ pub fn playback_stop(
 pub async fn playback_next(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> CommandResult<PlaybackStateDto> {
+) -> CommandResult<EngineSnapshotDto> {
     let snapshot = transition_resolved(
         state.services.playback.as_ref(),
         state.services.tracks.as_ref(),
@@ -154,7 +153,7 @@ pub async fn playback_next(
 pub async fn playback_previous(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> CommandResult<PlaybackStateDto> {
+) -> CommandResult<EngineSnapshotDto> {
     let snapshot = transition_resolved(
         state.services.playback.as_ref(),
         state.services.tracks.as_ref(),
@@ -170,7 +169,7 @@ pub fn playback_seek(
     app: AppHandle,
     state: State<'_, AppState>,
     request: SeekRequestDto,
-) -> CommandResult<PlaybackStateDto> {
+) -> CommandResult<EngineSnapshotDto> {
     emit(
         &app,
         super::command(state.services.playback.seek(request.position_ms))?,
@@ -182,7 +181,7 @@ pub fn playback_set_volume(
     app: AppHandle,
     state: State<'_, AppState>,
     request: SetVolumeRequestDto,
-) -> CommandResult<PlaybackStateDto> {
+) -> CommandResult<EngineSnapshotDto> {
     emit(
         &app,
         super::command(state.services.playback.set_volume(request.volume))?,
@@ -194,7 +193,7 @@ pub fn playback_set_repeat_mode(
     app: AppHandle,
     state: State<'_, AppState>,
     mode: RepeatModeDto,
-) -> CommandResult<PlaybackStateDto> {
+) -> CommandResult<EngineSnapshotDto> {
     emit(
         &app,
         super::command(state.services.playback.set_repeat_mode(mode))?,
@@ -205,7 +204,7 @@ pub fn playback_set_repeat_mode(
 mod tests {
     use super::*;
     use crate::{
-        dto::{PlaybackContextDto, RepeatModeDto, TrackRefDto, TrackSourceDto},
+        dto::{PlaybackContextDto, PlaybackStateDto, RepeatModeDto, TrackRefDto, TrackSourceDto},
         error::{AppError, AppResult},
     };
     use hyperplayer_engine::{
@@ -228,6 +227,9 @@ mod tests {
 
     impl PlaybackPort for MockPlayback {
         fn state(&self) -> AppResult<PlaybackStateDto> {
+            unreachable!()
+        }
+        fn engine_snapshot(&self) -> AppResult<EngineSnapshotDto> {
             unreachable!()
         }
         fn play_resolved(

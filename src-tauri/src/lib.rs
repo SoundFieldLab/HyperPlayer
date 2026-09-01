@@ -8,9 +8,11 @@ pub mod events;
 mod lifecycle;
 mod platform;
 pub mod ports;
+mod secure_http;
 
 use commands::{
-    bootstrap, cache, compat, library, lyrics, netease, playback, queue, settings, updater, window,
+    bootstrap, cache, compat, library, lyrics, netease, playback, queue, settings, telemetry,
+    updater, weather, window,
 };
 use ports::AppState;
 use tauri::Manager;
@@ -29,6 +31,7 @@ pub fn run() {
     builder = builder.plugin(tauri_plugin_dialog::init());
 
     builder
+        .on_window_event(lifecycle::handle_window_event)
         .invoke_handler(tauri::generate_handler![
             bootstrap::bootstrap,
             bootstrap::dsp_availability,
@@ -82,6 +85,10 @@ pub fn run() {
             library::library_cancel_scan,
             settings::settings_get,
             settings::settings_update,
+            telemetry::telemetry_subscribe,
+            telemetry::telemetry_ack,
+            telemetry::telemetry_set_activity,
+            telemetry::telemetry_close,
             cache::cache_stats,
             cache::cache_status,
             cache::cache_track,
@@ -130,6 +137,7 @@ pub fn run() {
             updater::updater_status,
             updater::updater_check,
             updater::updater_update,
+            weather::shenzhen_weather,
         ])
         .setup(move |app| {
             let app_data_dir = app.path().app_data_dir()?;
@@ -168,6 +176,92 @@ mod tests {
         assert!(value.get("dynamicColor").is_some());
         assert!(value.get("closeBehavior").is_some());
         assert!(value.get("dynamic_color").is_none());
+
+        let weather = serde_json::to_value(ShenzhenWeatherDto {
+            location: "深圳".into(),
+            observed_at: "2026-09-01T12:30".into(),
+            temperature_c: 31.2,
+            apparent_temperature_c: 35.7,
+            relative_humidity_percent: 72,
+            weather_code: 61,
+            condition: "雨".into(),
+            wind_speed_kmh: 8.4,
+            is_day: true,
+        })
+        .unwrap();
+        assert!(weather.get("observedAt").is_some());
+        assert!(weather.get("temperatureC").is_some());
+        assert!(weather.get("relativeHumidityPercent").is_some());
+        assert!(weather.get("observed_at").is_none());
+    }
+
+    #[test]
+    fn telemetry_subscribe_uses_d31_defaults() {
+        let request =
+            serde_json::from_value::<TelemetrySubscribeRequestDto>(serde_json::json!({})).unwrap();
+        assert_eq!(request.max_frame_bytes, 1024);
+        assert_eq!(request.max_frames_per_second, 30);
+    }
+
+    #[test]
+    fn telemetry_activity_uses_rate_hz_contract() {
+        let request = serde_json::from_value::<TelemetryActivityRequestDto>(serde_json::json!({
+            "sessionId": "session",
+            "epoch": "1",
+            "rateHz": 15
+        }))
+        .unwrap();
+        assert_eq!(request.rate_hz, 15);
+        assert!(
+            serde_json::from_value::<TelemetryActivityRequestDto>(serde_json::json!({
+                "sessionId": "session",
+                "epoch": "1",
+                "active": true
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn telemetry_u64_fields_use_lossless_decimal_strings() {
+        let maximum = u64::MAX.to_string();
+        let request = serde_json::from_value::<TelemetryAckRequestDto>(serde_json::json!({
+            "sessionId": "session",
+            "epoch": maximum,
+            "sequence": "9007199254740993",
+            "revision": "18446744073709551614"
+        }))
+        .unwrap();
+        assert_eq!(request.epoch, u64::MAX);
+        assert_eq!(request.sequence, 9_007_199_254_740_993);
+        assert_eq!(request.revision, u64::MAX - 1);
+
+        let session = serde_json::to_value(TelemetrySessionDto {
+            session_id: "session".into(),
+            epoch: u64::MAX,
+            max_frame_bytes: 1024,
+            max_frames_per_second: 30,
+        })
+        .unwrap();
+        assert_eq!(session["epoch"], u64::MAX.to_string());
+
+        for invalid in [
+            serde_json::json!(1),
+            serde_json::json!("-1"),
+            serde_json::json!("+1"),
+            serde_json::json!("01x"),
+            serde_json::json!("18446744073709551616"),
+        ] {
+            assert!(
+                serde_json::from_value::<TelemetryAckRequestDto>(serde_json::json!({
+                    "sessionId": "session",
+                    "epoch": invalid,
+                    "sequence": "1",
+                    "revision": "1"
+                }))
+                .is_err()
+            );
+        }
     }
 
     #[test]

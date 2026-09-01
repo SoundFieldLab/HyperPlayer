@@ -7,7 +7,9 @@ pub mod netease;
 pub mod playback;
 pub mod queue;
 pub mod settings;
+pub mod telemetry;
 pub mod updater;
+pub mod weather;
 pub mod window;
 
 use crate::error::{AppError, CommandResult};

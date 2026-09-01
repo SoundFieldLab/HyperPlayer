@@ -1,15 +1,12 @@
 use crate::{
-    dto::{
-        EngineSnapshotDto, EnqueueRequestDto, QueueItemRequestDto, QueueSnapshotDto,
-        ReorderQueueRequestDto,
-    },
+    dto::{EngineSnapshotDto, EnqueueRequestDto, QueueItemRequestDto, ReorderQueueRequestDto},
     error::CommandResult,
     events,
     ports::AppState,
 };
 use tauri::{AppHandle, Emitter, State};
 
-fn emit(app: &AppHandle, snapshot: EngineSnapshotDto) -> CommandResult<QueueSnapshotDto> {
+fn emit(app: &AppHandle, snapshot: EngineSnapshotDto) -> CommandResult<EngineSnapshotDto> {
     app.emit(events::ENGINE_SNAPSHOT_CHANGED, &snapshot)
         .map_err(|error| {
             crate::error::ErrorDto::from(crate::error::AppError::Window(error.to_string()))
@@ -22,12 +19,12 @@ fn emit(app: &AppHandle, snapshot: EngineSnapshotDto) -> CommandResult<QueueSnap
         .map_err(|error| {
             crate::error::ErrorDto::from(crate::error::AppError::Window(error.to_string()))
         })?;
-    Ok(snapshot.queue)
+    Ok(snapshot)
 }
 
 #[tauri::command]
-pub fn queue_get(state: State<'_, AppState>) -> CommandResult<QueueSnapshotDto> {
-    super::command(state.services.queue.snapshot())
+pub fn queue_get(state: State<'_, AppState>) -> CommandResult<EngineSnapshotDto> {
+    super::command(state.services.playback.engine_snapshot())
 }
 
 #[tauri::command]
@@ -35,7 +32,7 @@ pub async fn queue_enqueue(
     app: AppHandle,
     state: State<'_, AppState>,
     request: EnqueueRequestDto,
-) -> CommandResult<QueueSnapshotDto> {
+) -> CommandResult<EngineSnapshotDto> {
     let track = super::command(state.services.tracks.resolve(&request.track).await)?;
     emit(
         &app,
@@ -53,7 +50,7 @@ pub fn queue_remove(
     app: AppHandle,
     state: State<'_, AppState>,
     request: QueueItemRequestDto,
-) -> CommandResult<QueueSnapshotDto> {
+) -> CommandResult<EngineSnapshotDto> {
     emit(
         &app,
         super::command(state.services.queue.remove(&request.queue_item_id))?,
@@ -65,7 +62,7 @@ pub fn queue_reorder(
     app: AppHandle,
     state: State<'_, AppState>,
     request: ReorderQueueRequestDto,
-) -> CommandResult<QueueSnapshotDto> {
+) -> CommandResult<EngineSnapshotDto> {
     emit(&app, super::command(state.services.queue.reorder(request))?)
 }
 
@@ -73,7 +70,7 @@ pub fn queue_reorder(
 pub fn queue_clear_play_next(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> CommandResult<QueueSnapshotDto> {
+) -> CommandResult<EngineSnapshotDto> {
     emit(
         &app,
         super::command(state.services.queue.clear_play_next())?,
@@ -84,6 +81,6 @@ pub fn queue_clear_play_next(
 pub fn queue_clear_all(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> CommandResult<QueueSnapshotDto> {
+) -> CommandResult<EngineSnapshotDto> {
     emit(&app, super::command(state.services.queue.clear_all())?)
 }

@@ -2,6 +2,8 @@ pub const PLAYBACK_STATE_CHANGED: &str = "hyperplayer://playback/state-changed";
 pub const PLAYBACK_PROGRESS: &str = "hyperplayer://playback/progress";
 pub const QUEUE_CHANGED: &str = "hyperplayer://queue/changed";
 pub const ENGINE_SNAPSHOT_CHANGED: &str = "hyperplayer://engine/snapshot-changed";
+pub const DSP_CONFIGURATION_REJECTED: &str = "hyperplayer://dsp/configuration-rejected";
+pub const DSP_PROCESSING_FAULT: &str = "hyperplayer://dsp/processing-fault";
 pub const LIBRARY_SCAN_PROGRESS: &str = "hyperplayer://library/scan-progress";
 pub const SETTINGS_CHANGED: &str = "hyperplayer://settings/changed";
 pub const CACHE_STATUS_CHANGED: &str = "hyperplayer://cache/status-changed";
@@ -16,6 +18,8 @@ pub const ALL: &[&str] = &[
     PLAYBACK_PROGRESS,
     QUEUE_CHANGED,
     ENGINE_SNAPSHOT_CHANGED,
+    DSP_CONFIGURATION_REJECTED,
+    DSP_PROCESSING_FAULT,
     LIBRARY_SCAN_PROGRESS,
     SETTINGS_CHANGED,
     CACHE_STATUS_CHANGED,

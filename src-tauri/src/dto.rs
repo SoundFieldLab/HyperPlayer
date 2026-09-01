@@ -1,5 +1,29 @@
 use serde::{Deserialize, Serialize};
 
+mod u64_decimal_string {
+    use serde::{de::Error, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(D::Error::custom("expected an unsigned decimal string"));
+        }
+        value
+            .parse()
+            .map_err(|_| D::Error::custom("unsigned decimal string exceeds u64"))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppInfoDto {
@@ -11,10 +35,23 @@ pub struct AppInfoDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct ShenzhenWeatherDto {
+    pub location: String,
+    pub observed_at: String,
+    pub temperature_c: f64,
+    pub apparent_temperature_c: f64,
+    pub relative_humidity_percent: u8,
+    pub weather_code: u16,
+    pub condition: String,
+    pub wind_speed_kmh: f64,
+    pub is_day: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct BootstrapDto {
     pub app: AppInfoDto,
-    pub playback: PlaybackStateDto,
-    pub queue: QueueSnapshotDto,
+    pub engine: EngineSnapshotDto,
     pub settings: SettingsDto,
     pub netease: NeteaseStatusDto,
     pub dsp: DspAvailabilityDto,
@@ -145,8 +182,18 @@ pub struct QueueSnapshotDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineSnapshotDto {
+    pub revision: u64,
     pub playback: PlaybackStateDto,
     pub queue: QueueSnapshotDto,
+    pub dsp_execution: DspExecutionStatusDto,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DspExecutionStatusDto {
+    pub revision: u64,
+    pub safe_bypass_active: bool,
+    pub fault: Option<DspProcessingFaultDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1211,8 +1258,143 @@ pub struct ScanProgressDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaybackProgressDto {
+    pub revision: u64,
     pub position_ms: u64,
     pub duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TelemetrySubscribeRequestDto {
+    #[serde(default = "default_telemetry_max_frame_bytes")]
+    pub max_frame_bytes: u32,
+    #[serde(default = "default_telemetry_max_frames_per_second")]
+    pub max_frames_per_second: u16,
+}
+
+const fn default_telemetry_max_frame_bytes() -> u32 {
+    1024
+}
+
+const fn default_telemetry_max_frames_per_second() -> u16 {
+    30
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TelemetrySessionDto {
+    pub session_id: String,
+    #[serde(with = "u64_decimal_string")]
+    pub epoch: u64,
+    pub max_frame_bytes: u32,
+    pub max_frames_per_second: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TelemetryAckRequestDto {
+    pub session_id: String,
+    #[serde(with = "u64_decimal_string")]
+    pub epoch: u64,
+    #[serde(with = "u64_decimal_string")]
+    pub sequence: u64,
+    #[serde(with = "u64_decimal_string")]
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TelemetryActivityRequestDto {
+    pub session_id: String,
+    #[serde(with = "u64_decimal_string")]
+    pub epoch: u64,
+    pub rate_hz: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TelemetryCloseRequestDto {
+    pub session_id: String,
+    #[serde(with = "u64_decimal_string")]
+    pub epoch: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TelemetryAckDto {
+    pub accepted: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DspConfigurationRejectedDto {
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DspProcessingFaultDto {
+    pub revision: u64,
+    pub processor_index: usize,
+    pub processor_name: String,
+    pub kind: String,
+    pub stream_frame: u64,
+    pub safe_bypass_active: bool,
+    pub fallback_status: DspFallbackStatusDto,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DspFallbackStatusDto {
+    RustSafeBypass,
+}
+
+#[cfg(test)]
+mod dsp_processing_fault_tests {
+    use super::*;
+
+    #[test]
+    fn execution_status_serializes_durable_fault_without_pcm() {
+        let value = serde_json::to_value(DspExecutionStatusDto {
+            revision: 8,
+            safe_bypass_active: true,
+            fault: Some(DspProcessingFaultDto {
+                revision: 8,
+                processor_index: 2,
+                processor_name: "compressor".into(),
+                kind: "nonFiniteOutput".into(),
+                stream_frame: 4096,
+                safe_bypass_active: true,
+                fallback_status: DspFallbackStatusDto::RustSafeBypass,
+            }),
+        })
+        .unwrap();
+
+        assert_eq!(value["revision"], 8);
+        assert_eq!(value["safeBypassActive"], true);
+        assert_eq!(value["fault"]["streamFrame"], 4096);
+        assert!(value.get("pcm").is_none());
+        assert!(value["fault"].get("pcm").is_none());
+    }
+
+    #[test]
+    fn processing_fault_serializes_safe_bypass_diagnostic_in_camel_case() {
+        let value = serde_json::to_value(DspProcessingFaultDto {
+            revision: 8,
+            processor_index: 2,
+            processor_name: "compressor".into(),
+            kind: "nonFiniteOutput".into(),
+            stream_frame: 4096,
+            safe_bypass_active: true,
+            fallback_status: DspFallbackStatusDto::RustSafeBypass,
+        })
+        .unwrap();
+
+        assert_eq!(value["safeBypassActive"], true);
+        assert_eq!(value["fallbackStatus"], "rustSafeBypass");
+        assert!(value.get("safe_bypass_active").is_none());
+        assert!(value.get("pcm").is_none());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
