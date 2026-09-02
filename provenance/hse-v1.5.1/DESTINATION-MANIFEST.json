@@ -17,7 +17,7 @@
   "pathFormat": "Repository-relative paths with forward slashes, sorted by Unicode code point.",
   "hashAlgorithm": "SHA-256 over bytes with CRLF normalized to LF",
   "aggregateFormat": "<lowercase-destination-sha256><two spaces><destination-path><LF>",
-  "aggregateSha256": "83bb865b4e7c626666c5bd6e7b7364f906da08f420f3174806a67429ca0ed879",
+  "aggregateSha256": "9ab0878c5469e3128c903c06183cfc57f8a48ddbbabf95a06382489532b0aaa7",
   "fileCount": 100,
   "files": [
     {
@@ -125,7 +125,7 @@
       "path": "crates/hyperplayer-hrtf-core/src/sha256.rs",
       "sourcePath": null,
       "sourceSha256": null,
-      "destinationSha256": "d8ece95460b1c799365737aac7286061571ff0bed7f7708a9ab7357970cd1047",
+      "destinationSha256": "d59f0a3ddaca142b1abc7666447a08787eeec669c9aadecbca335ba4bdb0cdfb",
       "adaptations": [
         "algorithm-change"
       ]
