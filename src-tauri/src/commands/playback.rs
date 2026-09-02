@@ -282,6 +282,13 @@ mod tests {
         fn set_volume(&self, _volume: f32) -> AppResult<EngineSnapshotDto> {
             unreachable!()
         }
+        fn configure_dsp(
+            &self,
+            _revision: u64,
+            _config: hyperplayer_engine::dsp_algorithms::DspConfig,
+        ) -> AppResult<EngineSnapshotDto> {
+            unreachable!()
+        }
         fn set_repeat_mode(&self, _mode: RepeatModeDto) -> AppResult<EngineSnapshotDto> {
             unreachable!()
         }

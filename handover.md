@@ -1,23 +1,22 @@
 # HyperPlayer 当前交接
 
-更新时间：2026-09-01
+更新时间：2026-09-02
 
 > 本文件记录当前事实状态。它覆盖产品、HSE/DSP、telemetry、UI、缓存、网易云、音频和测试证据；`handover-visualization.md` 保留可视化专项细节，其中部分"未完成"描述已被后续实现覆盖。
 
 ## 1. 一句话结论
 
-HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播放器主干，并完成本地播放/曲库/队列/歌词、部分网易云、D23/D24、部分缓存、真实 DSP runtime、HSE v1.5.1 核心 vendoring（含 destination hash gate）、14 个生产处理器和 HPTM v2 端到端 telemetry 链路。
+HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播放器主干，并完成本地播放/曲库/队列/歌词、部分网易云、D23/D24、部分缓存、真实 DSP runtime、HSE v1.5.1 核心 vendoring（含 source/destination/derivation hash gate）、14 个生产处理器、正式 DspPort、12 scenes、HSE2 投影、原生 DSP 工作台和 HPTM v2 端到端 telemetry 链路。
 
 **项目仍未达到 v1 全功能完成。** 当前主要缺口包括：
 
-- HSE 完整 22 阶段尚未全部进入 HyperPlayer 生产播放链；
-- Tauri `DspPort`、完整 DSP 参数/预设/HSE2/工作台尚未接通；
-- D30 缓存 schema/policy/worker/UI 基本未实施；
+- HSE 完整 22 阶段尚未全部进入 HyperPlayer 生产播放链；Stage 13、15–18、20–22 仍未接入；
+- D30 已完成 schema v7、v6 备份、缓存策略/淘汰/离线证明、reconciliation 规划与 durable album-fill 核心；Tauri runtime worker、实际 IO/probes 和 Settings UI 尚未接线；
 - MP3/FLAC 增量解码、真实 codec trim、设备切换、独占模式和完整 Windows 集成未完成；
 - 网易云仍有较多路由、UI 工作流和受控账号外部验收缺口；
-- 当前 UI 三列深色重排未经最终 WebView2 多尺寸/双主题验收，用户已明确认为当前排版退化；
 - vGPU/WebGPU 尚未真正接入；
-- 主线已推送至 `origin/main`（`8fbc457`）；最新一轮高风险修复（HPTM 跨层协议、standby DSP fault 降级、vendored destination gate）已完成并通过全部本地门禁，但仍在工作树待提交。
+- DSP 配置当前为进程内权威，尚未持久化；标准 BS.1770 模式和完整 Stage 19 LUFS/true-peak/limiter/FFT telemetry 未实现；
+- 本轮实现、测试、UI 修复和文档更新仍在工作树，尚未提交。
 
 功能完成必须满足完整证据链：
 
@@ -38,22 +37,11 @@ HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播�
 ## 2. 当前 Git 与工作树状态
 
 - 当前分支：`main`
-- 当前 HEAD：`8fbc457 fix(engine): satisfy Rust 1.98 strict Clippy`
-- `main` 与 `origin/main` 在 `8fbc457` 同步（ahead/behind `0/0`）。
-- 本轮三项修复已在工作树完成、全部门禁通过，但尚未提交：
-  - HPTM v2 固定帧跨层协议修复：`crates/hyperplayer-engine/src/telemetry.rs`、`src-tauri/src/commands/telemetry.rs`、`app/visualization/telemetry/*`
-  - standby speculative DSP fault 非致命降级：`crates/hyperplayer-engine/src/{dsp,runtime,actor}.rs`、`crates/hyperplayer-engine/tests/dsp_realtime_invariants.rs`
-  - vendored destination manifest/hash gate：`scripts/verify-hse-destination-manifest.mjs`、`provenance/hse-v1.5.1/DESTINATION-MANIFEST.json`、`package.json`、`.github/workflows/quality.yml`
-- `docs/启动页面定调文件.md`（启动页 Splash 定调需求 v2）已按用户要求纳入 git 追踪。
-- 最近已推送的关键提交：
-  - `8790ac8 chore(hse): vendor authorized DSP reference cores`
-  - `8427872 feat(engine): integrate DSP pipeline and telemetry`
-  - `7e26ccd feat(desktop): expose engine telemetry and weather`
-  - `6fecaeb feat(ui): redesign player and add visualizations`
-  - `265fcd0 docs: record DSP and visualization implementation`
-  - `a6f861a fix(ui): stabilize Shenzhen time and test fixtures`
-  - `8fbc457 fix(engine): satisfy Rust 1.98 strict Clippy`
-- `src-tauri/gen/`、`*.tmp`、`dist/`、`node_modules/` 和 Rust `target/` 已按生成物/缓存忽略。
+- 当前 HEAD：`a4e5b32 docs: track splash screen launch spec`
+- `main` 与 `origin/main` 在 `a4e5b32` 同步（ahead/behind `0/0`）。
+- 当前工作树超过 100 个变更路径，属于本轮未提交实现：HSE TS 去重与 vector provenance、HPTM golden bytes、Stage 1/2/7 core 化与 direct façade 清理、DspPort/HSE2/presets/工作台、UI 双栏/双主题修复、D30 schema v7 核心与测试。
+- 先前 handover 记录为“待提交”的 HPTM、standby safe-bypass 和 destination gate 已分别在 `64ecbba`、`8e4e48a`、`4d57efb` 提交；当前工作树没有重复保留那三批旧修改。
+- `src-tauri/gen/`、`*.tmp`、`dist/`、`node_modules/` 和 Rust `target/` 继续按生成物/缓存忽略。
 
 历史已合并基线：
 
@@ -120,7 +108,7 @@ TypeScript：
 - 私有包名：`@hyperplayer/hse-ts-core`
 - 包含 DSP、参数/default、12 场景、HSE2/ShareCodec、analysis 和 spatial 核心。
 - `pnpm check:hse-ts` 可独立 strict typecheck。
-- 当前还不是 pnpm workspace member，也没有被产品/现有 parity runner 使用。
+- 已通过根项目本地 link dependency `@hyperplayer/hse-ts-core` 接入 parity/control-side 构建；不在 vendored 目录生成 `node_modules`，避免污染 destination gate。
 
 来源与许可：
 
@@ -133,9 +121,9 @@ TypeScript：
 
 ### 4.3 Destination manifest/hash gate（已完成）
 
-- `provenance/hse-v1.5.1/DESTINATION-MANIFEST.json` 覆盖三个 destination root：`crates/hyperplayer-hse-core`、`crates/hyperplayer-hrtf-core`、`shared/hse-ts-core`，共 89 个文件；aggregate SHA-256：
-  `799cb79c1f5361628856f483b1380cd7aec463e96abd5c20c33dd2a5790f5923`
-- 每文件记录 source path/hash 与 destination hash，并标注 adaptation 分类（relocation、license-notice、lint-policy、runtime-checkpoint-api、test-only、algorithm-change）。
+- `provenance/hse-v1.5.1/DESTINATION-MANIFEST.json` 为 schema v2，覆盖三个 destination root：`crates/hyperplayer-hse-core`、`crates/hyperplayer-hrtf-core`、`shared/hse-ts-core`，共 92 个文件；aggregate SHA-256：
+  `d21553c09d15e5cfd37c70b72a7f7e76eb84dc69c42d3862e2965cbac134f027`
+- 每文件记录 source path/hash 与 destination hash，并标注 adaptation 分类；Stage 1/2/7 新抽取 core 还通过 `derivedFrom` 固定到 SOURCE-MANIFEST 中的 Rust/TS 来源路径与 SHA-256。
 - 哈希统一对 CRLF→LF 规范化后的字节计算，不依赖 `core.autocrlf`；路径为仓库相对 `/` 分隔并稳定排序；vendored 根目录校验为真实目录且不逃逸仓库（symlink/junction 拒绝）。
 - `pnpm check:hse-destination` 只读校验：缺失、未登记新增、hash 漂移、排序/重复/schema/source 映射漂移均失败；`pnpm update:hse-destination` 为显式重建。
 - 门禁接线：`pnpm frontend:build` 与 CI quality workflow 均执行 `check:hse-destination`；`pnpm check:hse-vendor` 为 source+destination 联合审计（source 依赖 gitignored 的 clean checkout，不进入默认构建）。
@@ -176,40 +164,22 @@ TypeScript：
 
 ### 5.2 已直接委托 vendored HSE Rust core 的部分
 
-以下生产算法已不再由 HyperPlayer 自己维护重复的样本级算法主体：
+- 以下生产算法已不再由 HyperPlayer 自己维护重复的样本级算法主体；Stage 1 Loudness Normalization、Stage 2 Surround3D、Stage 3 Mid/Side、Stage 4 Pre-EQ、Stage 5 De-esser、Stage 6 Compressor、Stage 7 Night Mode、Stage 8–12 modulation、Stage 14 Bass Enhancer、Stage 19 LUFS meter 均委托 vendored HSE Rust core。
+- Stage 1/2/7 已从 `EngineChainStage` 内联逻辑抽成公开 typed core stage，并删除 HyperPlayer 本地 gain/phase/shelf/sample-loop 数学。
+- `mid_side.rs`、`eq_chain.rs` 纯重导出已删除；BassEnhancer/Compressor/De-esser façade 已收薄为 settings/default/DTO 映射，产品 processor 直接持有 core stage。
+- Delay/Chorus/Flanger/Phaser/Tremolo 使用 core 返回的规范化参数、`tail_basis` 与 runtime-state API；Tremolo 不再 clone 整个 effect 作 checkpoint。
+- HyperPlayer adapter 只保留 interleaved/planar PCM、enabled 门控、格式/有限值验证、revision、checkpoint、standby、latency/tail 产品策略、sidechain 路由、故障旁路和实时线程约束。
 
-- Stage 3 Mid/Side → `hse_core::mid_side::MidSideStage`
-- Stage 4 Pre-EQ → `hse_core::eq_chain::EqChainStage`
-- Stage 5 De-esser → `hse_core::deesser::DeesserStage`
-- Stage 6 Compressor → `hse_core::compressor::CompressorStage`
-- Stage 8 Delay → `hse_core::mod_effects::DelayEffect`
-- Stage 9 Chorus → `hse_core::mod_effects::ChorusEffect`
-- Stage 10 Flanger → `hse_core::mod_effects::FlangerEffect`
-- Stage 11 Phaser → `hse_core::mod_effects::PhaserEffect`
-- Stage 12 Tremolo → `hse_core::mod_effects::TremoloEffect`
-- Stage 14 Bass Enhancer → `hse_core::bass_enhancer::BassEnhancerStage`
-- Stage 19 LUFS meter → `hse_core::lufs_meter::LufsMeter`
-- Biquad 设计和 EQ 基础也来自 vendored core。
+### 5.3 已上线阶段的 core 化与去重状态
 
-HyperPlayer adapter 仍负责：
+当前 Stage 1、2、7 与其余已上线阶段均已将采样数学委托 vendored HSE Rust core；不再存在 Fully local 或 hybrid 的生产算法主体。
 
-- interleaved/planar PCM 适配；
-- enabled 门控；
-- 有限值与格式校验；
-- revision 状态迁移；
-- checkpoint；
-- false→true reset；
-- latency/tail 产品策略；
-- sidechain 路由策略；
-- 实时零分配约束。
+- Stage 1 Loudness Normalization：core stage 持有 gain/smoothing；HyperPlayer 只读取 `SharedLufsState` 并适配 PCM/revision/checkpoint。
+- Stage 2 Surround3D：core stage 持有 phase 与旋转数学；disabled→enabled 按 HSE reset。
+- Stage 7 Night Mode：core stage 组合 Compressor + 双 Biquad；HyperPlayer 不再维护 shelf 状态、系数设计或处理循环。
+- Stage 3/4 的纯重导出文件已删除；Stage 5/6/14 的厚 façade 已收薄；Stage 8–12 的参数钳位、tail basis 与 runtime checkpoint 均由 core API 提供。
 
-### 5.3 仍为本地或 hybrid 的已上线阶段
-
-- Stage 1 Loudness Normalization：归一化 gain/smoothing 控制逻辑仍在 HyperPlayer；读 vendored LUFS meter 发布状态。
-- Stage 2 Surround3D：仍是 HyperPlayer 本地授权移植，没有调用 vendored独立 core 类型。
-- Stage 7 Night Mode：hybrid；压缩器和 biquad 设计来自 vendored core，但 high-shelf 状态与组合逻辑仍在 HyperPlayer。
-
-后续迁移这三项时，应该从 vendored `EngineChainStage` 抽取可复用 core，而不是再按 TS 重写。
+下一步去重只剩新增 stage 接入时的 adapter 设计，不再需要迁移现有 14 processor 的重复样本算法。
 
 ### 5.4 已 vendored 但未进入生产链
 
@@ -271,25 +241,24 @@ HyperPlayer adapter 仍负责：
 
 - public trait 理论上仍允许 processor 在 preflight 通过后于 restore 时返回 false，generic rollback 协议无法回滚已经恢复的前序 processor；当前 production processor 实现约束使该路径应不可达，但接口层仍可进一步收紧。
 
-### 5.7 DSP availability / UI bridge 仍然错误
+### 5.7 DspPort / availability / 工作台（本轮已接通）
 
-尽管生产 DSP 已运行，以下接口仍声明 DSP unavailable/bypassed：
+已完成：
 
-- `src-tauri/src/commands/bootstrap.rs::dsp_availability()`
-- `dsp_availability_value()`
-- frontend `adaptPlayback()` 中的 `dsp: { available: false, bypassed: true, label: "规格待接入" }`
+- Rust DSP runtime availability 真实报告；`revision == 0` 的启动空链、有效 configured chain 和 `SafeBypass` 在 UI 分开展示。
+- 正式 Tauri commands：`dsp_get_configuration`、`dsp_configure`、`dsp_list_presets`、`dsp_apply_preset`、`dsp_import_hse2`、`dsp_export_hse2`。
+- 当前 14 processor 的显式 typed DTO、finite/range/枚举/EQ band 校验和严格单调 revision。
+- 默认 `revision 1 / DspConfig::default()` 通过 actor 配置；mono source 仍使用 stereo F32 输出格式编译 DSP。
+- 12 个 HSE scenes 接入；当前只应用 14-stage 投影，未支持 Stage 13、15–18、20–22 明确返回 `partial + unsupportedStages`。
+- HSE2 使用 vendored Rust ShareCodec；导入遵循 HSE codec sanitize/rehydrate，再验证当前投影；导出标记 `current14StageProjection`。
+- requested/applied 分离：pending 在 actor request 前登记，只在 matching `DspExecutionChanged` 后晋升；matching rejection 清除 pending；读取/导出只使用 applied config。
+- 配置拒绝包含稳定 code、脱敏 reason、可选 stage；所有 DSP `u64` 在 IPC 使用十进制字符串，前端领域层使用 `bigint`。
+- HyperPlayer 原生工作台覆盖 13 个可编辑处理器、Stage 19 只读状态、EQ bandCount/frequency/gain/Q、预设和 HSE2；输入范围与 Rust DTO 一致并在提交前校验。
 
-因此 UI 的 DSP availability 文案与 Rust 实际能力不一致。
+仍缺：
 
-同时仍缺：
-
-- 正式 `DspPort`
-- DSP configure Tauri command/DTO
-- 12 presets 产品桥
-- HSE2 导入导出产品桥
-- HyperPlayer 原生工作台参数编辑
-- 参数 revision/失败原因在 UI 的完整展示
-- configuration rejection 的稳定错误码、脱敏 reason、可选 stage 名
+- DSP 配置跨进程持久化；当前重启恢复默认 revision 1。
+- 完整 22-stage DTO/工作台和 Stage 19 LUFS/true-peak/limiter/FFT 动态数据。
 
 ### 5.8 LUFS 兼容性说明
 
@@ -323,18 +292,13 @@ ItuBs1770_5   新 HyperPlayer 标准权威模式
 - Rust：1 个 53-vector suite + Biquad reset regression。
 - TS：1 个 Phaser 边界测试 + 1 个 manifest 测试 + 53 个 vector test，共 55 项。
 
-来源缺口：
+来源与去重状态（本轮完成）：
 
-- 只有 24/53 vector metadata 带结构化 `source { project, version, commit }`。
-- 29 组缺少 machine-checked provenance：Bass、Biquad、Compressor、De-esser、EQ、Loudness Normalization、Mid/Side、Surround3D。
-- 现有 Rust/TS harness 只强制 Night Mode 和五个 modulation effect 的来源。
-- 后续需为所有 HSE-derived vectors 提供固定 checkout generator 和 source metadata。
-
-TS 重复实现缺口：
-
-- `shared/hse-ts-core` 是正式 vendored TS core，但当前 parity 仍 import `app/dsp/*` 的第二套手工实现。
-- 这形成三套行为面：vendored TS、vendored Rust、`app/dsp` TS。
-- 应改为 parity 直接使用 `shared/hse-ts-core`，只保留 HyperPlayer 必要 adapter/driver，然后删除 `app/dsp` 重复算法主体。
+- 53/53 vector metadata 均带固定 `source { project, version, commit }`，Rust/TS harness 对全部向量强制校验。
+- 为 Bass、Biquad、Compressor、De-esser、EQ、Loudness Normalization、Mid/Side、Surround3D 补齐固定 checkout generators；29/29 候选与现有 `.f32` 逐字节一致，二进制未改。
+- `@hyperplayer/hse-ts-core` 已作为本地 link dependency 接入；`app/dsp/` 的 15 个手写 TypeScript 算法副本已删除，只保留直接调用 shared core 的 parity harness。
+- Night Mode、Surround3D、Loudness Normalization 的 TS parity 通过中性化 `HyperSoundEngine` 整链隔离目标 stage，无额外 TS 算法副本。
+- destination manifest 升级 schema v2；新增 Stage 1/2/7 Rust core 文件通过 `derivedFrom` 绑定 SOURCE-MANIFEST 中固定 Rust/TS 源路径与 SHA-256。
 
 ---
 
@@ -380,7 +344,7 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 - activity 降为 0 Hz 时保留已发送帧的 ACK 窗口，迟到 ACK 不再导致 session 被误关闭；新增暂停→ACK→恢复回归。
 - 跨层测试已存在：真实 `TelemetryFrame::encode()` → Tauri parse/session 原样转发 → 前端 strict decode（spectrum/true peak/limiter 保持 `null`）。
 
-遗留（P2）：Rust 编码器 → TS 解码器的受版本控制 golden bytes 跨语言向量测试尚未建立；正式 WebView2 实时 waveform/meter 多尺寸验收仍待执行。
+- Rust 编码器 → TS 解码器的受版本控制 golden bytes 已建立：3 个固定 780-byte 帧，共 2340 bytes；覆盖大 `u64`、waveform/meters、reserved 区和 0 Hz 会话语义。
 
 ### 7.3 Tauri telemetry session
 
@@ -416,7 +380,7 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 页面组件已接线，真实 Engine frame 协议层已可端到端到达 WebView：
 
 - Expanded Player：设计上只在用户打开 waveform 时申请 telemetry；无 frame 时显示基线，不伪造。
-- DSP 页面：设计上显示 meter；无 spectrum 时显示 unavailable；response curve 只是固定 0 dB 参考线；参数控件仍禁用。
+- DSP 页面：显示当前 14-stage 配置、12 scenes、HSE2 导入导出、revision/pending/rejection；Stage 19 明确为只读且 HPTM v2 当前不发布 LUFS。无 spectrum 时显示 unavailable，response curve 仍明确是固定 0 dB 参考线。
 - 剩余为验收缺口：正式 Tauri/WebView2 中的实时 waveform/meter 多尺寸/双主题确认仍未执行。
 
 ### 7.5 vGPU 状态
@@ -431,27 +395,22 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 
 ---
 
-## 8. UI 当前状态与已知视觉问题
+## 8. UI 当前状态与视觉验收
 
-用户已明确反馈：最近另一会话加入的 UI 排版"变得很差，不如以前"。本轮已启动 UI 修复代理，但代理被停止，**没有完成 UI 修复**。
+本轮已修复用户指出的三列深色排版退化：
 
-当前主要风险：
+- 默认骨架恢复为 `sidebar + workspace + 80px player dock` 双栏，不再常驻 300px 右侧 context rail。
+- next-up 和上下文队列保留在按需 QueuePanel；不再使用 `playTrack(track)` 伪造 queue-item 播放。
+- `redesign.css` 改为语义 token 驱动，raw hex 为 0；明亮默认和深石墨主题均由 `data-theme` 生效。
+- 宽屏 left/right/bottom 队列 dock 参与布局并支持持久宽高；960px 以下退化 overlay；floating 与主面板互斥。
+- DSP 工作台在窄屏单列、宽屏双列；EQ 子网格 auto-fit，参数提交前做合法性校验。
+- QueuePanel、导航和浮窗补齐 aria 状态、焦点恢复、Escape、Tab 环与 tablist/tabpanel 键盘语义。
 
-- `app/styles/redesign.css` 最后加载，重写整个 shell。
-- shell 被改成约 `248px + main + 300px` 三列，增加永久 right context rail。
-- 1180px 以下隐藏 context rail，960px 以下折叠 sidebar；Tauri 最小宽度正好约 960px，边界排版未验收。
-- redesign.css 大量硬编码深色背景/文字，不完全尊重 `data-theme`；默认亮色/完整双主题定调可能被破坏。
-- 当前右侧 next-up row 使用 `playTrack(track)`，可能重新发起播放而不是选择现有 queue item，交互语义需确认。
-- 没有当前三列 redesign 的正式 WebView2 多尺寸截图和用户逐页确认。
-- 早期视觉验收不能覆盖当前 UI，因为 shell、telemetry 和 DSP 页面已发生大改。
+正式验收证据（2026-09-02）：
 
-后续 UI 修复必须：
-
-- 先对比当前 App/Navigation/Content/Player 与 `docs/UI设计基线.md`；
-- 保留功能，不通过删栏/删状态/删 telemetry 简化布局；
-- 恢复明亮默认和完整深石墨主题；
-- 处理 960×640、1440×900、1920×1080；
-- 正式在 Tauri/WebView2 验收，不用浏览器预览代替。
+- 在 release Tauri/WebView2 主窗口执行 1440×900 明亮、960×640 明亮、1440×900 深色验收；Windows DPI 为 150%，使用 `GetDpiForWindow` 校正后的完整 `PrintWindow` 截图。
+- 三张截图经 visual judge 全部 `pass`；宽/窄侧栏、播放坞、主题和 DSP 表单均无横向截断或重叠。
+- 截图位于 gitignored 的 `temp/ui-acceptance/*-dpi.png`，只作本地验收证据；用户最终逐页确认仍属于外部验收。
 
 ---
 
@@ -523,16 +482,21 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 - album session/task 基础持久化。
 - UI 能显示 missing/queued/caching/ready/locked/failed 等状态。
 
-D30 尚未完成：
+D30 第一阶段已完成：
 
-- repository schema 仍是 v6，不是 v7。
-- 10 GiB default、2–100 GiB config、trim to 90%。
-- LRU、recent-100 protection、acquisition class eviction order。
-- partial 24h cleanup、startup DB/object reconciliation、migration backup。
-- Public 7-day offline proof。
-- durable album-fill item queue、resume、single concurrency、preemption。
-- AC/metered/disk reserve/power probes。
-- Settings 容量/策略 UI。
+- repository schema 已升级 v7；v6 迁移前通过 SQLite `VACUUM INTO` 建立并校验一致性备份，再原子替换固定 `.v6.backup`，v7 DDL 与 `user_version` 单事务提交。
+- v7 已记录 logical size、last access、typed acquisition class、Public proof、partial 创建时间和 integrity verification；旧 v6 entry 按 `content_hash` 从 object size 回填。
+- `CachePolicy` 已实现 10 GiB 默认、2–100 GiB、90% trim、recent 100、partial 24h、Public 7d 和磁盘保留/恢复阈值。
+- eviction planner 按 `content_hash` 聚合共享对象，保护 leases/recent，有效执行权威淘汰顺序；过期 partial/orphan 不受 recent 保护。
+- reconciliation planner 要求绝对 cache root 和安全 root-relative 路径，同时核对 hash/path，只生成计划不执行删除。
+- Public offline proof 和 AccountEntitled offline fail-closed 已实现并测试。
+- durable `album_fill_items` 支持 enqueue/claim/complete/fail/resume；前台工作可事务式 yield running item；`AlbumFillCoordinator` 已提供资源门禁、claim/yield 核心。
+
+D30 第二阶段仍未完成：
+
+- engine 已新增 eviction/object snapshots、事务式 apply eviction/missing、cache access touch、CAS root-relative scan/safe delete 和 album aggregate transaction API；但尚未由 Tauri runtime supervisor 调用。
+- Tauri worker 生命周期、定时 reconciliation/quota 执行、Windows AC/计费网络/磁盘探测和 album-fill 实际下载调度。
+- 容量/策略持久化、runtime status command/events 和 Settings 容量/策略 UI。
 
 ---
 
@@ -560,84 +524,41 @@ D30 尚未完成：
 
 ## 13. 当前测试与构建证据
 
-### 13.1 本轮修复后的通过证据
+### 13.1 本轮工作树的通过证据（2026-09-02）
 
-以下命令于 2026-09-01 在含本轮三项修复的工作树上执行（尚未提交）。Rust crates workspace 使用本地默认工具链（与 CI 固定的 Rust 1.98 行为一致，提交前应按 §16 清单用 `+1.98.0` 复跑）：
+Rust crates（`+1.98.0`）：
 
-```text
-cargo fmt --manifest-path crates/Cargo.toml --all -- --check
-cargo clippy --manifest-path crates/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --manifest-path crates/Cargo.toml --workspace --all-targets --all-features --locked
-```
-
-当前通过：
-
-- HyperPlayer engine lib：229 passed（含新增 standby fault 三层回归）
-- Rust DSP parity：2 passed，其中主 suite 覆盖 53 vectors
-- DSP realtime invariants：7 passed（safe-bypass 零分配覆盖新的原子降级 API）
-- HRTF core：33 passed，1 ignored（需要用户提供 SOFA asset）
-- HRTF realtime allocation：5 passed
-- HRTF renderer features：10 passed
-- HSE core：315 passed，1 ignored（不可达 3π/2 精确边界）
-- HSE parameter scan：1 passed
-- HSE realtime allocation：5 passed
-- strict Clippy：通过
+- `cargo fmt --check`、workspace/all-targets/all-features strict Clippy、完整 tests 全部通过。
+- Engine lib：224 passed；DSP parity：2 passed（53 vectors）；DSP realtime invariants：9 passed；telemetry golden：1 passed。
+- HRTF core：33 passed、1 ignored；allocation：5 passed；renderer features：10 passed。
+- HSE core：333 passed、1 ignored；parameter scan：1 passed；realtime allocation：6 passed。
 
 Tauri：
 
-```text
-cargo test --manifest-path src-tauri/Cargo.toml --workspace --all-targets --all-features --locked
-cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
-```
+- fmt、workspace/all-targets/all-features strict Clippy 全部通过。
+- Tauri lib：124 passed；main：0 tests。
 
-当前通过：
+Frontend / IPC / license：
 
-- Tauri lib：114 passed（含真实 Engine encode → parse/forward 跨层测试与 0 Hz 迟到 ACK 回归）
-- Tauri main：0 tests
-- strict Clippy：通过
-
-Frontend 当前明确证据：
-
-```text
-pnpm test
-pnpm frontend:build
-```
-
-- 15 test files passed
-- 170 tests passed（含 LUFS bit 拒绝、reserved spectrum 非零拒绝）
-- IPC contract：84 commands / 14 events matched
-- TypeScript project build 通过
-- Vite production build 通过；仅保留既有的单 chunk 超过 500 kB 警告
-
-其他当前通过证据：
-
-- `pnpm check:hse-destination`：89 个 destination 文件验证通过（aggregate SHA-256 见 §4.3）。
-- `pnpm check:hse-source`：84 source files / aggregate SHA-256 固定。
-- `pnpm check:hse-ts`：通过。
-- NetEase TypeScript oracle：当前 strict typecheck 通过。
+- `TZ=UTC pnpm test`：17 files / 189 tests passed。
+- IPC contract：90 commands / 14 events matched。
+- `pnpm frontend:build`、TypeScript project build、Vite production build、NetEase oracle strict typecheck、`pnpm check:hse-ts` 全部通过。
+- `pnpm check:hse-destination`：schema v2、92 files、aggregate SHA-256 `d21553c09d15e5cfd37c70b72a7f7e76eb84dc69c42d3862e2965cbac134f027`。
 - JavaScript production license audit：15 records accepted。
-- `cargo deny`：advisories/licenses/bans/sources 通过，仅 duplicate/unmatched allow warnings。
-- IPC verifier 是单向覆盖检查，Rust 实际注册 command 更多，不能视为所有 Rust command 都有 typed frontend bridge。
-- 静态 DSP vector 文件数：53 JSON + 53 `.f32`。
+- `cargo deny` advisories/licenses/bans/sources 通过，仅保留既有 duplicate/unmatched allow warnings。
 
-### 13.2 当前未完成的验证
+Build / UI：
 
-Vitest 转译不做完整 TypeScript typecheck，因此必须同时保留 `pnpm test` 与 `pnpm frontend:build` 两道门禁。
+- `pnpm build` 完整 Tauri release build 在 UI/DspPort 检查点通过，并生成 `HyperPlayer_0.1.0_x64-setup.exe` 与 `HyperPlayer_0.1.0_x64_en-US.msi`；之后追加的 façade 清理与 D30 engine API 已通过各自 Rust/前端门禁，但当前最终工作树仍需在提交前再执行一次完整 `pnpm build`。
+- 本轮 UI/DspPort release 检查点在真实 Tauri/WebView2 中完成 1440×900 明亮、960×640 明亮、1440×900 深色截图；DPI 校正图经 visual judge 三页全部通过。其后只追加了 DSP 输入上限、布局预设导航和 rejection `bigint` 收口，均通过前端测试/build，但提交前仍应以最终工作树再做一次截图抽查。
+- Vite 仍有单 chunk 约 647 kB 的既有警告。
 
-尚未对当前工作树运行或完成：
+### 13.2 尚未完成的验证
 
-- `+1.98.0` 工具链下的完整门禁复跑（提交前必须执行）
-- 完整 `pnpm build` / Tauri release bundle
-- 当前 NSIS/MSI 最终重建
-- 当前 Tauri/WebView2 多尺寸截图验收（含实时 waveform/meter）
-- vGPU/WebGPU/device-loss/pixel tests（因为 vGPU 尚未接入）
-- 本轮提交后的 GitHub Actions 结果
-
-前端并发稳定性：
-
-- 本轮默认并行 170 项通过。
-- 历史上 `navigation.test.ts` 曾超过 15 秒并出现 overlapping `act()`；本轮未复现，但长期稳定性仍需由后续 CI 观察。
-- 不应为该问题修改导航业务逻辑；若再次出现，应优化 test cleanup/async lifecycle 或配置 file parallelism/timeout。
+- 本轮尚未提交，因此没有提交后的 GitHub Actions 结果。
+- vGPU/WebGPU/device-loss/pixel tests 未执行，因为 vGPU 尚未接入。
+- 实时 waveform/meter 需要加载真实正在播放的音频后再做动态视觉确认；本轮窗口验收覆盖布局、主题、工作台和空闲 meter 状态。
+- 用户逐页最终视觉确认、真实音频硬件、长期播放、受控网易云账号和 updater 外部验收仍待执行。
 
 ---
 
@@ -645,38 +566,26 @@ Vitest 转译不做完整 TypeScript typecheck，因此必须同时保留 `pnpm 
 
 ### P1 / 中风险
 
-1. **TS 核心重复**
-   - `shared/hse-ts-core` 已 vendored，但 parity 仍使用 `app/dsp` 手工副本。
-   - 应将 parity 和 preview 改用 shared core，删除重复 algorithm bodies。
-
-2. **vector provenance 不完整**
-   - 29/53 缺 structured source。
-
-3. **HSE core constructor 直接 API 边界**
-   - Delay/Chorus/Flanger core constructor 在未 set_params 前不完全复现 TS default。
+1. **HSE core constructor 直接 API 边界**
+   - Delay/Chorus/Flanger core constructor 在未 `set_params` 前不完全复现 TS default。
    - 极大 finite sample rate 可能造成 pathological allocation/overflow。
    - HyperPlayer façade 当前受保护，但 core public API 应修正或收窄。
 
-4. **LUFS 标准模式缺失**
+2. **LUFS 标准模式缺失**
    - 当前只应标记为 HSE v1.5.1 compatibility；需要新增标准模式。
 
-5. **DSP availability 假状态**
-   - bootstrap/frontend 仍写 unavailable/BYPASS。
-
-6. **配置拒绝缺原因**
-   - `DspConfigurationRejected` 仅含 revision；应增加稳定错误码、脱敏 reason、可选 stage。
-
-7. **BSD 分发文本需再审计**
+3. **BSD 分发文本需再审计**
    - 已有 attribution 和 V8 license；libmysofa/KD-tree 的完整 BSD 条款是否随 installer 分发仍需确认。
+
+4. **完整 22-stage production 尚未接入**
+   - Stage 13、15–18、20–22 已存在 vendored 实现，但仍缺 typed state/checkpoint/tail/adapter 与产品链门禁。
 
 ### P2 / 已知但非阻塞
 
-8. HPTM Rust 编码器 → TS 解码器的 golden bytes 跨语言向量测试未建立（本轮审查建议）。
-9. 默认并行前端测试历史上出现过 timeout/act 污染，本轮未复现。
-10. UI light theme 被 redesign.css 深色硬编码破坏。
-11. 当前三列 shell 未做正式 WebView2 视觉验收。
-12. 右侧 next-up row 的队列行为需确认。
-13. HSE 完整 22-stage library 已有但 production 只接 14 processors。
+5. 默认并行前端测试历史上出现过 timeout/act 污染，本轮 189 项未复现。
+6. DSP 配置尚未持久化，重启回到 revision 1 default。
+7. HPTM v2 未分配 LUFS/true-peak/limiter/FFT 动态字段；Stage 19 工作台明确显示只读 unavailable。
+8. 已上线 14 processor 的 direct façade、参数钳位、tail 派生与 Tremolo clone checkpoint 已完成去重；后续 adapter 工作只针对新增 stage。
 
 ---
 
@@ -685,19 +594,15 @@ Vitest 转译不做完整 TypeScript typecheck，因此必须同时保留 `pnpm 
 ### DSP / D29
 
 - Stage 13、15–18、20–22 生产融合。
-- Stage 1/2/7 进一步 core 化。
-- 完整参数模型接 HyperPlayer DTO。
-- 12 scenes/presets 产品接入。
-- HSE2 import/export。
-- DspPort + Tauri configure command/events。
-- 原生 DSP 工作台参数编辑。
+- 已上线 14 processor 的 direct façade、参数钳位、tail 派生与 Tremolo clone checkpoint 已完成去重；后续 adapter 工作只针对新增 stage。
 - 标准 BS.1770 模式。
 - 完整 Stage 19 telemetry schema：LUFS/true peak/limiter reduction/FFT。
 - Stage 22 HRTF 数据来源与许可证。
+- DSP 配置持久化和完整 22-stage 工作台。
 
 ### D30
 
-- schema v7、quota/LRU/reconciliation/offline proof/album worker/probes/UI。
+- Tauri runtime supervisor、定时 reconciliation/quota IO、Windows AC/计费网络/磁盘探测、album-fill 实际下载调度和 Settings 容量/策略 UI。
 
 ### 音频与设备
 
@@ -715,11 +620,9 @@ Vitest 转译不做完整 TypeScript typecheck，因此必须同时保留 `pnpm 
 
 ### UI / 可视化
 
-- 修复当前排版退化。
-- 双主题恢复。
-- DSP availability 与工作台真实状态。
 - vGPU/WebGPU 接入及 fallback parity。
-- 正式 WebView2 多尺寸、DPI、forced colors、text scale、aux windows 和用户逐页确认。
+- 实时播放状态下 waveform/meter 动态验收。
+- forced colors、text scale、aux windows 和用户逐页最终确认。
 
 ### Windows / 发布
 
@@ -734,13 +637,11 @@ Vitest 转译不做完整 TypeScript typecheck，因此必须同时保留 `pnpm 
 
 下个会话建议严格按以下顺序：
 
-1. 将 parity 从 `app/dsp` 切到 `shared/hse-ts-core`，删除重复 TS 算法。
-2. 为全部 53 vectors 补 structured provenance 和生成器。
-3. 修复 DSP availability 假状态，并设计正式 DspPort。
-4. 继续 Stage 1/2/7 core 化，再接 Stage 13、15–18、20–22。
-5. 单独处理 UI 排版修复并做 Tauri/WebView2 多尺寸验收。
-6. 补建 HPTM Rust→TS golden bytes 跨语言向量测试。
-7. 当前跨层工作形成可审查提交后，再推进 D30、decoder/device、网易云剩余能力。
+1. 先复审并提交当前工作树；按 parity/provenance、HSE core migration、DspPort、UI、telemetry golden、docs 拆分审查提交，避免继续扩大未提交面。
+2. 按 `13 → 15 → 18 → 21 → 20 → 16+17 → 22` 接入缺失阶段；每阶段先补 vendored typed state/checkpoint/tail API，再接 HyperPlayer adapter。
+3. 增加 DSP 配置持久化和标准 BS.1770 模式；HSE v1.5.1 compatibility 路径保持不变。
+4. 接入 D30 Tauri runtime supervisor、实际 reconciliation/quota IO、Windows 资源 probes、album-fill 下载调度和 Settings UI。
+5. 再推进 decoder preparation/incremental codec/device、网易云剩余能力、vGPU 和 Windows 发布能力。
 
 提交前必须逐项执行并记录：
 

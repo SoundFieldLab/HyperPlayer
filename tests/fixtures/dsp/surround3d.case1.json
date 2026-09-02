@@ -18,5 +18,10 @@
     "value": 0.000001,
     "floor": 1e-9
   },
-  "notes": "由固定 HSE v1.5.1 commit f7017621b7d84005fbfed8a3c42a119487a17326 正式 HyperSoundEngine 构建生成；动态反向旋转，包含 1 帧尾块。"
+  "notes": "由固定 HSE v1.5.1 commit f7017621b7d84005fbfed8a3c42a119487a17326 正式 HyperSoundEngine 构建生成；动态反向旋转，包含 1 帧尾块。",
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  }
 }

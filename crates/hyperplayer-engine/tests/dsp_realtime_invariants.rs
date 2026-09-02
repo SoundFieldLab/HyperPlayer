@@ -1,3 +1,4 @@
+use hse_core::eq_chain::EqBandParam;
 use hyperplayer_engine::dsp::{
     PcmBlock, PcmFormat, PcmProcessor, PcmSampleFormat, PreparedProcessorChain, ProcessorChain,
     ProcessorFaultKind, ResetReason, RuntimeStateCapability,
@@ -7,18 +8,21 @@ use hyperplayer_engine::dsp_algorithms::chorus::ChorusSettings;
 use hyperplayer_engine::dsp_algorithms::compressor::CompressorSettings;
 use hyperplayer_engine::dsp_algorithms::deesser::DeesserSettings;
 use hyperplayer_engine::dsp_algorithms::delay::DelaySettings;
-use hyperplayer_engine::dsp_algorithms::eq_chain::EqBandParam;
 use hyperplayer_engine::dsp_algorithms::flanger::FlangerSettings;
-use hyperplayer_engine::dsp_algorithms::loudness_normalization::LoudnessNormalizationSettings;
+use hyperplayer_engine::dsp_algorithms::loudness_normalization::{
+    LoudnessNormalizationProcessor, LoudnessNormalizationSettings,
+};
+use hyperplayer_engine::dsp_algorithms::lufs_meter::SharedLufsState;
 use hyperplayer_engine::dsp_algorithms::night_mode::NightModeSettings;
 use hyperplayer_engine::dsp_algorithms::phaser::PhaserSettings;
-use hyperplayer_engine::dsp_algorithms::surround3d::Surround3dSettings;
+use hyperplayer_engine::dsp_algorithms::surround3d::{Surround3dProcessor, Surround3dSettings};
 use hyperplayer_engine::dsp_algorithms::tremolo::TremoloSettings;
 use hyperplayer_engine::dsp_algorithms::{
     prepare_dsp_chain, DspConfig, EqChainConfig, EqStereoMode,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::sync::Arc;
 
 struct CountingAllocator;
 
@@ -480,6 +484,92 @@ fn processing_error_bypass_and_recovery_allocate_nothing() {
     assert_eq!(chain.snapshot().revision, 2);
     assert!(!chain.snapshot().safe_bypass_active);
     assert_eq!(guard.count(), 0, "processing-error bypass path allocated");
+}
+
+#[test]
+fn loudness_adapter_process_and_checkpoint_are_allocation_free_after_prepare() {
+    let shared = Arc::new(SharedLufsState::new());
+    let settings = LoudnessNormalizationSettings {
+        enabled: true,
+        use_realtime_meter: false,
+        external_gain_db: 6.0,
+        ..LoudnessNormalizationSettings::default()
+    };
+    let mut processor = LoudnessNormalizationProcessor::new(48_000, settings, shared).unwrap();
+    processor.prepare(format(), 128).unwrap();
+    let mut checkpoint = processor.create_runtime_checkpoint().unwrap();
+    let mut samples = [0.25_f32; 256];
+
+    let guard = AllocationGuard::arm();
+    for _ in 0..64 {
+        processor
+            .process(PcmBlock {
+                format: format(),
+                interleaved: &mut samples,
+            })
+            .unwrap();
+        assert!(processor.save_runtime_state(checkpoint.as_mut()));
+        assert!(processor.restore_runtime_state(checkpoint.as_ref()));
+    }
+    let allocations = guard.count();
+    drop(guard);
+
+    assert_eq!(
+        allocations, 0,
+        "loudness adapter allocated {allocations} times"
+    );
+}
+
+#[test]
+fn surround_disabled_to_enabled_revision_swap_starts_with_fresh_phase() {
+    let enabled = Surround3dSettings {
+        enabled: true,
+        speed: 1.25,
+        angle: 17.0,
+        ..Surround3dSettings::default()
+    };
+    let mut stale_disabled = Surround3dProcessor::with_settings(48_000, enabled).unwrap();
+    stale_disabled.prepare(format(), 128).unwrap();
+    stale_disabled
+        .process(PcmBlock {
+            format: format(),
+            interleaved: &mut [0.25_f32; 256],
+        })
+        .unwrap();
+    assert_ne!(stale_disabled.phase(), 0.0);
+    stale_disabled
+        .set_params(Surround3dSettings {
+            enabled: false,
+            ..enabled
+        })
+        .unwrap();
+
+    let active =
+        PreparedProcessorChain::prepare(1, format(), 128, vec![Box::new(stale_disabled)]).unwrap();
+    let mut chain = ProcessorChain::from_prepared(active);
+    let next = Surround3dProcessor::with_settings(48_000, enabled).unwrap();
+    chain
+        .queue_prepared(
+            PreparedProcessorChain::prepare(2, format(), 128, vec![Box::new(next)]).unwrap(),
+        )
+        .unwrap();
+
+    let input = [0.25_f32; 256];
+    let mut actual = input;
+    chain.process(format(), &mut actual, 128).unwrap();
+
+    let mut fresh = Surround3dProcessor::with_settings(48_000, enabled).unwrap();
+    fresh.prepare(format(), 128).unwrap();
+    let mut expected = input;
+    fresh
+        .process(PcmBlock {
+            format: format(),
+            interleaved: &mut expected,
+        })
+        .unwrap();
+
+    assert_eq!(chain.snapshot().revision, 2);
+    assert_eq!(actual.map(f32::to_bits), expected.map(f32::to_bits));
 }
 
 #[test]

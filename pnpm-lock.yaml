@@ -30,6 +30,9 @@ importers:
         specifier: ^5.0.15
         version: 5.0.15(@types/react@19.2.18)(react@19.2.8)
     devDependencies:
+      '@hyperplayer/hse-ts-core':
+        specifier: link:shared/hse-ts-core
+        version: link:shared/hse-ts-core
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.3(vite@8.2.2(@types/node@26.4.0)(jiti@2.7.0))

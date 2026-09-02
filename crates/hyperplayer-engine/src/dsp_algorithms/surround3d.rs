@@ -1,11 +1,14 @@
-//! HSE v1.5.1 Stage 2 轻量 3D 环绕立体声旋转。
+//! HSE v1.5.1 Stage 2 Surround3D 的 HyperPlayer PCM 适配器。
 //!
-//! 经 `LICENSE-HSE-AUTHORIZATION.md` 专项授权，移植自 HyperSoundEngine v1.5.1
-//! (`f7017621b7d84005fbfed8a3c42a119487a17326`)。每块只计算一次旋转矩阵，
-//! 中间计算保持 `f64`，只在写回交错 PCM 时量化为 `f32`。
+//! DSP 采样数学与相位状态由 `hse_core::surround3d::Surround3dStage` 权威实现；本模块
+//! 仅负责产品参数校验、立体声交错/平面转换、生命周期与实时缓冲管理。
 
 use crate::dsp::{PcmBlock, PcmFormat, PcmProcessor, ResetReason};
 use crate::error::{EngineError, Result};
+use hse_core::surround3d::{
+    Surround3dRuntimeState, Surround3dSettings as CoreSurround3dSettings, Surround3dStage,
+};
+use hse_core::Stage;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Surround3dSettings {
@@ -43,10 +46,24 @@ impl Default for Surround3dSettings {
     }
 }
 
+impl From<Surround3dSettings> for CoreSurround3dSettings {
+    fn from(settings: Surround3dSettings) -> Self {
+        Self {
+            enabled: settings.enabled,
+            distance: settings.distance,
+            speed: settings.speed,
+            angle: settings.angle,
+            direction: settings.direction,
+        }
+    }
+}
+
 pub struct Surround3dProcessor {
     sample_rate: u32,
     settings: Surround3dSettings,
-    phase: f64,
+    stage: Surround3dStage,
+    left: Vec<f32>,
+    right: Vec<f32>,
 }
 
 impl Surround3dProcessor {
@@ -57,10 +74,17 @@ impl Surround3dProcessor {
     pub fn with_settings(sample_rate: u32, settings: Surround3dSettings) -> Result<Self> {
         validate_sample_rate(sample_rate)?;
         settings.validate()?;
+        let mut stage =
+            Surround3dStage::new(f64::from(sample_rate)).map_err(EngineError::InvalidInput)?;
+        stage
+            .set_params(settings.into())
+            .map_err(EngineError::InvalidInput)?;
         Ok(Self {
             sample_rate,
             settings,
-            phase: 0.0,
+            stage,
+            left: Vec::new(),
+            right: Vec::new(),
         })
     }
 
@@ -70,36 +94,15 @@ impl Surround3dProcessor {
 
     pub fn set_params(&mut self, settings: Surround3dSettings) -> Result<()> {
         settings.validate()?;
+        self.stage
+            .set_params(settings.into())
+            .map_err(EngineError::InvalidInput)?;
         self.settings = settings;
         Ok(())
     }
 
     pub fn phase(&self) -> f64 {
-        self.phase
-    }
-
-    fn process_samples(&mut self, samples: &mut [f32]) {
-        if !self.settings.enabled {
-            return;
-        }
-
-        let frames = samples.len() / 2;
-        self.phase += std::f64::consts::TAU
-            * self.settings.speed
-            * (frames as f64 / f64::from(self.sample_rate))
-            * 0.125;
-        let theta = self.settings.angle * std::f64::consts::PI / 180.0
-            + self.settings.direction * self.phase;
-        let cosine = theta.cos();
-        let sine = theta.sin();
-        let scale = 0.5 + 0.5 * self.settings.distance;
-
-        for frame in samples.as_chunks_mut::<2>().0.iter_mut() {
-            let left = f64::from(frame[0]);
-            let right = f64::from(frame[1]);
-            frame[0] = ((left * cosine - right * sine) * scale) as f32;
-            frame[1] = ((left * sine + right * cosine) * scale) as f32;
-        }
+        self.stage.phase()
     }
 }
 
@@ -112,36 +115,44 @@ impl PcmProcessor for Surround3dProcessor {
         let Some(previous) = previous.as_any_mut().downcast_mut::<Self>() else {
             return false;
         };
-        self.phase = previous.phase;
+        if self.settings.enabled && previous.settings.enabled {
+            return self.stage.copy_runtime_state_from(&previous.stage).is_ok();
+        }
         true
     }
 
     fn create_runtime_checkpoint(&self) -> Option<Box<dyn std::any::Any + Send>> {
-        Some(Box::new(self.phase))
+        Some(Box::new(self.stage.snapshot_runtime_state()))
     }
 
     fn runtime_checkpoint_compatible(&self, state: &(dyn std::any::Any + Send)) -> bool {
-        state.is::<f64>()
+        let Some(state) = state.downcast_ref::<Surround3dRuntimeState>() else {
+            return false;
+        };
+        let mut probe = self.stage.clone();
+        probe.restore_runtime_state(state).is_ok()
     }
 
     fn save_runtime_state(&self, state: &mut (dyn std::any::Any + Send)) -> bool {
-        let Some(phase) = state.downcast_mut::<f64>() else {
+        let Some(state) = state.downcast_mut::<Surround3dRuntimeState>() else {
             return false;
         };
-        *phase = self.phase;
-        true
+        self.stage.save_runtime_state(state).is_ok()
     }
 
     fn restore_runtime_state(&mut self, state: &(dyn std::any::Any + Send)) -> bool {
-        let Some(phase) = state.downcast_ref::<f64>() else {
+        let Some(state) = state.downcast_ref::<Surround3dRuntimeState>() else {
             return false;
         };
-        self.phase = *phase;
-        true
+        self.stage.restore_runtime_state(state).is_ok()
     }
 
-    fn prepare(&mut self, format: PcmFormat, _max_block_frames: usize) -> Result<()> {
-        validate_stereo_format(format, self.sample_rate)
+    fn prepare(&mut self, format: PcmFormat, max_block_frames: usize) -> Result<()> {
+        validate_stereo_format(format, self.sample_rate)?;
+        self.left.resize(max_block_frames, 0.0);
+        self.right.resize(max_block_frames, 0.0);
+        self.stage.prepare(max_block_frames);
+        Ok(())
     }
 
     fn process(&mut self, block: PcmBlock<'_>) -> Result<()> {
@@ -151,12 +162,37 @@ impl PcmProcessor for Surround3dProcessor {
                 "surround3d requires complete stereo frames".into(),
             ));
         }
-        self.process_samples(block.interleaved);
+        let frames = block.interleaved.len() / 2;
+        if frames > self.left.len() {
+            return Err(EngineError::InvalidInput(
+                "surround3d block exceeds the prepared frame capacity".into(),
+            ));
+        }
+        if !self.settings.enabled {
+            return Ok(());
+        }
+
+        for (index, frame) in block.interleaved.as_chunks::<2>().0.iter().enumerate() {
+            self.left[index] = frame[0];
+            self.right[index] = frame[1];
+        }
+        self.stage
+            .process(&mut self.left[..frames], &mut self.right[..frames]);
+        for (index, frame) in block
+            .interleaved
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
+            frame[0] = self.left[index];
+            frame[1] = self.right[index];
+        }
         Ok(())
     }
 
     fn reset(&mut self, _reason: ResetReason) {
-        self.phase = 0.0;
+        self.stage.reset();
     }
 
     fn latency_frames(&self) -> u32 {
@@ -211,6 +247,12 @@ mod tests {
         })
     }
 
+    fn prepared(settings: Surround3dSettings) -> Surround3dProcessor {
+        let mut processor = Surround3dProcessor::with_settings(48_000, settings).unwrap();
+        processor.prepare(format(48_000), 128).unwrap();
+        processor
+    }
+
     #[test]
     fn defaults_match_hse_stage_two() {
         let settings = Surround3dSettings::default();
@@ -224,7 +266,7 @@ mod tests {
 
     #[test]
     fn disabled_is_bit_exact_and_freezes_phase() {
-        let mut processor = Surround3dProcessor::new(48_000).unwrap();
+        let mut processor = prepared(Surround3dSettings::default());
         let mut samples = [-0.0_f32, f32::from_bits(1), -0.25, 1.0];
         let expected = samples.map(f32::to_bits);
         process(&mut processor, &mut samples).unwrap();
@@ -233,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn first_block_advances_before_one_matrix_including_short_block() {
+    fn adapter_matches_core_planar_output_bit_for_bit() {
         let settings = Surround3dSettings {
             enabled: true,
             distance: 0.4,
@@ -241,25 +283,18 @@ mod tests {
             angle: 11.0,
             direction: -1.0,
         };
-        let mut processor = Surround3dProcessor::with_settings(48_000, settings).unwrap();
-        let input = [0.25_f32, -0.75, -0.5, 0.125, 1.0, 0.5];
-        let mut actual = input;
+        let mut processor = prepared(settings);
+        let mut actual = [0.25_f32, -0.75, -0.5, 0.125, 1.0, 0.5];
         process(&mut processor, &mut actual).unwrap();
 
-        let phase = std::f64::consts::TAU * 0.7 * (3.0 / 48_000.0) * 0.125;
-        let theta = 11.0 * std::f64::consts::PI / 180.0 - phase;
-        let (sine, cosine) = theta.sin_cos();
-        let scale = 0.7;
-        let mut expected = input;
-        for frame in expected.as_chunks_mut::<2>().0.iter_mut() {
-            let left = f64::from(frame[0]);
-            let right = f64::from(frame[1]);
-            frame[0] = ((left * cosine - right * sine) * scale) as f32;
-            frame[1] = ((left * sine + right * cosine) * scale) as f32;
-        }
-
-        assert_eq!(processor.phase(), phase);
+        let mut core = Surround3dStage::new(48_000.0).unwrap();
+        core.set_params(settings.into()).unwrap();
+        let mut left = [0.25_f32, -0.5, 1.0];
+        let mut right = [-0.75_f32, 0.125, 0.5];
+        core.process(&mut left, &mut right);
+        let expected = [left[0], right[0], left[1], right[1], left[2], right[2]];
         assert_eq!(actual.map(f32::to_bits), expected.map(f32::to_bits));
+        assert_eq!(processor.phase(), core.phase());
     }
 
     #[test]
@@ -269,6 +304,7 @@ mod tests {
             ..Surround3dSettings::default()
         };
         let mut processor = Surround3dProcessor::with_settings(44_100, settings).unwrap();
+        processor.prepare(format(44_100), 2).unwrap();
         let input = [0.5_f32, -0.25, 0.75, 0.125];
         let mut first = input;
         process(&mut processor, &mut first).unwrap();
@@ -325,37 +361,77 @@ mod tests {
     }
 
     #[test]
-    fn adopts_phase_across_parameter_revision() {
+    fn adopts_phase_only_when_both_revisions_are_enabled() {
         let old_settings = Surround3dSettings {
             enabled: true,
             ..Surround3dSettings::default()
         };
-        let mut previous = Surround3dProcessor::with_settings(48_000, old_settings).unwrap();
-        let mut samples = [
-            0.25_f32, -0.5, 0.25, -0.5, 0.25, -0.5, 0.25, -0.5, 0.25, -0.5, 0.25, -0.5, 0.25, -0.5,
-            0.25, -0.5,
-        ];
+        let mut previous = prepared(old_settings);
+        let mut samples = [0.25_f32, -0.5, 0.25, -0.5, 0.25, -0.5, 0.25, -0.5];
         process(&mut previous, &mut samples).unwrap();
         let expected_phase = previous.phase();
 
-        let new_settings = Surround3dSettings {
-            enabled: false,
+        let enabled_settings = Surround3dSettings {
+            enabled: true,
             speed: 2.5,
             angle: 90.0,
             ..Surround3dSettings::default()
         };
-        let mut next = Surround3dProcessor::with_settings(48_000, new_settings).unwrap();
-        assert!(next.adopt_runtime_state_from(&mut previous));
-        assert_eq!(next.phase(), expected_phase);
-        assert_eq!(next.settings(), new_settings);
+        let mut enabled_next = prepared(enabled_settings);
+        assert!(enabled_next.adopt_runtime_state_from(&mut previous));
+        assert_eq!(enabled_next.phase(), expected_phase);
+        assert_eq!(enabled_next.settings(), enabled_settings);
+
+        let disabled_settings = Surround3dSettings {
+            enabled: false,
+            ..enabled_settings
+        };
+        let mut disabled_next = prepared(disabled_settings);
+        assert!(disabled_next.adopt_runtime_state_from(&mut previous));
+        assert_eq!(disabled_next.phase(), 0.0);
+
+        previous.set_params(disabled_settings).unwrap();
+        assert_eq!(previous.phase(), expected_phase);
+        let mut reenabled = prepared(enabled_settings);
+        assert!(reenabled.adopt_runtime_state_from(&mut previous));
+        assert_eq!(reenabled.phase(), 0.0);
+
+        let mut disabled_from_disabled = prepared(disabled_settings);
+        assert!(disabled_from_disabled.adopt_runtime_state_from(&mut previous));
+        assert_eq!(disabled_from_disabled.phase(), 0.0);
 
         let mut bypass = BypassProcessor;
-        assert!(!next.adopt_runtime_state_from(&mut bypass));
+        assert!(!reenabled.adopt_runtime_state_from(&mut bypass));
     }
 
     #[test]
-    fn process_rejects_incomplete_frames_and_format_mismatch() {
+    fn checkpoint_restore_preserves_settings_and_replays() {
+        let settings = Surround3dSettings {
+            enabled: true,
+            speed: 1.25,
+            ..Surround3dSettings::default()
+        };
+        let mut processor = prepared(settings);
+        process(&mut processor, &mut [0.25, -0.5, 0.75, 0.125]).unwrap();
+        let mut checkpoint = processor.create_runtime_checkpoint().unwrap();
+        assert!(processor.save_runtime_state(checkpoint.as_mut()));
+
+        let input = [0.2_f32, -0.3, 0.4, 0.1];
+        let mut expected = input;
+        process(&mut processor, &mut expected).unwrap();
+        assert!(processor.restore_runtime_state(checkpoint.as_ref()));
+        assert_eq!(processor.settings(), settings);
+        let mut actual = input;
+        process(&mut processor, &mut actual).unwrap();
+        assert_eq!(actual.map(f32::to_bits), expected.map(f32::to_bits));
+    }
+
+    #[test]
+    fn process_rejects_unprepared_capacity_incomplete_frames_and_format_mismatch() {
         let mut processor = Surround3dProcessor::new(48_000).unwrap();
+        let mut complete = [0.0_f32; 2];
+        assert!(process(&mut processor, &mut complete).is_err());
+        processor.prepare(format(48_000), 2).unwrap();
         let mut partial = [0.0_f32; 3];
         assert!(process(&mut processor, &mut partial).is_err());
         assert!(processor.prepare(format(44_100), 128).is_err());

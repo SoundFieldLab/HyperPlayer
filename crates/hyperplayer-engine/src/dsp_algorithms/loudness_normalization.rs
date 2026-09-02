@@ -1,88 +1,23 @@
-//! HSE v1.5.1 第 1 级响度归一化与播放链适配。
+//! HSE v1.5.1 第 1 级响度归一化播放链适配。
+//!
+//! 增益、平滑和采样写回由 `hse_core::loudness_normalization` 权威实现；本模块只负责
+//! PCM 格式检查、交错/平面转换、每块一次原子读数桥接与 revision/checkpoint 适配。
 
 use super::lufs_meter::SharedLufsState;
 use crate::dsp::{PcmBlock, PcmFormat, PcmProcessor, ResetReason};
 use crate::error::{EngineError, Result};
+pub use hse_core::loudness_normalization::LoudnessNormalizationSettings;
+use hse_core::loudness_normalization::{
+    LoudnessNormalizationReadings, LoudnessNormalizationRuntimeState, LoudnessNormalizationStage,
+};
 use std::sync::Arc;
 
-const REALTIME_SMOOTH_SECONDS: f64 = 3.0;
-const MANUAL_SMOOTH_SECONDS: f64 = 0.08;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LoudnessNormalizationSettings {
-    pub enabled: bool,
-    pub target_lufs: f64,
-    pub max_gain_db: f64,
-    pub min_gain_db: f64,
-    pub use_realtime_meter: bool,
-    pub external_gain_db: f64,
-}
-
-impl Default for LoudnessNormalizationSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            target_lufs: -14.0,
-            max_gain_db: 9.0,
-            min_gain_db: -9.0,
-            use_realtime_meter: true,
-            external_gain_db: 0.0,
-        }
-    }
-}
-
-impl LoudnessNormalizationSettings {
-    pub fn validate(self) -> Result<Self> {
-        for (name, value) in [
-            ("target_lufs", self.target_lufs),
-            ("max_gain_db", self.max_gain_db),
-            ("min_gain_db", self.min_gain_db),
-            ("external_gain_db", self.external_gain_db),
-        ] {
-            if !value.is_finite() {
-                return Err(EngineError::InvalidInput(format!(
-                    "loudness normalization {name} must be finite"
-                )));
-            }
-        }
-        if !(-40.0..=0.0).contains(&self.target_lufs) {
-            return Err(EngineError::InvalidInput(
-                "loudness normalization target_lufs must be between -40 and 0".into(),
-            ));
-        }
-        if !(0.0..=24.0).contains(&self.max_gain_db) {
-            return Err(EngineError::InvalidInput(
-                "loudness normalization max_gain_db must be between 0 and 24".into(),
-            ));
-        }
-        if !(-24.0..=0.0).contains(&self.min_gain_db) {
-            return Err(EngineError::InvalidInput(
-                "loudness normalization min_gain_db must be between -24 and 0".into(),
-            ));
-        }
-        if !(-24.0..=24.0).contains(&self.external_gain_db) {
-            return Err(EngineError::InvalidInput(
-                "loudness normalization external_gain_db must be between -24 and 24".into(),
-            ));
-        }
-        if self.min_gain_db > self.max_gain_db {
-            return Err(EngineError::InvalidInput(
-                "loudness normalization min_gain_db cannot exceed max_gain_db".into(),
-            ));
-        }
-        Ok(self)
-    }
-}
-
-/// 第 1 级归一化处理器。
-///
-/// 与后置 `LufsMeterProcessor` 共用原子快照。此处理器在块首读取一次，因此后置 tap 在
-/// 当前块末发布的读数只能从下一块开始生效，保持 HSE 主链的 prior-block 语义。
 pub struct LoudnessNormalizationProcessor {
     sample_rate: u32,
-    settings: LoudnessNormalizationSettings,
+    core: LoudnessNormalizationStage,
     shared: Arc<SharedLufsState>,
-    gain: f64,
+    left: Vec<f32>,
+    right: Vec<f32>,
 }
 
 impl LoudnessNormalizationProcessor {
@@ -91,70 +26,31 @@ impl LoudnessNormalizationProcessor {
         settings: LoudnessNormalizationSettings,
         shared: Arc<SharedLufsState>,
     ) -> Result<Self> {
-        if sample_rate == 0 {
-            return Err(EngineError::InvalidInput(
-                "loudness normalization sample rate must be greater than zero".into(),
-            ));
-        }
-        let settings = settings.validate()?;
+        let mut core = LoudnessNormalizationStage::new(f64::from(sample_rate))
+            .map_err(EngineError::InvalidInput)?;
+        core.set_params(settings)
+            .map_err(EngineError::InvalidInput)?;
         Ok(Self {
             sample_rate,
-            settings,
+            core,
             shared,
-            gain: 1.0,
+            left: Vec::new(),
+            right: Vec::new(),
         })
     }
 
     pub fn gain(&self) -> f64 {
-        self.gain
+        self.core.gain()
     }
 
     pub fn settings(&self) -> LoudnessNormalizationSettings {
-        self.settings
+        self.core.settings()
     }
 
     pub fn set_settings(&mut self, settings: LoudnessNormalizationSettings) -> Result<()> {
-        let settings = settings.validate()?;
-        if !settings.enabled {
-            self.gain = 1.0;
-        }
-        self.settings = settings;
-        Ok(())
-    }
-
-    fn process_samples(&mut self, samples: &mut [f32]) {
-        if !self.settings.enabled {
-            return;
-        }
-        let frames = samples.len() / 2;
-        let (gain_db, seconds) = if self.settings.use_realtime_meter {
-            let (integrated_lufs, momentary_lufs) = self.shared.realtime_loudness();
-            let measured = if integrated_lufs.is_finite() {
-                integrated_lufs
-            } else {
-                momentary_lufs
-            };
-            let gain_db = if measured.is_finite() {
-                (self.settings.target_lufs - measured)
-                    .clamp(self.settings.min_gain_db, self.settings.max_gain_db)
-            } else {
-                0.0
-            };
-            (gain_db, REALTIME_SMOOTH_SECONDS)
-        } else {
-            (
-                self.settings
-                    .external_gain_db
-                    .clamp(self.settings.min_gain_db, self.settings.max_gain_db),
-                MANUAL_SMOOTH_SECONDS,
-            )
-        };
-        let alpha = 1.0 - (-(frames as f64 / f64::from(self.sample_rate)) / seconds).exp();
-        self.gain += alpha * (10.0_f64.powf(gain_db / 20.0) - self.gain);
-        for frame in samples.as_chunks_mut::<2>().0.iter_mut() {
-            frame[0] = (f64::from(frame[0]) * self.gain) as f32;
-            frame[1] = (f64::from(frame[1]) * self.gain) as f32;
-        }
+        self.core
+            .set_params(settings)
+            .map_err(EngineError::InvalidInput)
     }
 }
 
@@ -170,38 +66,42 @@ impl PcmProcessor for LoudnessNormalizationProcessor {
         else {
             return false;
         };
-        if self.settings.enabled {
-            self.gain = previous.gain;
+        if !self.core.settings().enabled {
+            return true;
         }
-        true
+        self.core.copy_runtime_state_from(&previous.core).is_ok()
     }
 
     fn create_runtime_checkpoint(&self) -> Option<Box<dyn std::any::Any + Send>> {
-        Some(Box::new(self.gain))
+        Some(Box::new(self.core.snapshot_runtime_state()))
     }
 
     fn runtime_checkpoint_compatible(&self, state: &(dyn std::any::Any + Send)) -> bool {
-        state.is::<f64>()
+        state
+            .downcast_ref::<LoudnessNormalizationRuntimeState>()
+            .is_some_and(|state| {
+                let mut probe = self.core.clone();
+                probe.restore_runtime_state(state).is_ok()
+            })
     }
 
     fn save_runtime_state(&self, state: &mut (dyn std::any::Any + Send)) -> bool {
-        let Some(gain) = state.downcast_mut::<f64>() else {
-            return false;
-        };
-        *gain = self.gain;
-        true
+        state
+            .downcast_mut::<LoudnessNormalizationRuntimeState>()
+            .is_some_and(|state| self.core.save_runtime_state(state).is_ok())
     }
 
     fn restore_runtime_state(&mut self, state: &(dyn std::any::Any + Send)) -> bool {
-        let Some(gain) = state.downcast_ref::<f64>() else {
-            return false;
-        };
-        self.gain = *gain;
-        true
+        state
+            .downcast_ref::<LoudnessNormalizationRuntimeState>()
+            .is_some_and(|state| self.core.restore_runtime_state(state).is_ok())
     }
 
-    fn prepare(&mut self, format: PcmFormat, _max_block_frames: usize) -> Result<()> {
-        validate_stereo_format(format, self.sample_rate)
+    fn prepare(&mut self, format: PcmFormat, max_block_frames: usize) -> Result<()> {
+        validate_stereo_format(format, self.sample_rate)?;
+        self.left.resize(max_block_frames, 0.0);
+        self.right.resize(max_block_frames, 0.0);
+        Ok(())
     }
 
     fn process(&mut self, block: PcmBlock<'_>) -> Result<()> {
@@ -211,12 +111,43 @@ impl PcmProcessor for LoudnessNormalizationProcessor {
                 "loudness normalization requires complete stereo frames".into(),
             ));
         }
-        self.process_samples(block.interleaved);
+        let frames = block.interleaved.len() / 2;
+        if !self.core.settings().enabled {
+            return Ok(());
+        }
+        if frames > self.left.len() {
+            return Err(EngineError::InvalidInput(
+                "loudness normalization block exceeds the prepared frame capacity".into(),
+            ));
+        }
+        for (index, frame) in block.interleaved.as_chunks::<2>().0.iter().enumerate() {
+            self.left[index] = frame[0];
+            self.right[index] = frame[1];
+        }
+        let (integrated_lufs, momentary_lufs) = self.shared.realtime_loudness();
+        self.core.process(
+            &mut self.left[..frames],
+            &mut self.right[..frames],
+            LoudnessNormalizationReadings {
+                integrated_lufs,
+                momentary_lufs,
+            },
+        );
+        for (index, frame) in block
+            .interleaved
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
+            frame[0] = self.left[index];
+            frame[1] = self.right[index];
+        }
         Ok(())
     }
 
     fn reset(&mut self, _reason: ResetReason) {
-        self.gain = 1.0;
+        self.core.reset();
     }
 
     fn latency_frames(&self) -> u32 {
@@ -257,30 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_and_validation_match_hse_contract() {
-        let defaults = LoudnessNormalizationSettings::default();
-        assert_eq!(defaults.target_lufs, -14.0);
-        assert_eq!(defaults.max_gain_db, 9.0);
-        assert_eq!(defaults.min_gain_db, -9.0);
-        assert!(defaults.use_realtime_meter);
-        assert_eq!(defaults.external_gain_db, 0.0);
-        assert!(defaults.validate().is_ok());
-        assert!(LoudnessNormalizationSettings {
-            target_lufs: f64::NAN,
-            ..defaults
-        }
-        .validate()
-        .is_err());
-        assert!(LoudnessNormalizationSettings {
-            min_gain_db: 1.0,
-            ..defaults
-        }
-        .validate()
-        .is_err());
-    }
-
-    #[test]
-    fn manual_branch_uses_exact_block_smoothing_and_f32_write_boundary() {
+    fn adapter_matches_core_manual_processing_bit_for_bit() {
         let shared = Arc::new(SharedLufsState::new());
         let settings = LoudnessNormalizationSettings {
             enabled: true,
@@ -288,7 +196,9 @@ mod tests {
             external_gain_db: 6.0,
             ..LoudnessNormalizationSettings::default()
         };
-        let mut processor = LoudnessNormalizationProcessor::new(48_000, settings, shared).unwrap();
+        let mut processor =
+            LoudnessNormalizationProcessor::new(48_000, settings, Arc::clone(&shared)).unwrap();
+        processor.prepare(format(), 2).unwrap();
         let mut samples = [0.25_f32, -0.5, 0.75, -1.0];
         processor
             .process(PcmBlock {
@@ -296,14 +206,26 @@ mod tests {
                 interleaved: &mut samples,
             })
             .unwrap();
-        let alpha = 1.0 - (-(2.0_f64 / 48_000.0) / 0.08).exp();
-        let gain = 1.0 + alpha * (10.0_f64.powf(6.0 / 20.0) - 1.0);
-        assert_eq!(processor.gain().to_bits(), gain.to_bits());
-        assert_eq!(
-            samples[0].to_bits(),
-            ((f64::from(0.25_f32) * gain) as f32).to_bits()
+
+        let mut core = LoudnessNormalizationStage::new(48_000.0).unwrap();
+        core.set_params(settings).unwrap();
+        let mut left = [0.25_f32, 0.75];
+        let mut right = [-0.5_f32, -1.0];
+        core.process(
+            &mut left,
+            &mut right,
+            LoudnessNormalizationReadings::unmeasured(),
         );
-        assert_eq!(samples[1], (f64::from(-0.5_f32) * gain) as f32);
+        assert_eq!(
+            samples.map(f32::to_bits),
+            [
+                left[0].to_bits(),
+                right[0].to_bits(),
+                left[1].to_bits(),
+                right[1].to_bits(),
+            ]
+        );
+        assert_eq!(processor.gain().to_bits(), core.gain().to_bits());
     }
 
     #[test]
@@ -347,23 +269,51 @@ mod tests {
     }
 
     #[test]
-    fn reset_and_disable_restore_unity_gain() {
+    fn checkpoint_and_revision_preserve_gain_but_keep_new_parameters() {
         let shared = Arc::new(SharedLufsState::new());
         let settings = LoudnessNormalizationSettings {
             enabled: true,
             use_realtime_meter: false,
-            external_gain_db: 9.0,
+            external_gain_db: 6.0,
             ..LoudnessNormalizationSettings::default()
         };
-        let mut processor = LoudnessNormalizationProcessor::new(48_000, settings, shared).unwrap();
-        let mut samples = [1.0_f32, 1.0];
-        processor.process_samples(&mut samples);
-        assert_ne!(processor.gain(), 1.0);
-        processor.reset(ResetReason::Seek);
-        assert_eq!(processor.gain(), 1.0);
-        processor
-            .set_settings(LoudnessNormalizationSettings::default())
+        let mut source =
+            LoudnessNormalizationProcessor::new(48_000, settings, Arc::clone(&shared)).unwrap();
+        source.prepare(format(), 2).unwrap();
+        source
+            .process(PcmBlock {
+                format: format(),
+                interleaved: &mut [0.25_f32; 4],
+            })
             .unwrap();
-        assert_eq!(processor.gain(), 1.0);
+        let saved_gain = source.gain();
+        let mut checkpoint = source.create_runtime_checkpoint().unwrap();
+        assert!(source.save_runtime_state(checkpoint.as_mut()));
+
+        let next_settings = LoudnessNormalizationSettings {
+            external_gain_db: -3.0,
+            ..settings
+        };
+        let mut restored =
+            LoudnessNormalizationProcessor::new(48_000, next_settings, Arc::clone(&shared))
+                .unwrap();
+        assert!(restored.restore_runtime_state(checkpoint.as_ref()));
+        assert_eq!(restored.gain(), saved_gain);
+        assert_eq!(restored.settings(), next_settings);
+
+        let mut adopted =
+            LoudnessNormalizationProcessor::new(48_000, next_settings, shared).unwrap();
+        assert!(adopted.adopt_runtime_state_from(&mut source));
+        assert_eq!(adopted.gain(), saved_gain);
+        assert_eq!(adopted.settings(), next_settings);
+
+        let mut disabled = LoudnessNormalizationProcessor::new(
+            48_000,
+            LoudnessNormalizationSettings::default(),
+            Arc::new(SharedLufsState::new()),
+        )
+        .unwrap();
+        assert!(disabled.adopt_runtime_state_from(&mut source));
+        assert_eq!(disabled.gain(), 1.0);
     }
 }

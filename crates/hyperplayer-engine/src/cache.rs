@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +41,39 @@ pub enum CacheState {
     Partial,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheAcquisitionClass {
+    FrequentAlbumRemainder,
+    Automatic,
+    UserRequested,
+    RecentPlayback,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicOfflineProof {
+    pub confirmed_unix_ms: u64,
+    pub server_revision: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheRecord {
+    pub entry: CacheEntry,
+    pub logical_size_bytes: u64,
+    pub last_accessed_unix_ms: u64,
+    pub acquisition_class: CacheAcquisitionClass,
+    pub public_offline_proof: Option<PublicOfflineProof>,
+    pub partial_created_unix_ms: Option<u64>,
+    pub integrity_verified_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnlineAuthority {
+    Confirmed,
+    Denied,
+    Unavailable,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verification {
     Confirmed,
@@ -57,6 +90,7 @@ pub struct PlaybackAuthorization {
 }
 
 pub const DEFAULT_ENTITLEMENT_MAX_AGE: Duration = Duration::from_secs(5 * 60);
+pub const PUBLIC_OFFLINE_PROOF_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheGateDenial {
@@ -143,6 +177,44 @@ pub fn authorize_cache_at(
     }
 }
 
+pub fn authorize_cache_offline_at(
+    record: &CacheRecord,
+    online_authority: OnlineAuthority,
+    now: SystemTime,
+) -> std::result::Result<(), CacheGateDenial> {
+    if record.entry.state != CacheState::Available {
+        return Err(CacheGateDenial::CacheUnavailable);
+    }
+    if online_authority == OnlineAuthority::Denied {
+        return Err(CacheGateDenial::OfficialPlaybackNotConfirmed);
+    }
+    match record.entry.access_class {
+        CacheAccessClass::AccountEntitled { .. } => Err(CacheGateDenial::EntitlementNotConfirmed),
+        CacheAccessClass::Public => {
+            if record.integrity_verified_unix_ms.is_none() {
+                return Err(CacheGateDenial::CacheUnavailable);
+            }
+            if online_authority == OnlineAuthority::Confirmed {
+                return Ok(());
+            }
+            let proof = record
+                .public_offline_proof
+                .as_ref()
+                .filter(|proof| !proof.server_revision.trim().is_empty())
+                .ok_or(CacheGateDenial::ValidationMissing)?;
+            let now_unix_ms = system_time_unix_ms(now).ok_or(CacheGateDenial::ValidationMissing)?;
+            let max_age_ms =
+                u64::try_from(PUBLIC_OFFLINE_PROOF_MAX_AGE.as_millis()).unwrap_or(u64::MAX);
+            if proof.confirmed_unix_ms > now_unix_ms
+                || now_unix_ms.saturating_sub(proof.confirmed_unix_ms) > max_age_ms
+            {
+                return Err(CacheGateDenial::ValidationMissing);
+            }
+            Ok(())
+        }
+    }
+}
+
 fn system_time_unix_ms(value: SystemTime) -> Option<u64> {
     value
         .duration_since(UNIX_EPOCH)
@@ -153,6 +225,8 @@ fn system_time_unix_ms(value: SystemTime) -> Option<u64> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CacheLease {
+    ActivePlayback,
+    CurrentTrack,
     NextTrackPrefetch,
     AlbumPrefetch { album_id: String },
     RecentHistory,
@@ -161,6 +235,8 @@ pub enum CacheLease {
 impl CacheLease {
     pub fn stable_key(&self) -> String {
         match self {
+            Self::ActivePlayback => "active_playback".into(),
+            Self::CurrentTrack => "current_track".into(),
             Self::NextTrackPrefetch => "next_track_prefetch".into(),
             Self::AlbumPrefetch { album_id } => format!("album_prefetch:{album_id}"),
             Self::RecentHistory => "recent_history".into(),
@@ -230,6 +306,13 @@ impl PartialCacheObject {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CacheStorageSnapshot {
+    pub object_paths: Vec<PathBuf>,
+    pub partials: Vec<crate::cache_policy::StoredPartial>,
+    pub physical_size_bytes: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct ContentAddressedCache {
     root: PathBuf,
@@ -270,6 +353,92 @@ impl ContentAddressedCache {
     pub fn open(&self, content_hash: &str) -> Result<File> {
         Ok(File::open(self.object_path(content_hash)?)?)
     }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn scan(&self) -> Result<CacheStorageSnapshot> {
+        let mut object_paths = Vec::new();
+        let mut partials = Vec::new();
+        let mut physical_size_bytes = 0_u64;
+        for entry in fs::read_dir(self.root.join("objects"))? {
+            let entry = entry?;
+            let metadata = fs::symlink_metadata(entry.path())?;
+            if !metadata.file_type().is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if validate_content_hash(name).is_err() {
+                continue;
+            }
+            object_paths.push(PathBuf::from("objects").join(name));
+            physical_size_bytes = physical_size_bytes.saturating_add(metadata.len());
+        }
+        for entry in fs::read_dir(self.root.join("partial"))? {
+            let entry = entry?;
+            let metadata = fs::symlink_metadata(entry.path())?;
+            if !metadata.file_type().is_file() {
+                continue;
+            }
+            let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
+            let created_unix_ms = system_time_unix_ms(modified).unwrap_or(0);
+            partials.push(crate::cache_policy::StoredPartial {
+                relative_path: PathBuf::from("partial").join(entry.file_name()),
+                created_unix_ms,
+            });
+            physical_size_bytes = physical_size_bytes.saturating_add(metadata.len());
+        }
+        object_paths.sort();
+        partials.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        Ok(CacheStorageSnapshot {
+            object_paths,
+            partials,
+            physical_size_bytes,
+        })
+    }
+
+    pub fn remove_relative_file(&self, relative_path: &Path) -> Result<bool> {
+        validate_storage_relative_path(relative_path)?;
+        let path = self.root.join(relative_path);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        if !metadata.file_type().is_file() {
+            return Err(EngineError::InvalidInput(
+                "cache deletion target must be a regular file".into(),
+            ));
+        }
+        fs::remove_file(path)?;
+        Ok(true)
+    }
+}
+
+fn validate_storage_relative_path(path: &Path) -> Result<()> {
+    if path.is_absolute()
+        || path.components().count() != 2
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(EngineError::InvalidInput(
+            "cache path must be a normalized root-relative file".into(),
+        ));
+    }
+    let mut components = path.components();
+    let directory = components.next().and_then(|value| match value {
+        Component::Normal(value) => value.to_str(),
+        _ => None,
+    });
+    if !matches!(directory, Some("objects" | "partial")) {
+        return Err(EngineError::InvalidInput(
+            "cache path is outside managed storage".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_content_hash(content_hash: &str) -> Result<()> {
@@ -415,6 +584,122 @@ mod tests {
         let mut bytes = Vec::new();
         cache.open(&hash).unwrap().read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"payload");
+    }
+
+    #[test]
+    fn public_offline_requires_integrity_and_fresh_revisioned_proof() {
+        let now_ms = 8 * 24 * 60 * 60 * 1_000;
+        let now = UNIX_EPOCH + Duration::from_millis(now_ms);
+        let mut record = CacheRecord {
+            entry: CacheEntry {
+                content_id: MediaId::new("public"),
+                quality: "standard".into(),
+                content_hash: "b".repeat(64),
+                access_class: CacheAccessClass::Public,
+                entitlement_snapshot: None,
+                last_validated_unix_ms: None,
+                official_source: "netease".into(),
+                state: CacheState::Available,
+            },
+            logical_size_bytes: 7,
+            last_accessed_unix_ms: now_ms,
+            acquisition_class: CacheAcquisitionClass::Automatic,
+            public_offline_proof: Some(PublicOfflineProof {
+                confirmed_unix_ms: now_ms - 7 * 24 * 60 * 60 * 1_000,
+                server_revision: "rev-public".into(),
+            }),
+            partial_created_unix_ms: None,
+            integrity_verified_unix_ms: Some(now_ms - 1),
+        };
+        assert_eq!(
+            authorize_cache_offline_at(&record, OnlineAuthority::Unavailable, now),
+            Ok(())
+        );
+        assert_eq!(
+            authorize_cache_offline_at(&record, OnlineAuthority::Denied, now),
+            Err(CacheGateDenial::OfficialPlaybackNotConfirmed)
+        );
+        record
+            .public_offline_proof
+            .as_mut()
+            .unwrap()
+            .confirmed_unix_ms -= 1;
+        assert_eq!(
+            authorize_cache_offline_at(&record, OnlineAuthority::Unavailable, now),
+            Err(CacheGateDenial::ValidationMissing)
+        );
+        record
+            .public_offline_proof
+            .as_mut()
+            .unwrap()
+            .confirmed_unix_ms = now_ms;
+        record.integrity_verified_unix_ms = None;
+        assert_eq!(
+            authorize_cache_offline_at(&record, OnlineAuthority::Unavailable, now),
+            Err(CacheGateDenial::CacheUnavailable)
+        );
+    }
+
+    #[test]
+    fn account_entitled_cache_never_uses_offline_fallback() {
+        let now = UNIX_EPOCH + Duration::from_secs(10);
+        let mut entry = vip_entry();
+        entry.state = CacheState::Available;
+        let record = CacheRecord {
+            entry,
+            logical_size_bytes: 1,
+            last_accessed_unix_ms: 1,
+            acquisition_class: CacheAcquisitionClass::UserRequested,
+            public_offline_proof: None,
+            partial_created_unix_ms: None,
+            integrity_verified_unix_ms: Some(1),
+        };
+        assert_eq!(
+            authorize_cache_offline_at(&record, OnlineAuthority::Unavailable, now),
+            Err(CacheGateDenial::EntitlementNotConfirmed)
+        );
+    }
+
+    #[test]
+    fn storage_scan_is_root_relative_and_deletion_rejects_escape() {
+        let root = tempdir().unwrap();
+        let cache = ContentAddressedCache::new(root.path()).unwrap();
+        let hash = format!("{:x}", Sha256::digest(b"payload"));
+        let mut partial = cache.begin_partial(&hash).unwrap();
+        partial.write_all(b"payload").unwrap();
+        partial.complete().unwrap();
+        std::fs::write(root.path().join("partial").join("old.part"), b"part").unwrap();
+
+        let snapshot = cache.scan().unwrap();
+        assert_eq!(
+            snapshot.object_paths,
+            vec![PathBuf::from("objects").join(&hash)]
+        );
+        assert_eq!(snapshot.partials.len(), 1);
+        assert_eq!(snapshot.physical_size_bytes, 11);
+        assert!(cache.remove_relative_file(Path::new("../outside")).is_err());
+        assert!(cache.remove_relative_file(Path::new("objects")).is_err());
+        assert!(cache
+            .remove_relative_file(&PathBuf::from("objects").join(&hash))
+            .unwrap());
+        assert!(!cache.object_path(&hash).unwrap().exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn storage_deletion_rejects_file_symlinks() {
+        use std::os::windows::fs::symlink_file;
+
+        let root = tempdir().unwrap();
+        let cache = ContentAddressedCache::new(root.path()).unwrap();
+        let outside = root.path().join("outside");
+        std::fs::write(&outside, b"keep").unwrap();
+        let link = PathBuf::from("objects").join("a".repeat(64));
+        if symlink_file(&outside, root.path().join(&link)).is_err() {
+            return;
+        }
+        assert!(cache.remove_relative_file(&link).is_err());
+        assert!(outside.exists());
     }
 
     #[test]

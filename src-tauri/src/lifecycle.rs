@@ -84,8 +84,15 @@ fn install_progress_forwarder<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::R
                         }
                         next_emit = Instant::now() + PROGRESS_INTERVAL;
                     }
-                    hyperplayer_engine::EngineEventKind::StateChanged
-                    | hyperplayer_engine::EngineEventKind::DspExecutionChanged => {
+                    hyperplayer_engine::EngineEventKind::StateChanged => {
+                        if emit_engine_snapshot(&app, &snapshot).is_err() {
+                            break;
+                        }
+                    }
+                    hyperplayer_engine::EngineEventKind::DspExecutionChanged => {
+                        if let Ok(mut dsp) = state.dsp.lock() {
+                            dsp.promote(snapshot.dsp_execution.revision);
+                        }
                         if emit_engine_snapshot(&app, &snapshot).is_err() {
                             break;
                         }
@@ -93,11 +100,29 @@ fn install_progress_forwarder<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::R
                     hyperplayer_engine::EngineEventKind::AutomaticTransitionRequested => {
                         unreachable!("automatic transitions are handled before event conversion")
                     }
-                    hyperplayer_engine::EngineEventKind::DspConfigurationRejected { revision } => {
+                    hyperplayer_engine::EngineEventKind::DspConfigurationRejected {
+                        revision,
+                        code,
+                        reason,
+                        stage,
+                    } => {
+                        if let Ok(mut dsp) = state.dsp.lock() {
+                            dsp.reject(revision);
+                        }
                         if app
                             .emit(
                                 events::DSP_CONFIGURATION_REJECTED,
-                                crate::dto::DspConfigurationRejectedDto { revision },
+                                crate::dto::DspConfigurationRejectedDto {
+                                    revision,
+                                    code: match code {
+                                        hyperplayer_engine::actor::DspConfigurationRejectionCode::ValidationFailed => "validationFailed",
+                                        hyperplayer_engine::actor::DspConfigurationRejectionCode::CompilationFailed => "compilationFailed",
+                                        hyperplayer_engine::actor::DspConfigurationRejectionCode::ApplyFailed => "applyFailed",
+                                    }
+                                    .into(),
+                                    reason: reason.into(),
+                                    stage: stage.map(str::to_owned),
+                                },
                             )
                             .is_err()
                         {

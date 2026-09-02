@@ -240,6 +240,10 @@ impl EngineAdapter {
                 resume: false,
             })?;
         }
+        handle.request(EngineCommand::ConfigureDsp {
+            revision: 1,
+            config: hyperplayer_engine::dsp_algorithms::DspConfig::default(),
+        })?;
         Ok(Self {
             handle,
             repository,
@@ -773,6 +777,14 @@ impl PlaybackPort for EngineAdapter {
         let snapshot = self.command(EngineCommand::SetVolume(volume))?;
         self.view.app_lock()?.volume = volume;
         self.engine_dto(snapshot)
+    }
+
+    fn configure_dsp(
+        &self,
+        revision: u64,
+        config: hyperplayer_engine::dsp_algorithms::DspConfig,
+    ) -> AppResult<EngineSnapshotDto> {
+        self.execute(EngineCommand::ConfigureDsp { revision, config })
     }
 
     fn set_repeat_mode(&self, mode: RepeatModeDto) -> AppResult<EngineSnapshotDto> {
@@ -4863,7 +4875,7 @@ mod tests {
             Box::new(WavDecoderFactory),
             Box::new(TestOutput(PcmFormat {
                 sample_rate: 8_000,
-                channels: 1,
+                channels: 2,
                 sample_format: PcmSampleFormat::F32,
             })),
         )

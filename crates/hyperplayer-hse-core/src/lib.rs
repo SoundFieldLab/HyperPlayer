@@ -56,14 +56,17 @@ pub mod fft;
 pub mod hse_stretch;
 pub mod limiter;
 pub mod loudness_comp;
+pub mod loudness_normalization;
 pub mod lufs_meter;
 pub mod mid_side;
 pub mod mod_effects;
 pub mod modulation_matrix;
+pub mod night_mode;
 pub mod params;
 pub mod reverb_simple;
 pub mod scenes;
 pub mod share_codec;
+pub mod surround3d;
 pub mod wav;
 
 /// 处理链中的单个阶段：立体声、就地、按块处理。

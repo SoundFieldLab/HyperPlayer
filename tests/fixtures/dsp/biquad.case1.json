@@ -17,5 +17,10 @@
     "value": 0.000001,
     "floor": 1e-9
   },
-  "notes": "典型参数：peaking +4dB@1kHz Q1.2；左=三频正弦叠加(100/1000/7500Hz)，右=固定种子LCG噪声。单声道模块：左右各一个独立 TDF2 实例，系数相同、状态独立跨块保持。"
+  "notes": "典型参数：peaking +4dB@1kHz Q1.2；左=三频正弦叠加(100/1000/7500Hz)，右=固定种子LCG噪声。单声道模块：左右各一个独立 TDF2 实例，系数相同、状态独立跨块保持。",
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  }
 }

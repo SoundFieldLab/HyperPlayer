@@ -7,6 +7,8 @@ import type {
   BackendBootstrapDto,
   BackendCacheStatusDto,
   BackendCloseRequestedDto,
+  BackendDspConfigurationRejectedDto,
+  BackendDspProcessingFaultDto,
   BackendEngineSnapshotDto,
   BackendNeteaseStatusDto,
   BackendPlaybackProgressDto,
@@ -22,7 +24,10 @@ import type {
   CacheStatsDto,
   CloseDecision,
   DspConfigurationRejectedDto,
-  DspProcessingFaultDto,
+  DspConfigurationDto,
+  DspApplyResultDto,
+  DspHse2ExportDto,
+  DspPresetDto,
   LibraryAlbumDto,
   LibraryArtistDto,
   LibraryArtworkDto,
@@ -92,6 +97,12 @@ export const TAURI_COMMANDS = {
   queueClearAll: "queue_clear_all",
   settingsGet: "settings_get",
   settingsUpdate: "settings_update",
+  dspGetConfiguration: "dsp_get_configuration",
+  dspConfigure: "dsp_configure",
+  dspListPresets: "dsp_list_presets",
+  dspApplyPreset: "dsp_apply_preset",
+  dspImportHse2: "dsp_import_hse2",
+  dspExportHse2: "dsp_export_hse2",
   libraryOverview: "library_overview",
   libraryQueryTracks: "library_query_tracks",
   libraryQueryAlbums: "library_query_albums",
@@ -230,6 +241,12 @@ function settingsRequest(patch: Partial<AppSettingsDto>): Partial<BackendSetting
   return request;
 }
 
+export function adaptDspConfigurationRejected(
+  payload: BackendDspConfigurationRejectedDto,
+): DspConfigurationRejectedDto {
+  return { ...payload, revision: BigInt(payload.revision) };
+}
+
 export function adaptPlayback(snapshot: BackendEngineSnapshotDto): PlaybackSnapshotDto {
   const { playback: state, queue } = snapshot;
   return {
@@ -242,11 +259,21 @@ export function adaptPlayback(snapshot: BackendEngineSnapshotDto): PlaybackSnaps
     queue: queue.context.map(adaptQueueItem),
     nextUp: queue.playNext.map(adaptQueueItem),
     repeat: { sequential: "sequence", repeatAll: "all", repeatOne: "one", shuffle: "shuffle" }[state.repeatMode] as PlaybackSnapshotDto["repeat"],
-    dsp: { available: false, bypassed: true, label: "规格待接入" },
+    dsp: {
+      available: true,
+      bypassed: BigInt(snapshot.dspExecution.revision) === 0n || snapshot.dspExecution.safeBypassActive,
+      label: "Rust DSP runtime 与参数桥已接通；当前支持 14 阶段实时处理",
+    },
     dspExecution: {
-      revision: snapshot.dspExecution.revision,
+      revision: BigInt(snapshot.dspExecution.revision),
       safeBypassActive: snapshot.dspExecution.safeBypassActive,
-      fault: snapshot.dspExecution.fault,
+      fault: snapshot.dspExecution.fault
+        ? {
+            ...snapshot.dspExecution.fault,
+            revision: BigInt(snapshot.dspExecution.fault.revision),
+            streamFrame: BigInt(snapshot.dspExecution.fault.streamFrame),
+          }
+        : null,
     },
   };
 }
@@ -277,8 +304,8 @@ export function createEngineSnapshotGate() {
     current: BackendEngineSnapshotDto["dspExecution"],
     candidate: BackendEngineSnapshotDto["dspExecution"],
   ) => {
-    if (candidate.revision > current.revision) return candidate;
-    if (candidate.revision < current.revision) return current;
+    if (BigInt(candidate.revision) > BigInt(current.revision)) return candidate;
+    if (BigInt(candidate.revision) < BigInt(current.revision)) return current;
     return dspSeverity(candidate) > dspSeverity(current) ? candidate : current;
   };
 
@@ -347,6 +374,12 @@ function tauriBridge(): TauriBridgeContract {
     async seek(positionMs) { return invokeEngine(TAURI_COMMANDS.playbackSeek, { request: { positionMs } }); },
     async setVolume(volume) { return invokeEngine(TAURI_COMMANDS.playbackSetVolume, { request: { volume } }); },
     async getSettings() { return adaptSettings(await invoke<BackendSettingsDto>(TAURI_COMMANDS.settingsGet)); },
+    async dspGetConfiguration() { return invoke<DspConfigurationDto>(TAURI_COMMANDS.dspGetConfiguration); },
+    async dspConfigure(configuration) { return invoke<DspApplyResultDto>(TAURI_COMMANDS.dspConfigure, { request: { configuration } }); },
+    async dspListPresets() { return invoke<DspPresetDto[]>(TAURI_COMMANDS.dspListPresets); },
+    async dspApplyPreset(presetId, revision) { return invoke<DspApplyResultDto>(TAURI_COMMANDS.dspApplyPreset, { request: { presetId, revision } }); },
+    async dspImportHse2(code, revision) { return invoke<DspApplyResultDto>(TAURI_COMMANDS.dspImportHse2, { request: { code, revision } }); },
+    async dspExportHse2() { return invoke<DspHse2ExportDto>(TAURI_COMMANDS.dspExportHse2); },
     async updateSettings(patch) {
       if (patch.material !== undefined) localStorage.setItem(materialKey, patch.material);
       const request = settingsRequest(patch);
@@ -454,8 +487,12 @@ function tauriBridge(): TauriBridgeContract {
         await add<BackendSettingsDto>(TAURI_EVENTS.settingsChanged, ({ payload }) => handlers.settingsChanged?.(adaptSettings(payload)));
         await add<BackendCacheStatusDto>(TAURI_EVENTS.cacheStatusChanged, ({ payload }) => handlers.cacheStatusChanged?.(payload));
         await add<BackendNeteaseStatusDto>(TAURI_EVENTS.neteaseStatusChanged, ({ payload }) => handlers.neteaseStatusChanged?.(payload));
-        await add<DspConfigurationRejectedDto>(TAURI_EVENTS.dspConfigurationRejected, ({ payload }) => handlers.dspConfigurationRejected?.(payload));
-        await add<DspProcessingFaultDto>(TAURI_EVENTS.dspProcessingFault, ({ payload }) => handlers.dspProcessingFault?.(payload));
+        await add<BackendDspConfigurationRejectedDto>(TAURI_EVENTS.dspConfigurationRejected, ({ payload }) => handlers.dspConfigurationRejected?.(adaptDspConfigurationRejected(payload)));
+        await add<BackendDspProcessingFaultDto>(TAURI_EVENTS.dspProcessingFault, ({ payload }) => handlers.dspProcessingFault?.({
+          ...payload,
+          revision: BigInt(payload.revision),
+          streamFrame: BigInt(payload.streamFrame),
+        }));
         await add<BackendCloseRequestedDto>(TAURI_EVENTS.closeRequested, ({ payload }) => handlers.closeRequested?.(payload));
       } catch (error) {
         listeners.forEach((unlisten) => unlisten());

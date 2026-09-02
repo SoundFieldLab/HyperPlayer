@@ -10,8 +10,6 @@ use hse_core::mod_effects::{
     PhaserSettings as CorePhaserSettings,
 };
 
-const MAX_TAIL_SECONDS: f64 = 12.0;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PhaserSettings {
     pub enabled: bool,
@@ -84,26 +82,22 @@ impl PhaserProcessor {
     }
 
     fn apply_params(&mut self, settings: PhaserSettings) {
-        self.settings = PhaserSettings {
+        let applied = self.effect.set_params(CorePhaserSettings {
             enabled: settings.enabled,
-            rate_hz: settings.rate_hz.clamp(0.01, 20.0),
-            depth: settings.depth.clamp(0.0, 1.0),
-            feedback: settings.feedback.clamp(0.0, 0.98),
-            mix: settings.mix.clamp(0.0, 1.0),
-            stages: (settings.stages + 0.5).floor().clamp(2.0, 8.0),
-        };
-        self.sync_core_params();
-    }
-
-    fn sync_core_params(&mut self) {
-        self.effect.set_params(CorePhaserSettings {
-            enabled: self.settings.enabled,
-            rate_hz: self.settings.rate_hz,
-            depth: self.settings.depth,
-            feedback: self.settings.feedback,
-            mix: self.settings.mix,
-            stages: self.settings.stages,
+            rate_hz: settings.rate_hz,
+            depth: settings.depth,
+            feedback: settings.feedback,
+            mix: settings.mix,
+            stages: settings.stages,
         });
+        self.settings = PhaserSettings {
+            enabled: applied.enabled,
+            rate_hz: applied.rate_hz,
+            depth: applied.depth,
+            feedback: applied.feedback,
+            mix: applied.mix,
+            stages: applied.stages,
+        };
     }
 
     fn reset_runtime_state(&mut self) {
@@ -211,13 +205,11 @@ impl PcmProcessor for PhaserProcessor {
     }
 
     fn tail_frames(&self) -> u32 {
-        if !self.is_active() || self.settings.mix == 0.0 {
+        let basis = self.effect.tail_basis();
+        if !self.is_active() || basis.wet_mix == 0.0 {
             return 0;
         }
-        (self.sample_rate * MAX_TAIL_SECONDS)
-            .ceil()
-            .min(f64::from(u32::MAX - 1)) as u32
-            + 1
+        basis.max_delay_samples.min(f64::from(u32::MAX)) as u32
     }
 }
 

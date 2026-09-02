@@ -1,10 +1,13 @@
 use crate::album::{
-    AlbumFillTask, AlbumPromotion, AlbumSession, AlbumTaskState, PrefetchPriority,
+    AlbumFillItem, AlbumFillItemPriority, AlbumFillItemState, AlbumFillTask,
+    AlbumFillWorkAvailability, AlbumPromotion, AlbumSession, AlbumTaskState, PrefetchPriority,
     FREQUENT_ALBUM_THRESHOLD,
 };
 use crate::cache::{
-    CacheAccessClass, CacheEntry, CacheLease, CacheObject, CacheState, EntitlementSnapshot,
+    CacheAccessClass, CacheAcquisitionClass, CacheEntry, CacheLease, CacheObject, CacheRecord,
+    CacheState, EntitlementSnapshot, PublicOfflineProof,
 };
+use crate::cache_policy::{DbCacheObject, EvictionRecord};
 use crate::error::{EngineError, Result};
 use crate::model::{
     AlbumSummary, ArtistSummary, FolderSummary, MediaId, MediaSource, PlaylistSummary, Track,
@@ -12,6 +15,7 @@ use crate::model::{
 use crate::queue::{PlaybackQueue, QueueContextSnapshot};
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 const MIGRATIONS: &[(i64, &str)] = &[
@@ -150,9 +154,44 @@ const MIGRATIONS: &[(i64, &str)] = &[
          CREATE INDEX IF NOT EXISTS idx_track_artists_artist ON track_artists(artist_id, media_id);
          CREATE INDEX IF NOT EXISTS idx_playlist_tracks_order ON playlist_tracks(playlist_id, position);",
     ),
+    (
+        7,
+        "ALTER TABLE cache_entries ADD COLUMN logical_size_bytes INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE cache_entries ADD COLUMN last_accessed_unix_ms INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE cache_entries ADD COLUMN acquisition_class TEXT NOT NULL DEFAULT 'automatic'
+             CHECK(acquisition_class IN ('frequent_album_remainder', 'automatic', 'user_requested', 'recent_playback'));
+         ALTER TABLE cache_entries ADD COLUMN public_proof_unix_ms INTEGER;
+         ALTER TABLE cache_entries ADD COLUMN public_proof_revision TEXT;
+         ALTER TABLE cache_entries ADD COLUMN partial_created_unix_ms INTEGER;
+         ALTER TABLE cache_entries ADD COLUMN integrity_verified_unix_ms INTEGER;
+         UPDATE cache_entries
+            SET logical_size_bytes = COALESCE(
+                (SELECT size_bytes FROM cache_objects
+                 WHERE cache_objects.content_hash = cache_entries.content_hash),
+                0
+            );
+         CREATE INDEX IF NOT EXISTS idx_cache_entries_eviction
+             ON cache_entries(state, acquisition_class, last_accessed_unix_ms, content_hash);
+         CREATE TABLE album_fill_items (
+             item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+             album_id TEXT NOT NULL,
+             content_id TEXT NOT NULL,
+             quality TEXT NOT NULL,
+             state TEXT NOT NULL CHECK(state IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+             attempt_count INTEGER NOT NULL DEFAULT 0,
+             priority TEXT NOT NULL CHECK(priority IN ('deferred', 'standard')),
+             created_unix_ms INTEGER NOT NULL,
+             updated_unix_ms INTEGER NOT NULL,
+             failure TEXT,
+             UNIQUE(album_id, content_id, quality)
+         );
+         CREATE INDEX idx_album_fill_items_claim
+             ON album_fill_items(state, priority DESC, created_unix_ms, item_id);",
+    ),
 ];
 
-const LATEST_SCHEMA_VERSION: i64 = 6;
+pub const LATEST_SCHEMA_VERSION: i64 = 7;
+const V6_SCHEMA_VERSION: i64 = 6;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LibraryTrack {
@@ -224,9 +263,29 @@ pub struct RemovedCacheObject {
     pub relative_path: PathBuf,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CacheEvictionSnapshot {
+    pub records: Vec<EvictionRecord>,
+    pub protected_hashes: std::collections::HashSet<String>,
+    pub current_physical_size_bytes: u64,
+    pub recent_remote_ids: Vec<String>,
+}
+
 pub trait ScanRepository {
     fn upsert_scanned_track(&self, track: &LibraryTrack) -> Result<()>;
     fn finish_scan(&mut self, root: &Path, found: &[PathBuf]) -> Result<usize>;
+}
+
+pub fn cache_v6_backup_path(path: &Path) -> PathBuf {
+    let mut backup = path.as_os_str().to_os_string();
+    backup.push(".v6.backup");
+    PathBuf::from(backup)
+}
+
+fn cache_v6_backup_temp_path(path: &Path) -> PathBuf {
+    let mut backup = cache_v6_backup_path(path).into_os_string();
+    backup.push(".tmp");
+    PathBuf::from(backup)
 }
 
 pub struct SqliteRepository {
@@ -235,8 +294,18 @@ pub struct SqliteRepository {
 
 impl SqliteRepository {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
         let connection = Connection::open(path)?;
         connection.pragma_update(None, "foreign_keys", true)?;
+        let current: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if current > LATEST_SCHEMA_VERSION {
+            return Err(EngineError::Unsupported(format!(
+                "database schema version {current} is newer than supported version {LATEST_SCHEMA_VERSION}"
+            )));
+        }
+        if current == V6_SCHEMA_VERSION {
+            create_v6_backup(&connection, path)?;
+        }
         let mut repository = Self { connection };
         repository.migrate()?;
         Ok(repository)
@@ -1096,8 +1165,13 @@ impl SqliteRepository {
             "INSERT INTO cache_entries (
                 content_id, quality, content_hash, access_class, owner_user_id,
                 entitlement_product, entitlement_valid_until_unix_ms,
-                entitlement_server_revision, last_validated_unix_ms, official_source, state
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                entitlement_server_revision, last_validated_unix_ms, official_source, state,
+                logical_size_bytes, last_accessed_unix_ms, acquisition_class,
+                public_proof_unix_ms, public_proof_revision, partial_created_unix_ms,
+                integrity_verified_unix_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                       COALESCE((SELECT size_bytes FROM cache_objects WHERE content_hash = ?3), 0),
+                       0, 'automatic', NULL, NULL, NULL, NULL)
              ON CONFLICT(content_id, quality) DO UPDATE SET
                 content_hash=excluded.content_hash, access_class=excluded.access_class,
                 owner_user_id=excluded.owner_user_id,
@@ -1105,7 +1179,14 @@ impl SqliteRepository {
                 entitlement_valid_until_unix_ms=excluded.entitlement_valid_until_unix_ms,
                 entitlement_server_revision=excluded.entitlement_server_revision,
                 last_validated_unix_ms=excluded.last_validated_unix_ms,
-                official_source=excluded.official_source, state=excluded.state",
+                official_source=excluded.official_source, state=excluded.state,
+                logical_size_bytes=COALESCE(
+                    (SELECT size_bytes FROM cache_objects WHERE content_hash = excluded.content_hash),
+                    0
+                ),
+                last_accessed_unix_ms=0, acquisition_class='automatic',
+                public_proof_unix_ms=NULL, public_proof_revision=NULL,
+                partial_created_unix_ms=NULL, integrity_verified_unix_ms=NULL",
             params![
                 entry.content_id.0,
                 entry.quality,
@@ -1151,6 +1232,75 @@ impl SqliteRepository {
             .map_err(Into::into)
     }
 
+    pub fn upsert_cache_record(&self, record: &CacheRecord) -> Result<()> {
+        self.upsert_cache_entry(&record.entry)?;
+        let proof = record.public_offline_proof.as_ref();
+        self.connection.execute(
+            "UPDATE cache_entries SET logical_size_bytes = ?3, last_accessed_unix_ms = ?4,
+                 acquisition_class = ?5, public_proof_unix_ms = ?6,
+                 public_proof_revision = ?7, partial_created_unix_ms = ?8,
+                 integrity_verified_unix_ms = ?9
+             WHERE content_id = ?1 AND quality = ?2",
+            params![
+                record.entry.content_id.0,
+                record.entry.quality,
+                sqlite_integer(record.logical_size_bytes, "logical_size_bytes")?,
+                sqlite_integer(record.last_accessed_unix_ms, "last_accessed_unix_ms")?,
+                cache_acquisition_class_name(record.acquisition_class),
+                optional_sqlite_integer(
+                    proof.map(|value| value.confirmed_unix_ms),
+                    "public_proof_unix_ms"
+                )?,
+                proof.map(|value| value.server_revision.as_str()),
+                optional_sqlite_integer(record.partial_created_unix_ms, "partial_created_unix_ms")?,
+                optional_sqlite_integer(
+                    record.integrity_verified_unix_ms,
+                    "integrity_verified_unix_ms"
+                )?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn cache_record(&self, content_id: &MediaId, quality: &str) -> Result<Option<CacheRecord>> {
+        self.connection
+            .query_row(
+                "SELECT content_id, quality, content_hash, access_class, owner_user_id,
+                        entitlement_product, entitlement_valid_until_unix_ms,
+                        entitlement_server_revision, last_validated_unix_ms,
+                        official_source, state, logical_size_bytes, last_accessed_unix_ms,
+                        acquisition_class, public_proof_unix_ms, public_proof_revision,
+                        partial_created_unix_ms, integrity_verified_unix_ms
+                 FROM cache_entries WHERE content_id = ?1 AND quality = ?2",
+                params![content_id.0, quality],
+                map_cache_record,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn touch_cache_record(
+        &self,
+        content_id: &MediaId,
+        quality: &str,
+        accessed_unix_ms: u64,
+    ) -> Result<bool> {
+        if content_id.0.trim().is_empty() || quality.trim().is_empty() {
+            return Err(EngineError::InvalidInput(
+                "cache identity and quality are required".into(),
+            ));
+        }
+        Ok(self.connection.execute(
+            "UPDATE cache_entries SET last_accessed_unix_ms = MAX(last_accessed_unix_ms, ?3)
+             WHERE content_id = ?1 AND quality = ?2",
+            params![
+                content_id.0,
+                quality,
+                sqlite_integer(accessed_unix_ms, "accessed_unix_ms")?
+            ],
+        )? == 1)
+    }
+
     pub fn cache_stats(&self) -> Result<CacheRepositoryStats> {
         self.connection
             .query_row(
@@ -1168,6 +1318,132 @@ impl SqliteRepository {
                 },
             )
             .map_err(Into::into)
+    }
+
+    pub fn cache_eviction_snapshot(&self, recent_limit: usize) -> Result<CacheEvictionSnapshot> {
+        let mut statement = self.connection.prepare(
+            "SELECT content_id, content_hash, logical_size_bytes, state, acquisition_class,
+                    last_accessed_unix_ms, partial_created_unix_ms FROM cache_entries",
+        )?;
+        let records = statement
+            .query_map([], |row| {
+                Ok(EvictionRecord {
+                    content_id: row.get(0)?,
+                    content_hash: row.get(1)?,
+                    logical_size_bytes: u64_column(row, 2)?,
+                    state: cache_state_from_name(row.get::<_, String>(3)?.as_str(), 3)?,
+                    acquisition_class: cache_acquisition_class_from_name(
+                        row.get::<_, String>(4)?.as_str(),
+                        4,
+                    )?,
+                    last_accessed_unix_ms: u64_column(row, 5)?,
+                    partial_created_unix_ms: optional_u64_column(row, 6)?,
+                    orphan: false,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let protected_hashes = {
+            let mut statement = self
+                .connection
+                .prepare("SELECT DISTINCT content_hash FROM cache_leases")?;
+            let values = statement
+                .query_map([], |row| row.get(0))?
+                .collect::<std::result::Result<_, _>>()?;
+            values
+        };
+        let current_physical_size_bytes = self.connection.query_row(
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM cache_objects",
+            [],
+            |row| u64_column(row, 0),
+        )?;
+        let recent_remote_ids = {
+            let mut statement = self.connection.prepare(
+                "SELECT h.media_id FROM playback_history h
+                 WHERE EXISTS (SELECT 1 FROM cache_entries e
+                     WHERE e.content_id = h.media_id AND e.official_source = 'netease')
+                 GROUP BY h.media_id ORDER BY MAX(h.played_unix_ms) DESC LIMIT ?1",
+            )?;
+            let values = statement
+                .query_map([i64::try_from(recent_limit).unwrap_or(i64::MAX)], |row| {
+                    row.get(0)
+                })?
+                .collect::<std::result::Result<_, _>>()?;
+            values
+        };
+        Ok(CacheEvictionSnapshot {
+            records,
+            protected_hashes,
+            current_physical_size_bytes,
+            recent_remote_ids,
+        })
+    }
+
+    pub fn cache_object_snapshot(&self) -> Result<Vec<DbCacheObject>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT content_hash, relative_path FROM cache_objects")?;
+        let values = statement
+            .query_map([], |row| {
+                let content_hash: String = row.get(0)?;
+                let stored: String = row.get(1)?;
+                let relative_path = normalize_cache_object_relative_path(&content_hash, &stored)
+                    .map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(1, Type::Text, Box::new(error))
+                    })?;
+                Ok(DbCacheObject {
+                    content_hash,
+                    relative_path,
+                })
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(values)
+    }
+
+    pub fn apply_cache_eviction_hashes(
+        &mut self,
+        hashes: &[String],
+    ) -> Result<Vec<RemovedCacheObject>> {
+        let transaction = self.connection.transaction()?;
+        let mut eligible = Vec::new();
+        for hash in hashes {
+            let leases: u32 = transaction.query_row(
+                "SELECT COUNT(*) FROM cache_leases WHERE content_hash = ?1",
+                [hash],
+                |row| row.get(0),
+            )?;
+            if leases == 0 {
+                transaction.execute("DELETE FROM cache_entries WHERE content_hash = ?1", [hash])?;
+                eligible.push(hash.clone());
+            }
+        }
+        let removed = collect_unreferenced_cache_objects(&transaction, eligible)?;
+        transaction.commit()?;
+        Ok(removed)
+    }
+
+    pub fn apply_missing_cache_objects(&mut self, hashes: &[String]) -> Result<usize> {
+        let transaction = self.connection.transaction()?;
+        let mut invalidated = 0;
+        for hash in hashes {
+            let leases: u32 = transaction.query_row(
+                "SELECT COUNT(*) FROM cache_leases WHERE content_hash = ?1",
+                [hash],
+                |row| row.get(0),
+            )?;
+            if leases == 0 {
+                invalidated += transaction
+                    .execute("DELETE FROM cache_entries WHERE content_hash = ?1", [hash])?;
+                transaction.execute("DELETE FROM cache_objects WHERE content_hash = ?1", [hash])?;
+            } else {
+                invalidated += transaction.execute(
+                    "UPDATE cache_entries SET state = 'partial', integrity_verified_unix_ms = NULL
+                     WHERE content_hash = ?1 AND state <> 'partial'",
+                    [hash],
+                )?;
+            }
+        }
+        transaction.commit()?;
+        Ok(invalidated)
     }
 
     pub fn lock_account_entitled_cache_entries(
@@ -1275,7 +1551,7 @@ impl SqliteRepository {
             params![
                 object.content_hash,
                 sqlite_integer(object.size_bytes, "size_bytes")?,
-                file_name,
+                format!("objects/{file_name}"),
                 sqlite_integer(completed_unix_ms, "completed_unix_ms")?
             ],
         )?;
@@ -1342,6 +1618,60 @@ impl SqliteRepository {
         Ok(())
     }
 
+    pub fn create_album_fill_task(
+        &mut self,
+        task: &AlbumFillTask,
+        items: &[AlbumFillItem],
+    ) -> Result<()> {
+        if task.album_id.trim().is_empty()
+            || task.state != AlbumTaskState::Pending
+            || usize::try_from(task.total_items).ok() != Some(items.len())
+            || items.iter().any(|item| {
+                item.album_id != task.album_id
+                    || item.state != AlbumFillItemState::Pending
+                    || item.content_id.0.trim().is_empty()
+                    || item.quality.trim().is_empty()
+            })
+        {
+            return Err(EngineError::InvalidInput(
+                "invalid album fill aggregate".into(),
+            ));
+        }
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO album_fill_tasks(album_id, state, priority, completed_items,
+                 total_items, updated_unix_ms, failure) VALUES (?1, 'pending', ?2, 0, ?3, ?4, NULL)
+             ON CONFLICT(album_id) DO UPDATE SET state = 'pending', priority = excluded.priority,
+                 completed_items = 0, total_items = excluded.total_items,
+                 updated_unix_ms = excluded.updated_unix_ms, failure = NULL",
+            params![
+                task.album_id,
+                prefetch_priority_name(task.priority),
+                task.total_items,
+                sqlite_integer(task.updated_unix_ms, "updated_unix_ms")?,
+            ],
+        )?;
+        for item in items {
+            transaction.execute(
+                "INSERT INTO album_fill_items(album_id, content_id, quality, state, attempt_count,
+                     priority, created_unix_ms, updated_unix_ms, failure)
+                 VALUES (?1, ?2, ?3, 'pending', 0, ?4, ?5, ?5, NULL)
+                 ON CONFLICT(album_id, content_id, quality) DO UPDATE SET state = 'pending',
+                     priority = excluded.priority, updated_unix_ms = excluded.updated_unix_ms,
+                     failure = NULL WHERE album_fill_items.state <> 'completed'",
+                params![
+                    item.album_id,
+                    item.content_id.0,
+                    item.quality,
+                    album_fill_priority_name(item.priority),
+                    sqlite_integer(item.created_unix_ms, "created_unix_ms")?,
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn album_fill_task(&self, album_id: &str) -> Result<Option<AlbumFillTask>> {
         self.connection
             .query_row(
@@ -1349,6 +1679,198 @@ impl SqliteRepository {
                         updated_unix_ms, failure FROM album_fill_tasks WHERE album_id = ?1",
                 [album_id],
                 map_album_fill_task,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn enqueue_album_fill_item(&self, item: &AlbumFillItem) -> Result<i64> {
+        if item.album_id.trim().is_empty()
+            || item.content_id.0.trim().is_empty()
+            || item.quality.trim().is_empty()
+            || item.state != AlbumFillItemState::Pending
+        {
+            return Err(EngineError::InvalidInput("invalid album fill item".into()));
+        }
+        self.connection.execute(
+            "INSERT INTO album_fill_items(album_id, content_id, quality, state, attempt_count,
+                 priority, created_unix_ms, updated_unix_ms, failure)
+             VALUES (?1, ?2, ?3, 'pending', 0, ?4, ?5, ?5, NULL)
+             ON CONFLICT(album_id, content_id, quality) DO UPDATE SET
+                 priority = CASE
+                     WHEN excluded.priority = 'standard' THEN 'standard'
+                     ELSE album_fill_items.priority
+                 END,
+                 updated_unix_ms = excluded.updated_unix_ms
+             WHERE album_fill_items.state IN ('pending', 'failed')",
+            params![
+                item.album_id,
+                item.content_id.0,
+                item.quality,
+                album_fill_priority_name(item.priority),
+                sqlite_integer(item.created_unix_ms, "created_unix_ms")?,
+            ],
+        )?;
+        self.connection
+            .query_row(
+                "SELECT item_id FROM album_fill_items
+                 WHERE album_id = ?1 AND content_id = ?2 AND quality = ?3",
+                params![item.album_id, item.content_id.0, item.quality],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
+    pub fn claim_album_fill_item(
+        &mut self,
+        updated_unix_ms: u64,
+        availability: AlbumFillWorkAvailability,
+    ) -> Result<Option<AlbumFillItem>> {
+        if availability == AlbumFillWorkAvailability::ForegroundPending {
+            self.yield_album_fill_items(updated_unix_ms)?;
+            return Ok(None);
+        }
+        let transaction = self.connection.transaction()?;
+        let running: u32 = transaction.query_row(
+            "SELECT COUNT(*) FROM album_fill_items WHERE state = 'running'",
+            [],
+            |row| row.get(0),
+        )?;
+        if running != 0 {
+            return Ok(None);
+        }
+        let item_id: Option<i64> = transaction
+            .query_row(
+                "SELECT item_id FROM album_fill_items WHERE state = 'pending'
+                 ORDER BY CASE priority WHEN 'standard' THEN 1 ELSE 0 END DESC,
+                          created_unix_ms, item_id LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(item_id) = item_id else {
+            transaction.commit()?;
+            return Ok(None);
+        };
+        let changed = transaction.execute(
+            "UPDATE album_fill_items SET state = 'running', attempt_count = attempt_count + 1,
+                 updated_unix_ms = ?2, failure = NULL
+             WHERE item_id = ?1 AND state = 'pending'",
+            params![item_id, sqlite_integer(updated_unix_ms, "updated_unix_ms")?],
+        )?;
+        if changed != 1 {
+            transaction.commit()?;
+            return Ok(None);
+        }
+        let item = transaction.query_row(
+            "SELECT item_id, album_id, content_id, quality, state, attempt_count, priority,
+                    created_unix_ms, updated_unix_ms, failure
+             FROM album_fill_items WHERE item_id = ?1",
+            [item_id],
+            map_album_fill_item,
+        )?;
+        transaction.commit()?;
+        Ok(Some(item))
+    }
+
+    pub fn complete_album_fill_item(&mut self, item_id: i64, updated_unix_ms: u64) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        let album_id: String = transaction.query_row(
+            "SELECT album_id FROM album_fill_items WHERE item_id = ?1 AND state = 'running'",
+            [item_id],
+            |row| row.get(0),
+        )?;
+        transition_album_fill_item(
+            &transaction,
+            item_id,
+            "running",
+            "completed",
+            None,
+            updated_unix_ms,
+        )?;
+        transaction.execute(
+            "UPDATE album_fill_tasks SET completed_items = (
+                 SELECT COUNT(*) FROM album_fill_items
+                 WHERE album_id = ?1 AND state = 'completed'
+             ), state = CASE WHEN NOT EXISTS (
+                 SELECT 1 FROM album_fill_items
+                 WHERE album_id = ?1 AND state <> 'completed'
+             ) THEN 'completed' ELSE 'running' END,
+             updated_unix_ms = ?2, failure = NULL WHERE album_id = ?1",
+            params![
+                album_id,
+                sqlite_integer(updated_unix_ms, "updated_unix_ms")?
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn fail_album_fill_item(
+        &mut self,
+        item_id: i64,
+        failure: &str,
+        updated_unix_ms: u64,
+    ) -> Result<()> {
+        if failure.trim().is_empty() {
+            return Err(EngineError::InvalidInput(
+                "album fill failure is required".into(),
+            ));
+        }
+        let transaction = self.connection.transaction()?;
+        let album_id: String = transaction.query_row(
+            "SELECT album_id FROM album_fill_items WHERE item_id = ?1 AND state = 'running'",
+            [item_id],
+            |row| row.get(0),
+        )?;
+        transition_album_fill_item(
+            &transaction,
+            item_id,
+            "running",
+            "failed",
+            Some(failure),
+            updated_unix_ms,
+        )?;
+        transaction.execute(
+            "UPDATE album_fill_tasks SET state = 'failed', updated_unix_ms = ?2,
+                 failure = ?3 WHERE album_id = ?1",
+            params![
+                album_id,
+                sqlite_integer(updated_unix_ms, "updated_unix_ms")?,
+                failure
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn yield_album_fill_items(&mut self, updated_unix_ms: u64) -> Result<usize> {
+        let transaction = self.connection.transaction()?;
+        let changed = transaction.execute(
+            "UPDATE album_fill_items SET state = 'pending', updated_unix_ms = ?1
+             WHERE state = 'running'",
+            [sqlite_integer(updated_unix_ms, "updated_unix_ms")?],
+        )?;
+        transaction.commit()?;
+        Ok(changed)
+    }
+
+    pub fn resume_album_fill_items(&self, updated_unix_ms: u64) -> Result<usize> {
+        Ok(self.connection.execute(
+            "UPDATE album_fill_items SET state = 'pending', updated_unix_ms = ?1
+             WHERE state IN ('running', 'failed')",
+            [sqlite_integer(updated_unix_ms, "updated_unix_ms")?],
+        )?)
+    }
+
+    pub fn album_fill_item(&self, item_id: i64) -> Result<Option<AlbumFillItem>> {
+        self.connection
+            .query_row(
+                "SELECT item_id, album_id, content_id, quality, state, attempt_count, priority,
+                        created_unix_ms, updated_unix_ms, failure
+                 FROM album_fill_items WHERE item_id = ?1",
+                [item_id],
+                map_album_fill_item,
             )
             .optional()
             .map_err(Into::into)
@@ -1406,6 +1928,73 @@ impl SqliteRepository {
     }
 }
 
+fn create_v6_backup(connection: &Connection, path: &Path) -> Result<()> {
+    let backup_path = cache_v6_backup_path(path);
+    let temporary_path = cache_v6_backup_temp_path(path);
+    if temporary_path.exists() {
+        fs::remove_file(&temporary_path)?;
+    }
+    let escaped = temporary_path.to_string_lossy().replace('\'', "''");
+    connection.execute_batch(&format!("VACUUM INTO '{escaped}'"))?;
+    let backup = Connection::open(&temporary_path)?;
+    let version: i64 = backup.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    drop(backup);
+    if version != V6_SCHEMA_VERSION {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(EngineError::InvalidInput(
+            "v6 recovery backup validation failed".into(),
+        ));
+    }
+    replace_backup_atomically(&temporary_path, &backup_path)?;
+    Ok(())
+}
+
+fn replace_backup_atomically(temporary_path: &Path, backup_path: &Path) -> Result<()> {
+    if fs::rename(temporary_path, backup_path).is_ok() {
+        return Ok(());
+    }
+    let mut previous = backup_path.as_os_str().to_os_string();
+    previous.push(".previous");
+    let previous = PathBuf::from(previous);
+    if previous.exists() {
+        fs::remove_file(&previous)?;
+    }
+    fs::rename(backup_path, &previous)?;
+    if let Err(error) = fs::rename(temporary_path, backup_path) {
+        let _ = fs::rename(&previous, backup_path);
+        return Err(error.into());
+    }
+    fs::remove_file(previous)?;
+    Ok(())
+}
+
+fn transition_album_fill_item(
+    connection: &Connection,
+    item_id: i64,
+    expected_state: &str,
+    next_state: &str,
+    failure: Option<&str>,
+    updated_unix_ms: u64,
+) -> Result<()> {
+    let changed = connection.execute(
+        "UPDATE album_fill_items SET state = ?3, updated_unix_ms = ?4, failure = ?5
+         WHERE item_id = ?1 AND state = ?2",
+        params![
+            item_id,
+            expected_state,
+            next_state,
+            sqlite_integer(updated_unix_ms, "updated_unix_ms")?,
+            failure
+        ],
+    )?;
+    if changed != 1 {
+        return Err(EngineError::InvalidInput(
+            "invalid album fill item transition".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl ScanRepository for SqliteRepository {
     fn upsert_scanned_track(&self, track: &LibraryTrack) -> Result<()> {
         self.upsert_track(track)
@@ -1441,11 +2030,12 @@ fn collect_unreferenced_cache_objects(
                 )
                 .optional()?;
             if let Some(path) = path {
+                let relative_path = normalize_cache_object_relative_path(&hash, &path)?;
                 transaction
                     .execute("DELETE FROM cache_objects WHERE content_hash = ?1", [&hash])?;
                 removed.push(RemovedCacheObject {
                     content_hash: hash,
-                    relative_path: PathBuf::from(path),
+                    relative_path,
                 });
             }
         }
@@ -1550,6 +2140,84 @@ fn map_cache_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<CacheEntry> {
     })
 }
 
+fn map_cache_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<CacheRecord> {
+    let entry = map_cache_entry(row)?;
+    let acquisition_class = match row.get::<_, String>(13)?.as_str() {
+        "frequent_album_remainder" => CacheAcquisitionClass::FrequentAlbumRemainder,
+        "automatic" => CacheAcquisitionClass::Automatic,
+        "user_requested" => CacheAcquisitionClass::UserRequested,
+        "recent_playback" => CacheAcquisitionClass::RecentPlayback,
+        _ => return Err(invalid_column(13, "invalid cache acquisition class")),
+    };
+    let proof_confirmed = optional_u64_column(row, 14)?;
+    let proof_revision: Option<String> = row.get(15)?;
+    let public_offline_proof = match (proof_confirmed, proof_revision) {
+        (Some(confirmed_unix_ms), Some(server_revision)) if !server_revision.trim().is_empty() => {
+            Some(PublicOfflineProof {
+                confirmed_unix_ms,
+                server_revision,
+            })
+        }
+        (None, None) => None,
+        _ => return Err(invalid_column(14, "invalid public offline proof")),
+    };
+    Ok(CacheRecord {
+        entry,
+        logical_size_bytes: u64_column(row, 11)?,
+        last_accessed_unix_ms: u64_column(row, 12)?,
+        acquisition_class,
+        public_offline_proof,
+        partial_created_unix_ms: optional_u64_column(row, 16)?,
+        integrity_verified_unix_ms: optional_u64_column(row, 17)?,
+    })
+}
+
+fn cache_acquisition_class_from_name(
+    value: &str,
+    column: usize,
+) -> rusqlite::Result<CacheAcquisitionClass> {
+    match value {
+        "frequent_album_remainder" => Ok(CacheAcquisitionClass::FrequentAlbumRemainder),
+        "automatic" => Ok(CacheAcquisitionClass::Automatic),
+        "user_requested" => Ok(CacheAcquisitionClass::UserRequested),
+        "recent_playback" => Ok(CacheAcquisitionClass::RecentPlayback),
+        _ => Err(invalid_column(column, "invalid cache acquisition class")),
+    }
+}
+
+fn cache_state_from_name(value: &str, column: usize) -> rusqlite::Result<CacheState> {
+    match value {
+        "available" => Ok(CacheState::Available),
+        "locked_entitlement" => Ok(CacheState::LockedEntitlement),
+        "partial" => Ok(CacheState::Partial),
+        _ => Err(invalid_column(column, "invalid cache state")),
+    }
+}
+
+fn normalize_cache_object_relative_path(content_hash: &str, stored: &str) -> Result<PathBuf> {
+    let path = Path::new(stored);
+    let normalized = if path.components().count() == 1 && stored == content_hash {
+        PathBuf::from("objects").join(content_hash)
+    } else {
+        path.to_path_buf()
+    };
+    if normalized != PathBuf::from("objects").join(content_hash) {
+        return Err(EngineError::InvalidInput(
+            "cache object path must be objects/<content hash>".into(),
+        ));
+    }
+    Ok(normalized)
+}
+
+fn cache_acquisition_class_name(value: CacheAcquisitionClass) -> &'static str {
+    match value {
+        CacheAcquisitionClass::FrequentAlbumRemainder => "frequent_album_remainder",
+        CacheAcquisitionClass::Automatic => "automatic",
+        CacheAcquisitionClass::UserRequested => "user_requested",
+        CacheAcquisitionClass::RecentPlayback => "recent_playback",
+    }
+}
+
 fn cache_state_name(state: CacheState) -> &'static str {
     match state {
         CacheState::Available => "available",
@@ -1575,6 +2243,41 @@ fn prefetch_priority_name(priority: PrefetchPriority) -> &'static str {
         PrefetchPriority::NextTrack => "next_track",
         PrefetchPriority::FollowingTrack => "following_track",
         PrefetchPriority::FrequentAlbumRemainder => "frequent_album_remainder",
+    }
+}
+
+fn map_album_fill_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<AlbumFillItem> {
+    let state = match row.get::<_, String>(4)?.as_str() {
+        "pending" => AlbumFillItemState::Pending,
+        "running" => AlbumFillItemState::Running,
+        "completed" => AlbumFillItemState::Completed,
+        "failed" => AlbumFillItemState::Failed,
+        "cancelled" => AlbumFillItemState::Cancelled,
+        _ => return Err(invalid_column(4, "invalid album fill item state")),
+    };
+    let priority = match row.get::<_, String>(6)?.as_str() {
+        "deferred" => AlbumFillItemPriority::Deferred,
+        "standard" => AlbumFillItemPriority::Standard,
+        _ => return Err(invalid_column(6, "invalid album fill item priority")),
+    };
+    Ok(AlbumFillItem {
+        item_id: row.get(0)?,
+        album_id: row.get(1)?,
+        content_id: MediaId(row.get(2)?),
+        quality: row.get(3)?,
+        state,
+        attempt_count: row.get(5)?,
+        priority,
+        created_unix_ms: u64_column(row, 7)?,
+        updated_unix_ms: u64_column(row, 8)?,
+        failure: row.get(9)?,
+    })
+}
+
+fn album_fill_priority_name(priority: AlbumFillItemPriority) -> &'static str {
+    match priority {
+        AlbumFillItemPriority::Deferred => "deferred",
+        AlbumFillItemPriority::Standard => "standard",
     }
 }
 
@@ -1685,6 +2388,30 @@ mod tests {
             sample_rate: Some(48_000),
             channels: Some(2),
             bitrate_kbps: Some(900),
+        }
+    }
+
+    fn public_cache_record(content_id: &str, hash: &str, size: u64) -> CacheRecord {
+        CacheRecord {
+            entry: CacheEntry {
+                content_id: MediaId::new(content_id),
+                quality: "standard".into(),
+                content_hash: hash.into(),
+                access_class: CacheAccessClass::Public,
+                entitlement_snapshot: None,
+                last_validated_unix_ms: None,
+                official_source: "netease".into(),
+                state: CacheState::Available,
+            },
+            logical_size_bytes: size,
+            last_accessed_unix_ms: 10,
+            acquisition_class: CacheAcquisitionClass::Automatic,
+            public_offline_proof: Some(PublicOfflineProof {
+                confirmed_unix_ms: 10,
+                server_revision: "revision".into(),
+            }),
+            partial_created_unix_ms: None,
+            integrity_verified_unix_ms: Some(10),
         }
     }
 
@@ -1998,6 +2725,313 @@ mod tests {
     }
 
     #[test]
+    fn v6_to_v7_preserves_cache_data_and_creates_a_v6_backup_once() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("library.db");
+        {
+            let repository = SqliteRepository::open(&path).unwrap();
+            repository
+                .upsert_cache_entry(&CacheEntry {
+                    content_id: MediaId::new("song"),
+                    quality: "standard".into(),
+                    content_hash: "a".repeat(64),
+                    access_class: CacheAccessClass::Public,
+                    entitlement_snapshot: None,
+                    last_validated_unix_ms: None,
+                    official_source: "netease".into(),
+                    state: CacheState::Available,
+                })
+                .unwrap();
+            repository
+                .connection
+                .execute(
+                    "INSERT INTO cache_objects(content_hash, size_bytes, relative_path, completed_unix_ms)
+                     VALUES (?1, ?2, ?1, 1)",
+                    params!["a".repeat(64), sqlite_integer(12 * 1024 * 1024 * 1024, "size").unwrap()],
+                )
+                .unwrap();
+            repository
+                .connection
+                .pragma_update(None, "user_version", V6_SCHEMA_VERSION)
+                .unwrap();
+            repository
+                .connection
+                .execute_batch(
+                    "DROP TABLE album_fill_items;
+                 DROP INDEX idx_cache_entries_eviction;",
+                )
+                .unwrap();
+        }
+
+        // Rebuild a genuine v6 shape because setting user_version alone is not a migration fixture.
+        let connection = Connection::open(&path).unwrap();
+        for column in [
+            "integrity_verified_unix_ms",
+            "partial_created_unix_ms",
+            "public_proof_revision",
+            "public_proof_unix_ms",
+            "acquisition_class",
+            "last_accessed_unix_ms",
+            "logical_size_bytes",
+        ] {
+            connection
+                .execute(
+                    &format!("ALTER TABLE cache_entries DROP COLUMN {column}"),
+                    [],
+                )
+                .unwrap();
+        }
+        drop(connection);
+
+        let backup_path = cache_v6_backup_path(&path);
+        let unrelated_backup = Connection::open(&backup_path).unwrap();
+        unrelated_backup
+            .execute_batch("CREATE TABLE unrelated(value TEXT); INSERT INTO unrelated VALUES ('old'); PRAGMA user_version = 6;")
+            .unwrap();
+        drop(unrelated_backup);
+
+        let repository = SqliteRepository::open(&path).unwrap();
+        assert_eq!(repository.schema_version().unwrap(), 7);
+        assert_eq!(
+            repository
+                .cache_entry(&MediaId::new("song"), "standard")
+                .unwrap()
+                .unwrap()
+                .content_hash,
+            "a".repeat(64)
+        );
+        assert_eq!(
+            repository
+                .cache_record(&MediaId::new("song"), "standard")
+                .unwrap()
+                .unwrap()
+                .logical_size_bytes,
+            12 * 1024 * 1024 * 1024
+        );
+        assert!(backup_path.is_file());
+        let backup = Connection::open(&backup_path).unwrap();
+        assert_eq!(
+            backup
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            6
+        );
+        assert_eq!(
+            backup
+                .query_row("SELECT content_id FROM cache_entries", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "song"
+        );
+        assert!(backup
+            .query_row("SELECT value FROM unrelated", [], |row| row
+                .get::<_, String>(0))
+            .is_err());
+        drop(backup);
+        let backup_bytes = fs::read(&backup_path).unwrap();
+        drop(repository);
+        assert_eq!(
+            SqliteRepository::open(&path)
+                .unwrap()
+                .schema_version()
+                .unwrap(),
+            7
+        );
+        assert_eq!(fs::read(backup_path).unwrap(), backup_bytes);
+    }
+
+    #[test]
+    fn failed_v7_migration_keeps_original_v6_and_backup_recoverable() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("broken.db");
+        let connection = Connection::open(&path).unwrap();
+        for (version, sql) in MIGRATIONS.iter().filter(|(version, _)| *version <= 6) {
+            connection.execute_batch(sql).unwrap();
+            connection
+                .pragma_update(None, "user_version", version)
+                .unwrap();
+        }
+        connection
+            .execute(
+                "ALTER TABLE cache_entries ADD COLUMN logical_size_bytes INTEGER",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(SqliteRepository::open(&path).is_err());
+        let original = Connection::open(&path).unwrap();
+        assert_eq!(
+            original
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            6
+        );
+        let backup = Connection::open(cache_v6_backup_path(&path)).unwrap();
+        assert_eq!(
+            backup
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            6
+        );
+    }
+
+    #[test]
+    fn v7_cache_record_round_trips_typed_governance_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = SqliteRepository::open(root.path().join("metadata.db")).unwrap();
+        let record = CacheRecord {
+            entry: CacheEntry {
+                content_id: MediaId::new("song"),
+                quality: "standard".into(),
+                content_hash: "c".repeat(64),
+                access_class: CacheAccessClass::Public,
+                entitlement_snapshot: None,
+                last_validated_unix_ms: None,
+                official_source: "netease".into(),
+                state: CacheState::Partial,
+            },
+            logical_size_bytes: 123,
+            last_accessed_unix_ms: 456,
+            acquisition_class: CacheAcquisitionClass::FrequentAlbumRemainder,
+            public_offline_proof: Some(PublicOfflineProof {
+                confirmed_unix_ms: 400,
+                server_revision: "public-rev".into(),
+            }),
+            partial_created_unix_ms: Some(300),
+            integrity_verified_unix_ms: Some(450),
+        };
+        repository.upsert_cache_record(&record).unwrap();
+        assert_eq!(
+            repository
+                .cache_record(&record.entry.content_id, "standard")
+                .unwrap(),
+            Some(record)
+        );
+    }
+
+    #[test]
+    fn legacy_upsert_clears_v7_proof_and_integrity_when_hash_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = SqliteRepository::open(root.path().join("replace.db")).unwrap();
+        let mut record = CacheRecord {
+            entry: CacheEntry {
+                content_id: MediaId::new("song"),
+                quality: "standard".into(),
+                content_hash: "c".repeat(64),
+                access_class: CacheAccessClass::Public,
+                entitlement_snapshot: None,
+                last_validated_unix_ms: None,
+                official_source: "netease".into(),
+                state: CacheState::Available,
+            },
+            logical_size_bytes: 123,
+            last_accessed_unix_ms: 456,
+            acquisition_class: CacheAcquisitionClass::UserRequested,
+            public_offline_proof: Some(PublicOfflineProof {
+                confirmed_unix_ms: 400,
+                server_revision: "proof".into(),
+            }),
+            partial_created_unix_ms: None,
+            integrity_verified_unix_ms: Some(450),
+        };
+        repository.upsert_cache_record(&record).unwrap();
+        record.entry.content_hash = "d".repeat(64);
+        repository.upsert_cache_entry(&record.entry).unwrap();
+        let replaced = repository
+            .cache_record(&record.entry.content_id, "standard")
+            .unwrap()
+            .unwrap();
+        assert_eq!(replaced.entry.content_hash, "d".repeat(64));
+        assert_eq!(replaced.logical_size_bytes, 0);
+        assert_eq!(replaced.acquisition_class, CacheAcquisitionClass::Automatic);
+        assert_eq!(replaced.public_offline_proof, None);
+        assert_eq!(replaced.integrity_verified_unix_ms, None);
+    }
+
+    #[test]
+    fn durable_album_items_claim_once_yield_to_foreground_and_resume() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("album.db");
+        let mut repository = SqliteRepository::open(&path).unwrap();
+        for (id, priority) in [
+            ("low", AlbumFillItemPriority::Deferred),
+            ("standard", AlbumFillItemPriority::Standard),
+        ] {
+            repository
+                .enqueue_album_fill_item(&AlbumFillItem::pending(
+                    "album",
+                    MediaId::new(id),
+                    "standard",
+                    priority,
+                    1,
+                ))
+                .unwrap();
+        }
+        assert!(repository
+            .claim_album_fill_item(2, AlbumFillWorkAvailability::ForegroundPending)
+            .unwrap()
+            .is_none());
+        let first = repository
+            .claim_album_fill_item(3, AlbumFillWorkAvailability::Idle)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.content_id, MediaId::new("standard"));
+        assert_eq!(first.state, AlbumFillItemState::Running);
+        assert_eq!(first.attempt_count, 1);
+        assert!(repository
+            .claim_album_fill_item(4, AlbumFillWorkAvailability::ForegroundPending)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            repository
+                .album_fill_item(first.item_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            AlbumFillItemState::Pending
+        );
+        let first = repository
+            .claim_album_fill_item(5, AlbumFillWorkAvailability::Idle)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.attempt_count, 2);
+        assert!(repository
+            .claim_album_fill_item(6, AlbumFillWorkAvailability::Idle)
+            .unwrap()
+            .is_none());
+        drop(repository);
+
+        let mut repository = SqliteRepository::open(&path).unwrap();
+        assert_eq!(repository.resume_album_fill_items(5).unwrap(), 1);
+        let resumed = repository
+            .claim_album_fill_item(6, AlbumFillWorkAvailability::Idle)
+            .unwrap()
+            .unwrap();
+        assert_eq!(resumed.item_id, first.item_id);
+        assert_eq!(resumed.attempt_count, 3);
+        repository
+            .fail_album_fill_item(resumed.item_id, "network", 7)
+            .unwrap();
+        assert_eq!(repository.resume_album_fill_items(8).unwrap(), 1);
+        let final_claim = repository
+            .claim_album_fill_item(9, AlbumFillWorkAvailability::Idle)
+            .unwrap()
+            .unwrap();
+        repository
+            .complete_album_fill_item(final_claim.item_id, 10)
+            .unwrap();
+        assert_eq!(
+            repository
+                .album_fill_item(final_claim.item_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            AlbumFillItemState::Completed
+        );
+    }
+
+    #[test]
     fn future_schema_is_rejected_without_migration() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("future.db");
@@ -2221,6 +3255,167 @@ mod tests {
             repository.delete_playlist("missing"),
             Err(EngineError::InvalidInput(_))
         ));
+    }
+
+    #[test]
+    fn cache_runtime_snapshot_normalizes_legacy_paths_and_apply_rechecks_leases() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let first_hash = "a".repeat(64);
+        let second_hash = "b".repeat(64);
+        for (content_id, hash, size) in [
+            ("100", first_hash.as_str(), 11_u64),
+            ("200", second_hash.as_str(), 13_u64),
+        ] {
+            repository
+                .record_cache_object(
+                    &CacheObject {
+                        content_hash: hash.into(),
+                        size_bytes: size,
+                        path: PathBuf::from("objects").join(hash),
+                    },
+                    1,
+                )
+                .unwrap();
+            repository
+                .upsert_cache_record(&public_cache_record(content_id, hash, size))
+                .unwrap();
+            repository
+                .append_playback_history(&PlaybackHistoryRecord {
+                    media_id: MediaId::new(content_id),
+                    played_unix_ms: size,
+                    position_ms: 0,
+                })
+                .unwrap();
+        }
+        repository
+            .connection
+            .execute(
+                "UPDATE cache_objects SET relative_path = ?2 WHERE content_hash = ?1",
+                params![first_hash, first_hash],
+            )
+            .unwrap();
+
+        let objects = repository.cache_object_snapshot().unwrap();
+        assert_eq!(
+            objects[0].relative_path,
+            PathBuf::from("objects").join(&first_hash)
+        );
+        let snapshot = repository.cache_eviction_snapshot(100).unwrap();
+        assert_eq!(snapshot.current_physical_size_bytes, 24);
+        assert_eq!(snapshot.recent_remote_ids, vec!["200", "100"]);
+
+        repository
+            .acquire_cache_lease(&first_hash, &CacheLease::NextTrackPrefetch, 20)
+            .unwrap();
+        let removed = repository
+            .apply_cache_eviction_hashes(&[first_hash.clone(), second_hash.clone()])
+            .unwrap();
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].content_hash, second_hash);
+        assert!(repository
+            .cache_record(&MediaId::new("100"), "standard")
+            .unwrap()
+            .is_some());
+        assert!(repository
+            .cache_record(&MediaId::new("200"), "standard")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn missing_objects_delete_unleased_entries_and_invalidate_leased_entries() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let unleased = "c".repeat(64);
+        let leased = "d".repeat(64);
+        for (id, hash) in [("unleased", &unleased), ("leased", &leased)] {
+            repository
+                .record_cache_object(
+                    &CacheObject {
+                        content_hash: hash.clone(),
+                        size_bytes: 1,
+                        path: PathBuf::from("objects").join(hash),
+                    },
+                    1,
+                )
+                .unwrap();
+            repository
+                .upsert_cache_record(&public_cache_record(id, hash, 1))
+                .unwrap();
+        }
+        repository
+            .acquire_cache_lease(&leased, &CacheLease::ActivePlayback, 2)
+            .unwrap();
+
+        assert_eq!(
+            repository
+                .apply_missing_cache_objects(&[unleased.clone(), leased.clone()])
+                .unwrap(),
+            2
+        );
+        assert!(repository
+            .cache_record(&MediaId::new("unleased"), "standard")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            repository
+                .cache_record(&MediaId::new("leased"), "standard")
+                .unwrap()
+                .unwrap()
+                .entry
+                .state,
+            CacheState::Partial
+        );
+    }
+
+    #[test]
+    fn album_fill_aggregate_creation_and_transitions_update_task_atomically() {
+        let mut repository = SqliteRepository::in_memory().unwrap();
+        let task = AlbumFillTask {
+            album_id: "album".into(),
+            state: AlbumTaskState::Pending,
+            priority: PrefetchPriority::FrequentAlbumRemainder,
+            completed_items: 0,
+            total_items: 2,
+            updated_unix_ms: 1,
+            failure: None,
+        };
+        let items = [
+            AlbumFillItem::pending(
+                "album",
+                MediaId::new("one"),
+                "standard",
+                AlbumFillItemPriority::Standard,
+                1,
+            ),
+            AlbumFillItem::pending(
+                "album",
+                MediaId::new("two"),
+                "standard",
+                AlbumFillItemPriority::Standard,
+                1,
+            ),
+        ];
+        repository.create_album_fill_task(&task, &items).unwrap();
+        let first = repository
+            .claim_album_fill_item(2, AlbumFillWorkAvailability::Idle)
+            .unwrap()
+            .unwrap();
+        repository
+            .complete_album_fill_item(first.item_id, 3)
+            .unwrap();
+        let running = repository.album_fill_task("album").unwrap().unwrap();
+        assert_eq!(running.state, AlbumTaskState::Running);
+        assert_eq!(running.completed_items, 1);
+        let second = repository
+            .claim_album_fill_item(4, AlbumFillWorkAvailability::Idle)
+            .unwrap()
+            .unwrap();
+        repository
+            .fail_album_fill_item(second.item_id, "network", 5)
+            .unwrap();
+        let failed = repository.album_fill_task("album").unwrap().unwrap();
+        assert_eq!(failed.state, AlbumTaskState::Failed);
+        assert_eq!(failed.failure.as_deref(), Some("network"));
     }
 
     #[test]

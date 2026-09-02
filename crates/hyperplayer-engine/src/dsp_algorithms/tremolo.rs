@@ -5,7 +5,10 @@
 
 use crate::dsp::{PcmBlock, PcmFormat, PcmProcessor, ResetReason};
 use crate::error::{EngineError, Result};
-use hse_core::mod_effects::{TremoloEffect, TremoloSettings as CoreTremoloSettings};
+use hse_core::mod_effects::{
+    TremoloEffect, TremoloRuntimeState as CoreTremoloRuntimeState,
+    TremoloSettings as CoreTremoloSettings,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TremoloSettings {
@@ -28,7 +31,7 @@ impl Default for TremoloSettings {
 
 #[derive(Clone)]
 struct TremoloRuntimeState {
-    effect: TremoloEffect,
+    core: CoreTremoloRuntimeState,
 }
 
 pub struct TremoloProcessor {
@@ -76,22 +79,18 @@ impl TremoloProcessor {
     }
 
     fn apply_params(&mut self, settings: TremoloSettings) {
-        self.settings = TremoloSettings {
+        let applied = self.effect.set_params(CoreTremoloSettings {
             enabled: settings.enabled,
-            rate_hz: settings.rate_hz.clamp(0.01, 30.0),
-            depth: settings.depth.clamp(0.0, 1.0),
-            mix: settings.mix.clamp(0.0, 1.0),
-        };
-        self.sync_core_params();
-    }
-
-    fn sync_core_params(&mut self) {
-        self.effect.set_params(CoreTremoloSettings {
-            enabled: self.settings.enabled,
-            rate_hz: self.settings.rate_hz,
-            depth: self.settings.depth,
-            mix: self.settings.mix,
+            rate_hz: settings.rate_hz,
+            depth: settings.depth,
+            mix: settings.mix,
         });
+        self.settings = TremoloSettings {
+            enabled: applied.enabled,
+            rate_hz: applied.rate_hz,
+            depth: applied.depth,
+            mix: applied.mix,
+        };
     }
 
     fn reset_runtime_state(&mut self) {
@@ -113,8 +112,10 @@ impl PcmProcessor for TremoloProcessor {
         }
 
         if self.is_active() && previous.is_active() {
-            self.effect = previous.effect.clone();
-            self.sync_core_params();
+            return self
+                .effect
+                .copy_runtime_state_from(&previous.effect)
+                .is_ok();
         } else if self.is_active() {
             self.reset_runtime_state();
         }
@@ -123,7 +124,7 @@ impl PcmProcessor for TremoloProcessor {
 
     fn create_runtime_checkpoint(&self) -> Option<Box<dyn std::any::Any + Send>> {
         Some(Box::new(TremoloRuntimeState {
-            effect: self.effect.clone(),
+            core: self.effect.snapshot_runtime_state(),
         }))
     }
 
@@ -135,17 +136,14 @@ impl PcmProcessor for TremoloProcessor {
         let Some(state) = state.downcast_mut::<TremoloRuntimeState>() else {
             return false;
         };
-        state.effect = self.effect.clone();
-        true
+        self.effect.save_runtime_state(&mut state.core).is_ok()
     }
 
     fn restore_runtime_state(&mut self, state: &(dyn std::any::Any + Send)) -> bool {
         let Some(state) = state.downcast_ref::<TremoloRuntimeState>() else {
             return false;
         };
-        self.effect = state.effect.clone();
-        self.sync_core_params();
-        true
+        self.effect.restore_runtime_state(&state.core).is_ok()
     }
 
     fn prepare(&mut self, format: PcmFormat, max_block_frames: usize) -> Result<()> {

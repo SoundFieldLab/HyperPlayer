@@ -42,15 +42,12 @@ pub struct DelayProcessor {
     effect: DelayEffect,
     left: Vec<f32>,
     right: Vec<f32>,
-    buffer_len: usize,
-    delay_samples: f64,
 }
 
 impl DelayProcessor {
     pub fn new(sample_rate: f64, settings: DelaySettings) -> Result<Self> {
         validate_sample_rate(sample_rate)?;
         validate_settings(settings)?;
-        let buffer_len = delay_buffer_len(sample_rate)?;
         let effect = DelayEffect::new(sample_rate).map_err(EngineError::InvalidInput)?;
         let mut processor = Self {
             sample_rate,
@@ -58,8 +55,6 @@ impl DelayProcessor {
             effect,
             left: Vec::new(),
             right: Vec::new(),
-            buffer_len,
-            delay_samples: 0.0,
         };
         processor.apply_params(settings);
         Ok(processor)
@@ -85,23 +80,18 @@ impl DelayProcessor {
     }
 
     fn apply_params(&mut self, settings: DelaySettings) {
-        self.settings = DelaySettings {
+        let applied = self.effect.set_params(CoreDelaySettings {
             enabled: settings.enabled,
-            delay_ms: settings.delay_ms.clamp(0.0, 2_000.0),
-            feedback: settings.feedback.clamp(0.0, 0.98),
-            mix: settings.mix.clamp(0.0, 1.0),
-        };
-        self.delay_samples = self.settings.delay_ms / 1_000.0 * self.sample_rate;
-        self.sync_core_params();
-    }
-
-    fn sync_core_params(&mut self) {
-        self.effect.set_params(CoreDelaySettings {
-            enabled: self.settings.enabled,
-            delay_ms: self.settings.delay_ms,
-            feedback: self.settings.feedback,
-            mix: self.settings.mix,
+            delay_ms: settings.delay_ms,
+            feedback: settings.feedback,
+            mix: settings.mix,
         });
+        self.settings = DelaySettings {
+            enabled: applied.enabled,
+            delay_ms: applied.delay_ms,
+            feedback: applied.feedback,
+            mix: applied.mix,
+        };
     }
 
     fn reset_runtime_state(&mut self) {
@@ -217,23 +207,19 @@ impl PcmProcessor for DelayProcessor {
     }
 
     fn tail_frames(&self) -> u32 {
-        if !self.is_active() || self.settings.mix == 0.0 {
+        let basis = self.effect.tail_basis();
+        if !self.is_active() || basis.wet_mix == 0.0 {
             return 0;
         }
-        let effective_delay = if self.delay_samples < 1.0 {
-            self.buffer_len as f64
-        } else {
-            self.delay_samples.ceil()
-        };
-        let repeats = if self.settings.feedback == 0.0 {
+        let repeats = if basis.feedback == 0.0 {
             1.0
         } else {
             let floor_linear = 10.0_f64.powf(TAIL_FLOOR_DB / 20.0);
-            (floor_linear.ln() / self.settings.feedback.ln())
-                .ceil()
-                .max(1.0)
+            (floor_linear.ln() / basis.feedback.ln()).ceil().max(1.0)
         };
-        (effective_delay * repeats).ceil().min(f64::from(u32::MAX)) as u32
+        (basis.max_delay_samples * repeats)
+            .ceil()
+            .min(f64::from(u32::MAX)) as u32
     }
 }
 
@@ -244,16 +230,6 @@ fn validate_sample_rate(sample_rate: f64) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-fn delay_buffer_len(sample_rate: f64) -> Result<usize> {
-    let length = (sample_rate * 2.0).ceil();
-    if length >= usize::MAX as f64 {
-        return Err(EngineError::InvalidInput(
-            "delay sample rate is too large for the delay line".into(),
-        ));
-    }
-    Ok(length as usize + 1)
 }
 
 fn validate_settings(settings: DelaySettings) -> Result<()> {
@@ -350,8 +326,7 @@ mod tests {
         let mut processor = DelayProcessor::new(4.0, DelaySettings::default()).unwrap();
         processor.set_params(enabled(5_000.0, 2.0, -1.0)).unwrap();
         assert_eq!(processor.settings(), enabled(2_000.0, 0.98, 0.0));
-        assert_eq!(processor.delay_samples, 8.0);
-        assert_eq!(processor.buffer_len, 9);
+        assert_eq!(processor.effect.tail_basis().max_delay_samples, 8.0);
     }
 
     #[test]

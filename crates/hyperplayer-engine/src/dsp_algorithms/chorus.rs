@@ -10,9 +10,6 @@ use hse_core::mod_effects::{
     ChorusSettings as CoreChorusSettings,
 };
 
-const MAX_DELAY_SECONDS: f64 = 0.1;
-const BASE_DELAY_MS: f64 = 20.0;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChorusSettings {
     pub enabled: bool,
@@ -44,16 +41,12 @@ pub struct ChorusProcessor {
     effect: ChorusEffect,
     left: Vec<f32>,
     right: Vec<f32>,
-    buffer_len: usize,
-    base_delay_samples: f64,
-    depth_samples: f64,
 }
 
 impl ChorusProcessor {
     pub fn new(sample_rate: f64, settings: ChorusSettings) -> Result<Self> {
         validate_sample_rate(sample_rate)?;
         validate_settings(settings)?;
-        let buffer_len = chorus_buffer_len(sample_rate)?;
         let effect = ChorusEffect::new(sample_rate).map_err(EngineError::InvalidInput)?;
         let mut processor = Self {
             sample_rate,
@@ -61,9 +54,6 @@ impl ChorusProcessor {
             effect,
             left: Vec::new(),
             right: Vec::new(),
-            buffer_len,
-            base_delay_samples: BASE_DELAY_MS / 1_000.0 * sample_rate,
-            depth_samples: 0.0,
         };
         processor.apply_params(settings);
         Ok(processor)
@@ -89,23 +79,18 @@ impl ChorusProcessor {
     }
 
     fn apply_params(&mut self, settings: ChorusSettings) {
-        self.settings = ChorusSettings {
+        let applied = self.effect.set_params(CoreChorusSettings {
             enabled: settings.enabled,
-            rate_hz: settings.rate_hz.clamp(0.01, 20.0),
-            depth_ms: settings.depth_ms.clamp(0.0, 50.0),
-            mix: settings.mix.clamp(0.0, 1.0),
-        };
-        self.depth_samples = self.settings.depth_ms / 1_000.0 * self.sample_rate;
-        self.sync_core_params();
-    }
-
-    fn sync_core_params(&mut self) {
-        self.effect.set_params(CoreChorusSettings {
-            enabled: self.settings.enabled,
-            rate_hz: self.settings.rate_hz,
-            depth_ms: self.settings.depth_ms,
-            mix: self.settings.mix,
+            rate_hz: settings.rate_hz,
+            depth_ms: settings.depth_ms,
+            mix: settings.mix,
         });
+        self.settings = ChorusSettings {
+            enabled: applied.enabled,
+            rate_hz: applied.rate_hz,
+            depth_ms: applied.depth_ms,
+            mix: applied.mix,
+        };
     }
 
     fn reset_runtime_state(&mut self) {
@@ -221,15 +206,11 @@ impl PcmProcessor for ChorusProcessor {
     }
 
     fn tail_frames(&self) -> u32 {
-        if !self.is_active() || self.settings.mix == 0.0 {
+        let basis = self.effect.tail_basis();
+        if !self.is_active() || basis.wet_mix == 0.0 {
             return 0;
         }
-        let maximum_delay = if self.base_delay_samples - self.depth_samples < 1.0 {
-            self.buffer_len as f64
-        } else {
-            self.base_delay_samples + self.depth_samples
-        };
-        maximum_delay.ceil().min(f64::from(u32::MAX)) as u32
+        basis.max_delay_samples.ceil().min(f64::from(u32::MAX)) as u32
     }
 }
 
@@ -240,16 +221,6 @@ fn validate_sample_rate(sample_rate: f64) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-fn chorus_buffer_len(sample_rate: f64) -> Result<usize> {
-    let length = (sample_rate * MAX_DELAY_SECONDS).ceil();
-    if length >= (usize::MAX - 2) as f64 {
-        return Err(EngineError::InvalidInput(
-            "chorus sample rate is too large for the delay line".into(),
-        ));
-    }
-    Ok(length as usize + 2)
 }
 
 fn validate_settings(settings: ChorusSettings) -> Result<()> {
@@ -348,9 +319,7 @@ mod tests {
         let mut processor = ChorusProcessor::new(1_000.0, ChorusSettings::default()).unwrap();
         processor.set_params(enabled(-1.0, 80.0, 2.0)).unwrap();
         assert_eq!(processor.settings(), enabled(0.01, 50.0, 1.0));
-        assert_eq!(processor.base_delay_samples, 20.0);
-        assert_eq!(processor.depth_samples, 50.0);
-        assert_eq!(processor.buffer_len, 102);
+        assert_eq!(processor.effect.tail_basis().max_delay_samples, 102.0);
     }
 
     #[test]

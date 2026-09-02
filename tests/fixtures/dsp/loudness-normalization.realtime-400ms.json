@@ -19,5 +19,10 @@
     "value": 0.000001,
     "floor": 1e-9
   },
-  "notes": "HSE v1.5.1 官方 engine-chain.lufs-normalization-400ms 向量原样复用；前 19200 帧无完整读数保持 0 dB，下一块开始按首个读数驱动 3 秒平滑。"
+  "notes": "HSE v1.5.1 官方 engine-chain.lufs-normalization-400ms 向量原样复用；前 19200 帧无完整读数保持 0 dB，下一块开始按首个读数驱动 3 秒平滑。",
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  }
 }

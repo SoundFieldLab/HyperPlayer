@@ -25,14 +25,13 @@ pub fn bootstrap(state: State<'_, AppState>) -> CommandResult<BootstrapDto> {
 
 #[tauri::command]
 pub fn dsp_availability() -> CommandResult<DspAvailabilityDto> {
-    super::command(Err(crate::error::AppError::Unavailable(
-        "DSP specification D16 is pending; the processing path remains bypassed".into(),
-    )))
+    Ok(dsp_availability_value())
 }
 
-fn dsp_availability_value() -> DspAvailabilityDto {
+pub(super) fn dsp_availability_value() -> DspAvailabilityDto {
     DspAvailabilityDto {
-        available: false,
-        reason: "DSP specification D16 is pending; the processing path remains bypassed".into(),
+        available: true,
+        reason: "Rust DSP runtime and six configuration commands are available through DspPort"
+            .into(),
     }
 }

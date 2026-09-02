@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppSettingsDto, BridgeContract, BridgeEventHandlers, PlaybackSnapshotDto, Unlisten } from "./bridge/contracts";
+import type { AppSettingsDto, BridgeContract, BridgeEventHandlers, DspApplyResultDto, DspConfigurationDto, PlaybackSnapshotDto, Unlisten } from "./bridge/contracts";
 import type { TelemetryTransport } from "./visualization/telemetry";
 
 const memoryStorage = (() => {
@@ -36,8 +36,25 @@ const playback: PlaybackSnapshotDto = {
   queue: [],
   nextUp: [],
   repeat: "sequence",
-  dsp: { available: false, bypassed: true, label: "规格待接入" },
-  dspExecution: { revision: 0, safeBypassActive: false, fault: null },
+  dsp: { available: true, bypassed: true, label: "Rust DSP runtime 已内建；完整 22 阶段与 DspPort 尚未接通" },
+  dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
+};
+
+const dspConfiguration: DspConfigurationDto = {
+  revision: "1",
+  loudnessNormalization: { enabled: false, targetLufs: -14, maxGainDb: 9, minGainDb: -9, useRealtimeMeter: true, externalGainDb: 0 },
+  surround3d: { enabled: false, distance: 0.5, speed: 1, angle: 0, direction: 1 },
+  midSide: { enabled: false, stereoWidth: 1, voiceBalance: 0 },
+  preEq: { enabled: true, bandCount: 1, qCompensation: true, stereoMode: "independent", bands: [{ frequency: 1000, gain: 0, q: 1.1 }] },
+  deesser: { enabled: false, centerHz: 6000, q: 0.7, thresholdDb: -30, ratio: 8, attackMs: 1, releaseMs: 80, splitBand: true, mix: 1 },
+  compressor: { enabled: false, thresholdDb: -20, ratio: 4, kneeDb: 6, attackMs: 10, releaseMs: 150, makeupDb: 0, outputGain: 1 },
+  nightMode: { enabled: false, amount: 0 },
+  delay: { enabled: false, delayMs: 250, feedback: 0.3, mix: 0.3 },
+  chorus: { enabled: false, rateHz: 1, depthMs: 3, mix: 0.4 },
+  flanger: { enabled: false, rateHz: 0.5, depthMs: 2, feedback: 0.4, mix: 0.5 },
+  phaser: { enabled: false, rateHz: 0.5, depth: 0.5, feedback: 0.4, mix: 0.5, stages: 4 },
+  tremolo: { enabled: false, rateHz: 5, depth: 0.5, mix: 1 },
+  bassEnhancer: { enabled: false, cutoffHz: 90, q: 0.7, harmonicType: "odd", harmonicGain: 0.6, mix: 0.5, levelDb: 0, lowBoostDb: 0 },
 };
 
 function deferred<T>() {
@@ -59,6 +76,12 @@ function mockBridge(overrides: Partial<BridgeContract> = {}): BridgeContract {
     seek: vi.fn(async () => playback),
     setVolume: vi.fn(async () => playback),
     getSettings: vi.fn(async () => settings),
+    dspGetConfiguration: vi.fn(async () => { throw new Error("not configured"); }),
+    dspConfigure: vi.fn(async () => { throw new Error("not configured"); }),
+    dspListPresets: vi.fn(async () => []),
+    dspApplyPreset: vi.fn(async () => { throw new Error("not configured"); }),
+    dspImportHse2: vi.fn(async () => { throw new Error("not configured"); }),
+    dspExportHse2: vi.fn(async () => ({ code: "", scope: "current14StageProjection" as const, unsupportedStages: [] })),
     updateSettings: vi.fn(async (patch) => ({ ...settings, ...patch })),
     enqueue: vi.fn(async () => playback),
     removeQueueItem: vi.fn(async () => playback),
@@ -236,6 +259,58 @@ describe("app store", () => {
     expect(useAppStore.getState().toasts.at(-1)?.message).toBe("服务离线");
   });
 
+  it.each(["configure", "preset", "import"] as const)(
+    "commits %s when the execution event arrives before the pending response",
+    async (kind) => {
+      const response = deferred<DspApplyResultDto>();
+      const resultConfiguration = { ...dspConfiguration, revision: "2" };
+      const result: DspApplyResultDto = {
+        revision: "2",
+        status: "pending",
+        partial: kind !== "configure",
+        unsupportedStages: kind === "configure" ? [] : ["13:reverb"],
+        engine: {
+          revision: 1,
+          playback: {
+            status: "paused",
+            currentTrack: null,
+            positionMs: 0,
+            durationMs: null,
+            volume: 0.5,
+            muted: false,
+            repeatMode: "sequential",
+          },
+          queue: { currentItemId: null, playNext: [], context: [], revision: 1 },
+          dspExecution: { revision: "0", safeBypassActive: false, fault: null },
+        },
+        configuration: resultConfiguration,
+      };
+      const testBridge = mockBridge({
+        dspConfigure: vi.fn(() => response.promise),
+        dspApplyPreset: vi.fn(() => response.promise),
+        dspImportHse2: vi.fn(() => response.promise),
+      });
+      const { setBridgeForTests, useAppStore } = await import("./store");
+      setBridgeForTests(testBridge);
+      useAppStore.setState({ dspConfiguration, playback });
+
+      const request = kind === "configure"
+        ? useAppStore.getState().configureDsp(dspConfiguration)
+        : kind === "preset"
+          ? useAppStore.getState().applyDspPreset("studio")
+          : useAppStore.getState().importDspHse2("HSE2:test");
+      useAppStore.setState({ playback: { ...playback, dspExecution: { revision: 2n, safeBypassActive: false, fault: null } } });
+      response.resolve(result);
+      await request;
+
+      expect(useAppStore.getState()).toMatchObject({
+        dspConfiguration: resultConfiguration,
+        dspPendingConfiguration: null,
+        dspBusy: false,
+      });
+    },
+  );
+
   it("surfaces asynchronous DSP preparation rejection with its revision", async () => {
     let handlers: BridgeEventHandlers = {};
     const testBridge = mockBridge({
@@ -245,15 +320,24 @@ describe("app store", () => {
     setBridgeForTests(testBridge);
 
     await useAppStore.getState().init();
-    handlers.dspConfigurationRejected?.({ revision: 7 });
-    expect(useAppStore.getState().toasts.at(-1)?.message).toBe("DSP 配置 revision 7 未能准备");
+    const pendingConfiguration = { ...dspConfiguration, revision: "7" };
+    useAppStore.setState({ dspPendingConfiguration: pendingConfiguration });
+    handlers.dspConfigurationRejected?.({
+      revision: 7n,
+      code: "compilationFailed",
+      reason: "DSP configuration could not be compiled for the active audio format",
+      stage: "compile",
+    });
+    expect(useAppStore.getState().toasts.at(-1)?.message).toBe(
+      "DSP 配置 revision 7 被拒绝（compile 阶段）：DSP configuration could not be compiled for the active audio format [compilationFailed]",
+    );
 
     const fault = {
-      revision: 8,
+      revision: 8n,
       processorIndex: 2,
       processorName: "compressor",
       kind: "nonFiniteOutput" as const,
-      streamFrame: 4096,
+      streamFrame: 4096n,
       safeBypassActive: true,
       fallbackStatus: "rustSafeBypass" as const,
     };
@@ -264,14 +348,14 @@ describe("app store", () => {
     handlers.playbackChanged?.({
       ...playback,
       revision: 9,
-      dspExecution: { revision: 8, safeBypassActive: true, fault: { ...fault } },
+      dspExecution: { revision: 8n, safeBypassActive: true, fault: { ...fault } },
     });
     expect(useAppStore.getState().dspDiagnostic).toEqual(fault);
 
     handlers.playbackChanged?.({
       ...playback,
       revision: 9,
-      dspExecution: { revision: 9, safeBypassActive: false, fault: null },
+      dspExecution: { revision: 9n, safeBypassActive: false, fault: null },
     });
     expect(useAppStore.getState().dspDiagnostic).toBeNull();
 
@@ -281,17 +365,17 @@ describe("app store", () => {
 
   it("restores a safe-bypass diagnostic from bootstrap", async () => {
     const fault = {
-      revision: 8,
+      revision: 8n,
       processorIndex: 2,
       processorName: "compressor",
       kind: "nonFiniteOutput" as const,
-      streamFrame: 4096,
+      streamFrame: 4096n,
       safeBypassActive: true,
       fallbackStatus: "rustSafeBypass" as const,
     };
     const bypassed = {
       ...playback,
-      dspExecution: { revision: 8, safeBypassActive: true, fault },
+      dspExecution: { revision: 8n, safeBypassActive: true, fault },
     };
     const testBridge = mockBridge({ bootstrap: vi.fn(async () => ({ playback: bypassed, settings, tasks: [] })) });
     const { setBridgeForTests, useAppStore } = await import("./store");

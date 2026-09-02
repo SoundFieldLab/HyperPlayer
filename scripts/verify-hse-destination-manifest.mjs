@@ -97,19 +97,64 @@ function sourcePathFor(root, relativePath) {
 
 const checkpointApiPaths = new Set([
   'src/bass_enhancer.rs',
+  'src/biquad.rs',
   'src/compressor.rs',
   'src/convolver.rs',
   'src/deesser.rs',
   'src/eq_chain.rs',
   'src/loudness_comp.rs',
   'src/lufs_meter.rs',
+  'src/loudness_normalization.rs',
   'src/mod_effects.rs',
+  'src/night_mode.rs',
+  'src/surround3d.rs',
 ])
+
+const derivationSourcePaths = new Map([
+  [
+    'crates/hyperplayer-hse-core/src/loudness_normalization.rs',
+    [
+      'HyperSoundEngineRust/crates/hse-core/src/engine_chain.rs',
+      'src/engine/HyperSoundEngine.ts',
+    ],
+  ],
+  [
+    'crates/hyperplayer-hse-core/src/night_mode.rs',
+    [
+      'HyperSoundEngineRust/crates/hse-core/src/biquad.rs',
+      'HyperSoundEngineRust/crates/hse-core/src/compressor.rs',
+      'HyperSoundEngineRust/crates/hse-core/src/engine_chain.rs',
+      'src/dsp/biquad.ts',
+      'src/dsp/Compressor.ts',
+      'src/engine/HyperSoundEngine.ts',
+    ],
+  ],
+  [
+    'crates/hyperplayer-hse-core/src/surround3d.rs',
+    [
+      'HyperSoundEngineRust/crates/hse-core/src/engine_chain.rs',
+      'src/engine/HyperSoundEngine.ts',
+    ],
+  ],
+])
+
+function derivedFromFor(destinationPath, sourceHashes) {
+  const sourcePaths = derivationSourcePaths.get(destinationPath)
+  if (!sourcePaths) return undefined
+  return sourcePaths.map((path) => {
+    const sourceSha256 = sourceHashes.get(path)
+    if (!sourceSha256) throw new Error(`derived source is not registered in SOURCE-MANIFEST.json: ${path}`)
+    return { path, sha256: sourceSha256 }
+  })
+}
 
 function adaptationsFor(relativePath, sourceSha256, destinationSha256) {
   if (relativePath === 'README.md') return ['license-notice']
   if (relativePath === 'package.json' || relativePath === 'tsconfig.json') return ['relocation']
   if (relativePath === 'Cargo.toml') return ['relocation']
+  if (relativePath === 'tests/realtime_alloc.rs' && sourceSha256 !== destinationSha256) {
+    return ['runtime-checkpoint-api', 'test-only']
+  }
   if (relativePath.startsWith('tests/fixtures/')) return ['relocation', 'test-only']
   if (relativePath.startsWith('tests/')) return ['test-only']
   if (relativePath === 'src/fft.rs' && sourceSha256 !== destinationSha256) return ['license-notice', 'algorithm-change']
@@ -133,13 +178,16 @@ async function buildManifest() {
       const candidateSourcePath = sourcePathFor(root, relativePath)
       const sourceSha256 = sourceHashes.get(candidateSourcePath) ?? null
       const destinationSha256 = await sha256(resolve(destinationRoot, ...path.split('/')))
-      files.push({
+      const file = {
         path,
         sourcePath: sourceSha256 === null ? null : candidateSourcePath,
         sourceSha256,
         destinationSha256,
         adaptations: adaptationsFor(relativePath, sourceSha256, destinationSha256),
-      })
+      }
+      const derivedFrom = derivedFromFor(path, sourceHashes)
+      if (derivedFrom) file.derivedFrom = derivedFrom
+      files.push(file)
     }
   }
 
@@ -149,7 +197,7 @@ async function buildManifest() {
     .digest('hex')
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     source: sourceManifest.source,
     authorization: 'LICENSE-HSE-AUTHORIZATION.md',
     roots: roots.map(({ destination }) => destination),
@@ -179,7 +227,7 @@ function formatList(paths) {
 async function verify(recorded) {
   const sourceManifest = JSON.parse(await readFile(sourceManifestPath, 'utf8'))
   const sourceHashes = new Map(sourceManifest.files.map((file) => [file.path, file.sha256]))
-  if (recorded.schemaVersion !== 1) throw new Error(`unsupported manifest schemaVersion: ${recorded.schemaVersion}`)
+  if (recorded.schemaVersion !== 2) throw new Error(`unsupported manifest schemaVersion: ${recorded.schemaVersion}`)
   if (JSON.stringify(recorded.source) !== JSON.stringify(sourceManifest.source)) {
     throw new Error('manifest source metadata does not match SOURCE-MANIFEST.json')
   }
@@ -213,6 +261,20 @@ async function verify(recorded) {
       throw new Error(`source mapping does not match SOURCE-MANIFEST.json: ${file.path}`)
     }
     if (!sha256Pattern.test(file.destinationSha256)) throw new Error(`invalid destination SHA-256: ${file.path}`)
+    const expectedDerivedFrom = derivedFromFor(file.path, sourceHashes)
+    if (JSON.stringify(file.derivedFrom) !== JSON.stringify(expectedDerivedFrom)) {
+      throw new Error(`derived source mapping drift: ${file.path}`)
+    }
+    if (file.derivedFrom) {
+      for (const source of file.derivedFrom) {
+        if (source.path.includes('\\') || source.path.startsWith('/') || source.path.split('/').includes('..')) {
+          throw new Error(`derived source path is not normalized: ${file.path}`)
+        }
+        if (!sha256Pattern.test(source.sha256) || sourceHashes.get(source.path) !== source.sha256) {
+          throw new Error(`derived source does not match SOURCE-MANIFEST.json: ${file.path}`)
+        }
+      }
+    }
     const expectedAdaptations = adaptationsFor(relativePath, file.sourceSha256, file.destinationSha256)
     if (JSON.stringify(file.adaptations) !== JSON.stringify(expectedAdaptations)) {
       throw new Error(`adaptation classification drift: ${file.path}`)

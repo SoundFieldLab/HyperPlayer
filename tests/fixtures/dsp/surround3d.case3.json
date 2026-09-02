@@ -18,5 +18,10 @@
     "value": 0.000001,
     "floor": 1e-9
   },
-  "notes": "由固定 HSE v1.5.1 commit f7017621b7d84005fbfed8a3c42a119487a17326 正式 HyperSoundEngine 构建生成；静态 90 度旋转与 distance 电平缩放，包含短尾块。"
+  "notes": "由固定 HSE v1.5.1 commit f7017621b7d84005fbfed8a3c42a119487a17326 正式 HyperSoundEngine 构建生成；静态 90 度旋转与 distance 电平缩放，包含短尾块。",
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  }
 }

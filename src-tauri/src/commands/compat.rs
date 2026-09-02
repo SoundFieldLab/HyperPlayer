@@ -12,6 +12,7 @@ use tauri::{State, WebviewWindow};
 #[tauri::command]
 pub fn get_playback(state: State<'_, AppState>) -> CommandResult<FrontendPlaybackDto> {
     let playback = super::command(state.services.playback.state())?;
+    let engine = super::command(state.services.playback.engine_snapshot())?;
     let queue = super::command(state.services.queue.snapshot())?;
     let current = playback.current_track.as_ref().map(frontend_track);
     let next_up = queue
@@ -45,9 +46,9 @@ pub fn get_playback(state: State<'_, AppState>) -> CommandResult<FrontendPlaybac
         }
         .into(),
         dsp: FrontendDspDto {
-            available: false,
-            bypassed: true,
-            label: "规格待接入".into(),
+            available: true,
+            bypassed: engine.dsp_execution.revision == 0 || engine.dsp_execution.safe_bypass_active,
+            label: "Rust DSP runtime 与参数桥已接通；当前支持 14 阶段实时处理".into(),
         },
     })
 }

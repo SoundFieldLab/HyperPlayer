@@ -23,5 +23,10 @@
     "value": 0.000001,
     "floor": 1e-9
   },
-  "notes": "阈下不衰减 + 钳制极值：低电平输入使包络稳态低于阈值 -20dB → reduction 恒 0、g 恒 1，输出为 LR-4 全通重构（幅度不变、相位旋转——非逐位一致，幅度语义以冻结向量界定）；centerHz=30000 按 fs×0.45=19845 生效（44100 采样率上界）、q=0.05→0.1 下界、attackMs=0→0.05ms、releaseMs=0→1ms（release 下限与 attack 不同）。多采样率 44100 覆盖 attack/release/交叉系数随 fs 变化。帧数非整除（末块 126 帧）。"
+  "notes": "阈下不衰减 + 钳制极值：低电平输入使包络稳态低于阈值 -20dB → reduction 恒 0、g 恒 1，输出为 LR-4 全通重构（幅度不变、相位旋转——非逐位一致，幅度语义以冻结向量界定）；centerHz=30000 按 fs×0.45=19845 生效（44100 采样率上界）、q=0.05→0.1 下界、attackMs=0→0.05ms、releaseMs=0→1ms（release 下限与 attack 不同）。多采样率 44100 覆盖 attack/release/交叉系数随 fs 变化。帧数非整除（末块 126 帧）。",
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  }
 }

@@ -195,10 +195,30 @@ pub fn design_biquad(
     })
 }
 
+/// Biquad 连续处理状态快照，只包含左右声道的 TDF2 s1/s2。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BiquadRuntimeState {
+    state_len: usize,
+    state: [f64; 4],
+}
+
+/// Biquad 运行时状态形状不兼容。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BiquadRuntimeStateMismatch;
+
+impl std::fmt::Display for BiquadRuntimeStateMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("biquad runtime state shape mismatch")
+    }
+}
+
+impl std::error::Error for BiquadRuntimeStateMismatch {}
+
 /// 一个已就绪的双二阶阶段：单组系数 + 左右两份独立 TDF2 状态。
 ///
 /// 参数快照不落地存储——与 TS Biquad 一致，构造（或未来的 setParams）只把参数
 /// 折算进系数；后续若需要运行期参数更新，在此追加快照字段即可。
+#[derive(Clone)]
 pub struct BiquadStage {
     /// 归一化后的五系数（f64，跨左右共用）。
     coeffs: BiquadCoeffs,
@@ -250,6 +270,46 @@ impl BiquadStage {
     /// 当前归一化系数快照（诊断/测试用途）。
     pub fn coeffs(&self) -> BiquadCoeffs {
         self.coeffs
+    }
+
+    /// 获取只包含四个 TDF2 标量的固定大小状态快照。
+    pub fn snapshot_runtime_state(&self) -> BiquadRuntimeState {
+        BiquadRuntimeState {
+            state_len: 4,
+            state: [self.s1_l, self.s2_l, self.s1_r, self.s2_r],
+        }
+    }
+
+    /// 将当前 TDF2 状态写入已有快照；形状不兼容时不修改快照。
+    pub fn save_runtime_state(
+        &self,
+        state: &mut BiquadRuntimeState,
+    ) -> Result<(), BiquadRuntimeStateMismatch> {
+        if state.state_len != 4 {
+            return Err(BiquadRuntimeStateMismatch);
+        }
+        state.state = [self.s1_l, self.s2_l, self.s1_r, self.s2_r];
+        Ok(())
+    }
+
+    /// 恢复 TDF2 状态；保留目标实例的系数。
+    pub fn restore_runtime_state(
+        &mut self,
+        state: &BiquadRuntimeState,
+    ) -> Result<(), BiquadRuntimeStateMismatch> {
+        if state.state_len != 4 {
+            return Err(BiquadRuntimeStateMismatch);
+        }
+        [self.s1_l, self.s2_l, self.s1_r, self.s2_r] = state.state;
+        Ok(())
+    }
+
+    /// 从另一实例复制 TDF2 状态；保留目标实例的系数。
+    pub fn copy_runtime_state_from(
+        &mut self,
+        source: &Self,
+    ) -> Result<(), BiquadRuntimeStateMismatch> {
+        self.restore_runtime_state(&source.snapshot_runtime_state())
     }
 
     /// TDF2 单样本递推（逐行复刻 TS process，L149–L154）。
@@ -750,5 +810,52 @@ mod tests {
         assert_eq!(stage.s2_l, 0.0);
         assert_eq!(stage.s1_r, 0.0);
         assert_eq!(stage.s2_r, 0.0);
+    }
+
+    #[test]
+    fn 运行时状态往返复制保留目标系数且失配原子() {
+        let mut source = BiquadStage::new(48000.0, "peaking", 1000.0, 1.2, 4.0).expect("合法参数");
+        let mut warm_l = [0.5_f32, -0.25, 0.75, 1.0];
+        let mut warm_r = [-0.125_f32, 0.25, -0.5, 0.875];
+        source.process(&mut warm_l, &mut warm_r);
+        let mut checkpoint = source.snapshot_runtime_state();
+
+        let target_coeffs = design_biquad("notch", 60.0, 8.0, 0.0, 48000.0).unwrap();
+        let mut expected = source.clone();
+        expected.coeffs = target_coeffs;
+        let mut restored = BiquadStage::new(48000.0, "notch", 60.0, 8.0, 0.0).unwrap();
+        restored.restore_runtime_state(&checkpoint).unwrap();
+        assert_eq!(restored.coeffs(), target_coeffs);
+
+        let input_l = [0.125_f32, -0.75, 0.375];
+        let input_r = [-0.5_f32, 0.625, -0.25];
+        let mut expected_l = input_l;
+        let mut expected_r = input_r;
+        let mut restored_l = input_l;
+        let mut restored_r = input_r;
+        expected.process(&mut expected_l, &mut expected_r);
+        restored.process(&mut restored_l, &mut restored_r);
+        assert_eq!((restored_l, restored_r), (expected_l, expected_r));
+
+        let mut copied = BiquadStage::new(48000.0, "notch", 60.0, 8.0, 0.0).unwrap();
+        copied.copy_runtime_state_from(&source).unwrap();
+        assert_eq!(copied.coeffs(), target_coeffs);
+
+        let checkpoint_before = checkpoint;
+        checkpoint.state_len = 3;
+        let before = restored.snapshot_runtime_state();
+        assert_eq!(
+            restored.restore_runtime_state(&checkpoint),
+            Err(BiquadRuntimeStateMismatch)
+        );
+        assert_eq!(restored.snapshot_runtime_state(), before);
+        assert_eq!(restored.coeffs(), target_coeffs);
+
+        assert_eq!(
+            source.save_runtime_state(&mut checkpoint),
+            Err(BiquadRuntimeStateMismatch)
+        );
+        assert_eq!(checkpoint.state, checkpoint_before.state);
+        assert_eq!(checkpoint.state_len, 3);
     }
 }

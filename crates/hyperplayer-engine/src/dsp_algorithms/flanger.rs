@@ -10,8 +10,6 @@ use hse_core::mod_effects::{
     FlangerSettings as CoreFlangerSettings,
 };
 
-const MAX_DELAY_SECONDS: f64 = 0.05;
-const BASE_DELAY_MS: f64 = 1.0;
 const TAIL_FLOOR_DB: f64 = -120.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -47,14 +45,12 @@ pub struct FlangerProcessor {
     effect: FlangerEffect,
     left: Vec<f32>,
     right: Vec<f32>,
-    buffer_len: usize,
 }
 
 impl FlangerProcessor {
     pub fn new(sample_rate: f64, settings: FlangerSettings) -> Result<Self> {
         validate_sample_rate(sample_rate)?;
         validate_settings(settings)?;
-        let buffer_len = flanger_buffer_len(sample_rate)?;
         let effect = FlangerEffect::new(sample_rate).map_err(EngineError::InvalidInput)?;
         let mut processor = Self {
             sample_rate,
@@ -62,7 +58,6 @@ impl FlangerProcessor {
             effect,
             left: Vec::new(),
             right: Vec::new(),
-            buffer_len,
         };
         processor.apply_params(settings);
         Ok(processor)
@@ -87,24 +82,20 @@ impl FlangerProcessor {
     }
 
     fn apply_params(&mut self, settings: FlangerSettings) {
-        self.settings = FlangerSettings {
+        let applied = self.effect.set_params(CoreFlangerSettings {
             enabled: settings.enabled,
-            rate_hz: settings.rate_hz.clamp(0.01, 20.0),
-            depth_ms: settings.depth_ms.clamp(0.0, 50.0),
-            feedback: settings.feedback.clamp(0.0, 0.98),
-            mix: settings.mix.clamp(0.0, 1.0),
-        };
-        self.sync_core_params();
-    }
-
-    fn sync_core_params(&mut self) {
-        self.effect.set_params(CoreFlangerSettings {
-            enabled: self.settings.enabled,
-            rate_hz: self.settings.rate_hz,
-            depth_ms: self.settings.depth_ms,
-            feedback: self.settings.feedback,
-            mix: self.settings.mix,
+            rate_hz: settings.rate_hz,
+            depth_ms: settings.depth_ms,
+            feedback: settings.feedback,
+            mix: settings.mix,
         });
+        self.settings = FlangerSettings {
+            enabled: applied.enabled,
+            rate_hz: applied.rate_hz,
+            depth_ms: applied.depth_ms,
+            feedback: applied.feedback,
+            mix: applied.mix,
+        };
     }
 
     fn reset_runtime_state(&mut self) {
@@ -212,25 +203,17 @@ impl PcmProcessor for FlangerProcessor {
     }
 
     fn tail_frames(&self) -> u32 {
-        if !self.is_active() || self.settings.mix == 0.0 {
+        let basis = self.effect.tail_basis();
+        if !self.is_active() || basis.wet_mix == 0.0 {
             return 0;
         }
-        let base_delay_samples = BASE_DELAY_MS / 1_000.0 * self.sample_rate;
-        let depth_samples = self.settings.depth_ms / 1_000.0 * self.sample_rate;
-        let maximum_delay = if base_delay_samples - depth_samples < 1.0 {
-            self.buffer_len as f64
-        } else {
-            base_delay_samples + depth_samples
-        };
-        let repeats = if self.settings.feedback == 0.0 {
+        let repeats = if basis.feedback == 0.0 {
             1.0
         } else {
             let floor_linear = 10.0_f64.powf(TAIL_FLOOR_DB / 20.0);
-            (floor_linear.ln() / self.settings.feedback.ln())
-                .ceil()
-                .max(1.0)
+            (floor_linear.ln() / basis.feedback.ln()).ceil().max(1.0)
         };
-        (maximum_delay.ceil() * repeats)
+        (basis.max_delay_samples.ceil() * repeats)
             .ceil()
             .min(f64::from(u32::MAX)) as u32
     }
@@ -243,16 +226,6 @@ fn validate_sample_rate(sample_rate: f64) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-fn flanger_buffer_len(sample_rate: f64) -> Result<usize> {
-    let length = (sample_rate * MAX_DELAY_SECONDS).ceil();
-    if length >= (usize::MAX - 2) as f64 {
-        return Err(EngineError::InvalidInput(
-            "flanger sample rate is too large for the delay line".into(),
-        ));
-    }
-    Ok(length as usize + 2)
 }
 
 fn validate_settings(settings: FlangerSettings) -> Result<()> {

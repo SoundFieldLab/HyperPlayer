@@ -150,6 +150,19 @@ pub struct TremoloSettings {
     pub mix: f64,
 }
 
+/// 调制效果尾音策略的只读基础量。
+///
+/// Core 只报告已钳位参数对应的最大延迟记忆与反馈，不规定产品侧的衰减阈值。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModEffectTailBasis {
+    /// 当前参数可能读取的最大历史帧数。
+    pub max_delay_samples: f64,
+    /// 当前已钳位反馈系数；无反馈效果为 0。
+    pub feedback: f64,
+    /// 当前已钳位干湿比；产品侧据此识别逐位干声。
+    pub wet_mix: f64,
+}
+
 /// 对齐 TS `ModEffectsSettings`：五个子对象全部完整给出（含 enabled）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModEffectsSettings {
@@ -221,10 +234,29 @@ impl DelayEffect {
     }
 
     /// 对齐 TS `setParams`：ms→样本换算在 setParams 一次性完成（处理循环内常量）。
-    pub fn set_params(&mut self, p: DelaySettings) {
+    pub fn set_params(&mut self, p: DelaySettings) -> DelaySettings {
         self.delay_samples = (clamp(p.delay_ms, 0.0, 2000.0) / 1000.0) * self.fs;
         self.feedback = clamp(p.feedback, 0.0, 0.98);
         self.mix = clamp(p.mix, 0.0, 1.0);
+        DelaySettings {
+            enabled: p.enabled,
+            delay_ms: self.delay_samples / self.fs * 1000.0,
+            feedback: self.feedback,
+            mix: self.mix,
+        }
+    }
+
+    /// 返回已钳位参数对应的尾音估算基础，不规定衰减阈值。
+    pub fn tail_basis(&self) -> ModEffectTailBasis {
+        ModEffectTailBasis {
+            max_delay_samples: if self.delay_samples < 1.0 {
+                self.buf_l.len() as f64
+            } else {
+                self.delay_samples.ceil()
+            },
+            feedback: self.feedback,
+            wet_mix: self.mix,
+        }
     }
 
     /// 分配并返回仅含环形缓冲与写位置的状态快照。
@@ -369,6 +401,14 @@ impl ModulatedDelayCore {
         self.rate_hz = clamp(rate_hz, 0.01, 20.0);
     }
 
+    fn effective_max_delay_samples(&self) -> f64 {
+        if self.base_delay - self.depth_samples < 1.0 {
+            self.buf_l.len() as f64
+        } else {
+            self.base_delay + self.depth_samples
+        }
+    }
+
     fn snapshot_runtime_state(&self) -> ModulatedDelayRuntimeState {
         ModulatedDelayRuntimeState {
             sample_rate_bits: self.fs.to_bits(),
@@ -490,9 +530,24 @@ impl ChorusEffect {
     }
 
     /// 对齐 TS `setParams`：`setCommon(20, depthMs, rateHz)` + mix 钳制。
-    pub fn set_params(&mut self, p: ChorusSettings) {
+    pub fn set_params(&mut self, p: ChorusSettings) -> ChorusSettings {
         self.core.set_common(20.0, p.depth_ms, p.rate_hz);
         self.mix = clamp(p.mix, 0.0, 1.0);
+        ChorusSettings {
+            enabled: p.enabled,
+            rate_hz: self.core.rate_hz,
+            depth_ms: self.core.depth_samples / self.core.fs * 1000.0,
+            mix: self.mix,
+        }
+    }
+
+    /// 返回已钳位参数对应的最大调制延迟；chorus 无反馈。
+    pub fn tail_basis(&self) -> ModEffectTailBasis {
+        ModEffectTailBasis {
+            max_delay_samples: self.core.effective_max_delay_samples(),
+            feedback: 0.0,
+            wet_mix: self.mix,
+        }
     }
 
     /// 分配并返回环形缓冲、写位置与 LFO 相位快照。
@@ -575,10 +630,26 @@ impl FlangerEffect {
     }
 
     /// 对齐 TS `setParams`：`setCommon(1, depthMs, rateHz)` + feedback/mix 钳制。
-    pub fn set_params(&mut self, p: FlangerSettings) {
+    pub fn set_params(&mut self, p: FlangerSettings) -> FlangerSettings {
         self.core.set_common(1.0, p.depth_ms, p.rate_hz);
         self.feedback = clamp(p.feedback, 0.0, 0.98);
         self.mix = clamp(p.mix, 0.0, 1.0);
+        FlangerSettings {
+            enabled: p.enabled,
+            rate_hz: self.core.rate_hz,
+            depth_ms: self.core.depth_samples / self.core.fs * 1000.0,
+            feedback: self.feedback,
+            mix: self.mix,
+        }
+    }
+
+    /// 返回已钳位参数对应的最大调制延迟与反馈。
+    pub fn tail_basis(&self) -> ModEffectTailBasis {
+        ModEffectTailBasis {
+            max_delay_samples: self.core.effective_max_delay_samples(),
+            feedback: self.feedback,
+            wet_mix: self.mix,
+        }
     }
 
     /// 分配并返回环形缓冲、写位置与 LFO 相位快照。
@@ -699,12 +770,29 @@ impl PhaserEffect {
     }
 
     /// 对齐 TS `setParams`：`stages = max(2, min(8, round(stages)))`。
-    pub fn set_params(&mut self, p: PhaserSettings) {
+    pub fn set_params(&mut self, p: PhaserSettings) -> PhaserSettings {
         self.rate_hz = clamp(p.rate_hz, 0.01, 20.0);
         self.depth = clamp(p.depth, 0.0, 1.0);
         self.feedback = clamp(p.feedback, 0.0, 0.98);
         self.mix = clamp(p.mix, 0.0, 1.0);
         self.stages = js_max(2.0, js_min(8.0, js_round(p.stages))) as usize;
+        PhaserSettings {
+            enabled: p.enabled,
+            rate_hz: self.rate_hz,
+            depth: self.depth,
+            feedback: self.feedback,
+            mix: self.mix,
+            stages: self.stages as f64,
+        }
+    }
+
+    /// 返回一阶全通/反馈的最小记忆基础；具体衰减阈值由产品侧决定。
+    pub fn tail_basis(&self) -> ModEffectTailBasis {
+        ModEffectTailBasis {
+            max_delay_samples: (self.fs * 12.0).ceil().min(f64::from(u32::MAX - 1)) + 1.0,
+            feedback: self.feedback,
+            wet_mix: self.mix,
+        }
     }
 
     /// 分配并返回 LFO、全通单元与反馈记忆的状态快照。
@@ -832,10 +920,17 @@ impl PhaserEffect {
 }
 
 /// Tremolo 运行时状态快照。内部相位保持不透明，只能由 [`TremoloEffect`] 获取和恢复。
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TremoloRuntimeState {
+    sample_rate_bits: u64,
+    state_len: usize,
     phase: f64,
 }
+
+runtime_state_mismatch!(
+    TremoloRuntimeStateMismatch,
+    "tremolo runtime state sample rate or shape mismatch"
+);
 
 /// Tremolo：逐样本 LFO 幅度调制（逐行复刻 TS `TremoloEffect`）。
 #[derive(Debug, Clone)]
@@ -862,20 +957,70 @@ impl TremoloEffect {
     }
 
     /// 对齐 TS `setParams`（rateHz 上界 30 与 chorus/flanger 的 20 不同）。
-    pub fn set_params(&mut self, p: TremoloSettings) {
+    pub fn set_params(&mut self, p: TremoloSettings) -> TremoloSettings {
         self.rate_hz = clamp(p.rate_hz, 0.01, 30.0);
         self.depth = clamp(p.depth, 0.0, 1.0);
         self.mix = clamp(p.mix, 0.0, 1.0);
+        TremoloSettings {
+            enabled: p.enabled,
+            rate_hz: self.rate_hz,
+            depth: self.depth,
+            mix: self.mix,
+        }
     }
 
-    /// 获取仅包含连续处理状态的快照；不包含采样率或效果参数。
-    pub fn runtime_state(&self) -> TremoloRuntimeState {
-        TremoloRuntimeState { phase: self.phase }
+    /// Tremolo 无延迟记忆或反馈尾音。
+    pub fn tail_basis(&self) -> ModEffectTailBasis {
+        ModEffectTailBasis {
+            max_delay_samples: 0.0,
+            feedback: 0.0,
+            wet_mix: self.mix,
+        }
     }
 
-    /// 恢复连续处理状态；保留当前采样率与效果参数。
-    pub fn restore_runtime_state(&mut self, state: TremoloRuntimeState) {
+    /// 获取仅包含连续处理状态的固定大小快照。
+    pub fn snapshot_runtime_state(&self) -> TremoloRuntimeState {
+        TremoloRuntimeState {
+            sample_rate_bits: self.fs.to_bits(),
+            state_len: 1,
+            phase: self.phase,
+        }
+    }
+
+    /// 将当前状态写入已有快照；不兼容时不修改快照。
+    pub fn save_runtime_state(
+        &self,
+        state: &mut TremoloRuntimeState,
+    ) -> Result<(), TremoloRuntimeStateMismatch> {
+        if state.sample_rate_bits != self.fs.to_bits() || state.state_len != 1 {
+            return Err(TremoloRuntimeStateMismatch);
+        }
+        state.phase = self.phase;
+        Ok(())
+    }
+
+    /// 恢复连续处理状态；保留目标效果参数。
+    pub fn restore_runtime_state(
+        &mut self,
+        state: &TremoloRuntimeState,
+    ) -> Result<(), TremoloRuntimeStateMismatch> {
+        if state.sample_rate_bits != self.fs.to_bits() || state.state_len != 1 {
+            return Err(TremoloRuntimeStateMismatch);
+        }
         self.phase = state.phase;
+        Ok(())
+    }
+
+    /// 从另一实例复制连续处理状态；保留目标效果参数。
+    pub fn copy_runtime_state_from(
+        &mut self,
+        source: &Self,
+    ) -> Result<(), TremoloRuntimeStateMismatch> {
+        if self.fs.to_bits() != source.fs.to_bits() {
+            return Err(TremoloRuntimeStateMismatch);
+        }
+        self.phase = source.phase;
+        Ok(())
     }
 
     /// 就地处理（对齐 TS `processStereo`：`mix=0` 时乘数精确 1.0 → 逐位恒等）。
@@ -2008,7 +2153,7 @@ mod tests {
         let mut warm_l = lcg_noise(137, 201, 0.8);
         let mut warm_r = lcg_noise(137, 202, 0.6);
         fx.process_stereo(&mut warm_l, &mut warm_r);
-        let snapshot = fx.runtime_state();
+        let snapshot = fx.snapshot_runtime_state();
 
         let replay_in_l = lcg_noise(211, 203, 0.9);
         let replay_in_r = sine(211, 731.0, fs, 0.7, 0.3);
@@ -2019,7 +2164,7 @@ mod tests {
         let mut advance_l = lcg_noise(89, 204, 0.5);
         let mut advance_r = lcg_noise(89, 205, 0.5);
         fx.process_stereo(&mut advance_l, &mut advance_r);
-        fx.restore_runtime_state(snapshot);
+        fx.restore_runtime_state(&snapshot).unwrap();
 
         let mut replay_l = replay_in_l;
         let mut replay_r = replay_in_r;
@@ -2049,11 +2194,11 @@ mod tests {
         let mut warm_l = vec![1.0_f32; 173];
         let mut warm_r = vec![-1.0_f32; 173];
         source.process_stereo(&mut warm_l, &mut warm_r);
-        let snapshot = source.runtime_state();
+        let snapshot = source.snapshot_runtime_state();
 
         let mut restored = TremoloEffect::new(fs).expect("合法参数");
         restored.set_params(current_params);
-        restored.restore_runtime_state(snapshot);
+        restored.restore_runtime_state(&snapshot).unwrap();
 
         let mut control = TremoloEffect::new(fs).expect("合法参数");
         control.set_params(snapshot_params);
@@ -2078,6 +2223,143 @@ mod tests {
         );
         assert_eq!(restored_l, control_l, "恢复快照不得覆盖当前参数（左）");
         assert_eq!(restored_r, control_r, "恢复快照不得覆盖当前参数（右）");
+    }
+
+    #[test]
+    fn tremolo_运行时状态保存复制保留参数且失配原子() {
+        let fs = 48000.0;
+        let source_params = TremoloSettings {
+            enabled: true,
+            rate_hz: 3.0,
+            depth: 0.2,
+            mix: 0.15,
+        };
+        let target_params = TremoloSettings {
+            enabled: true,
+            rate_hz: 19.0,
+            depth: 0.91,
+            mix: 0.77,
+        };
+        let mut source = TremoloEffect::new(fs).unwrap();
+        source.set_params(source_params);
+        let mut warm_l = vec![1.0_f32; 173];
+        let mut warm_r = vec![-1.0_f32; 173];
+        source.process_stereo(&mut warm_l, &mut warm_r);
+        let mut checkpoint = source.snapshot_runtime_state();
+
+        let mut expected = source.clone();
+        expected.set_params(target_params);
+        let mut restored = TremoloEffect::new(fs).unwrap();
+        restored.set_params(target_params);
+        restored.restore_runtime_state(&checkpoint).unwrap();
+        let in_l = lcg_noise(256, 206, 0.8);
+        let in_r = lcg_noise(256, 207, 0.6);
+        assert_eq!(
+            drive_sched(
+                |l, r| restored.process_stereo(l, r),
+                &in_l,
+                &in_r,
+                &[73, 101, 82]
+            ),
+            drive_sched(
+                |l, r| expected.process_stereo(l, r),
+                &in_l,
+                &in_r,
+                &[73, 101, 82]
+            )
+        );
+
+        let mut copied = TremoloEffect::new(fs).unwrap();
+        copied.set_params(target_params);
+        copied.copy_runtime_state_from(&source).unwrap();
+        let mut saved = TremoloEffect::new(fs).unwrap();
+        saved.set_params(target_params);
+        source.save_runtime_state(&mut checkpoint).unwrap();
+        saved.restore_runtime_state(&checkpoint).unwrap();
+        assert_eq!(
+            copied.snapshot_runtime_state(),
+            saved.snapshot_runtime_state()
+        );
+
+        let mut mismatch = TremoloEffect::new(44100.0).unwrap();
+        mismatch.set_params(target_params);
+        let before = mismatch.snapshot_runtime_state();
+        assert_eq!(
+            mismatch.restore_runtime_state(&checkpoint),
+            Err(TremoloRuntimeStateMismatch)
+        );
+        assert_eq!(mismatch.snapshot_runtime_state(), before);
+        assert_eq!(
+            mismatch.copy_runtime_state_from(&source),
+            Err(TremoloRuntimeStateMismatch)
+        );
+        let checkpoint_before = checkpoint;
+        assert_eq!(
+            mismatch.save_runtime_state(&mut checkpoint),
+            Err(TremoloRuntimeStateMismatch)
+        );
+        assert_eq!(checkpoint, checkpoint_before);
+    }
+
+    #[test]
+    fn 尾音基础使用core内已钳位派生值() {
+        let fs = 48000.0;
+        let mut delay = DelayEffect::new(fs).unwrap();
+        delay.set_params(DelaySettings {
+            enabled: true,
+            delay_ms: 5000.0,
+            feedback: 2.0,
+            mix: 0.5,
+        });
+        assert_eq!(
+            delay.tail_basis(),
+            ModEffectTailBasis {
+                max_delay_samples: 96000.0,
+                feedback: 0.98,
+                wet_mix: 0.5,
+            }
+        );
+
+        let mut chorus = ChorusEffect::new(fs).unwrap();
+        chorus.set_params(ChorusSettings {
+            enabled: true,
+            rate_hz: 2.0,
+            depth_ms: 80.0,
+            mix: 0.5,
+        });
+        assert_eq!(chorus.tail_basis().max_delay_samples, 4802.0);
+        assert_eq!(chorus.tail_basis().feedback, 0.0);
+
+        let mut flanger = FlangerEffect::new(fs).unwrap();
+        flanger.set_params(FlangerSettings {
+            enabled: true,
+            rate_hz: 2.0,
+            depth_ms: 4.0,
+            feedback: 0.75,
+            mix: 0.5,
+        });
+        assert_eq!(flanger.tail_basis().max_delay_samples, 2402.0);
+        assert_eq!(flanger.tail_basis().feedback, 0.75);
+
+        let mut phaser = PhaserEffect::new(fs).unwrap();
+        phaser.set_params(PhaserSettings {
+            enabled: true,
+            rate_hz: 1.0,
+            depth: 0.5,
+            feedback: 2.0,
+            mix: 0.5,
+            stages: 4.0,
+        });
+        assert_eq!(phaser.tail_basis().max_delay_samples, 576_001.0);
+        assert_eq!(phaser.tail_basis().feedback, 0.98);
+        assert_eq!(
+            TremoloEffect::new(fs).unwrap().tail_basis(),
+            ModEffectTailBasis {
+                max_delay_samples: 0.0,
+                feedback: 0.0,
+                wet_mix: 1.0,
+            }
+        );
     }
 
     #[test]

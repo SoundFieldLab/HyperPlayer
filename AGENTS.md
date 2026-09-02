@@ -10,7 +10,7 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 - 项目许可证 **Apache-2.0**：依赖仅接受 Apache-2.0/MIT/BSD/ISC/Zlib/Unicode/OFL 等经审核可兼容许可证；GPL/AGPL 组件不引入；LGPL/MPL 等弱 copyleft 仅限完成合规评估并记录后使用
 - **只发 Windows**（Tauri 跨平台能力保留，未来可逆）；Windows 使用系统 WebView2
 - 资源占用**不设未经实测的硬指标**；M1/M6 分别测空闲/播放内存、冷启动与安装体积
-- **自研 DSP 是一等公民**：音频管线必须保留插入点；DSP 为 TS+Rust 双实现，Rust 为准
+- **自研 DSP 是一等公民**：音频管线必须保留插入点；HSE v1.5.1 自带 Rust 核心是唯一实时播放 DSP 主实现，TypeScript 核心承担参数、预设、HSE2、预览、诊断和一致性验证，可在控制面/可视化不可用时提供功能降级，但不得接管实际音频输出；Rust DSP 故障仍进入零 DSP 安全旁路
 - 官方内置网易云音源：模块隔离、可整体禁用，不与播放核心/引擎耦合（版权风险自担，用户知情决策）
 - **音源模块 Cleanroom 开发（用户明令）**：参考代码位于 `temp/`（已 gitignore），流程为「读参考 → 提炼 `docs/音源-网易云-行为规范.md` → 只按规范独立实现」；参考代码永不入库、永不复制进实现
 - 现有 `src/audio-source/netease/` TypeScript 代码是已联网验证的**行为 oracle**，不是 Tauri 终态运行时；网络、Cookie、设备会话和协议加密最终迁入 Rust。禁止用 Node sidecar 规避迁移
@@ -24,7 +24,9 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 
 - **2026-08-30 用户已解除正式代码禁令并要求全量实现**：可创建 Tauri 2 应用、React UI、commands/capabilities、Rust 引擎/曲库和网易云 Rust Cleanroom 实现
 - **DSP 全量接入（2026-08-31 用户定调）**：以 HyperSoundEngine v1.5.1（commit `f7017621b7d84005fbfed8a3c42a119487a17326`）为完整 DSP 核心输入，迁入 22 阶段 Rust/TS 能力、参数、预设、配置编码和一致性测试；Rust 为实际播放权威，不复用 HSE UI/browser host/service/WASAPI。HSE 自带 Rust 核心是已按 TS 参照编写并验证、但尚未实际融合播放器的代码；后续以该 Rust 核心为算法迁移首要来源，TS 作为独立行为 oracle，优先原样迁移/裁剪已有 Rust 算法，只增加 HyperPlayer 的 `PcmProcessor`、revision、checkpoint、tail 和实时线程适配层，不重复手写已有内核。权利人 IceFireIcer 已授予 HyperPlayer 专项修改、融合及 Apache-2.0 分发授权，见 `LICENSE-HSE-AUTHORIZATION.md`；第三方 IR、素材和 SOFA/HRTF 数据仍须单独审计
+- **HSE 主备与去重（2026-09-01 用户定调 / D33）**：继续适配 HSE 自带 Rust 核心作为生产主链；`shared/hse-ts-core` 作为控制面能力的备选/降级实现，覆盖参数校验、12 场景、HSE2、曲线预览、离线诊断和 parity，不允许通过 Web Audio、AudioWorklet 或 WebView 脚本接管实际播放。原先按 TS 另行手写的 Rust 算法必须按「vendored core API → HyperPlayer adapter → parity/vector → revision/checkpoint/standby → 零分配 → 全门禁」顺序逐阶段替换并删除；只保留 PCM 布局、门控、revision、checkpoint、standby、latency/tail、sidechain、故障旁路与实时线程适配，不允许长期维护重复算法主体。当前已上线的 14 个 processor 已完成该去重：Stage 1/2/7 已抽成独立 HSE Rust core stage，Stage 3/4 纯重导出和 Stage 5/6/14 厚 façade 已删除/收薄，Stage 8–12 已改用 core 规范化参数、tail basis 与 runtime-state API
 - **D25 保守默认（2026-08-31 用户授权工程定调）**：默认容量 10 GiB（可配置 2–100 GiB），到上限清理至 90%，保护最近 100 个不同远程曲目；Public 离线证明最长 7 天，AccountEntitled 离线永远 fail closed；整专补齐默认 standard、单并发、AC/非计费网络/磁盘保留条件满足时运行
+- **D30 当前实现边界（2026-09-02）**：repository schema v7、v6 一致性备份、typed cache governance metadata、按 content hash 淘汰 planner、recent/lease 保护、Public 7 天离线证明、AccountEntitled 离线拒绝、安全 reconciliation plan、durable album-fill items 和 `AlbumFillCoordinator` 已实现并通过测试。Tauri runtime supervisor、实际 reconciliation/quota IO、Windows AC/计费网络/磁盘探测、album-fill 下载生命周期和 Settings 容量/策略 UI 尚未接线；在这些完成前不得宣称 D30 产品闭环
 - 仍按现行定调与 ADR 实施；所有新增依赖须满足许可证约束，网易云实现继续严格遵守 Cleanroom 与模块隔离
 - 所有规划文件写入 `docs/`（已 gitignore）：需求、决策记录、ADR、术语表和协议规范
 - 每轮定调产生的新约束同步更新本文件与持久记忆

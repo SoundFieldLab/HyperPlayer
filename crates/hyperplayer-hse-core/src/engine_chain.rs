@@ -1,7 +1,6 @@
 //! HyperSoundEngine 1-22 级主链；第 22 级通过 hrtf-core 可选启用。
 use crate::{
     bass_enhancer::{BassEnhancerSettings, BassEnhancerStage},
-    biquad::BiquadStage,
     compressor::{CompressorSettings, CompressorStage},
     convolver::{ConvolverOptions, ConvolverStage},
     deesser::{DeesserSettings, DeesserStage},
@@ -11,6 +10,9 @@ use crate::{
     fft::Fft,
     limiter::{LimiterSettings, LimiterStage},
     loudness_comp::{LoudnessBandParam, LoudnessCompSettings, LoudnessCompStage},
+    loudness_normalization::{
+        LoudnessNormalizationReadings, LoudnessNormalizationSettings, LoudnessNormalizationStage,
+    },
     lufs_meter::LufsMeter,
     mid_side::MidSideStage,
     mod_effects::{
@@ -21,7 +23,9 @@ use crate::{
         EnvelopeParams, LfoParams, LfoShape, ModSource, ModTarget, ModulationMatrixStage,
         ModulationRoute,
     },
+    night_mode::{NightModeSettings, NightModeStage},
     reverb_simple::{ReverbSimpleParams, ReverbSimpleStage},
+    surround3d::{Surround3dSettings, Surround3dStage},
     Stage,
 };
 use hrtf_core::{
@@ -1195,9 +1199,7 @@ pub struct EngineChainStage {
     ms: MidSideStage,
     de: DeesserStage,
     cp: CompressorStage,
-    ncp: CompressorStage,
-    nsl: BiquadStage,
-    nsr: BiquadStage,
+    night: NightModeStage,
     me: ModEffectsStage,
     rv: ReverbSimpleStage,
     fdn: FdnReverbStage,
@@ -1222,8 +1224,8 @@ pub struct EngineChainStage {
     ranges: [(usize, usize); 10],
     targets: [f64; 10],
     ismooth: f64,
-    norm: f64,
-    sphase: f64,
+    norm: LoudnessNormalizationStage,
+    surround: Surround3dStage,
     mg: f64,
     mw: f64,
     next_frame_count: Option<usize>,
@@ -1233,7 +1235,6 @@ pub struct EngineChainStage {
     cp_on: bool,
     de_sidechain: bool,
     cp_sidechain: bool,
-    night_on: bool,
     bass_on: bool,
     loudness_comp_on: bool,
     ieq_on: bool,
@@ -1245,17 +1246,6 @@ pub struct EngineChainStage {
     pitch_on: bool,
     voice_balance: f64,
     stereo_width: f64,
-    norm_on: bool,
-    norm_realtime: bool,
-    norm_target_lufs: f64,
-    norm_min_db: f64,
-    norm_max_db: f64,
-    norm_external_db: f64,
-    surround_on: bool,
-    surround_distance: f64,
-    surround_speed: f64,
-    surround_angle: f64,
-    surround_direction: f64,
     ieq_strength: f64,
 }
 impl EngineChainStage {
@@ -1294,18 +1284,14 @@ impl EngineChainStage {
         let de_sidechain = des.sidechain_enabled;
         des.sidechain_enabled = false;
         let nm = o(v, "/nightMode")?;
-        let k = n(nm, "amount")? / 10.;
-        let ncp = CompressorSettings {
-            enabled: true,
-            threshold_db: cps.threshold_db - 6. * k,
-            ratio: (cps.ratio * (1. + 0.5 * k)).max(1.),
-            knee_db: cps.knee_db,
-            attack_ms: cps.attack_ms,
-            release_ms: cps.release_ms,
-            makeup_db: cps.makeup_db,
-            output_gain: 1.,
-            sidechain_enabled: false,
-        };
+        let night = NightModeStage::new(
+            fs,
+            NightModeSettings {
+                enabled: b(nm, "enabled")?,
+                amount: n(nm, "amount")?,
+                base_compressor: cps.clone(),
+            },
+        )?;
         let rvp = rv_params(o(v, "/reverb/algorithmic")?)?;
         let io = o(v, "/ieq")?;
         let mut ieq = EqChainStage::new(fs, 10.)?;
@@ -1377,7 +1363,24 @@ impl EngineChainStage {
             lc.reset()
         }
         let ln = o(v, "/loudnessNormalization")?;
+        let mut norm = LoudnessNormalizationStage::new(fs)?;
+        norm.set_params(LoudnessNormalizationSettings {
+            enabled: b(ln, "enabled")?,
+            target_lufs: n(ln, "targetLufs")?,
+            max_gain_db: n(ln, "maxGainDb")?,
+            min_gain_db: n(ln, "minGainDb")?,
+            use_realtime_meter: b(ln, "useRealtimeMeter")?,
+            external_gain_db: n(ln, "externalGainDb")?,
+        })?;
         let surround = o(v, "/surround3d")?;
+        let mut surround_stage = Surround3dStage::new(fs)?;
+        surround_stage.set_params(Surround3dSettings {
+            enabled: b(surround, "enabled")?,
+            distance: n(surround, "distance")?,
+            speed: n(surround, "speed")?,
+            angle: n(surround, "angle")?,
+            direction: n(surround, "direction")?,
+        })?;
         let pitch = o(v, "/pitch")?;
         let reverb = o(v, "/reverb")?;
         let reverb_mode = enum_value(
@@ -1426,9 +1429,7 @@ impl EngineChainStage {
             ms: MidSideStage::new(),
             de: DeesserStage::from_settings(fs, des)?,
             cp: CompressorStage::from_settings(fs, cps)?,
-            ncp: CompressorStage::from_settings(fs, ncp)?,
-            nsl: BiquadStage::new(fs, "highshelf", 6000., 0.707, -1.5 * n(nm, "amount")?)?,
-            nsr: BiquadStage::new(fs, "highshelf", 6000., 0.707, -1.5 * n(nm, "amount")?)?,
+            night,
             me: ModEffectsStage::from_settings(fs, me_settings(o(v, "/modEffects")?)?)?,
             rv: ReverbSimpleStage::from_params(fs, rvp.clone())?,
             fdn: FdnReverbStage::from_params(
@@ -1470,8 +1471,8 @@ impl EngineChainStage {
                 &["flat", "warm", "bright", "vocal"],
             )?),
             ismooth: 1. - (-(W as f64 / fs) / n(io, "timeConstantSec")?.max(0.1)).exp(),
-            norm: 1.,
-            sphase: 0.,
+            norm,
+            surround: surround_stage,
             mg: 1.,
             mw: 1.,
             next_frame_count: None,
@@ -1485,7 +1486,6 @@ impl EngineChainStage {
             cp_on: b(cpo, "enabled")?,
             de_sidechain,
             cp_sidechain,
-            night_on: b(nm, "enabled")? && n(nm, "amount")? > 0.0,
             bass_on: b(o(v, "/bassEnhancer")?, "enabled")?,
             loudness_comp_on: b(o(v, "/loudnessCompensation")?, "enabled")?,
             ieq_on: b(io, "enabled")?,
@@ -1497,17 +1497,6 @@ impl EngineChainStage {
             pitch_on: b(pitch, "enabled")?,
             voice_balance: n(pitch, "voiceBalance")?,
             stereo_width: v["stereoWidth"].as_f64().ok_or("stereoWidth 必须是数字")?,
-            norm_on: b(ln, "enabled")?,
-            norm_realtime: b(ln, "useRealtimeMeter")?,
-            norm_target_lufs: n(ln, "targetLufs")?,
-            norm_min_db: n(ln, "minGainDb")?,
-            norm_max_db: n(ln, "maxGainDb")?,
-            norm_external_db: n(ln, "externalGainDb")?,
-            surround_on: b(surround, "enabled")?,
-            surround_distance: n(surround, "distance")?,
-            surround_speed: n(surround, "speed")?,
-            surround_angle: n(surround, "angle")?,
-            surround_direction: n(surround, "direction")?,
             ieq_strength: n(io, "strength")?,
         })
     }
@@ -1515,7 +1504,7 @@ impl EngineChainStage {
         &IDS
     }
     pub fn norm_gain(&self) -> f64 {
-        self.norm
+        self.norm.gain()
     }
     pub fn ieq_gains(&self) -> [f32; 10] {
         self.ig
@@ -1631,44 +1620,14 @@ impl EngineChainStage {
             self.mg = 1.;
             self.mw = 1.
         }
-        if self.norm_on {
-            let rt = self.norm_realtime;
-            let db = if rt {
-                let i = self.lufs.get_integrated_lufs();
-                let m = if i.is_finite() {
-                    i
-                } else {
-                    self.lufs.get_momentary_lufs()
-                };
-                if m.is_finite() {
-                    (self.norm_target_lufs - m).clamp(self.norm_min_db, self.norm_max_db)
-                } else {
-                    0.
-                }
-            } else {
-                self.norm_external_db
-                    .clamp(self.norm_min_db, self.norm_max_db)
-            };
-            let a = 1. - (-(active_n as f64 / self.fs) / if rt { 3. } else { 0.08 }).exp();
-            self.norm += a * (10f64.powf(db / 20.) - self.norm);
-            gain(&mut l[..active_n], &mut r[..active_n], self.norm)
-        }
-        if self.surround_on {
-            self.sphase += 2.
-                * std::f64::consts::PI
-                * self.surround_speed
-                * (active_n as f64 / self.fs)
-                * 0.125;
-            let th = self.surround_angle * std::f64::consts::PI / 180.
-                + self.surround_direction * self.sphase;
-            let (c, s) = (th.cos(), th.sin());
-            let z = 0.5 + 0.5 * self.surround_distance;
-            for i in 0..active_n {
-                let (x, y) = (f64::from(l[i]), f64::from(r[i]));
-                l[i] = ((x * c - y * s) * z) as f32;
-                r[i] = ((x * s + y * c) * z) as f32
-            }
-        }
+        let prior_loudness = LoudnessNormalizationReadings {
+            integrated_lufs: self.lufs.get_integrated_lufs(),
+            momentary_lufs: self.lufs.get_momentary_lufs(),
+        };
+        self.norm
+            .process(&mut l[..active_n], &mut r[..active_n], prior_loudness);
+        self.surround
+            .process(&mut l[..active_n], &mut r[..active_n]);
         self.ms.set_params(
             if mod_on { self.mw } else { self.stereo_width },
             if self.pitch_on {
@@ -1703,11 +1662,7 @@ impl EngineChainStage {
                 self.cp.process(l, r)
             }
         }
-        if self.night_on {
-            self.ncp.process(l, r);
-            self.nsl.process_mono(l);
-            self.nsr.process_mono(r)
-        }
+        self.night.process(l, r);
         self.me.process(l, r);
         match self.reverb_kind {
             3 => self
@@ -1749,7 +1704,8 @@ impl Stage for EngineChainStage {
         self.eq.prepare(x);
         self.de.prepare(x);
         self.cp.prepare(x);
-        self.ncp.prepare(x);
+        self.night.prepare(x);
+        self.surround.prepare(x);
         self.me.prepare(x);
         self.rv.prepare(x);
         self.fdn.prepare(x);
@@ -1773,9 +1729,7 @@ impl Stage for EngineChainStage {
         self.ms.reset();
         self.de.reset();
         self.cp.reset();
-        self.ncp.reset();
-        self.nsl.reset();
-        self.nsr.reset();
+        self.night.reset();
         self.me.reset();
         self.rv.reset();
         self.fdn.reset();
@@ -1797,8 +1751,8 @@ impl Stage for EngineChainStage {
         self.ap = 0;
         self.ig = [0.; 10];
         self.il = [0.; 10];
-        self.norm = 1.;
-        self.sphase = 0.;
+        self.norm.reset();
+        self.surround.reset();
         self.mg = 1.;
         self.mw = 1.;
         self.next_frame_count = None
@@ -2062,6 +2016,7 @@ fn curve(x: &str) -> [f64; 10] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::biquad::BiquadStage;
     use hrtf_core::HrtfGrid;
 
     fn asymmetric_grid() -> HrtfGrid {
@@ -2376,6 +2331,124 @@ mod tests {
         }));
         engine.prepare(128);
         assert_eq!(engine.get_latency_samples(), 64);
+    }
+
+    #[test]
+    fn surround3d_stage_matches_engine_chain_stage_two_bit_for_bit() {
+        let settings = Surround3dSettings {
+            enabled: true,
+            distance: 0.85,
+            speed: 0.7,
+            angle: 11.0,
+            direction: -1.0,
+        };
+        let params = EngineChainParams::from_overrides(
+            48_000.0,
+            &json!({
+                "eq": {"enabled": false},
+                "limiter": {"enabled": false},
+                "surround3d": {
+                    "enabled": settings.enabled,
+                    "distance": settings.distance,
+                    "speed": settings.speed,
+                    "angle": settings.angle,
+                    "direction": settings.direction
+                }
+            }),
+        )
+        .unwrap();
+        let mut engine = EngineChainStage::from_params(48_000.0, params).unwrap();
+        let mut stage = Surround3dStage::new(48_000.0).unwrap();
+        stage.set_params(settings).unwrap();
+        let mut engine_left = [0.25_f32, -0.5, 1.0, 0.125];
+        let mut engine_right = [-0.75_f32, 0.125, 0.5, -0.25];
+        let mut stage_left = engine_left;
+        let mut stage_right = engine_right;
+
+        engine.process(&mut engine_left, &mut engine_right);
+        stage.process(&mut stage_left, &mut stage_right);
+
+        assert_eq!(engine_left.map(f32::to_bits), stage_left.map(f32::to_bits));
+        assert_eq!(
+            engine_right.map(f32::to_bits),
+            stage_right.map(f32::to_bits)
+        );
+    }
+
+    #[test]
+    fn loudness_stage_matches_engine_chain_stage_one_bit_for_bit() {
+        let settings = LoudnessNormalizationSettings {
+            enabled: true,
+            use_realtime_meter: false,
+            external_gain_db: 6.0,
+            ..LoudnessNormalizationSettings::default()
+        };
+        let params = EngineChainParams::from_overrides(
+            48_000.0,
+            &json!({
+                "eq": {"enabled": false},
+                "limiter": {"enabled": false},
+                "loudnessNormalization": {
+                    "enabled": true,
+                    "targetLufs": settings.target_lufs,
+                    "maxGainDb": settings.max_gain_db,
+                    "minGainDb": settings.min_gain_db,
+                    "useRealtimeMeter": false,
+                    "externalGainDb": settings.external_gain_db
+                }
+            }),
+        )
+        .unwrap();
+        let mut engine = EngineChainStage::from_params(48_000.0, params).unwrap();
+        let mut stage = LoudnessNormalizationStage::new(48_000.0).unwrap();
+        stage.set_params(settings).unwrap();
+
+        for block in 0..3 {
+            let input_left = std::array::from_fn::<_, 128, _>(|index| {
+                ((index + block * 128) as f64 * 0.17).sin() as f32 * 0.4
+            });
+            let input_right = std::array::from_fn::<_, 128, _>(|index| {
+                ((index + block * 128) as f64 * 0.11).cos() as f32 * 0.3
+            });
+            let (mut engine_left, mut engine_right) = (input_left, input_right);
+            let (mut stage_left, mut stage_right) = (input_left, input_right);
+            engine.process(&mut engine_left, &mut engine_right);
+            stage.process(
+                &mut stage_left,
+                &mut stage_right,
+                LoudnessNormalizationReadings::unmeasured(),
+            );
+            assert_eq!(engine_left.map(f32::to_bits), stage_left.map(f32::to_bits));
+            assert_eq!(
+                engine_right.map(f32::to_bits),
+                stage_right.map(f32::to_bits)
+            );
+            assert_eq!(engine.norm_gain().to_bits(), stage.gain().to_bits());
+        }
+    }
+
+    #[test]
+    fn engine_chain_stage_one_uses_only_prior_block_meter_readings() {
+        let params = EngineChainParams::from_overrides(
+            48_000.0,
+            &json!({
+                "eq": {"enabled": false},
+                "limiter": {"enabled": false},
+                "loudnessNormalization": {"enabled": true}
+            }),
+        )
+        .unwrap();
+        let mut engine = EngineChainStage::from_params(48_000.0, params).unwrap();
+        for _ in 0..150 {
+            let mut left = [0.1_f32; 128];
+            let mut right = left;
+            engine.process(&mut left, &mut right);
+            assert_eq!(engine.norm_gain(), 1.0);
+        }
+        let mut left = [0.1_f32; 128];
+        let mut right = left;
+        engine.process(&mut left, &mut right);
+        assert_ne!(engine.norm_gain(), 1.0);
     }
 
     #[test]

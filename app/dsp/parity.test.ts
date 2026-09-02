@@ -3,21 +3,32 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { BassEnhancer, type BassEnhancerSettings } from './bass-enhancer'
-import { Biquad, type BiquadType } from './biquad'
-import { Compressor, type CompressorSettings } from './compressor'
-import { ChorusEffect, type ChorusSettings } from './chorus'
-import { Deesser, type DeesserSettings } from './deesser'
-import { DelayEffect, type DelaySettings } from './delay'
-import { EqChain, type EqBandParam } from './eq-chain'
-import { FlangerEffect, type FlangerSettings } from './flanger'
-import { LoudnessNormalization, type LoudnessNormalizationSettings } from './loudness-normalization'
-import { LufsMeter } from './lufs-meter'
-import { MidSide } from './mid-side'
-import { NightMode, type NightModeSettings } from './night-mode'
-import { PhaserEffect, type PhaserSettings } from './phaser'
-import { Surround3d, type Surround3dSettings } from './surround3d'
-import { TremoloEffect, type TremoloSettings } from './tremolo'
+import {
+  BassEnhancer,
+  Biquad,
+  ChorusEffect,
+  Compressor,
+  Deesser,
+  DelayEffect,
+  EqChain,
+  FlangerEffect,
+  HyperSoundEngine,
+  MidSide,
+  PhaserEffect,
+  TremoloEffect,
+  createDefaultParams,
+  type BassEnhancerSettings,
+  type BiquadType,
+  type ChorusSettings,
+  type CompressorSettings,
+  type DeesserSettings,
+  type DelaySettings,
+  type EqBand,
+  type FlangerSettings,
+  type HyperSoundEngineParams,
+  type PhaserSettings,
+  type TremoloSettings,
+} from '@hyperplayer/hse-ts-core'
 
 interface VectorMeta {
   schemaVersion: number
@@ -29,7 +40,7 @@ interface VectorMeta {
   frames: number
   params: Record<string, unknown>
   tolerance: { kind: string; value: number; floor: number }
-  source?: { project: string; version: string; commit: string }
+  source: { project: string; version: string; commit: string }
 }
 
 interface VectorCase {
@@ -69,10 +80,8 @@ function validate(vector: VectorCase): void {
   if (meta.tolerance.kind !== 'relative' || !(meta.tolerance.value > 0) || !(meta.tolerance.floor >= 0)) {
     throw new Error(`${label}: tolerance 无效`)
   }
-  if (['night-mode', 'delay', 'chorus', 'flanger', 'phaser', 'tremolo'].includes(meta.module)) {
-    if (meta.source?.project !== 'HyperSoundEngine' || meta.source.version !== '1.5.1' || meta.source.commit !== 'f7017621b7d84005fbfed8a3c42a119487a17326') {
-      throw new Error(`${label}: 向量来源不是固定 HSE v1.5.1`)
-    }
+  if (meta.source.project !== 'HyperSoundEngine' || meta.source.version !== '1.5.1' || meta.source.commit !== 'f7017621b7d84005fbfed8a3c42a119487a17326') {
+    throw new Error(`${label}: 向量来源不是固定 HSE v1.5.1`)
   }
   if (bytes.byteLength !== meta.frames * 4 * Float32Array.BYTES_PER_ELEMENT) {
     throw new Error(`${label}: .f32 长度不符合四段 planar 布局`)
@@ -92,6 +101,56 @@ function readSegments(bytes: Uint8Array, frames: number): [Float32Array, Float32
 }
 
 type Process = (left: Float32Array, right: Float32Array) => void
+
+function neutralize(params: HyperSoundEngineParams): void {
+  params.eq.enabled = false
+  params.deesser.enabled = false
+  params.compressor.enabled = false
+  params.nightMode.enabled = false
+  params.reverb.enabled = false
+  params.surround3d.enabled = false
+  params.bassEnhancer.enabled = false
+  params.loudnessCompensation.enabled = false
+  params.loudnessNormalization.enabled = false
+  params.limiter.enabled = false
+  params.ieq.enabled = false
+  params.dynamicEq.enabled = false
+  params.pitch.enabled = false
+  params.modulation.enabled = false
+  params.modulation.routes = []
+  for (const effect of Object.values(params.modEffects)) effect.enabled = false
+  params.stereoWidth = 1
+  if (params.spatial) params.spatial.mode = 'off'
+}
+
+function inlineEngineProcessor(meta: VectorMeta): Process {
+  const params = createDefaultParams(meta.sampleRate)
+  neutralize(params)
+  if (meta.module === 'loudness-normalization') {
+    params.loudnessNormalization = meta.params as unknown as HyperSoundEngineParams['loudnessNormalization']
+  } else if (meta.module === 'night-mode') {
+    params.compressor = {
+      ...(meta.params.compressor as unknown as CompressorSettings),
+      enabled: false,
+    }
+    params.nightMode = {
+      enabled: meta.params.enabled as boolean,
+      amount: meta.params.amount as number,
+    }
+  } else {
+    params.surround3d = meta.params as unknown as HyperSoundEngineParams['surround3d']
+  }
+  const engine = new HyperSoundEngine(meta.sampleRate, 2)
+  engine.setParams(params)
+  engine.prepare(meta.blockSize)
+  return (left, right) => {
+    const outputLeft = new Float32Array(left.length)
+    const outputRight = new Float32Array(right.length)
+    engine.process([left, right], [outputLeft, outputRight])
+    left.set(outputLeft)
+    right.set(outputRight)
+  }
+}
 
 function processor(meta: VectorMeta): Process {
   switch (meta.module) {
@@ -125,21 +184,10 @@ function processor(meta: VectorMeta): Process {
       processor.setParams(meta.params as unknown as FlangerSettings)
       return (left, right) => processor.processStereo(left, right)
     }
-    case 'loudness-normalization': {
-      const meter = new LufsMeter(meta.sampleRate)
-      const normalization = new LoudnessNormalization(meta.sampleRate, meter)
-      normalization.setParams(meta.params as unknown as LoudnessNormalizationSettings)
-      return (left, right) => {
-        normalization.processStereo(left, right)
-        meter.processStereo(left, right)
-      }
-    }
-    case 'night-mode': {
-      const base = meta.params.compressor as unknown as CompressorSettings
-      const processor = new NightMode(meta.sampleRate, base)
-      processor.setParams(meta.params as unknown as NightModeSettings, base)
-      return (left, right) => processor.processStereo(left, right)
-    }
+    case 'loudness-normalization':
+    case 'night-mode':
+    case 'surround3d':
+      return inlineEngineProcessor(meta)
     case 'phaser': {
       const processor = new PhaserEffect(meta.sampleRate)
       processor.setParams(meta.params as unknown as PhaserSettings)
@@ -148,11 +196,6 @@ function processor(meta: VectorMeta): Process {
     case 'tremolo': {
       const processor = new TremoloEffect(meta.sampleRate)
       processor.setParams(meta.params as unknown as TremoloSettings)
-      return (left, right) => processor.processStereo(left, right)
-    }
-    case 'surround3d': {
-      const processor = new Surround3d(meta.sampleRate)
-      processor.setParams(meta.params as unknown as Surround3dSettings)
       return (left, right) => processor.processStereo(left, right)
     }
     case 'mid-side': {
@@ -195,7 +238,7 @@ function processor(meta: VectorMeta): Process {
       const params = meta.params as unknown as {
         bandCount: number
         qCompensation: boolean
-        bands: EqBandParam[]
+        bands: EqBand[]
       }
       const processor = new EqChain(meta.sampleRate, params.bandCount)
       processor.setBands(params.bands)

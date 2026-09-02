@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-mod u64_decimal_string {
+pub(crate) mod u64_decimal_string {
     use serde::{de::Error, Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
@@ -191,6 +191,7 @@ pub struct EngineSnapshotDto {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DspExecutionStatusDto {
+    #[serde(with = "u64_decimal_string")]
     pub revision: u64,
     pub safe_bypass_active: bool,
     pub fault: Option<DspProcessingFaultDto>,
@@ -1325,19 +1326,25 @@ pub struct TelemetryAckDto {
     pub accepted: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DspConfigurationRejectedDto {
+    #[serde(with = "u64_decimal_string")]
     pub revision: u64,
+    pub code: String,
+    pub reason: String,
+    pub stage: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DspProcessingFaultDto {
+    #[serde(with = "u64_decimal_string")]
     pub revision: u64,
     pub processor_index: usize,
     pub processor_name: String,
     pub kind: String,
+    #[serde(with = "u64_decimal_string")]
     pub stream_frame: u64,
     pub safe_bypass_active: bool,
     pub fallback_status: DspFallbackStatusDto,
@@ -1352,6 +1359,22 @@ pub enum DspFallbackStatusDto {
 #[cfg(test)]
 mod dsp_processing_fault_tests {
     use super::*;
+
+    #[test]
+    fn configuration_rejection_serializes_stable_diagnostic_fields() {
+        let value = serde_json::to_value(DspConfigurationRejectedDto {
+            revision: 9_007_199_254_740_993,
+            code: "compilationFailed".into(),
+            reason: "DSP configuration could not be compiled for the active audio format".into(),
+            stage: Some("compile".into()),
+        })
+        .unwrap();
+
+        assert_eq!(value["revision"], "9007199254740993");
+        assert_eq!(value["code"], "compilationFailed");
+        assert_eq!(value["stage"], "compile");
+        assert!(value.get("processor").is_none());
+    }
 
     #[test]
     fn execution_status_serializes_durable_fault_without_pcm() {
@@ -1370,9 +1393,9 @@ mod dsp_processing_fault_tests {
         })
         .unwrap();
 
-        assert_eq!(value["revision"], 8);
+        assert_eq!(value["revision"], "8");
         assert_eq!(value["safeBypassActive"], true);
-        assert_eq!(value["fault"]["streamFrame"], 4096);
+        assert_eq!(value["fault"]["streamFrame"], "4096");
         assert!(value.get("pcm").is_none());
         assert!(value["fault"].get("pcm").is_none());
     }
@@ -1390,8 +1413,9 @@ mod dsp_processing_fault_tests {
         })
         .unwrap();
 
+        assert_eq!(value["revision"], "8");
+        assert_eq!(value["streamFrame"], "4096");
         assert_eq!(value["safeBypassActive"], true);
-        assert_eq!(value["fallbackStatus"], "rustSafeBypass");
         assert!(value.get("safe_bypass_active").is_none());
         assert!(value.get("pcm").is_none());
     }

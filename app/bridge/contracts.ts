@@ -42,7 +42,7 @@ export interface PlaybackSnapshotDto {
   queue: QueueItemDto[];
   nextUp: QueueItemDto[];
   repeat: "sequence" | "all" | "one" | "shuffle";
-  dsp: { available: false; bypassed: true; label: "规格待接入" };
+  dsp: { available: boolean; bypassed: boolean; label: string };
   dspExecution: DspExecutionStatusDto;
 }
 
@@ -141,23 +141,23 @@ export interface BackendDspAvailabilityDto {
 }
 
 export interface BackendDspExecutionFaultDto {
-  revision: number;
+  revision: string;
   processorIndex: number;
   processorName: string;
   kind: "processingFailed" | "nonFiniteOutput";
-  streamFrame: number;
+  streamFrame: string;
   safeBypassActive: boolean;
   fallbackStatus: "rustSafeBypass";
 }
 
 export interface BackendDspExecutionStatusDto {
-  revision: number;
+  revision: string;
   safeBypassActive: boolean;
   fault: BackendDspExecutionFaultDto | null;
 }
 
 export interface DspExecutionStatusDto {
-  revision: number;
+  revision: bigint;
   safeBypassActive: boolean;
   fault: DspProcessingFaultDto | null;
 }
@@ -416,16 +416,36 @@ export interface BackendPlaybackProgressDto {
   durationMs: number | null;
 }
 
-export interface DspConfigurationRejectedDto {
-  revision: number;
+export interface BackendDspConfigurationRejectedDto {
+  revision: string;
+  code: "validationFailed" | "compilationFailed" | "applyFailed";
+  reason: string;
+  stage: "validate" | "compile" | "apply" | null;
 }
 
-export interface DspProcessingFaultDto {
-  revision: number;
+export interface DspConfigurationRejectedDto {
+  revision: bigint;
+  code: "validationFailed" | "compilationFailed" | "applyFailed";
+  reason: string;
+  stage: "validate" | "compile" | "apply" | null;
+}
+
+export interface BackendDspProcessingFaultDto {
+  revision: string;
   processorIndex: number;
   processorName: string;
   kind: "processingFailed" | "nonFiniteOutput";
-  streamFrame: number;
+  streamFrame: string;
+  safeBypassActive: boolean;
+  fallbackStatus: "rustSafeBypass";
+}
+
+export interface DspProcessingFaultDto {
+  revision: bigint;
+  processorIndex: number;
+  processorName: string;
+  kind: "processingFailed" | "nonFiniteOutput";
+  streamFrame: bigint;
   safeBypassActive: boolean;
   fallbackStatus: "rustSafeBypass";
 }
@@ -468,6 +488,27 @@ export interface BridgeEventHandlers {
 
 export type Unlisten = () => void;
 
+export interface DspEqBandDto { frequency: number; gain: number; q: number; }
+export interface DspConfigurationDto {
+  revision: string;
+  loudnessNormalization: { enabled: boolean; targetLufs: number; maxGainDb: number; minGainDb: number; useRealtimeMeter: boolean; externalGainDb: number };
+  surround3d: { enabled: boolean; distance: number; speed: number; angle: number; direction: number };
+  midSide: { enabled: boolean; stereoWidth: number; voiceBalance: number };
+  preEq: { enabled: boolean; bandCount: number; qCompensation: boolean; stereoMode: "independent" | "hseShared"; bands: DspEqBandDto[] };
+  deesser: { enabled: boolean; centerHz: number; q: number; thresholdDb: number; ratio: number; attackMs: number; releaseMs: number; splitBand: boolean; mix: number };
+  compressor: { enabled: boolean; thresholdDb: number; ratio: number; kneeDb: number; attackMs: number; releaseMs: number; makeupDb: number; outputGain: number };
+  nightMode: { enabled: boolean; amount: number };
+  delay: { enabled: boolean; delayMs: number; feedback: number; mix: number };
+  chorus: { enabled: boolean; rateHz: number; depthMs: number; mix: number };
+  flanger: { enabled: boolean; rateHz: number; depthMs: number; feedback: number; mix: number };
+  phaser: { enabled: boolean; rateHz: number; depth: number; feedback: number; mix: number; stages: number };
+  tremolo: { enabled: boolean; rateHz: number; depth: number; mix: number };
+  bassEnhancer: { enabled: boolean; cutoffHz: number; q: number; harmonicType: "odd" | "even" | "atan" | "soft"; harmonicGain: number; mix: number; levelDb: number; lowBoostDb: number | null };
+}
+export interface DspPresetDto { id: string; name: string; description: string; partial: boolean; unsupportedStages: string[]; }
+export interface DspApplyResultDto { revision: string; status: "applied" | "pending"; partial: boolean; unsupportedStages: string[]; engine: BackendEngineSnapshotDto; configuration: DspConfigurationDto; }
+export interface DspHse2ExportDto { code: string; scope: "current14StageProjection"; unsupportedStages: string[]; }
+
 export interface BridgeContract {
   bootstrap(): Promise<BridgeBootstrap>;
   getPlayback(): Promise<PlaybackSnapshotDto>;
@@ -480,6 +521,12 @@ export interface BridgeContract {
   seek(positionMs: number): Promise<PlaybackSnapshotDto>;
   setVolume(volume: number): Promise<PlaybackSnapshotDto>;
   getSettings(): Promise<AppSettingsDto>;
+  dspGetConfiguration(): Promise<DspConfigurationDto>;
+  dspConfigure(configuration: DspConfigurationDto): Promise<DspApplyResultDto>;
+  dspListPresets(): Promise<DspPresetDto[]>;
+  dspApplyPreset(presetId: string, revision: string): Promise<DspApplyResultDto>;
+  dspImportHse2(code: string, revision: string): Promise<DspApplyResultDto>;
+  dspExportHse2(): Promise<DspHse2ExportDto>;
   updateSettings(patch: Partial<AppSettingsDto>): Promise<AppSettingsDto>;
   enqueue(track: BackendTrackRefDto, position: QueueInsertPosition): Promise<PlaybackSnapshotDto>;
   removeQueueItem(queueItemId: string): Promise<PlaybackSnapshotDto>;

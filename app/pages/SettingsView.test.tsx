@@ -136,8 +136,13 @@ describe("SettingsView 更新器与不可用状态", () => {
     await settle();
 
     await act(async () => button(container, "音频与 DSP").click());
-    expect(container.textContent).toContain("DSP 核心接入中");
-    expect(container.textContent).toContain("4 个阶段");
+    expect(container.textContent).toContain("Rust DSP 核心已接通");
+    expect(container.textContent).toContain("14 个处理器");
+    expect(container.textContent).toContain("参数配置、预设与 HSE2 分享码通过 DspPort 生效");
+    expect(container.textContent).toContain("DspPort");
+    expect(container.textContent).toContain("HSE2");
+    expect(container.textContent).toContain("功能降级");
+    expect(container.textContent).toContain("不接管播放");
     expect(container.textContent).toContain("Rust Engine");
 
     await act(async () => button(container, "系统集成").click());

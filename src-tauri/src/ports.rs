@@ -67,6 +67,11 @@ pub trait PlaybackPort: Send + Sync {
     fn previous(&self, expected_queue_id: u64) -> AppResult<EngineSnapshotDto>;
     fn seek(&self, position_ms: u64) -> AppResult<EngineSnapshotDto>;
     fn set_volume(&self, volume: f32) -> AppResult<EngineSnapshotDto>;
+    fn configure_dsp(
+        &self,
+        revision: u64,
+        config: hyperplayer_engine::dsp_algorithms::DspConfig,
+    ) -> AppResult<EngineSnapshotDto>;
     fn set_repeat_mode(&self, mode: RepeatModeDto) -> AppResult<EngineSnapshotDto>;
     fn subscribe_events(
         &self,
@@ -387,10 +392,66 @@ fn spawn_prefetch_worker(
     Ok(())
 }
 
+#[derive(Clone)]
+pub struct PendingDspConfiguration {
+    pub revision: u64,
+    pub config: hyperplayer_engine::dsp_algorithms::DspConfig,
+}
+
+pub struct DspConfigurationState {
+    pub applied_revision: u64,
+    pub applied_config: hyperplayer_engine::dsp_algorithms::DspConfig,
+    pub pending: Option<PendingDspConfiguration>,
+}
+
+impl DspConfigurationState {
+    pub(crate) fn new() -> Self {
+        Self {
+            applied_revision: 0,
+            applied_config: hyperplayer_engine::dsp_algorithms::DspConfig::default(),
+            pending: Some(PendingDspConfiguration {
+                revision: 1,
+                config: hyperplayer_engine::dsp_algorithms::DspConfig::default(),
+            }),
+        }
+    }
+
+    pub fn newest_revision(&self) -> u64 {
+        self.pending
+            .as_ref()
+            .map_or(self.applied_revision, |pending| pending.revision)
+    }
+
+    pub fn request(
+        &mut self,
+        revision: u64,
+        config: hyperplayer_engine::dsp_algorithms::DspConfig,
+    ) {
+        self.pending = Some(PendingDspConfiguration { revision, config });
+    }
+
+    pub fn promote(&mut self, revision: u64) -> bool {
+        let Some(pending) = self.pending.take_if(|pending| pending.revision == revision) else {
+            return false;
+        };
+        self.applied_revision = pending.revision;
+        self.applied_config = pending.config;
+        true
+    }
+
+    pub fn reject(&mut self, revision: u64) -> bool {
+        self.pending
+            .take_if(|pending| pending.revision == revision)
+            .is_some()
+    }
+}
+
 pub struct AppState {
     pub services: AppServices,
     pub telemetry_sessions: crate::commands::telemetry::TelemetrySessions,
     pub exit_requested: Mutex<bool>,
+    pub dsp: Mutex<DspConfigurationState>,
+    pub dsp_operation: Mutex<()>,
     location_tickets: Mutex<HashMap<String, LocationTicket>>,
 }
 
@@ -406,6 +467,8 @@ impl AppState {
             services: AppServices::new(app_data_dir)?,
             telemetry_sessions: crate::commands::telemetry::TelemetrySessions::new(),
             exit_requested: Mutex::new(false),
+            dsp: Mutex::new(DspConfigurationState::new()),
+            dsp_operation: Mutex::new(()),
             location_tickets: Mutex::new(HashMap::new()),
         })
     }
@@ -460,6 +523,8 @@ impl AppState {
             services: AppServices::in_memory()?,
             telemetry_sessions: crate::commands::telemetry::TelemetrySessions::new(),
             exit_requested: Mutex::new(false),
+            dsp: Mutex::new(DspConfigurationState::new()),
+            dsp_operation: Mutex::new(()),
             location_tickets: Mutex::new(HashMap::new()),
         })
     }

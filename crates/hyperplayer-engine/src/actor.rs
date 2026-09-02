@@ -92,6 +92,9 @@ pub enum EngineEventKind {
     DspExecutionChanged,
     DspConfigurationRejected {
         revision: u64,
+        code: DspConfigurationRejectionCode,
+        reason: &'static str,
+        stage: Option<&'static str>,
     },
     DspProcessingFault {
         revision: u64,
@@ -102,6 +105,13 @@ pub enum EngineEventKind {
         safe_bypass_active: bool,
         fallback_status: DspFallbackStatus,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DspConfigurationRejectionCode {
+    ValidationFailed,
+    CompilationFailed,
+    ApplyFailed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,6 +231,7 @@ struct EngineRuntime {
     media: HashMap<u64, TrustedResolvedMedia>,
     pending_restore: bool,
     desired_dsp: Option<(u64, DspConfig)>,
+    pending_dsp: Option<(u64, DspConfig)>,
     dsp_compiler: Option<DspCompiler>,
 }
 
@@ -406,6 +417,7 @@ fn run_actor(
         media: HashMap::new(),
         pending_restore: false,
         desired_dsp: None,
+        pending_dsp: None,
         dsp_compiler: Some(DspCompiler::spawn().expect("DSP compiler thread must start")),
     };
     let mut next_tick = Instant::now() + ACTOR_TICK;
@@ -444,6 +456,14 @@ fn service_audio_tick(engine: &mut EngineRuntime) {
     let before_dsp = runtime.dsp_snapshot();
     let result = runtime.pump_once();
     let after_dsp = runtime.dsp_snapshot();
+    if before_dsp.revision != after_dsp.revision {
+        if let Some(pending) = engine
+            .pending_dsp
+            .take_if(|(revision, _)| *revision == after_dsp.revision)
+        {
+            engine.desired_dsp = Some(pending);
+        }
+    }
     if before_dsp.revision != after_dsp.revision
         || before_dsp.safe_bypass_active != after_dsp.safe_bypass_active
         || before_dsp.fault != after_dsp.fault
@@ -544,33 +564,70 @@ fn service_audio_tick(engine: &mut EngineRuntime) {
 }
 
 fn accept_compiled_dsp(engine: &mut EngineRuntime) {
-    let Some(compiler) = engine.dsp_compiler.as_ref() else {
-        return;
-    };
     let desired_revision = engine
-        .desired_dsp
+        .pending_dsp
         .as_ref()
         .map_or(0, |(revision, _)| *revision);
-    while let Some((revision, result)) = compiler.try_recv() {
+    loop {
+        let compiled = engine.dsp_compiler.as_ref().and_then(DspCompiler::try_recv);
+        let Some((revision, result)) = compiled else {
+            break;
+        };
         if revision != desired_revision {
             continue;
         }
-        let accepted = result.and_then(|prepared| {
-            engine
-                .audio
-                .as_mut()
-                .ok_or_else(|| EngineError::InvalidInput("no playback context is loaded".into()))?
-                .queue_prepared_dsp(prepared)
-        });
-        if accepted.is_err() {
-            let snapshot = engine.snapshot();
-            publish(
-                &mut engine.subscribers,
-                EngineEventKind::DspConfigurationRejected { revision },
-                snapshot,
-            );
+        match result {
+            Err(_) => {
+                engine.pending_dsp = None;
+                publish_dsp_rejection(
+                    engine,
+                    revision,
+                    DspConfigurationRejectionCode::CompilationFailed,
+                    "DSP configuration could not be compiled for the active audio format",
+                    Some("compile"),
+                );
+            }
+            Ok(prepared) => {
+                let accepted = engine
+                    .audio
+                    .as_mut()
+                    .ok_or_else(|| {
+                        EngineError::InvalidInput("no playback context is loaded".into())
+                    })
+                    .and_then(|runtime| runtime.queue_prepared_dsp(prepared));
+                if accepted.is_err() {
+                    engine.pending_dsp = None;
+                    publish_dsp_rejection(
+                        engine,
+                        revision,
+                        DspConfigurationRejectionCode::ApplyFailed,
+                        "DSP configuration could not be applied to the audio runtime",
+                        Some("apply"),
+                    );
+                }
+            }
         }
     }
+}
+
+fn publish_dsp_rejection(
+    engine: &mut EngineRuntime,
+    revision: u64,
+    code: DspConfigurationRejectionCode,
+    reason: &'static str,
+    stage: Option<&'static str>,
+) {
+    let snapshot = engine.snapshot();
+    publish(
+        &mut engine.subscribers,
+        EngineEventKind::DspConfigurationRejected {
+            revision,
+            code,
+            reason,
+            stage,
+        },
+        snapshot,
+    );
 }
 
 fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
@@ -643,27 +700,76 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
         }
         EngineCommand::ConfigureDsp { revision, config } => {
             let newest_revision = engine
-                .desired_dsp
+                .pending_dsp
                 .as_ref()
+                .or(engine.desired_dsp.as_ref())
                 .map_or(0, |(revision, _)| *revision);
             if revision == 0 || revision <= newest_revision {
+                publish(
+                    &mut engine.subscribers,
+                    EngineEventKind::DspConfigurationRejected {
+                        revision,
+                        code: DspConfigurationRejectionCode::ValidationFailed,
+                        reason: "DSP configuration revision must increase monotonically",
+                        stage: Some("validate"),
+                    },
+                    snapshot_with_dsp(machine, runtime.as_ref()),
+                );
                 return Err(EngineError::InvalidInput(
                     "DSP configuration revision must increase monotonically".into(),
                 ));
             }
-            validate_dsp_config(&config)?;
+            if let Err(error) = validate_dsp_config(&config) {
+                publish(
+                    &mut engine.subscribers,
+                    EngineEventKind::DspConfigurationRejected {
+                        revision,
+                        code: DspConfigurationRejectionCode::ValidationFailed,
+                        reason: "DSP configuration did not pass runtime validation",
+                        stage: Some("validate"),
+                    },
+                    snapshot_with_dsp(machine, runtime.as_ref()),
+                );
+                return Err(error);
+            }
             if let Some(runtime) = runtime.as_mut() {
                 if matches!(machine.state(), PlaybackState::Playing { .. }) {
                     if let Some(compiler) = engine.dsp_compiler.as_ref() {
-                        compiler.submit(revision, runtime.output_format(), config.clone());
+                        engine.pending_dsp = Some((revision, config.clone()));
+                        compiler.submit(revision, runtime.output_format(), config);
+                    } else if let Err(error) = runtime.configure_dsp(revision, config.clone()) {
+                        publish(
+                            &mut engine.subscribers,
+                            EngineEventKind::DspConfigurationRejected {
+                                revision,
+                                code: DspConfigurationRejectionCode::CompilationFailed,
+                                reason: "DSP configuration could not be compiled for the active audio format",
+                                stage: Some("compile"),
+                            },
+                            snapshot_with_dsp(machine, Some(runtime)),
+                        );
+                        return Err(error);
                     } else {
-                        runtime.configure_dsp(revision, config.clone())?;
+                        engine.pending_dsp = Some((revision, config));
                     }
+                } else if let Err(error) = runtime.configure_dsp(revision, config.clone()) {
+                    publish(
+                        &mut engine.subscribers,
+                        EngineEventKind::DspConfigurationRejected {
+                            revision,
+                            code: DspConfigurationRejectionCode::CompilationFailed,
+                            reason: "DSP configuration could not be compiled for the active audio format",
+                            stage: Some("compile"),
+                        },
+                        snapshot_with_dsp(machine, Some(runtime)),
+                    );
+                    return Err(error);
                 } else {
-                    runtime.configure_dsp(revision, config.clone())?;
+                    engine.pending_dsp = Some((revision, config));
                 }
+            } else {
+                engine.desired_dsp = Some((revision, config));
             }
-            engine.desired_dsp = Some((revision, config));
             Ok(())
         }
         EngineCommand::Stop => {
@@ -1287,6 +1393,7 @@ mod tests {
             media: HashMap::new(),
             pending_restore: false,
             desired_dsp: None,
+            pending_dsp: None,
             dsp_compiler: None,
         };
 
@@ -1405,7 +1512,12 @@ mod tests {
         );
         publish(
             &mut subscribers,
-            EngineEventKind::DspConfigurationRejected { revision: 7 },
+            EngineEventKind::DspConfigurationRejected {
+                revision: 7,
+                code: DspConfigurationRejectionCode::CompilationFailed,
+                reason: "DSP configuration could not be compiled for the active audio format",
+                stage: Some("compile"),
+            },
             machine.snapshot(),
         );
         publish(
@@ -1428,7 +1540,13 @@ mod tests {
             .iter()
             .any(|event| event.kind == EngineEventKind::StateChanged));
         assert!(events.iter().any(|event| {
-            event.kind == EngineEventKind::DspConfigurationRejected { revision: 7 }
+            event.kind
+                == EngineEventKind::DspConfigurationRejected {
+                    revision: 7,
+                    code: DspConfigurationRejectionCode::CompilationFailed,
+                    reason: "DSP configuration could not be compiled for the active audio format",
+                    stage: Some("compile"),
+                }
         }));
         assert!(events.iter().any(|event| {
             event.kind
@@ -1505,6 +1623,7 @@ mod tests {
             media: HashMap::new(),
             pending_restore: false,
             desired_dsp: None,
+            pending_dsp: None,
             dsp_compiler: None,
         };
         let (event_sender, event_receiver) = mpsc::channel();
@@ -1618,6 +1737,7 @@ mod tests {
             media: HashMap::new(),
             pending_restore: false,
             desired_dsp: None,
+            pending_dsp: None,
             dsp_compiler: None,
         };
         let current = item(1, &path);
@@ -1707,6 +1827,7 @@ mod tests {
             media: HashMap::new(),
             pending_restore: false,
             desired_dsp: None,
+            pending_dsp: None,
             dsp_compiler: Some(DspCompiler::spawn().unwrap()),
         };
         let current = item(1, &path);
@@ -1752,6 +1873,120 @@ mod tests {
         runtime.pump_once().unwrap();
         assert_eq!(runtime.dsp_snapshot().revision, 3);
         assert_eq!(runtime.dsp_snapshot().pending_revision, None);
+    }
+
+    #[test]
+    fn invalid_dsp_configuration_publishes_sanitized_validation_diagnostic() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("invalid-dsp.wav");
+        fs::write(&path, wav(&[1, 2, 3, 4])).unwrap();
+        let output = Box::new(TestOutput {
+            format: PcmFormat {
+                sample_rate: 48_000,
+                channels: 2,
+                sample_format: PcmSampleFormat::F32,
+            },
+            state: Arc::new(Mutex::new(State::default())),
+            fail_start: false,
+        }) as Box<dyn AudioOutput>;
+        let mut output = Some(output);
+        let mut engine = EngineRuntime {
+            machine: PlaybackMachine::new(1),
+            audio: None,
+            telemetry: TelemetryHub::new(),
+            decoder_factory: Some(Box::new(WavDecoderFactory)),
+            output_factory: Some(Box::new(move |_| {
+                output
+                    .take()
+                    .ok_or_else(|| EngineError::AudioBackend("test output already opened".into()))
+            })),
+            subscribers: Vec::new(),
+            media: HashMap::new(),
+            pending_restore: false,
+            desired_dsp: None,
+            pending_dsp: None,
+            dsp_compiler: None,
+        };
+        let (event_sender, event_receiver) = mpsc::channel();
+        engine.subscribers.push(event_sender);
+        let mut config = DspConfig::default();
+        config.pre_eq.band_count = 0;
+
+        let error = apply(
+            &mut engine,
+            EngineCommand::ConfigureDsp {
+                revision: 4,
+                config,
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, EngineError::InvalidInput(_)));
+        let event = event_receiver.recv().unwrap();
+        assert_eq!(
+            event.kind,
+            EngineEventKind::DspConfigurationRejected {
+                revision: 4,
+                code: DspConfigurationRejectionCode::ValidationFailed,
+                reason: "DSP configuration did not pass runtime validation",
+                stage: Some("validate"),
+            }
+        );
+    }
+
+    #[test]
+    fn mono_source_applies_bootstrap_dsp_to_stereo_output() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mono-bootstrap.wav");
+        fs::write(&path, wav(&[1, 2, 3, 4])).unwrap();
+        let requested_formats = Arc::new(Mutex::new(Vec::new()));
+        let requested_formats_for_factory = Arc::clone(&requested_formats);
+        let handle = EngineHandle::spawn_with(
+            8,
+            1,
+            Box::new(WavDecoderFactory),
+            Box::new(move |format| {
+                requested_formats_for_factory.lock().unwrap().push(format);
+                Ok(Box::new(TestOutput {
+                    format,
+                    state: Arc::new(Mutex::new(State::default())),
+                    fail_start: false,
+                }))
+            }),
+        )
+        .unwrap();
+        handle
+            .request(EngineCommand::ConfigureDsp {
+                revision: 1,
+                config: DspConfig::default(),
+            })
+            .unwrap();
+        let current = item(1, &path);
+        let loaded = handle
+            .request(EngineCommand::LoadContext {
+                items: vec![current.clone()],
+                start_index: 0,
+                media: media(&current, &path),
+            })
+            .unwrap();
+
+        assert_eq!(requested_formats.lock().unwrap()[0].channels, 2);
+        assert_eq!(loaded.dsp_execution.revision, 0);
+        assert!(handle.request(EngineCommand::Ready).is_ok());
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        let applied = loop {
+            let snapshot = handle.snapshot().unwrap();
+            if snapshot.dsp_execution.revision == 1 {
+                break snapshot;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "bootstrap DSP apply timed out"
+            );
+            std::thread::yield_now();
+        };
+        assert!(!applied.dsp_execution.safe_bypass_active);
+        handle.shutdown().unwrap();
     }
 
     #[test]
@@ -2298,6 +2533,7 @@ mod tests {
             media: HashMap::new(),
             pending_restore: false,
             desired_dsp: None,
+            pending_dsp: None,
             dsp_compiler: None,
         };
 
@@ -2373,6 +2609,7 @@ mod tests {
             media: HashMap::new(),
             pending_restore: false,
             desired_dsp: None,
+            pending_dsp: None,
             dsp_compiler: None,
         };
         apply(
@@ -2435,6 +2672,7 @@ mod tests {
             media: HashMap::new(),
             pending_restore: false,
             desired_dsp: None,
+            pending_dsp: None,
             dsp_compiler: None,
         };
         apply(
@@ -2495,6 +2733,7 @@ mod tests {
             media: HashMap::new(),
             pending_restore: false,
             desired_dsp: None,
+            pending_dsp: None,
             dsp_compiler: None,
         };
         apply(
@@ -2595,6 +2834,7 @@ mod tests {
             media: HashMap::new(),
             pending_restore: false,
             desired_dsp: None,
+            pending_dsp: None,
             dsp_compiler: None,
         };
         apply(

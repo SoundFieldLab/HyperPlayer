@@ -6,6 +6,9 @@ import type {
   BridgeContract,
   ContentDomain,
   DspProcessingFaultDto,
+  DspConfigurationDto,
+  DspPresetDto,
+  DspApplyResultDto,
   PlaybackSnapshotDto,
   PlaybackContextDto,
   QueueInsertPosition,
@@ -39,6 +42,13 @@ interface AppState {
   tasks: BackgroundTaskDto[];
   closeRequest: BackendCloseRequestedDto | null;
   dspDiagnostic: DspProcessingFaultDto | null;
+  dspConfiguration: DspConfigurationDto | null;
+  dspPendingConfiguration: DspConfigurationDto | null;
+  dspPresets: DspPresetDto[];
+  dspUnsupportedStages: string[];
+  dspPartial: boolean;
+  dspBusy: boolean;
+  dspRejection: string | null;
   expandedPlayer: boolean;
   overlay: OverlayId;
   searchOpen: boolean;
@@ -66,6 +76,11 @@ interface AppState {
   setVolume(value: number): Promise<void>;
   setRepeat(value: PlaybackSnapshotDto["repeat"]): Promise<void>;
   setSettings(patch: Partial<AppSettingsDto>): Promise<void>;
+  loadDspWorkspace(): Promise<void>;
+  configureDsp(configuration: DspConfigurationDto): Promise<void>;
+  applyDspPreset(presetId: string): Promise<void>;
+  importDspHse2(code: string): Promise<void>;
+  exportDspHse2(): Promise<string>;
   notifyError(error: unknown, fallback: string): void;
   dismissToast(id: number): void;
   enqueueTrack(track: TrackDto, position?: QueueInsertPosition): Promise<void>;
@@ -125,6 +140,25 @@ function acceptedPlaybackState(snapshot: PlaybackSnapshotDto, current: DspProces
   };
 }
 
+function nextDspRevision(configuration: DspConfigurationDto | null): string {
+  return (BigInt(configuration?.revision ?? "0") + 1n).toString();
+}
+
+function acceptedDspResult(result: DspApplyResultDto, currentPlaybackRevision: bigint | null) {
+  const applied = result.status === "applied"
+    || BigInt(result.engine.dspExecution.revision) === BigInt(result.revision)
+    || currentPlaybackRevision === BigInt(result.revision);
+  return {
+    ...(applied
+      ? { dspConfiguration: result.configuration, dspPendingConfiguration: null }
+      : { dspPendingConfiguration: result.configuration }),
+    dspPartial: result.partial,
+    dspUnsupportedStages: result.unsupportedStages,
+    dspRejection: null,
+    dspBusy: !applied,
+  };
+}
+
 let toastId = 0;
 let initGeneration = 0;
 let transportGeneration = 0;
@@ -155,6 +189,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   tasks: [],
   closeRequest: null,
   dspDiagnostic: null,
+  dspConfiguration: null,
+  dspPendingConfiguration: null,
+  dspPresets: [],
+  dspUnsupportedStages: [],
+  dspPartial: false,
+  dspBusy: false,
+  dspRejection: null,
   expandedPlayer: false,
   overlay: "none",
   searchOpen: false,
@@ -177,7 +218,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingUnlisten = await activeBridge.subscribe({
         playbackChanged: (playback) => {
           eventPlayback = playback;
-          set((state) => acceptedPlaybackState(playback, state.dspDiagnostic));
+          set((state) => {
+            const pending = state.dspPendingConfiguration;
+            const appliedPending = pending && BigInt(pending.revision) === playback.dspExecution.revision;
+            return {
+              ...acceptedPlaybackState(playback, state.dspDiagnostic),
+              ...(appliedPending ? { dspConfiguration: pending, dspPendingConfiguration: null, dspBusy: false } : {}),
+            };
+          });
         },
         queueChanged: (playback) => {
           eventPlayback = playback;
@@ -201,12 +249,19 @@ export const useAppStore = create<AppState>((set, get) => ({
           neteaseAuthenticated = status.authenticated;
           set((state) => ({ tasks: status.authenticated ? state.tasks.filter((task) => task.id !== "netease-login") : state.tasks }));
         },
-        dspConfigurationRejected: ({ revision }) => get().notifyError(
-          new Error(`DSP 配置 revision ${revision} 未能准备`),
-          "DSP 配置未能准备",
-        ),
+        dspConfigurationRejected: ({ revision, code, reason, stage }) => {
+          const pending = get().dspPendingConfiguration;
+          if (!pending || BigInt(pending.revision) !== BigInt(revision)) return;
+          const phase = stage ? `（${stage} 阶段）` : "";
+          const message = `DSP 配置 revision ${revision} 被拒绝${phase}：${reason} [${code}]`;
+          set({ dspPendingConfiguration: null, dspRejection: message, dspBusy: false });
+          get().notifyError(
+            new Error(message),
+            "DSP 配置未能应用",
+          );
+        },
         dspProcessingFault: (dspDiagnostic) => {
-          const acceptedRevision = get().playback?.dspExecution.revision ?? 0;
+          const acceptedRevision = get().playback?.dspExecution.revision ?? 0n;
           if (dspDiagnostic.revision < acceptedRevision) return;
           set({ dspDiagnostic });
           get().notifyError(
@@ -463,6 +518,60 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (previous) set({ settings: previous });
       void activeBridge.getSettings().then((settings) => { if (generation === settingsGeneration) set({ settings }); }).catch(() => undefined);
       get().notifyError(error, "保存设置失败");
+    }
+  },
+  async loadDspWorkspace() {
+    set({ dspBusy: true });
+    try {
+      const [dspConfiguration, dspPresets] = await Promise.all([
+        activeBridge.dspGetConfiguration(),
+        activeBridge.dspListPresets(),
+      ]);
+      set({ dspConfiguration, dspPendingConfiguration: null, dspPresets, dspBusy: false, dspRejection: null });
+    } catch (error) {
+      set({ dspBusy: false });
+      get().notifyError(error, "加载 DSP 工作台失败");
+    }
+  },
+  async configureDsp(configuration) {
+    const request = { ...configuration, revision: nextDspRevision(get().dspConfiguration) };
+    set({ dspBusy: true, dspRejection: null });
+    try {
+      const result = await activeBridge.dspConfigure(request);
+      set((state) => acceptedDspResult(result, state.playback?.dspExecution.revision ?? null));
+    } catch (error) {
+      set({ dspBusy: false, dspRejection: errorMessage(error) });
+      get().notifyError(error, "应用 DSP 配置失败");
+    }
+  },
+  async applyDspPreset(presetId) {
+    set({ dspBusy: true, dspRejection: null });
+    try {
+      const result = await activeBridge.dspApplyPreset(presetId, nextDspRevision(get().dspConfiguration));
+      set((state) => acceptedDspResult(result, state.playback?.dspExecution.revision ?? null));
+    } catch (error) {
+      set({ dspBusy: false, dspRejection: errorMessage(error) });
+      get().notifyError(error, "应用 DSP 预设失败");
+    }
+  },
+  async importDspHse2(code) {
+    set({ dspBusy: true, dspRejection: null });
+    try {
+      const result = await activeBridge.dspImportHse2(code, nextDspRevision(get().dspConfiguration));
+      set((state) => acceptedDspResult(result, state.playback?.dspExecution.revision ?? null));
+    } catch (error) {
+      set({ dspBusy: false, dspRejection: errorMessage(error) });
+      get().notifyError(error, "导入 HSE2 失败");
+    }
+  },
+  async exportDspHse2() {
+    try {
+      const result = await activeBridge.dspExportHse2();
+      set({ dspUnsupportedStages: result.unsupportedStages });
+      return result.code;
+    } catch (error) {
+      get().notifyError(error, "导出 HSE2 失败");
+      throw error;
     }
   },
   async enqueueTrack(track, position = "contextEnd") {

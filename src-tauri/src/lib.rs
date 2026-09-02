@@ -11,7 +11,7 @@ pub mod ports;
 mod secure_http;
 
 use commands::{
-    bootstrap, cache, compat, library, lyrics, netease, playback, queue, settings, telemetry,
+    bootstrap, cache, compat, dsp, library, lyrics, netease, playback, queue, settings, telemetry,
     updater, weather, window,
 };
 use ports::AppState;
@@ -35,6 +35,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bootstrap::bootstrap,
             bootstrap::dsp_availability,
+            dsp::dsp_get_configuration,
+            dsp::dsp_configure,
+            dsp::dsp_list_presets,
+            dsp::dsp_apply_preset,
+            dsp::dsp_import_hse2,
+            dsp::dsp_export_hse2,
             compat::get_playback,
             compat::set_playback,
             compat::seek,
@@ -297,10 +303,11 @@ mod tests {
     }
 
     #[test]
-    fn dsp_command_returns_unavailable() {
-        let error = crate::commands::bootstrap::dsp_availability().unwrap_err();
-        assert_eq!(error.code, "unavailable");
-        assert!(error.message.contains("D16"));
+    fn dsp_command_reports_built_in_runtime_capability() {
+        let availability = crate::commands::bootstrap::dsp_availability().unwrap();
+        assert!(availability.available);
+        assert!(availability.reason.contains("Rust DSP runtime"));
+        assert!(availability.reason.contains("DspPort"));
     }
 
     #[test]

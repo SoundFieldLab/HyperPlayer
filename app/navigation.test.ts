@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ minimize: vi.fn(), toggleMaximize: vi.fn(), close: vi.fn() }),
 }));
-vi.mock("./player/Player", () => ({ ExpandedPlayer: () => null, PlayerDock: () => null }));
+vi.mock("./player/Player", () => ({ ExpandedPlayer: () => null, PlayerDock: () => createElement("footer", { className: "player-dock" }) }));
+vi.mock("./pages/ContentViews", () => ({ CurrentView: () => createElement("div", { "data-testid": "current-view" }) }));
 
 const storage = vi.hoisted(() => {
   const values = new Map<string, string>();
@@ -149,24 +150,49 @@ describe("content-domain navigation history", () => {
     expect(shared()).toEqual(before);
   });
 
-  it("renders the top navigation and grouped music sidebar", async () => {
+  it("renders the baseline sidebar and keeps background tasks in the status center", async () => {
+    useAppStore.setState({ tasks: [{ id: "scan-1", kind: "scan", title: "扫描音乐", detail: "20 / 100", progress: 0.2, state: "running" }] });
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
 
-    await act(async () => root?.render(
-      createElement("div", null, createElement(Titlebar), createElement(SidebarNav)),
-    ));
+    await act(async () => root?.render(createElement("div", null, createElement(Titlebar), createElement(SidebarNav))));
     expect(container.textContent).toContain("HyperPlayer");
-    expect(container.textContent).toContain("音乐馆");
-    expect(container.textContent).toContain("你的音乐");
-    expect(container.textContent).toContain("发现音乐");
-    expect(container.textContent).toContain("我的歌单");
+    expect(container.textContent).toContain("网易云");
+    expect(container.textContent).toContain("本地");
+    expect(container.querySelector('nav[aria-label="内容导航"]')).not.toBeNull();
+    expect(container.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
+    expect(container.querySelector('[aria-current="page"]')?.getAttribute("aria-label")).toBe("首页");
+    expect(container.querySelector('[aria-label="状态中心，1 个进行中任务"]')).not.toBeNull();
     expect(container.querySelector('[aria-haspopup="dialog"]')).not.toBeNull();
     const settingsButton = [...container.querySelectorAll("button")].find((item) => item.textContent?.includes("设置"));
     expect(settingsButton).toBeDefined();
     await act(async () => settingsButton?.click());
     expect(useAppStore.getState().view).toBe("settings");
+  });
+
+  it("renders a two-column themed shell without a persistent context rail", async () => {
+    const init = vi.fn(async () => undefined);
+    const dispose = vi.fn();
+    useAppStore.setState({
+      ready: true,
+      onboarding: false,
+      init,
+      dispose,
+      settings: { theme: "light", material: "clean", dynamicColor: true, reduceMotion: false, reduceTransparency: false, restoreQueue: true, autoPlayOnLaunch: false, neteaseEnabled: true },
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => root?.render(createElement(App)));
+
+    const shell = container.querySelector(".app-shell");
+    expect(shell?.getAttribute("data-theme")).toBe("light");
+    expect(shell?.querySelector(":scope > .sidebar")).not.toBeNull();
+    expect(shell?.querySelector(":scope > .workspace > .titlebar")).not.toBeNull();
+    expect(shell?.querySelector(":scope > .player-dock")).not.toBeNull();
+    expect(shell?.querySelector(".context-rail")).toBeNull();
   });
 
   it("enables and invokes both titlebar history controls", async () => {

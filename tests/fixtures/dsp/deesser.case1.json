@@ -23,5 +23,10 @@
     "value": 0.000001,
     "floor": 1e-9
   },
-  "notes": "禁用恒等锚点：enabled=false 时 processStereo 首行直接返回、缓冲零改写，期望输出与输入逐位一致（左右声道皆然，包络与全部滤波器状态不推进）；其余参数取激进值随载荷固化。左=合成齿音（4–8kHz 九频点正弦族 + 固定种子 LCG 相位，带限确定性、无 Math.random），右=200Hz 正弦。帧数非整除（末块 112 帧）。"
+  "notes": "禁用恒等锚点：enabled=false 时 processStereo 首行直接返回、缓冲零改写，期望输出与输入逐位一致（左右声道皆然，包络与全部滤波器状态不推进）；其余参数取激进值随载荷固化。左=合成齿音（4–8kHz 九频点正弦族 + 固定种子 LCG 相位，带限确定性、无 Math.random），右=200Hz 正弦。帧数非整除（末块 112 帧）。",
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  }
 }

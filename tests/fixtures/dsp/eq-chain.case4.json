@@ -117,5 +117,10 @@
     "value": 0.000001,
     "floor": 1e-9
   },
-  "notes": "满配钳制极值：bandCount=20、20 段全配；首段 frequency=5/gain=30/q=0.05 越下界（按 20Hz/+24dB/Q0.1 生效），末段 frequency=30000/gain=-40/q=50 越上界（按 20kHz/−24dB/Q18 生效），三参数双向钳制语义随载荷固化。左=三频正弦叠加(220/3300/11000Hz)，右=固定种子LCG噪声。帧数非整除（末块 240 帧）。"
+  "notes": "满配钳制极值：bandCount=20、20 段全配；首段 frequency=5/gain=30/q=0.05 越下界（按 20Hz/+24dB/Q0.1 生效），末段 frequency=30000/gain=-40/q=50 越上界（按 20kHz/−24dB/Q18 生效），三参数双向钳制语义随载荷固化。左=三频正弦叠加(220/3300/11000Hz)，右=固定种子LCG噪声。帧数非整除（末块 240 帧）。",
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  }
 }

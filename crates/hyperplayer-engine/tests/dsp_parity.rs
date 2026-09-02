@@ -1,11 +1,12 @@
-use hse_core::{biquad::BiquadStage, Stage as HseStage};
+use hse_core::{
+    biquad::BiquadStage, compressor::CompressorStage, eq_chain::EqBandParam, Stage as HseStage,
+};
 use hyperplayer_engine::dsp::{PcmBlock, PcmFormat, PcmProcessor, PcmSampleFormat, ResetReason};
 use hyperplayer_engine::dsp_algorithms::bass_enhancer::{BassEnhancerSettings, HarmonicType};
 use hyperplayer_engine::dsp_algorithms::chorus::{ChorusProcessor, ChorusSettings};
-use hyperplayer_engine::dsp_algorithms::compressor::{Compressor, CompressorSettings};
+use hyperplayer_engine::dsp_algorithms::compressor::CompressorSettings;
 use hyperplayer_engine::dsp_algorithms::deesser::DeesserSettings;
 use hyperplayer_engine::dsp_algorithms::delay::{DelayProcessor, DelaySettings};
-use hyperplayer_engine::dsp_algorithms::eq_chain::EqBandParam;
 use hyperplayer_engine::dsp_algorithms::flanger::{FlangerProcessor, FlangerSettings};
 use hyperplayer_engine::dsp_algorithms::loudness_normalization::{
     LoudnessNormalizationProcessor, LoudnessNormalizationSettings,
@@ -37,7 +38,7 @@ struct VectorMeta {
     frames: usize,
     params: Value,
     tolerance: Tolerance,
-    source: Option<VectorSource>,
+    source: VectorSource,
 }
 
 #[derive(Deserialize)]
@@ -73,9 +74,12 @@ fn boolean(params: &Value, field: &str) -> bool {
 }
 
 struct VectorCompressor {
-    inner: Compressor,
+    inner: CompressorStage,
     derive_mono_sum: bool,
-    sidechain: Vec<f32>,
+    left: Vec<f32>,
+    right: Vec<f32>,
+    side_left: Vec<f32>,
+    side_right: Vec<f32>,
 }
 
 impl PcmProcessor for VectorCompressor {
@@ -93,28 +97,44 @@ impl PcmProcessor for VectorCompressor {
                 "compressor vectors require stereo".into(),
             ));
         }
-        self.sidechain.resize(max_block_frames * 2, 0.0);
+        self.left.resize(max_block_frames, 0.0);
+        self.right.resize(max_block_frames, 0.0);
+        self.side_left.resize(max_block_frames, 0.0);
+        self.side_right.resize(max_block_frames, 0.0);
         Ok(())
     }
 
     fn process(&mut self, block: PcmBlock<'_>) -> hyperplayer_engine::Result<()> {
-        if self.derive_mono_sum {
-            for (frame, side) in block
-                .interleaved
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .zip(self.sidechain.as_chunks_mut::<2>().0.iter_mut())
-            {
+        let frames = block.interleaved.len() / 2;
+        for (index, frame) in block.interleaved.as_chunks::<2>().0.iter().enumerate() {
+            self.left[index] = frame[0];
+            self.right[index] = frame[1];
+            if self.derive_mono_sum {
                 let mono = (f64::from(frame[0]) + f64::from(frame[1])) as f32;
-                side.copy_from_slice(&[mono, mono]);
+                self.side_left[index] = mono;
+                self.side_right[index] = mono;
             }
-            self.inner.process_interleaved_stereo_with_sidechain(
-                block.interleaved,
-                &self.sidechain[..block.interleaved.len()],
+        }
+        if self.derive_mono_sum {
+            self.inner.process_with_sidechain(
+                &mut self.left[..frames],
+                &mut self.right[..frames],
+                &self.side_left[..frames],
+                &self.side_right[..frames],
             );
         } else {
-            self.inner.process_interleaved_stereo(block.interleaved);
+            self.inner
+                .process(&mut self.left[..frames], &mut self.right[..frames]);
+        }
+        for (index, frame) in block
+            .interleaved
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
+            frame[0] = self.left[index];
+            frame[1] = self.right[index];
         }
         Ok(())
     }
@@ -437,9 +457,13 @@ fn processor(meta: &VectorMeta) -> Box<dyn PcmProcessor> {
                 sidechain_enabled: boolean(&meta.params, "sidechainEnabled"),
             };
             Box::new(VectorCompressor {
-                inner: Compressor::with_settings(f64::from(meta.sample_rate), settings).unwrap(),
+                inner: CompressorStage::from_settings(f64::from(meta.sample_rate), settings.into())
+                    .unwrap(),
                 derive_mono_sum: settings.sidechain_enabled,
-                sidechain: Vec::new(),
+                left: Vec::new(),
+                right: Vec::new(),
+                side_left: Vec::new(),
+                side_right: Vec::new(),
             })
         }
         "deesser" => Box::new(
@@ -605,18 +629,12 @@ fn hse_group_one_matches_shared_frozen_vectors() {
         assert!(meta.frames > 0 && meta.block_size > 0);
         assert_eq!(meta.tolerance.kind, "relative");
         let label = format!("{}.{}", meta.module, meta.case);
-        if matches!(
-            meta.module.as_str(),
-            "night-mode" | "delay" | "chorus" | "flanger" | "phaser" | "tremolo"
-        ) {
-            let source = meta
-                .source
-                .as_ref()
-                .expect("HSE-derived vector source is required");
-            assert_eq!(source.project, "HyperSoundEngine");
-            assert_eq!(source.version, "1.5.1");
-            assert_eq!(source.commit, "f7017621b7d84005fbfed8a3c42a119487a17326");
-        }
+        assert_eq!(meta.source.project, "HyperSoundEngine");
+        assert_eq!(meta.source.version, "1.5.1");
+        assert_eq!(
+            meta.source.commit,
+            "f7017621b7d84005fbfed8a3c42a119487a17326"
+        );
         assert_eq!(
             json_path.file_stem().and_then(|value| value.to_str()),
             Some(label.as_str())

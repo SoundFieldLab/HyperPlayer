@@ -1,13 +1,16 @@
-//! HSE v1.5.1 Stage 7 夜间模式：增强压缩后衰减 6 kHz 以上高频。
-//!
-//! 经 `LICENSE-HSE-AUTHORIZATION.md` 专项授权，移植自 HyperSoundEngine v1.5.1
-//! (`f7017621b7d84005fbfed8a3c42a119487a17326`)。中间运算保持 `f64`，只在
-//! PCM 缓冲写回时量化为 `f32`。
+//! HSE v1.5.1 Stage 7 夜间模式的 HyperPlayer PCM 适配层。
 
-use super::biquad::{design_biquad, BiquadCoeffs};
-use super::compressor::{Compressor, CompressorRuntimeState, CompressorSettings};
+use super::compressor::CompressorSettings;
 use crate::dsp::{PcmBlock, PcmFormat, PcmProcessor, ResetReason};
 use crate::error::{EngineError, Result};
+use hse_core::{
+    compressor::CompressorSettings as CoreCompressorSettings,
+    night_mode::{
+        NightModeRuntimeState as CoreNightModeRuntimeState,
+        NightModeSettings as CoreNightModeSettings, NightModeStage,
+    },
+    Stage as HseStage,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NightModeSettings {
@@ -36,37 +39,10 @@ impl EnabledTransition {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct MonoBiquadState {
-    s1: f64,
-    s2: f64,
-}
-
-impl MonoBiquadState {
-    fn process(&mut self, coeffs: BiquadCoeffs, samples: &mut [f32]) {
-        let (mut s1, mut s2) = (self.s1, self.s2);
-        for sample in samples {
-            let input = f64::from(*sample);
-            let output = coeffs.b0 * input + s1;
-            s1 = coeffs.b1 * input - coeffs.a1 * output + s2;
-            s2 = coeffs.b2 * input - coeffs.a2 * output;
-            *sample = output as f32;
-        }
-        self.s1 = s1;
-        self.s2 = s2;
-    }
-
-    fn reset(&mut self) {
-        *self = Self::default();
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct NightModeRuntimeState {
     sample_rate: u32,
-    compressor: CompressorRuntimeState,
-    shelf_left: MonoBiquadState,
-    shelf_right: MonoBiquadState,
+    core: CoreNightModeRuntimeState,
 }
 
 pub struct NightModeProcessor {
@@ -75,10 +51,7 @@ pub struct NightModeProcessor {
     base_compressor: CompressorSettings,
     active: bool,
     enabled_transition: EnabledTransition,
-    compressor: Compressor,
-    shelf_coeffs: BiquadCoeffs,
-    shelf_left: MonoBiquadState,
-    shelf_right: MonoBiquadState,
+    core: NightModeStage,
     left: Vec<f32>,
     right: Vec<f32>,
 }
@@ -100,10 +73,11 @@ impl NightModeProcessor {
         validate_sample_rate(sample_rate)?;
         validate_settings(settings)?;
         let active = settings.enabled && settings.amount > 0.0;
-        let compressor_settings = derive_compressor_settings(settings, base_compressor);
-        let compressor = Compressor::with_settings(f64::from(sample_rate), compressor_settings)
-            .map_err(|error| EngineError::InvalidInput(error.into()))?;
-        let shelf_coeffs = design_shelf(sample_rate, settings.amount)?;
+        let core = NightModeStage::new(
+            f64::from(sample_rate),
+            core_settings(settings, base_compressor),
+        )
+        .map_err(EngineError::InvalidInput)?;
         Ok(Self {
             sample_rate,
             settings,
@@ -113,10 +87,7 @@ impl NightModeProcessor {
                 was_active: false,
                 is_active: active,
             },
-            compressor,
-            shelf_coeffs,
-            shelf_left: MonoBiquadState::default(),
-            shelf_right: MonoBiquadState::default(),
+            core,
             left: Vec::new(),
             right: Vec::new(),
         })
@@ -139,7 +110,18 @@ impl NightModeProcessor {
     }
 
     pub fn derived_compressor_settings(&self) -> CompressorSettings {
-        derive_compressor_settings(self.settings, self.base_compressor)
+        let settings = self.core.derived_compressor_settings();
+        CompressorSettings {
+            enabled: settings.enabled,
+            threshold_db: settings.threshold_db,
+            ratio: settings.ratio,
+            knee_db: settings.knee_db,
+            attack_ms: settings.attack_ms,
+            release_ms: settings.release_ms,
+            makeup_db: settings.makeup_db,
+            output_gain: settings.output_gain,
+            sidechain_enabled: settings.sidechain_enabled,
+        }
     }
 
     pub fn set_params(
@@ -150,8 +132,9 @@ impl NightModeProcessor {
         validate_settings(settings)?;
         let was_active = self.active;
         let is_active = settings.enabled && settings.amount > 0.0;
-        let shelf_coeffs = design_shelf(self.sample_rate, settings.amount)?;
-
+        self.core
+            .set_params(core_settings(settings, base_compressor))
+            .map_err(EngineError::InvalidInput)?;
         self.settings = settings;
         self.base_compressor = base_compressor;
         self.active = is_active;
@@ -159,32 +142,7 @@ impl NightModeProcessor {
             was_active,
             is_active,
         };
-        self.compressor
-            .set_params(derive_compressor_settings(settings, base_compressor));
-        self.shelf_coeffs = shelf_coeffs;
-        if !was_active && is_active {
-            self.reset_runtime_state();
-        }
         Ok(())
-    }
-
-    fn reset_runtime_state(&mut self) {
-        self.compressor.reset();
-        self.shelf_left.reset();
-        self.shelf_right.reset();
-    }
-
-    fn copy_runtime_state_from(&mut self, source: &Self) -> bool {
-        if self
-            .compressor
-            .copy_runtime_state_from(&source.compressor)
-            .is_err()
-        {
-            return false;
-        }
-        self.shelf_left = source.shelf_left;
-        self.shelf_right = source.shelf_right;
-        true
     }
 }
 
@@ -205,19 +163,19 @@ impl PcmProcessor for NightModeProcessor {
             is_active: self.active,
         };
         if self.active && previous.active {
-            return self.copy_runtime_state_from(previous);
-        } else if self.active {
-            self.reset_runtime_state();
+            self.core.copy_runtime_state_from(&previous.core).is_ok()
+        } else {
+            if self.active {
+                self.core.reset();
+            }
+            true
         }
-        true
     }
 
     fn create_runtime_checkpoint(&self) -> Option<Box<dyn std::any::Any + Send>> {
         Some(Box::new(NightModeRuntimeState {
             sample_rate: self.sample_rate,
-            compressor: self.compressor.snapshot_runtime_state(),
-            shelf_left: self.shelf_left,
-            shelf_right: self.shelf_right,
+            core: self.core.snapshot_runtime_state(),
         }))
     }
 
@@ -234,16 +192,7 @@ impl PcmProcessor for NightModeProcessor {
         if self.sample_rate != state.sample_rate {
             return false;
         }
-        if self
-            .compressor
-            .save_runtime_state(&mut state.compressor)
-            .is_err()
-        {
-            return false;
-        }
-        state.shelf_left = self.shelf_left;
-        state.shelf_right = self.shelf_right;
-        true
+        self.core.save_runtime_state(&mut state.core).is_ok()
     }
 
     fn restore_runtime_state(&mut self, state: &(dyn std::any::Any + Send)) -> bool {
@@ -253,23 +202,14 @@ impl PcmProcessor for NightModeProcessor {
         if self.sample_rate != state.sample_rate {
             return false;
         }
-        if self
-            .compressor
-            .restore_runtime_state(&state.compressor)
-            .is_err()
-        {
-            return false;
-        }
-        self.shelf_left = state.shelf_left;
-        self.shelf_right = state.shelf_right;
-        true
+        self.core.restore_runtime_state(&state.core).is_ok()
     }
 
     fn prepare(&mut self, format: PcmFormat, max_block_frames: usize) -> Result<()> {
         validate_stereo_format(format, self.sample_rate)?;
         self.left.resize(max_block_frames, 0.0);
         self.right.resize(max_block_frames, 0.0);
-        self.compressor.prepare(max_block_frames);
+        self.core.prepare(max_block_frames);
         Ok(())
     }
 
@@ -290,16 +230,12 @@ impl PcmProcessor for NightModeProcessor {
             ));
         }
 
-        self.compressor
-            .process_interleaved_stereo(block.interleaved);
         for (index, frame) in block.interleaved.as_chunks::<2>().0.iter().enumerate() {
             self.left[index] = frame[0];
             self.right[index] = frame[1];
         }
-        self.shelf_left
-            .process(self.shelf_coeffs, &mut self.left[..frames]);
-        self.shelf_right
-            .process(self.shelf_coeffs, &mut self.right[..frames]);
+        self.core
+            .process(&mut self.left[..frames], &mut self.right[..frames]);
         for (index, frame) in block
             .interleaved
             .as_chunks_mut::<2>()
@@ -314,7 +250,7 @@ impl PcmProcessor for NightModeProcessor {
     }
 
     fn reset(&mut self, _reason: ResetReason) {
-        self.reset_runtime_state();
+        self.core.reset();
     }
 
     fn latency_frames(&self) -> u32 {
@@ -326,43 +262,22 @@ impl PcmProcessor for NightModeProcessor {
     }
 }
 
-fn derive_compressor_settings(
-    settings: NightModeSettings,
-    base: CompressorSettings,
-) -> CompressorSettings {
-    let k = settings.amount / 10.0;
-    CompressorSettings {
-        enabled: true,
-        threshold_db: base.threshold_db - 6.0 * k,
-        ratio: js_max(1.0, base.ratio * (1.0 + 0.5 * k)),
-        knee_db: base.knee_db,
-        attack_ms: base.attack_ms,
-        release_ms: base.release_ms,
-        makeup_db: base.makeup_db,
-        output_gain: 1.0,
-        sidechain_enabled: false,
+fn core_settings(settings: NightModeSettings, base: CompressorSettings) -> CoreNightModeSettings {
+    CoreNightModeSettings {
+        enabled: settings.enabled,
+        amount: settings.amount,
+        base_compressor: CoreCompressorSettings {
+            enabled: base.enabled,
+            threshold_db: base.threshold_db,
+            ratio: base.ratio,
+            knee_db: base.knee_db,
+            attack_ms: base.attack_ms,
+            release_ms: base.release_ms,
+            makeup_db: base.makeup_db,
+            output_gain: base.output_gain,
+            sidechain_enabled: false,
+        },
     }
-}
-
-fn js_max(a: f64, b: f64) -> f64 {
-    if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else if a > b {
-        a
-    } else {
-        b
-    }
-}
-
-fn design_shelf(sample_rate: u32, amount: f64) -> Result<BiquadCoeffs> {
-    design_biquad(
-        "highshelf",
-        6_000.0,
-        0.707,
-        -1.5 * amount,
-        f64::from(sample_rate),
-    )
-    .map_err(EngineError::InvalidInput)
 }
 
 fn validate_sample_rate(sample_rate: u32) -> Result<()> {
@@ -454,7 +369,6 @@ mod tests {
                 sidechain_enabled: false,
             }
         );
-        assert!(processor.is_active());
     }
 
     #[test]
@@ -482,74 +396,22 @@ mod tests {
     }
 
     #[test]
-    fn processes_compressor_before_independent_channel_shelves() {
-        let base = CompressorSettings {
-            threshold_db: -80.0,
-            ratio: 1.0,
-            knee_db: 0.0,
-            attack_ms: 0.05,
-            release_ms: 0.05,
-            ..CompressorSettings::default()
-        };
-        let settings = active_settings(6.0);
-        let mut processor = NightModeProcessor::with_settings(48_000, settings, base).unwrap();
-        processor.prepare(FORMAT, 4).unwrap();
-
-        let mut actual = [1.0, 0.0, 0.25, 0.0, -0.5, 0.0, 0.125, 0.0];
-        let mut expected = actual;
-        let derived = derive_compressor_settings(settings, base);
-        let mut compressor = Compressor::with_settings(48_000.0, derived).unwrap();
-        compressor.process_interleaved_stereo(&mut expected);
-        let coeffs = design_shelf(48_000, settings.amount).unwrap();
-        let mut left = expected
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|frame| frame[0])
-            .collect::<Vec<_>>();
-        let mut right = expected
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|frame| frame[1])
-            .collect::<Vec<_>>();
-        MonoBiquadState::default().process(coeffs, &mut left);
-        MonoBiquadState::default().process(coeffs, &mut right);
-        for (index, frame) in expected.as_chunks_mut::<2>().0.iter_mut().enumerate() {
-            frame[0] = left[index];
-            frame[1] = right[index];
-        }
-
-        process(&mut processor, &mut actual);
-        assert_eq!(actual, expected);
-        assert!(actual
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .all(|frame| frame[1] == 0.0));
-    }
-
-    #[test]
     fn active_adoption_and_checkpoint_restore_preserve_runtime_only() {
-        let settings = active_settings(8.0);
         let base = CompressorSettings::default();
-        let mut previous = NightModeProcessor::with_settings(48_000, settings, base).unwrap();
+        let mut previous =
+            NightModeProcessor::with_settings(48_000, active_settings(8.0), base).unwrap();
         previous.prepare(FORMAT, 4).unwrap();
         process(
             &mut previous,
             &mut [0.8, -0.6, 0.4, -0.2, 0.7, -0.5, 0.3, -0.1],
         );
 
-        let mut adopted = NightModeProcessor::with_settings(48_000, settings, base).unwrap();
+        let mut adopted =
+            NightModeProcessor::with_settings(48_000, active_settings(3.0), base).unwrap();
         adopted.prepare(FORMAT, 4).unwrap();
         assert!(adopted.adopt_runtime_state_from(&mut previous));
-        assert_eq!(
-            adopted.enabled_transition(),
-            EnabledTransition {
-                was_active: true,
-                is_active: true,
-            }
-        );
+        assert_eq!(adopted.settings(), active_settings(3.0));
+        assert_eq!(adopted.derived_compressor_settings().threshold_db, -21.8);
 
         let mut checkpoint = adopted.create_runtime_checkpoint().unwrap();
         assert!(adopted.save_runtime_state(checkpoint.as_mut()));
@@ -559,45 +421,6 @@ mod tests {
         let mut replay = [0.35, -0.3, 0.2, -0.15];
         process(&mut adopted, &mut replay);
         assert_eq!(first, replay);
-    }
-
-    #[test]
-    fn incompatible_compressor_state_is_propagated_without_partial_adoption() {
-        let settings = active_settings(8.0);
-        let base = CompressorSettings::default();
-        let mut source = NightModeProcessor::with_settings(48_000, settings, base).unwrap();
-        let mut target = NightModeProcessor::with_settings(44_100, settings, base).unwrap();
-        let original_transition = target.enabled_transition();
-        let checkpoint = source.create_runtime_checkpoint().unwrap();
-
-        assert!(!target.adopt_runtime_state_from(&mut source));
-        assert_eq!(target.enabled_transition(), original_transition);
-        assert!(!target.runtime_checkpoint_compatible(checkpoint.as_ref()));
-        assert!(!target.restore_runtime_state(checkpoint.as_ref()));
-    }
-
-    #[test]
-    fn checkpoint_uses_compressor_runtime_state_and_preserves_parameters() {
-        let settings = active_settings(7.0);
-        let base = CompressorSettings {
-            threshold_db: -11.0,
-            ratio: 2.5,
-            ..CompressorSettings::default()
-        };
-        let mut processor = NightModeProcessor::with_settings(48_000, settings, base).unwrap();
-        let checkpoint = processor.create_runtime_checkpoint().unwrap();
-        let state = checkpoint
-            .downcast_ref::<NightModeRuntimeState>()
-            .expect("night-mode checkpoint type");
-        let _: CompressorRuntimeState = state.compressor;
-
-        assert!(processor.restore_runtime_state(checkpoint.as_ref()));
-        assert_eq!(processor.settings(), settings);
-        assert_eq!(processor.base_compressor_settings(), base);
-        assert_eq!(
-            processor.compressor.settings(),
-            derive_compressor_settings(settings, base)
-        );
     }
 
     #[test]

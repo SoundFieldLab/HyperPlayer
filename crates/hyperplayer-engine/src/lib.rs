@@ -4,6 +4,7 @@ pub mod actor;
 pub mod album;
 pub mod audio;
 pub mod cache;
+pub mod cache_policy;
 pub mod dsp;
 pub mod dsp_algorithms;
 pub mod error;
@@ -23,3 +24,20 @@ pub use media::{MediaHandle, MediaHandleKind, TrustedResolvedMedia};
 pub use model::{MediaId, MediaSource, QueueItem, Track};
 pub use playback::{DspExecutionFault, DspExecutionSnapshot, PlaybackSnapshot, PlaybackState};
 pub use telemetry::{TelemetryActivity, TelemetryFrame, TelemetryHub, TelemetrySubscriber};
+
+/// HSE 控制面快照；实时播放仍只接受 typed [`dsp_algorithms::DspConfig`]。
+pub fn hse_builtin_scenes() -> Vec<serde_json::Value> {
+    hse_core::scenes::builtin_scenes()
+}
+
+pub fn hse_default_params(sample_rate: f64) -> serde_json::Value {
+    hse_core::params::default_params(sample_rate)
+}
+
+pub fn hse_encode_share_code(params: &serde_json::Value) -> std::result::Result<String, String> {
+    hse_core::share_codec::encode_share_code(params)
+}
+
+pub fn hse_decode_share_code(code: &str) -> std::result::Result<serde_json::Value, String> {
+    hse_core::share_codec::decode_share_code(code)
+}

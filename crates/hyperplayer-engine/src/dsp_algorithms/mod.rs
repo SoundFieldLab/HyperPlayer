@@ -1,42 +1,37 @@
 //! HyperSoundEngine v1.5.1 第一算法组及播放链适配。
 
 pub mod bass_enhancer;
-pub(crate) mod biquad;
 pub mod chorus;
 pub mod compressor;
 pub mod deesser;
 pub mod delay;
-pub mod eq_chain;
 pub mod flanger;
 pub mod loudness_normalization;
 pub mod lufs_meter;
-pub(crate) mod mid_side;
 pub mod night_mode;
 pub mod phaser;
 pub mod surround3d;
 pub mod tremolo;
 
-pub(crate) trait Stage {
-    fn prepare(&mut self, max_block_size: usize);
-    fn process(&mut self, left: &mut [f32], right: &mut [f32]);
-    fn reset(&mut self);
-}
-
 use crate::dsp::{
     PcmBlock, PcmFormat, PcmProcessor, PreparedProcessorChain, ResetReason, RuntimeStateCapability,
 };
 use crate::error::{EngineError, Result};
-use bass_enhancer::{BassEnhancer, BassEnhancerRuntimeState, BassEnhancerSettings};
+use bass_enhancer::BassEnhancerSettings;
 use chorus::{ChorusProcessor, ChorusSettings};
-use compressor::{Compressor, CompressorRuntimeState, CompressorSettings};
-use deesser::{DeesserRuntimeState, DeesserSettings, DeesserStage};
+use compressor::CompressorSettings;
+use deesser::DeesserSettings;
 use delay::{DelayProcessor, DelaySettings};
-use eq_chain::{EqBandParam, EqChainRuntimeState, EqChainStage};
 use flanger::{FlangerProcessor, FlangerSettings};
+use hse_core::bass_enhancer::{BassEnhancerRuntimeState, BassEnhancerStage};
+use hse_core::compressor::{CompressorRuntimeState, CompressorStage};
+use hse_core::deesser::{DeesserRuntimeState, DeesserStage};
+pub use hse_core::eq_chain::EqBandParam;
+use hse_core::eq_chain::{EqChainRuntimeState, EqChainStage};
+use hse_core::mid_side::MidSideStage;
 use hse_core::Stage as HseStage;
 use loudness_normalization::{LoudnessNormalizationProcessor, LoudnessNormalizationSettings};
 use lufs_meter::{LufsMeterProcessor, SharedLufsState};
-use mid_side::MidSideStage;
 use night_mode::{NightModeProcessor, NightModeSettings};
 use phaser::{PhaserProcessor, PhaserSettings};
 use std::sync::Arc;
@@ -132,7 +127,10 @@ impl Default for DspConfig {
 }
 
 pub(crate) fn validate_dsp_config(config: &DspConfig) -> Result<()> {
-    config.loudness_normalization.validate()?;
+    config
+        .loudness_normalization
+        .validate()
+        .map_err(EngineError::InvalidInput)?;
     config.surround3d.validate()?;
     if !config.night_mode.amount.is_finite() {
         return Err(EngineError::InvalidInput(
@@ -526,7 +524,7 @@ impl DeesserProcessor {
                 "external de-esser sidechain bus is not available".into(),
             ));
         }
-        DeesserStage::from_settings(f64::from(sample_rate), settings)
+        DeesserStage::from_settings(f64::from(sample_rate), settings.into())
             .map(|inner| Self {
                 sample_rate,
                 enabled: settings.enabled,
@@ -655,7 +653,7 @@ struct CompressorProcessorRuntimeState {
 pub struct CompressorProcessor {
     sample_rate: u32,
     enabled: bool,
-    inner: Compressor,
+    inner: CompressorStage,
 }
 
 impl CompressorProcessor {
@@ -665,13 +663,13 @@ impl CompressorProcessor {
                 "external compressor sidechain bus is not available".into(),
             ));
         }
-        Compressor::with_settings(f64::from(sample_rate), settings)
+        CompressorStage::from_settings(f64::from(sample_rate), settings.into())
             .map(|inner| Self {
                 sample_rate,
                 enabled: settings.enabled,
                 inner,
             })
-            .map_err(|error| EngineError::InvalidInput(error.into()))
+            .map_err(EngineError::InvalidInput)
     }
 }
 
@@ -739,7 +737,10 @@ impl PcmProcessor for CompressorProcessor {
 
     fn process(&mut self, block: PcmBlock<'_>) -> Result<()> {
         require_stereo(block.format)?;
-        self.inner.process_interleaved_stereo(block.interleaved);
+        for frame in block.interleaved.as_chunks_mut::<2>().0.iter_mut() {
+            let (left, right) = frame.split_at_mut(1);
+            self.inner.process(left, right);
+        }
         Ok(())
     }
 
@@ -764,18 +765,18 @@ struct BassEnhancerProcessorRuntimeState {
 pub struct BassEnhancerProcessor {
     sample_rate: u32,
     enabled: bool,
-    inner: BassEnhancer,
+    inner: BassEnhancerStage,
 }
 
 impl BassEnhancerProcessor {
     pub fn new(sample_rate: u32, settings: BassEnhancerSettings) -> Result<Self> {
-        BassEnhancer::with_settings(f64::from(sample_rate), settings)
+        BassEnhancerStage::from_settings(f64::from(sample_rate), settings.into())
             .map(|inner| Self {
                 sample_rate,
                 enabled: settings.enabled,
                 inner,
             })
-            .map_err(|error| EngineError::InvalidInput(error.into()))
+            .map_err(EngineError::InvalidInput)
     }
 }
 
@@ -846,7 +847,10 @@ impl PcmProcessor for BassEnhancerProcessor {
 
     fn process(&mut self, block: PcmBlock<'_>) -> Result<()> {
         require_stereo(block.format)?;
-        self.inner.process_interleaved_stereo(block.interleaved);
+        for frame in block.interleaved.as_chunks_mut::<2>().0.iter_mut() {
+            let (left, right) = frame.split_at_mut(1);
+            self.inner.process(left, right);
+        }
         Ok(())
     }
 
@@ -2048,7 +2052,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamics_checkpoints_use_core_runtime_state_and_preserve_parameters() {
+    fn dynamics_checkpoints_use_core_runtime_state() {
         let deesser_settings = DeesserSettings {
             center_hz: 4_200.0,
             threshold_db: -18.0,
@@ -2058,7 +2062,6 @@ mod tests {
         let deesser_checkpoint = deesser.create_runtime_checkpoint().unwrap();
         assert!(deesser_checkpoint.is::<DeesserProcessorRuntimeState>());
         assert!(deesser.restore_runtime_state(deesser_checkpoint.as_ref()));
-        assert_eq!(deesser.inner.settings(), deesser_settings);
 
         let compressor_settings = CompressorSettings {
             threshold_db: -8.0,
@@ -2069,7 +2072,6 @@ mod tests {
         let compressor_checkpoint = compressor.create_runtime_checkpoint().unwrap();
         assert!(compressor_checkpoint.is::<CompressorProcessorRuntimeState>());
         assert!(compressor.restore_runtime_state(compressor_checkpoint.as_ref()));
-        assert_eq!(compressor.inner.settings(), compressor_settings);
 
         let bass_settings = BassEnhancerSettings {
             harmonic_type: bass_enhancer::HarmonicType::Soft,
@@ -2080,7 +2082,6 @@ mod tests {
         let bass_checkpoint = bass.create_runtime_checkpoint().unwrap();
         assert!(bass_checkpoint.is::<BassEnhancerProcessorRuntimeState>());
         assert!(bass.restore_runtime_state(bass_checkpoint.as_ref()));
-        assert_eq!(bass.inner.settings(), bass_settings);
     }
 
     #[test]

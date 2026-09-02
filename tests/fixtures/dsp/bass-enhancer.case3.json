@@ -21,5 +21,10 @@
     "value": 0.000001,
     "floor": 1e-9
   },
-  "notes": "低音下潜真实能量路径：lowBoostDb=+6 → lowLin=10^0.3-1≈0.995，低通提取的低频带近似翻倍混回；谐波路径低注入（harmonicGain 0.2 / mix 0.3）突出下潜路径。左右共享 55Hz 低音、去相关中频（440/660Hz）。blockSize=500 恰整除（12 块）。"
+  "notes": "低音下潜真实能量路径：lowBoostDb=+6 → lowLin=10^0.3-1≈0.995，低通提取的低频带近似翻倍混回；谐波路径低注入（harmonicGain 0.2 / mix 0.3）突出下潜路径。左右共享 55Hz 低音、去相关中频（440/660Hz）。blockSize=500 恰整除（12 块）。",
+  "source": {
+    "project": "HyperSoundEngine",
+    "version": "1.5.1",
+    "commit": "f7017621b7d84005fbfed8a3c42a119487a17326"
+  }
 }

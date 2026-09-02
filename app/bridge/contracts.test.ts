@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { adaptPlayback, adaptTrack, bridge, bridgeError, createEngineSnapshotGate, TAURI_COMMANDS, TAURI_EVENTS } from "./index";
+import { adaptDspConfigurationRejected, adaptPlayback, adaptTrack, bridge, bridgeError, createEngineSnapshotGate, TAURI_COMMANDS, TAURI_EVENTS } from "./index";
 import type { BackendDspExecutionStatusDto, BackendPlaybackStateDto, BackendQueueSnapshotDto, DspProcessingFaultDto } from "./contracts";
 
 const storage = new Map<string, string>();
@@ -41,7 +41,7 @@ const queue: BackendQueueSnapshotDto = {
 };
 
 const healthyDsp = (revision: number): BackendDspExecutionStatusDto => ({
-  revision,
+  revision: revision.toString(),
   safeBypassActive: false,
   fault: null,
 });
@@ -49,6 +49,11 @@ const healthyDsp = (revision: number): BackendDspExecutionStatusDto => ({
 describe("bridge contract adapters", () => {
   it("preserves stable queue item identities", () => {
     const result = adaptPlayback({ revision: queue.revision, playback, queue, dspExecution: healthyDsp(0) });
+    expect(result.dsp).toEqual({
+      available: true,
+      bypassed: true,
+      label: "Rust DSP runtime 与参数桥已接通；当前支持 14 阶段实时处理",
+    });
     expect(result.currentQueueItemId).toBe("queue-current");
     expect(result.nextUp[0].queueItemId).toBe("queue-next");
     expect(result.queue[0].queueItemId).toBe("queue-context");
@@ -99,31 +104,37 @@ describe("bridge contract adapters", () => {
     const gate = createEngineSnapshotGate();
     const base = { revision: 7, playback, queue: { ...queue, revision: 7 }, dspExecution: healthyDsp(8) };
     const fault = {
-      revision: 8,
+      revision: "8",
       processorIndex: 2,
       processorName: "compressor",
       kind: "nonFiniteOutput" as const,
-      streamFrame: 4096,
+      streamFrame: "4096",
       safeBypassActive: true,
       fallbackStatus: "rustSafeBypass" as const,
     };
 
     gate.accept(base);
-    expect(gate.accept({ ...base, dspExecution: { revision: 8, safeBypassActive: true, fault: null } }).dspExecution).toEqual({
-      revision: 8,
-      safeBypassActive: true,
-      fault: null,
+    expect(gate.accept({ ...base, dspExecution: { revision: "8", safeBypassActive: true, fault: null } })).toMatchObject({
+      dsp: { available: true, bypassed: true },
+      dspExecution: {
+        revision: 8n,
+        safeBypassActive: true,
+        fault: null,
+      },
     });
-    expect(gate.accept({ ...base, revision: 6, queue: { ...queue, revision: 6 }, dspExecution: { revision: 8, safeBypassActive: true, fault } })).toMatchObject({
+    expect(gate.accept({ ...base, revision: 6, queue: { ...queue, revision: 6 }, dspExecution: { revision: "8", safeBypassActive: true, fault } })).toMatchObject({
       revision: 7,
       dspExecution: {
-        revision: 8,
+        revision: 8n,
         safeBypassActive: true,
-        fault,
+        fault: { ...fault, revision: 8n, streamFrame: 4096n },
       },
     });
     expect(gate.accept({ ...base, dspExecution: healthyDsp(8) }).dspExecution?.safeBypassActive).toBe(true);
-    expect(gate.accept({ ...base, dspExecution: healthyDsp(9) }).dspExecution).toEqual(healthyDsp(9));
+    expect(gate.accept({ ...base, dspExecution: healthyDsp(9) })).toMatchObject({
+      dsp: { available: true, bypassed: false },
+      dspExecution: { revision: 9n, safeBypassActive: false, fault: null },
+    });
   });
 
   it("declares the Tauri-only bridge contract", () => {
@@ -139,13 +150,22 @@ describe("bridge contract adapters", () => {
     expect(TAURI_EVENTS.dspProcessingFault).toBe("hyperplayer://dsp/processing-fault");
   });
 
+  it("preserves DSP rejection revisions beyond the JavaScript safe integer range", () => {
+    expect(adaptDspConfigurationRejected({
+      revision: "9007199254740993",
+      code: "applyFailed",
+      reason: "DSP configuration could not be applied to the audio runtime",
+      stage: "apply",
+    }).revision).toBe(9_007_199_254_740_993n);
+  });
+
   it("contracts DSP processing faults as Rust safe-bypass diagnostics", () => {
     const fault = {
-      revision: 8,
+      revision: 8n,
       processorIndex: 2,
       processorName: "compressor",
       kind: "nonFiniteOutput",
-      streamFrame: 4096,
+      streamFrame: 4096n,
       safeBypassActive: true,
       fallbackStatus: "rustSafeBypass",
     } satisfies DspProcessingFaultDto;
@@ -155,7 +175,7 @@ describe("bridge contract adapters", () => {
   });
 
   it("declares every newly connected command", () => {
-    expect(Object.values(TAURI_COMMANDS)).toHaveLength(84);
+    expect(Object.values(TAURI_COMMANDS)).toHaveLength(90);
     expect(Object.values(TAURI_COMMANDS)).toEqual(expect.arrayContaining([
       "playback_stop", "playback_next", "playback_previous", "playback_set_repeat_mode",
       "library_overview", "library_query_tracks", "library_register_location", "library_start_scan", "library_cancel_scan",
@@ -166,6 +186,7 @@ describe("bridge contract adapters", () => {
       "cache_stats", "cache_status", "cache_track", "cache_remove", "cache_clear", "lyrics_get",
       "window_show", "window_hide", "window_close", "window_set_always_on_top", "desktop_lyrics_set_click_through",
       "updater_status", "updater_check", "updater_update", "shenzhen_weather",
+      "dsp_get_configuration", "dsp_configure", "dsp_list_presets", "dsp_apply_preset", "dsp_import_hse2", "dsp_export_hse2",
       "telemetry_subscribe", "telemetry_ack", "telemetry_set_activity", "telemetry_close",
     ]));
   });

@@ -28,6 +28,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@hyperplayer/hse-ts-core": "link:shared/hse-ts-core",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^26.4.0",

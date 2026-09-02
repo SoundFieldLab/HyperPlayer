@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BackendTrackDto, PlaybackSnapshotDto } from "../bridge/contracts";
+import type { BackendTrackDto, DspConfigurationDto, PlaybackSnapshotDto } from "../bridge/contracts";
 
 vi.hoisted(() => {
   const values = new Map<string, string>();
@@ -36,6 +36,8 @@ const bridgeMocks = vi.hoisted(() => ({
   updaterStatus: vi.fn(),
   updaterCheck: vi.fn(),
   updaterUpdate: vi.fn(),
+  dspGetConfiguration: vi.fn(),
+  dspListPresets: vi.fn(),
 }));
 
 vi.mock("../bridge", async (importOriginal) => {
@@ -59,6 +61,23 @@ const backendTrack = (id: string, title: string, source: "local" | "netease" = "
   qualityLabel: "无损",
   playable: true,
 });
+
+const dspConfiguration: DspConfigurationDto = {
+  revision: "2",
+  loudnessNormalization: { enabled: true, targetLufs: -14, maxGainDb: 9, minGainDb: -9, useRealtimeMeter: true, externalGainDb: 0 },
+  surround3d: { enabled: true, distance: 0.5, speed: 1, angle: 0, direction: 1 },
+  midSide: { enabled: true, stereoWidth: 1, voiceBalance: 0 },
+  preEq: { enabled: true, bandCount: 1, qCompensation: true, stereoMode: "independent", bands: [{ frequency: 1000, gain: 0, q: 1 }] },
+  deesser: { enabled: true, centerHz: 6000, q: 1, thresholdDb: -24, ratio: 4, attackMs: 5, releaseMs: 100, splitBand: true, mix: 1 },
+  compressor: { enabled: true, thresholdDb: -18, ratio: 4, kneeDb: 6, attackMs: 10, releaseMs: 200, makeupDb: 0, outputGain: 1 },
+  nightMode: { enabled: false, amount: 0.5 },
+  delay: { enabled: false, delayMs: 250, feedback: 0.25, mix: 0.2 },
+  chorus: { enabled: false, rateHz: 1, depthMs: 5, mix: 0.2 },
+  flanger: { enabled: false, rateHz: 1, depthMs: 2, feedback: 0.2, mix: 0.2 },
+  phaser: { enabled: true, rateHz: 1, depth: 0.5, feedback: 0.2, mix: 0.5, stages: 4 },
+  tremolo: { enabled: false, rateHz: 4, depth: 0.5, mix: 0.5 },
+  bassEnhancer: { enabled: false, cutoffHz: 120, q: 1, harmonicType: "soft", harmonicGain: 0.5, mix: 0.5, levelDb: 0, lowBoostDb: null },
+};
 
 function button(container: HTMLElement, label: string): HTMLButtonElement {
   const match = [...container.querySelectorAll("button")].find((item) => item.textContent?.includes(label));
@@ -124,6 +143,8 @@ describe("CurrentView 页面能力边界", () => {
     bridgeMocks.updaterStatus.mockResolvedValue({ enabled: true, reason: null });
     bridgeMocks.updaterCheck.mockResolvedValue({ available: false, version: null, currentVersion: "0.1.0", notes: null });
     bridgeMocks.updaterUpdate.mockResolvedValue(false);
+    bridgeMocks.dspGetConfiguration.mockRejectedValue(new Error("DSP fixture not enabled"));
+    bridgeMocks.dspListPresets.mockResolvedValue([]);
     useAppStore.setState({
       domain: "local",
       view: "playlists",
@@ -370,7 +391,7 @@ describe("CurrentView 页面能力边界", () => {
   });
 
   it("plays and queues a DJ main track through existing store actions", async () => {
-    const result: PlaybackSnapshotDto = { revision: 1, current: null, currentQueueItemId: null, status: "paused", positionMs: 0, volume: 0.5, queue: [], nextUp: [], repeat: "sequence", dsp: { available: false, bypassed: true, label: "规格待接入" }, dspExecution: { revision: 0, safeBypassActive: false, fault: null } };
+    const result: PlaybackSnapshotDto = { revision: 1, current: null, currentQueueItemId: null, status: "paused", positionMs: 0, volume: 0.5, queue: [], nextUp: [], repeat: "sequence", dsp: { available: true, bypassed: true, label: "Rust DSP runtime 已内建；完整 22 阶段与 DspPort 尚未接通" }, dspExecution: { revision: 0n, safeBypassActive: false, fault: null } };
     const playTrack = vi.spyOn(useAppStore.getState(), "playTrack");
     const enqueueTrack = vi.spyOn(useAppStore.getState(), "enqueueTrack");
     bridgeMocks.neteaseDjRadios.mockResolvedValue({ radios: [{ id: 20, name: "公开电台", coverUrl: null, description: null, programCount: 1, subscriberCount: null, category: null }], programs: [], nextCursor: null });
@@ -399,9 +420,120 @@ describe("CurrentView 页面能力边界", () => {
     await act(async () => { useAppStore.setState({ view: "dsp" }); });
     await act(async () => root.render(<CurrentView />));
     expect(container.textContent).toContain("音效工作台");
-    expect(container.textContent).toContain("参数均衡");
-    expect(container.textContent).toContain("独立左右 EQ 状态");
-    expect(container.textContent).toContain("参数控制尚未连接");
+    expect(container.textContent).toContain("Rust 配置编译中");
+    expect(container.textContent).toContain("14 个处理器");
+    expect(container.textContent).toContain("vendored HSE Rust");
+    expect(container.textContent).toContain("BYPASS");
+    expect(container.textContent).not.toContain("LIVE");
+    expect(container.textContent).toContain("DSP 配置不可用");
+    expect(container.textContent).toContain("HSE2 分享码");
+    expect(button(container, "应用参数").disabled).toBe(true);
+  });
+
+  it("renders constrained DSP controls and keeps LUFS separate from RMS and peak telemetry", async () => {
+    bridgeMocks.dspGetConfiguration.mockResolvedValue(dspConfiguration);
+    bridgeMocks.dspListPresets.mockResolvedValue([{ id: "studio", name: "录音室", description: "测试", partial: false, unsupportedStages: [] }]);
+    useAppStore.setState({ view: "dsp" });
+
+    await act(async () => root.render(<CurrentView />));
+    await settle();
+
+    expect(container.textContent).toContain("LUFS tap 已接，当前 HPTM v2 未发布 LUFS");
+    expect(container.querySelector('[aria-label="实时 RMS 和峰值遥测"]')).not.toBeNull();
+    const direction = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("方向"))?.querySelector("select");
+    expect([...direction?.options ?? []].map((option) => option.value)).toEqual(["-1", "1"]);
+    const stages = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("级数"))?.querySelector("input");
+    expect(stages).toMatchObject({ min: "2", max: "8", step: "1" });
+    const eqBand = container.querySelector(".dsp-eq-bands fieldset");
+    expect(eqBand?.querySelectorAll('input[type="number"]')).toHaveLength(3);
+    expect([...eqBand?.querySelectorAll("label > span") ?? []].map((item) => item.textContent)).toEqual(["频率 Hz", "增益 dB", "Q"]);
+    const frequency = eqBand?.querySelector<HTMLInputElement>('input[type="number"]');
+    expect(frequency).toMatchObject({ min: "20", max: "20000", step: "1" });
+    const surroundDistance = [...container.querySelectorAll(".dsp-module")].find((module) => module.textContent?.includes("环绕运动"))?.querySelector<HTMLInputElement>('input[type="number"]');
+    expect(surroundDistance).toMatchObject({ min: "0", max: "10" });
+    const nightAmount = [...container.querySelectorAll(".dsp-module")].find((module) => module.textContent?.includes("夜间模式"))?.querySelector<HTMLInputElement>('input[type="number"]');
+    expect(nightAmount).toMatchObject({ min: "0", max: "10" });
+    const bassInputs = [...container.querySelectorAll(".dsp-module")].find((module) => module.textContent?.includes("低频增强"))?.querySelectorAll<HTMLInputElement>('input[type="number"]');
+    expect([...bassInputs ?? []].map((input) => [input.min, input.max])).toEqual([["20", "500"], ["0.1", "10"], ["0", "1"], ["0", "1"], ["-6", "6"], ["-6", "12"]]);
+    expect(container.querySelector(".dsp-toolbar")).not.toBeNull();
+    expect(container.querySelector(".dsp-share-actions")).not.toBeNull();
+    expect(container.querySelector(".eq-reference")).not.toBeNull();
+  });
+
+  it("keeps pre-EQ bandCount and bands synchronized at both boundaries", async () => {
+    bridgeMocks.dspGetConfiguration.mockResolvedValue(dspConfiguration);
+    bridgeMocks.dspListPresets.mockResolvedValue([]);
+    useAppStore.setState({ view: "dsp" });
+    await act(async () => root.render(<CurrentView />));
+    await settle();
+
+    const bandCount = container.querySelector<HTMLInputElement>('input[aria-label="频段数"]') ?? [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("频段数"))?.querySelector<HTMLInputElement>("input");
+    expect(bandCount).toMatchObject({ min: "1", max: "20", step: "1" });
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(bandCount, "3");
+      bandCount?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(3);
+    expect([...container.querySelectorAll<HTMLInputElement>(".dsp-eq-bands fieldset input")].every((input) => Number.isFinite(Number(input.value)))).toBe(true);
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(bandCount, "1");
+      bandCount?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(1);
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(bandCount, "25");
+      bandCount?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(20);
+  });
+
+  it("blocks invalid DSP drafts and exposes accessible validation errors", async () => {
+    const configure = vi.spyOn(useAppStore.getState(), "configureDsp");
+    bridgeMocks.dspGetConfiguration.mockResolvedValue({ ...dspConfiguration, bassEnhancer: { ...dspConfiguration.bassEnhancer, harmonicGain: 2 } });
+    bridgeMocks.dspListPresets.mockResolvedValue([]);
+    useAppStore.setState({ view: "dsp" });
+    await act(async () => root.render(<CurrentView />));
+    await settle();
+
+    const apply = button(container, "应用参数");
+    expect(apply.disabled).toBe(true);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("谐波增益必须在 0 到 1 之间");
+    await act(async () => apply.click());
+    expect(configure).not.toHaveBeenCalled();
+  });
+
+  it("shows an active Rust chain as live and faults as safe bypass", async () => {
+    const base = {
+      revision: 2,
+      current: null,
+      currentQueueItemId: null,
+      status: "paused" as const,
+      positionMs: 0,
+      volume: 0.5,
+      queue: [],
+      nextUp: [],
+      repeat: "sequence" as const,
+      dsp: { available: true, bypassed: false, label: "Rust DSP runtime 已内建" },
+      dspExecution: { revision: 2n, safeBypassActive: false, fault: null },
+    };
+    useAppStore.setState({ view: "dsp", playback: base });
+    await act(async () => root.render(<CurrentView />));
+    expect(container.textContent).toContain("Rust 处理链在线");
+    expect(container.textContent).toContain("LIVE");
+
+    await act(async () => {
+      useAppStore.setState({
+        playback: {
+          ...base,
+          dsp: { ...base.dsp, bypassed: true },
+          dspExecution: { revision: 2n, safeBypassActive: true, fault: null },
+        },
+      });
+    });
+    expect(container.textContent).toContain("Rust 安全旁路");
+    expect(container.textContent).toContain("BYPASS");
   });
 
   it("uses real telemetry with fallback renderers while keeping DSP controls honest", async () => {
@@ -428,7 +560,7 @@ describe("CurrentView 页面能力边界", () => {
     expect(container.textContent).not.toContain("限幅衰减");
     expect(telemetryTransport.acknowledge).toHaveBeenCalledWith(4n, 9n, 12n);
     expect(container.textContent).toContain("固定平直参考，不代表当前 DSP 配置");
-    expect(button(container, "参数控制尚未连接").disabled).toBe(true);
+    expect(button(container, "应用参数").disabled).toBe(true);
     expect(container.textContent).not.toContain("当前均衡响应");
   });
 

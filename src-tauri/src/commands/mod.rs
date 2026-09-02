@@ -1,6 +1,7 @@
 pub mod bootstrap;
 pub mod cache;
 pub mod compat;
+pub mod dsp;
 pub mod library;
 pub mod lyrics;
 pub mod netease;

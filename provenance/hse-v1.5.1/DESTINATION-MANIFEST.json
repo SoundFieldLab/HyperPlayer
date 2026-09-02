@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "source": {
     "project": "HyperSoundEngine",
     "version": "1.5.1",
@@ -17,8 +17,8 @@
   "pathFormat": "Repository-relative paths with forward slashes, sorted by Unicode code point.",
   "hashAlgorithm": "SHA-256 over bytes with CRLF normalized to LF",
   "aggregateFormat": "<lowercase-destination-sha256><two spaces><destination-path><LF>",
-  "aggregateSha256": "799cb79c1f5361628856f483b1380cd7aec463e96abd5c20c33dd2a5790f5923",
-  "fileCount": 89,
+  "aggregateSha256": "d21553c09d15e5cfd37c70b72a7f7e76eb84dc69c42d3862e2965cbac134f027",
+  "fileCount": 92,
   "files": [
     {
       "path": "crates/hyperplayer-hrtf-core/Cargo.toml",
@@ -127,6 +127,7 @@
       "sourceSha256": "658e4f18e667132e44ddf9736502f54a1c1b5bacc03f6a36b4b99de979a37730",
       "destinationSha256": "92659bc0d10b2d91bbbb2e996fef3c915f3314245d766e3bf274db6283e92c9c",
       "adaptations": [
+        "runtime-checkpoint-api",
         "test-only"
       ]
     },
@@ -171,8 +172,9 @@
       "path": "crates/hyperplayer-hse-core/src/biquad.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/biquad.rs",
       "sourceSha256": "b3997c80c4090b417b110303dbfbb2513776006a549b735bacfa4f0367ae5e19",
-      "destinationSha256": "3fd62f65f2e35b88aab13305e7920ab330f69fa19f1a902886d90260d9942bc2",
+      "destinationSha256": "dad650436261fb06314295194c34e58a3f33c3fbbe3f9fee8257eb84fd3eaaa2",
       "adaptations": [
+        "runtime-checkpoint-api",
         "algorithm-change"
       ]
     },
@@ -219,7 +221,7 @@
       "path": "crates/hyperplayer-hse-core/src/engine_chain.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/engine_chain.rs",
       "sourceSha256": "54ccfa12f69d5a192f419abf1b025b8121423923e01d0cdd73ef4822a9c58073",
-      "destinationSha256": "7117003d8b685c92b6543e0bfd80dac79c70c07a99ab3a96b83e68f39d1ce836",
+      "destinationSha256": "4cec471b90b20d8512ab3ede270d18baf05d9571fd50ed62113f7d9b9405d5d4",
       "adaptations": [
         "algorithm-change"
       ]
@@ -266,7 +268,7 @@
       "path": "crates/hyperplayer-hse-core/src/lib.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/lib.rs",
       "sourceSha256": "8f20c5d5bf6f94ba00936fc541c3aea24bb8f239ab1ed2ef5537828547659cfd",
-      "destinationSha256": "3b8ca52a3cb9cc20179b2be6e8d2bce32b678089e157bd462342d025cd6f5aff",
+      "destinationSha256": "2dc4d425a55bd6796c465af2b7ab0e39baba68660adb298586018fd7e185eca6",
       "adaptations": [
         "license-notice",
         "lint-policy",
@@ -293,6 +295,26 @@
       ]
     },
     {
+      "path": "crates/hyperplayer-hse-core/src/loudness_normalization.rs",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "destinationSha256": "a403cae6a3c556561dc681a94cfa54658066d9bb4a83de67c246beb1a4ee240e",
+      "adaptations": [
+        "runtime-checkpoint-api",
+        "algorithm-change"
+      ],
+      "derivedFrom": [
+        {
+          "path": "HyperSoundEngineRust/crates/hse-core/src/engine_chain.rs",
+          "sha256": "54ccfa12f69d5a192f419abf1b025b8121423923e01d0cdd73ef4822a9c58073"
+        },
+        {
+          "path": "src/engine/HyperSoundEngine.ts",
+          "sha256": "46d0415fa921af1050ed171edd038e57894958d1a75b5c9ef723c9eebff81019"
+        }
+      ]
+    },
+    {
       "path": "crates/hyperplayer-hse-core/src/lufs_meter.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/lufs_meter.rs",
       "sourceSha256": "f6f8205d60488c8011b31048a242c5fd9dbc08c152cfbcb3318ea3a8486f02e4",
@@ -315,7 +337,7 @@
       "path": "crates/hyperplayer-hse-core/src/mod_effects.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/mod_effects.rs",
       "sourceSha256": "50c6b06d61a00102a5334230d43a77a06db61c290a121b5a42c00a2a4b180b7a",
-      "destinationSha256": "cc65d324419e895f1a88f5d59a986261a3b1b97f47db25d4d16455c0d6d0029e",
+      "destinationSha256": "c48eeacacf68f8e6aa18dcbe761f1858ada8ddfaecb700d01ffeb5950afa7585",
       "adaptations": [
         "runtime-checkpoint-api",
         "algorithm-change"
@@ -328,6 +350,42 @@
       "destinationSha256": "b3d5675731e132418499535035b61e73b7a8d53bc5edb8c326190c59fbe1d91a",
       "adaptations": [
         "algorithm-change"
+      ]
+    },
+    {
+      "path": "crates/hyperplayer-hse-core/src/night_mode.rs",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "destinationSha256": "42045c3b0b597165ce15ff55a0b7d9ea1564f5d1d08ed64f38d78f32c4e81a46",
+      "adaptations": [
+        "runtime-checkpoint-api",
+        "algorithm-change"
+      ],
+      "derivedFrom": [
+        {
+          "path": "HyperSoundEngineRust/crates/hse-core/src/biquad.rs",
+          "sha256": "b3997c80c4090b417b110303dbfbb2513776006a549b735bacfa4f0367ae5e19"
+        },
+        {
+          "path": "HyperSoundEngineRust/crates/hse-core/src/compressor.rs",
+          "sha256": "49ee3beb5bb096517c2086c1a2db0ce73d0f0edb97b9aa3681d8b76a9f68a9c2"
+        },
+        {
+          "path": "HyperSoundEngineRust/crates/hse-core/src/engine_chain.rs",
+          "sha256": "54ccfa12f69d5a192f419abf1b025b8121423923e01d0cdd73ef4822a9c58073"
+        },
+        {
+          "path": "src/dsp/biquad.ts",
+          "sha256": "6f3b1919688d19e13c8f6cbc3c05af713b7a04fc6459b0e9f7a4b6d5bb12f823"
+        },
+        {
+          "path": "src/dsp/Compressor.ts",
+          "sha256": "6d39f51015f7d34d571ddbb6a558396518837a7a948ffd575a766519b7d42386"
+        },
+        {
+          "path": "src/engine/HyperSoundEngine.ts",
+          "sha256": "46d0415fa921af1050ed171edd038e57894958d1a75b5c9ef723c9eebff81019"
+        }
       ]
     },
     {
@@ -364,6 +422,26 @@
       "destinationSha256": "7bf98f611a6a12e8979e2d89e55f07853ed61a3b68087528c358d9ab0882a7a6",
       "adaptations": [
         "algorithm-change"
+      ]
+    },
+    {
+      "path": "crates/hyperplayer-hse-core/src/surround3d.rs",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "destinationSha256": "2d90524197ef5c4b128c296a989b723c444ee70ff1982bb6c65de4ba3ad088af",
+      "adaptations": [
+        "runtime-checkpoint-api",
+        "algorithm-change"
+      ],
+      "derivedFrom": [
+        {
+          "path": "HyperSoundEngineRust/crates/hse-core/src/engine_chain.rs",
+          "sha256": "54ccfa12f69d5a192f419abf1b025b8121423923e01d0cdd73ef4822a9c58073"
+        },
+        {
+          "path": "src/engine/HyperSoundEngine.ts",
+          "sha256": "46d0415fa921af1050ed171edd038e57894958d1a75b5c9ef723c9eebff81019"
+        }
       ]
     },
     {
@@ -418,8 +496,9 @@
       "path": "crates/hyperplayer-hse-core/tests/realtime_alloc.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/tests/realtime_alloc.rs",
       "sourceSha256": "c9d0702a40b8ca3f65bd3e3a8542323fdcd9901a1dc6e8607a9f594694432df1",
-      "destinationSha256": "7053a92e0cd1b017c28c8e06b62cae3ee900d99cbce024fcbc3fafd38d274752",
+      "destinationSha256": "4ac861db2c94f4212ef648d9a30f80dd65788fe327943a3d883ae881e5dcbbee",
       "adaptations": [
+        "runtime-checkpoint-api",
         "test-only"
       ]
     },

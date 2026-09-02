@@ -66,8 +66,8 @@ const playback = (current: TrackDto): PlaybackSnapshotDto => ({
   queue: [],
   nextUp: [],
   repeat: "sequence",
-  dsp: { available: false, bypassed: true, label: "规格待接入" },
-  dspExecution: { revision: 0, safeBypassActive: false, fault: null },
+  dsp: { available: true, bypassed: true, label: "Rust DSP runtime 已内建；完整 22 阶段与 DspPort 尚未接通" },
+  dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
 });
 
 function status(id: string, value: BackendCacheStatusDto["status"]): BackendCacheStatusDto {
