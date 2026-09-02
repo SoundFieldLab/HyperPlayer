@@ -17,8 +17,8 @@
   "pathFormat": "Repository-relative paths with forward slashes, sorted by Unicode code point.",
   "hashAlgorithm": "SHA-256 over bytes with CRLF normalized to LF",
   "aggregateFormat": "<lowercase-destination-sha256><two spaces><destination-path><LF>",
-  "aggregateSha256": "d21553c09d15e5cfd37c70b72a7f7e76eb84dc69c42d3862e2965cbac134f027",
-  "fileCount": 92,
+  "aggregateSha256": "fecb82ef752910fd926ba0d6581fadbc7ede9a142995b3d7f5215af015fba936",
+  "fileCount": 99,
   "files": [
     {
       "path": "crates/hyperplayer-hrtf-core/Cargo.toml",
@@ -60,7 +60,7 @@
       "path": "crates/hyperplayer-hrtf-core/src/lib.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hrtf-core/src/lib.rs",
       "sourceSha256": "95ca73c2c5750af5e8b1d1cb98fd900126e0fe4e48b3a0035b8b26af426becb2",
-      "destinationSha256": "9a3864383f96bc86daa41fca039675bb5ed2bbd822b09806e589b88f1ba9cfd5",
+      "destinationSha256": "d7954a5f7ed4453bd654a593e5f414795ef60a9d086f2d4e37e4b9e625db10a9",
       "adaptations": [
         "license-notice",
         "lint-policy",
@@ -95,10 +95,28 @@
       ]
     },
     {
+      "path": "crates/hyperplayer-hrtf-core/src/resource.rs",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "destinationSha256": "8a7c67d9f83b37a6d74f433f9497e6b3d92384a2ad387cf5f3441a0b337a6934",
+      "adaptations": [
+        "algorithm-change"
+      ]
+    },
+    {
       "path": "crates/hyperplayer-hrtf-core/src/room.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hrtf-core/src/room.rs",
       "sourceSha256": "92c95ce6b31c4d9a4e087c56f225f67176f526c809d617232c6cb645f0cd80f6",
       "destinationSha256": "340ef7002c3f59610cfa56a191d286f0a2ff0fec64c1352e00bbcbb32a4fe7ab",
+      "adaptations": [
+        "algorithm-change"
+      ]
+    },
+    {
+      "path": "crates/hyperplayer-hrtf-core/src/sha256.rs",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "destinationSha256": "d8ece95460b1c799365737aac7286061571ff0bed7f7708a9ab7357970cd1047",
       "adaptations": [
         "algorithm-change"
       ]
@@ -122,6 +140,15 @@
       ]
     },
     {
+      "path": "crates/hyperplayer-hrtf-core/tests/common/mod.rs",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "destinationSha256": "2911f61da6a4697972bbcf182e7e00e535e8f873b0714b9049c28fcbd8eebfd6",
+      "adaptations": [
+        "test-only"
+      ]
+    },
+    {
       "path": "crates/hyperplayer-hrtf-core/tests/realtime_alloc.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hrtf-core/tests/realtime_alloc.rs",
       "sourceSha256": "658e4f18e667132e44ddf9736502f54a1c1b5bacc03f6a36b4b99de979a37730",
@@ -136,6 +163,15 @@
       "sourcePath": "HyperSoundEngineRust/crates/hrtf-core/tests/renderer_features.rs",
       "sourceSha256": "04072025a102c91e91e9508ac3c94fb7c34c26719bf2ef48b3f7913965e48a66",
       "destinationSha256": "d2252cef65d20aa6f94a4a83d0dfb4026e725530db3db061c8296798dccb5b5d",
+      "adaptations": [
+        "test-only"
+      ]
+    },
+    {
+      "path": "crates/hyperplayer-hrtf-core/tests/resource_pipeline.rs",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "destinationSha256": "f88d8e82646cccaeebb38c98312200bb300a30c36beb4b9d3f3df954316b46bc",
       "adaptations": [
         "test-only"
       ]
@@ -192,7 +228,7 @@
       "path": "crates/hyperplayer-hse-core/src/convolver.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/convolver.rs",
       "sourceSha256": "59f3bcd4afada1e8f0c4d5e1833dde851bc5ffde04a2a36b0836695f65e7888b",
-      "destinationSha256": "903d0353411af646fd1758be6479b05773a8ed1aa60ce757d24e1d9be8208d51",
+      "destinationSha256": "dafba8b300ddade52aadfb711bf05438be632693be305818418fb0d63db8214b",
       "adaptations": [
         "runtime-checkpoint-api",
         "algorithm-change"
@@ -212,7 +248,7 @@
       "path": "crates/hyperplayer-hse-core/src/dynamic_eq.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/dynamic_eq.rs",
       "sourceSha256": "a42959a38c443a95e9c03567002400aaa3687b282619c208dfa071e8600a9ffd",
-      "destinationSha256": "7d530a8796bb265112e6bcf76c9f1877334a73caefc372f573be73983233c198",
+      "destinationSha256": "254697aa1209dc53ed92f3fb411bd6e80c32e1795399a2d1eed8621b3ead4eba",
       "adaptations": [
         "algorithm-change"
       ]
@@ -221,7 +257,7 @@
       "path": "crates/hyperplayer-hse-core/src/engine_chain.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/engine_chain.rs",
       "sourceSha256": "54ccfa12f69d5a192f419abf1b025b8121423923e01d0cdd73ef4822a9c58073",
-      "destinationSha256": "4cec471b90b20d8512ab3ede270d18baf05d9571fd50ed62113f7d9b9405d5d4",
+      "destinationSha256": "d5531fa03b55e28c930ecbb4c8d4c9f593bc58b071263afb60601f018d66a927",
       "adaptations": [
         "algorithm-change"
       ]
@@ -240,7 +276,7 @@
       "path": "crates/hyperplayer-hse-core/src/fdn_reverb.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/fdn_reverb.rs",
       "sourceSha256": "7332d0f78425a8cf3de3840f79773c920f442784bc84bfe9cffe9613cec757e8",
-      "destinationSha256": "050985c8f256d1b8abbfbc24b19f341a810a6f08368bcbe4083e72107a4f90a3",
+      "destinationSha256": "ebd01d8c2ac3fdbb2e88e8313e429b46b4a08c6df34f89d8675dc186fc63dff1",
       "adaptations": [
         "algorithm-change"
       ]
@@ -279,7 +315,7 @@
       "path": "crates/hyperplayer-hse-core/src/limiter.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/limiter.rs",
       "sourceSha256": "b6031c6f29cfa93dda234341b843e62c7c4e6cf7411e1ba100427e5ac0de37a6",
-      "destinationSha256": "f2867aa5ac104c7d18c4670fde737900a23e79ff5820f093f456555837aa6883",
+      "destinationSha256": "f159ce665b8d6d6ab0eb5d489812138357dcd6e0ca96b34e8ece2476e6b4e2b1",
       "adaptations": [
         "algorithm-change"
       ]
@@ -288,7 +324,7 @@
       "path": "crates/hyperplayer-hse-core/src/loudness_comp.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/loudness_comp.rs",
       "sourceSha256": "b3a7e22c221e6808f1b76d2104e40de4244c0ddc0b6dd0f9e14d5b94bbbbd372",
-      "destinationSha256": "5916ce1d237506f7db57824de53852dd35ec38f655d15fe102ab0750c60e8f11",
+      "destinationSha256": "7fb1646cb239f892797a4090497d61ca1ab4ffbe56135c7b257d96a890fce99f",
       "adaptations": [
         "runtime-checkpoint-api",
         "algorithm-change"
@@ -318,7 +354,7 @@
       "path": "crates/hyperplayer-hse-core/src/lufs_meter.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/lufs_meter.rs",
       "sourceSha256": "f6f8205d60488c8011b31048a242c5fd9dbc08c152cfbcb3318ea3a8486f02e4",
-      "destinationSha256": "9e9854b9887918d8244da7f35efb843c0580b34503de33f7e2c7c30d47718efb",
+      "destinationSha256": "87c48d2ceee7d59256727a1b4b91ccf09ff80a85772e803f60c683b51d30dcbe",
       "adaptations": [
         "runtime-checkpoint-api",
         "algorithm-change"
@@ -347,7 +383,7 @@
       "path": "crates/hyperplayer-hse-core/src/modulation_matrix.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/modulation_matrix.rs",
       "sourceSha256": "8667329f5264e5ae257bbfe6f85ad396d10ef2bd370fcca2af0d49f65bfc7a32",
-      "destinationSha256": "b3d5675731e132418499535035b61e73b7a8d53bc5edb8c326190c59fbe1d91a",
+      "destinationSha256": "4ddfedb9c2fb5e353e32e0cb7de59cdf6404cf595101baf6b03fffb11b3a4f48",
       "adaptations": [
         "algorithm-change"
       ]
@@ -401,7 +437,7 @@
       "path": "crates/hyperplayer-hse-core/src/reverb_simple.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/reverb_simple.rs",
       "sourceSha256": "7fd8c2d912d954f6fbe879e6ca08fa89c595ec8d9a99811d89028f4a0c5158d8",
-      "destinationSha256": "bdea73368c3d639fbb636bc72af170014715881fdce3f46620ca53d022ede4fa",
+      "destinationSha256": "91c8cfa899e10798594f62bb6cf1e0f7ed18c0cef221812e84afa642e55cab4c",
       "adaptations": [
         "algorithm-change"
       ]
@@ -410,7 +446,7 @@
       "path": "crates/hyperplayer-hse-core/src/scenes.rs",
       "sourcePath": "HyperSoundEngineRust/crates/hse-core/src/scenes.rs",
       "sourceSha256": "8f846569951a4e05bbc56cf759c06ac6bd76dd351cb44b1c52b0d045621a9fc4",
-      "destinationSha256": "aa5ecff928d9e1b18d2136bd8dd33dad89987d9cd76de08e380f709355a4cd5b",
+      "destinationSha256": "7111d965fea1cf135dfadbe96c14b9cd0e348c113cbf5cb5cbe335ef1fe96813",
       "adaptations": [
         "algorithm-change"
       ]
@@ -454,6 +490,15 @@
       ]
     },
     {
+      "path": "crates/hyperplayer-hse-core/tests/bs1770_vectors.rs",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "destinationSha256": "cf886150669db8db05af4e5f27ea5d22ef0b93cdd817ce0b2f899e36896aaf0c",
+      "adaptations": [
+        "test-only"
+      ]
+    },
+    {
       "path": "crates/hyperplayer-hse-core/tests/fixtures/engine/default-params.48000.json",
       "sourcePath": "specs/engine/vectors/default-params.48000.json",
       "sourceSha256": "263b3ec31aa401f8ce9a5c5485f0920275667cd4f13268dcd82311d8c2f32f8f",
@@ -467,7 +512,7 @@
       "path": "crates/hyperplayer-hse-core/tests/fixtures/engine/scenes.48000.json",
       "sourcePath": "specs/engine/vectors/scenes.48000.json",
       "sourceSha256": "042ed95ecf91edfe52ad798f829dec6fa84ce4b61534eda0eb40eb29d54d79cd",
-      "destinationSha256": "527ca95d85806b6e3ca9009809f180936cf0d38d1ea011129a606d1c45c33232",
+      "destinationSha256": "0dfcc258b8c12bee51d61d87ab1b575341772b66cc840cac886062be1366cdd3",
       "adaptations": [
         "relocation",
         "test-only"
@@ -480,6 +525,24 @@
       "destinationSha256": "e4dba541fe2d742a4801a8c2971672328183f316e1a234261b72701a6fdffd1e",
       "adaptations": [
         "relocation",
+        "test-only"
+      ]
+    },
+    {
+      "path": "crates/hyperplayer-hse-core/tests/limiter_realtime_alloc.rs",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "destinationSha256": "a94318a1980dbc3e85e1287ed2e80c63e49f8d5901096e589b8a80343a567fe5",
+      "adaptations": [
+        "test-only"
+      ]
+    },
+    {
+      "path": "crates/hyperplayer-hse-core/tests/modulation_realtime_alloc.rs",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "destinationSha256": "5d1704964c2cdba4f2562ea73af830592a57c5c543f3328cf4b325a3a5edeae2",
+      "adaptations": [
         "test-only"
       ]
     },
@@ -740,7 +803,7 @@
       "path": "shared/hse-ts-core/src/engine/ScenePresets.ts",
       "sourcePath": "src/engine/ScenePresets.ts",
       "sourceSha256": "62f44d39f3163afeaa3bdf391804f3ac674ddce386bd0834159a6a763f696add",
-      "destinationSha256": "34897b42093aacc6a3705646c3262efaea9dbb5f25cf764a8125a92a1272c1d8",
+      "destinationSha256": "47e735c5d129b5fcf34264a28cd1b117e89fbf540c875a44fd949d7da25f3e81",
       "adaptations": [
         "algorithm-change"
       ]

@@ -8,12 +8,14 @@
  * 说明：
  *  - 每个场景 = createDefaultParams(48000) 派生后覆盖 EQ 曲线 + 混响 + 压缩 +
  *    低音 + 齿音等，构成完整参数快照（快照语义，params.sceneId = 自身 id）；
+ *  - ieq/dynamicEq/modulation/limiter 四个新 stage 同样逐场景显式取值
+ *    （保持关闭的场景也写出与默认一致的完整字段），便于与 Rust scenes.rs 镜像；
  *  - 快照不含 IR 数据（卷积 IR 一律 null，混响走算法混响，符合"用 irName 引用"约定）；
  *  - params.sampleRate 为快照标称采样率；HyperSoundEngine 实际以构造时采样率处理。
  */
 
 import { createDefaultParams, PRO_EQ_DEFAULT_BANDS } from '../types'
-import type { ScenePreset, HyperSoundEngineParams } from '../types'
+import type { ScenePreset, HyperSoundEngineParams, IeqTargetCurve } from '../types'
 
 /** 12 个场景 id（顺序固定，与 SCENE_PRESETS 一一对应） */
 export const SCENE_IDS = [
@@ -131,6 +133,86 @@ function setDeesser(p: HyperSoundEngineParams, opts: {
   p.deesser.mix = opts.mix ?? 1
 }
 
+/**
+ * 新 stage（ieq/dynamicEq/modulation/limiter）逐场景显式取值：
+ * 每个场景都完整写出这四个 stage 的全部字段（哪怕 disabled，取值与默认快照一致），
+ * 与 Rust `hyperplayer-hse-core/src/scenes.rs` 逐字段镜像；冻结夹具
+ * `scenes.48000.json` 由 `scripts/export-scenes-fixture.mjs` 从本文件重新导出。
+ */
+
+/** 智能均衡 IEQ：全参数显式传入（慢速自适应频谱对齐） */
+function setIeq(p: HyperSoundEngineParams, opts: {
+  enabled: boolean
+  strength: number
+  targetCurve: IeqTargetCurve
+  timeConstantSec: number
+}): void {
+  p.ieq.enabled = opts.enabled
+  p.ieq.strength = opts.strength
+  p.ieq.targetCurve = opts.targetCurve
+  p.ieq.timeConstantSec = opts.timeConstantSec
+}
+
+/** 动态 EQ 频带构造：5 带全部参与、无静态目标增益（默认姿态） */
+function dynEqAllBands(): { enabled: boolean; targetGainDb: number }[] {
+  return [0, 1, 2, 3, 4].map(() => ({ enabled: true, targetGainDb: 0 }))
+}
+
+/** 动态 EQ 频带构造：仅低频带（<200 Hz 固定交叉）参与动态控制，其余带关闭 */
+function dynEqLowBandOnly(): { enabled: boolean; targetGainDb: number }[] {
+  return [
+    { enabled: true, targetGainDb: 0 },
+    { enabled: false, targetGainDb: 0 },
+    { enabled: false, targetGainDb: 0 },
+    { enabled: false, targetGainDb: 0 },
+    { enabled: false, targetGainDb: 0 },
+  ]
+}
+
+/** 自适应动态均衡：全参数显式传入（bands 用 dynEqAllBands/dynEqLowBandOnly 构造） */
+function setDynamicEq(p: HyperSoundEngineParams, opts: {
+  enabled: boolean
+  strength: number
+  thresholdDb: number
+  ratio: number
+  attackMs: number
+  releaseMs: number
+  bands: { enabled: boolean; targetGainDb: number }[]
+}): void {
+  p.dynamicEq.enabled = opts.enabled
+  p.dynamicEq.strength = opts.strength
+  p.dynamicEq.thresholdDb = opts.thresholdDb
+  p.dynamicEq.ratio = opts.ratio
+  p.dynamicEq.attackMs = opts.attackMs
+  p.dynamicEq.releaseMs = opts.releaseMs
+  p.dynamicEq.bands = opts.bands
+}
+
+/** 调制矩阵显式关闭：全子结构按默认值写出（场景不使用 LFO/包络调制） */
+function disableModulation(p: HyperSoundEngineParams): void {
+  p.modulation.enabled = false
+  p.modulation.lfo = { enabled: false, shape: 'sine', rateHz: 1, depth: 0.5 }
+  p.modulation.envelope = { enabled: false, attackMs: 10, releaseMs: 200, amount: 0.5 }
+  p.modulation.routes = []
+}
+
+/** 前瞻限幅器：全参数显式传入（按各场景响度余量差异化阈值与恢复） */
+function setLimiter(p: HyperSoundEngineParams, opts: {
+  enabled: boolean
+  thresholdDb: number
+  lookaheadMs: number
+  attackMs: number
+  releaseMs: number
+  truePeak: boolean
+}): void {
+  p.limiter.enabled = opts.enabled
+  p.limiter.thresholdDb = opts.thresholdDb
+  p.limiter.lookaheadMs = opts.lookaheadMs
+  p.limiter.attackMs = opts.attackMs
+  p.limiter.releaseMs = opts.releaseMs
+  p.limiter.truePeak = opts.truePeak
+}
+
 function finish(p: HyperSoundEngineParams, id: string): ScenePreset {
   p.sceneId = id
   p.customized = false
@@ -147,6 +229,11 @@ export const SCENE_PRESETS: ScenePreset[] = [
     disableReverb(p)
     setBass(p, { cutoffHz: 100, harmonicGain: 0.35, mix: 0.3 })
     setDeesser(p, { centerHz: 6500 })
+    // 新 stage：全默认克制——ieq/dynamicEq/modulation 关闭，透明安全限幅（-1 dB）
+    setIeq(p, { enabled: false, strength: 0.5, targetCurve: 'flat', timeConstantSec: 3 })
+    setDynamicEq(p, { enabled: false, strength: 0.5, thresholdDb: -20, ratio: 2, attackMs: 20, releaseMs: 200, bands: dynEqAllBands() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true })
     const sc = finish(p, 'pop')
     sc.name = '流行'
     sc.description = '流行乐通用：微笑 EQ 曲线 + 人声突出 + 干净直达人声'
@@ -160,6 +247,11 @@ export const SCENE_PRESETS: ScenePreset[] = [
     setCompressor(p, { thresholdDb: -22, ratio: 5, kneeDb: 4, attackMs: 5, releaseMs: 120, makeupDb: 13 })
     disableReverb(p)
     setBass(p, { cutoffHz: 70, harmonicType: 'odd', harmonicGain: 0.6, mix: 0.5 })
+    // 新 stage：全默认克制（13 dB makeup 已由总线压缩承担，限幅器保持透明 -1 dB）
+    setIeq(p, { enabled: false, strength: 0.5, targetCurve: 'flat', timeConstantSec: 3 })
+    setDynamicEq(p, { enabled: false, strength: 0.5, thresholdDb: -20, ratio: 2, attackMs: 20, releaseMs: 200, bands: dynEqAllBands() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true })
     const sc = finish(p, 'enhance')
     sc.name = '增强'
     sc.description = '增强：中频凹陷 + 强压缩 + 低频下潜冲击（干声，无齿音限制）'
@@ -171,6 +263,11 @@ export const SCENE_PRESETS: ScenePreset[] = [
     applyEqCurve(p, [2, 1.5, 1, 0.5, 0, 0, 0.5, 0.5, -0.5, -1])
     setCompressor(p, { thresholdDb: -16, ratio: 1.8, kneeDb: 10, attackMs: 20, releaseMs: 250, makeupDb: 4 })
     setReverb(p, { type: 'hall', roomSize: 0.55, damping: 0.45, wet: 0.35, dry: 0.8, preDelayMs: 10 })
+    // 新 stage：全默认克制——爵士重动态，不做自适应处理，限幅器只作透明保护
+    setIeq(p, { enabled: false, strength: 0.5, targetCurve: 'flat', timeConstantSec: 3 })
+    setDynamicEq(p, { enabled: false, strength: 0.5, thresholdDb: -20, ratio: 2, attackMs: 20, releaseMs: 200, bands: dynEqAllBands() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true })
     const sc = finish(p, 'jazz')
     sc.name = '爵士'
     sc.description = '爵士俱乐部：温暖音色 + 轻大厅空间 + 柔和动态'
@@ -185,6 +282,12 @@ export const SCENE_PRESETS: ScenePreset[] = [
     setBass(p, { cutoffHz: 100, harmonicType: 'even', harmonicGain: 0.7, mix: 0.6, levelDb: 1 })
     setDeesser(p, { centerHz: 7500, thresholdDb: -26 })
     p.stereoWidth = 1.2
+    // 新 stage：dynamicEq 只动态收敛低频带（<200 Hz）抑制低音堆积、保留泵感；
+    // 限幅器收 1.5 dB 余量 + 快恢复，匹配舞曲高能量连续输出
+    setIeq(p, { enabled: false, strength: 0.5, targetCurve: 'flat', timeConstantSec: 3 })
+    setDynamicEq(p, { enabled: true, strength: 0.4, thresholdDb: -18, ratio: 3, attackMs: 20, releaseMs: 250, bands: dynEqLowBandOnly() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -1.5, lookaheadMs: 5, attackMs: 0.5, releaseMs: 120, truePeak: true })
     const sc = finish(p, 'dance')
     sc.name = '舞曲'
     sc.description = '舞池能量：重低音 + 泵感压缩 + 高频光泽 + 宽声场（干声）'
@@ -197,6 +300,12 @@ export const SCENE_PRESETS: ScenePreset[] = [
     setCompressor(p, { thresholdDb: -24, ratio: 1.5, kneeDb: 12, attackMs: 30, releaseMs: 400, makeupDb: 1 })
     setReverb(p, { type: 'hall', roomSize: 0.75, damping: 0.3, wet: 0.55, dry: 0.7, preDelayMs: 15 })
     p.stereoWidth = 1.15
+    // 新 stage：ieq 轻度平直化（低强度 + 5 s 慢速），长时间聆听的音色一致性，
+    // 不破坏厅堂动态；限幅器保持透明 -1 dB 保护
+    setIeq(p, { enabled: true, strength: 0.3, targetCurve: 'flat', timeConstantSec: 5 })
+    setDynamicEq(p, { enabled: false, strength: 0.5, thresholdDb: -20, ratio: 2, attackMs: 20, releaseMs: 200, bands: dynEqAllBands() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true })
     const sc = finish(p, 'classical')
     sc.name = '古典'
     sc.description = '音乐厅演绎：平直频响 + 长混响尾音 + 宽广声场'
@@ -208,6 +317,11 @@ export const SCENE_PRESETS: ScenePreset[] = [
     applyEqCurve(p, [1, 1, 0.5, 0, 0, 0.5, 1.5, 2, 2, 1])
     setCompressor(p, { thresholdDb: -20, ratio: 3, kneeDb: 6, attackMs: 10, releaseMs: 200, makeupDb: 3 })
     setReverb(p, { type: 'stage', roomSize: 0.7, damping: 0.35, wet: 0.6, dry: 0.65, preDelayMs: 20 })
+    // 新 stage：全默认克制——现场感靠 EQ + 混响，不做自适应处理
+    setIeq(p, { enabled: false, strength: 0.5, targetCurve: 'flat', timeConstantSec: 3 })
+    setDynamicEq(p, { enabled: false, strength: 0.5, thresholdDb: -20, ratio: 2, attackMs: 20, releaseMs: 200, bands: dynEqAllBands() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true })
     const sc = finish(p, 'livehouse')
     sc.name = '现场'
     sc.description = 'LiveHouse 现场：大房间混响 + 临场中高频 + 稳健压缩'
@@ -220,6 +334,12 @@ export const SCENE_PRESETS: ScenePreset[] = [
     setCompressor(p, { thresholdDb: -16, ratio: 2, kneeDb: 10, attackMs: 15, releaseMs: 200, makeupDb: 4 })
     disableReverb(p)
     setDeesser(p, { centerHz: 7000, mix: 0.5 })
+    // 新 stage：监听参考必须中性——ieq/dynamicEq/modulation 显式关闭，限幅器只作
+    // 透明安全档（-1 dB），不引入任何音染色
+    setIeq(p, { enabled: false, strength: 0.5, targetCurve: 'flat', timeConstantSec: 3 })
+    setDynamicEq(p, { enabled: false, strength: 0.5, thresholdDb: -20, ratio: 2, attackMs: 20, releaseMs: 200, bands: dynEqAllBands() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true })
     const sc = finish(p, 'studio')
     sc.name = '录音棚'
     sc.description = '录音棚监听：平直频响 + 极轻处理，完全干声忠于原声'
@@ -232,6 +352,11 @@ export const SCENE_PRESETS: ScenePreset[] = [
     setCompressor(p, { thresholdDb: -18, ratio: 2, kneeDb: 10, attackMs: 20, releaseMs: 300, makeupDb: 5 })
     disableReverb(p)
     setBass(p, { cutoffHz: 110, harmonicGain: 0.4, mix: 0.35 })
+    // 新 stage：全默认克制——温暖感已由静态 EQ + 低音增强承担，不做自适应处理
+    setIeq(p, { enabled: false, strength: 0.5, targetCurve: 'flat', timeConstantSec: 3 })
+    setDynamicEq(p, { enabled: false, strength: 0.5, thresholdDb: -20, ratio: 2, attackMs: 20, releaseMs: 200, bands: dynEqAllBands() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true })
     const sc = finish(p, 'warm')
     sc.name = '温暖'
     sc.description = '温暖模拟味：饱满低音 + 柔和高频（干声）'
@@ -244,6 +369,12 @@ export const SCENE_PRESETS: ScenePreset[] = [
     setCompressor(p, { thresholdDb: -20, ratio: 2.5, kneeDb: 8, attackMs: 15, releaseMs: 250, makeupDb: 2 })
     setReverb(p, { type: 'hall', roomSize: 0.85, damping: 0.25, wet: 0.7, dry: 0.55, preDelayMs: 25, width: 1.4 })
     p.stereoWidth = 1.3
+    // 新 stage：限幅器收 2 dB 余量 + 慢恢复——极高混响湿量与 1.3 倍声场抬峰明显，
+    // 需要防削波且避免泵感破坏长尾；ieq/dynamicEq/modulation 保持关闭
+    setIeq(p, { enabled: false, strength: 0.5, targetCurve: 'flat', timeConstantSec: 3 })
+    setDynamicEq(p, { enabled: false, strength: 0.5, thresholdDb: -20, ratio: 2, attackMs: 20, releaseMs: 200, bands: dynEqAllBands() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -2, lookaheadMs: 5, attackMs: 0.5, releaseMs: 200, truePeak: true })
     const sc = finish(p, 'dts')
     sc.name = '浩渺'
     sc.description = 'DTS 浩渺：极开阔混响 + 空气感高频 + 超宽声场'
@@ -256,6 +387,12 @@ export const SCENE_PRESETS: ScenePreset[] = [
     setCompressor(p, { thresholdDb: -18, ratio: 3, kneeDb: 6, attackMs: 8, releaseMs: 150, makeupDb: 0 })
     setReverb(p, { type: 'stage', roomSize: 0.5, damping: 0.45, wet: 0.45, dry: 0.75, preDelayMs: 8 })
     setDeesser(p, { centerHz: 6500, ratio: 10, thresholdDb: -32 })
+    // 新 stage：ieq 轻度人声曲线（低强度 + 4 s 慢速）呼应人声中心定位，不与静态
+    // EQ/压缩抢戏；其余保持克制默认
+    setIeq(p, { enabled: true, strength: 0.25, targetCurve: 'vocal', timeConstantSec: 4 })
+    setDynamicEq(p, { enabled: false, strength: 0.5, thresholdDb: -20, ratio: 2, attackMs: 20, releaseMs: 200, bands: dynEqAllBands() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true })
     const sc = finish(p, 'vocal-stage')
     sc.name = '悠扬舞台'
     sc.description = '悠扬舞台：人声临场提升 + 齿音收敛 + 舞台空间'
@@ -279,6 +416,12 @@ export const SCENE_PRESETS: ScenePreset[] = [
     p.loudnessCompensation.preset = 'warm'
     p.loudnessCompensation.volumePercent = 30
     p.loudnessCompensation.maxBoostDb = 12
+    // 新 stage：限幅器与响度链组合——15 dB makeup + 低音量补偿(≤12 dB)抬峰凶猛，
+    // 收 3 dB 余量 + 慢恢复，深夜小音量下限幅动作更平滑；其余保持克制默认
+    setIeq(p, { enabled: false, strength: 0.5, targetCurve: 'flat', timeConstantSec: 3 })
+    setDynamicEq(p, { enabled: false, strength: 0.5, thresholdDb: -20, ratio: 2, attackMs: 20, releaseMs: 200, bands: dynEqAllBands() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -3, lookaheadMs: 5, attackMs: 0.5, releaseMs: 250, truePeak: true })
     const sc = finish(p, 'night-bass')
     sc.name = '深夜低音'
     sc.description = '深夜低音：夜间模式 + 虚拟低频增强 + 高频收敛，低音量均衡耐听'
@@ -293,6 +436,12 @@ export const SCENE_PRESETS: ScenePreset[] = [
     disableReverb(p)
     setBass(p, { cutoffHz: 60, harmonicType: 'even', harmonicGain: 0.9, mix: 0.75, levelDb: 2 })
     p.stereoWidth = 1.1
+    // 新 stage：dynamicEq 只动态收敛低频带（<200 Hz）——超低频 EQ + 0.9 谐波增强
+    // 的峰值堆积由它兜底；限幅器收 1.5 dB 余量 + 稍慢恢复控住次低频真峰值
+    setIeq(p, { enabled: false, strength: 0.5, targetCurve: 'flat', timeConstantSec: 3 })
+    setDynamicEq(p, { enabled: true, strength: 0.5, thresholdDb: -16, ratio: 4, attackMs: 15, releaseMs: 300, bands: dynEqLowBandOnly() })
+    disableModulation(p)
+    setLimiter(p, { enabled: true, thresholdDb: -1.5, lookaheadMs: 5, attackMs: 0.5, releaseMs: 200, truePeak: true })
     const sc = finish(p, 'heavy-bass')
     sc.name = '重低音'
     sc.description = '重低音：超低频提升 + 虚拟低频谐波增强 + 略宽声场，纯低频冲击力'

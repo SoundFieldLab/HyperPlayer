@@ -1,6 +1,11 @@
 {
   "schemaVersion": 1,
   "sampleRate": 48000,
+  "provenance": {
+    "version": "1.5.1-hyperplayer-scenes-ext",
+    "base": "HyperSoundEngine v1.5.1 specs/engine/vectors/scenes.48000.json (commit f7017621b7d84005fbfed8a3c42a119487a17326)",
+    "note": "HyperPlayer 扩展导出：12 个内置场景对 ieq/dynamicEq/modulation/limiter 做逐场景定制后，由 scripts/export-scenes-fixture.mjs 从 shared/hse-ts-core（TS oracle）重新生成；不再是纯上游 v1.5.1 冻结导出，仅保留上游 schemaVersion/sampleRate/结构契约。"
+  },
   "sceneIds": [
     "pop",
     "enhance",
@@ -1344,10 +1349,10 @@
         },
         "limiter": {
           "enabled": true,
-          "thresholdDb": -1,
+          "thresholdDb": -1.5,
           "lookaheadMs": 5,
           "attackMs": 0.5,
-          "releaseMs": 150,
+          "releaseMs": 120,
           "truePeak": true
         },
         "ieq": {
@@ -1357,31 +1362,31 @@
           "timeConstantSec": 3
         },
         "dynamicEq": {
-          "enabled": false,
-          "strength": 0.5,
-          "thresholdDb": -20,
-          "ratio": 2,
+          "enabled": true,
+          "strength": 0.4,
+          "thresholdDb": -18,
+          "ratio": 3,
           "attackMs": 20,
-          "releaseMs": 200,
+          "releaseMs": 250,
           "bands": [
             {
               "enabled": true,
               "targetGainDb": 0
             },
             {
-              "enabled": true,
+              "enabled": false,
               "targetGainDb": 0
             },
             {
-              "enabled": true,
+              "enabled": false,
               "targetGainDb": 0
             },
             {
-              "enabled": true,
+              "enabled": false,
               "targetGainDb": 0
             },
             {
-              "enabled": true,
+              "enabled": false,
               "targetGainDb": 0
             }
           ]
@@ -1742,10 +1747,10 @@
           "truePeak": true
         },
         "ieq": {
-          "enabled": false,
-          "strength": 0.5,
+          "enabled": true,
+          "strength": 0.3,
           "targetCurve": "flat",
-          "timeConstantSec": 3
+          "timeConstantSec": 5
         },
         "dynamicEq": {
           "enabled": false,
@@ -3299,10 +3304,10 @@
         },
         "limiter": {
           "enabled": true,
-          "thresholdDb": -1,
+          "thresholdDb": -2,
           "lookaheadMs": 5,
           "attackMs": 0.5,
-          "releaseMs": 150,
+          "releaseMs": 200,
           "truePeak": true
         },
         "ieq": {
@@ -3697,10 +3702,10 @@
           "truePeak": true
         },
         "ieq": {
-          "enabled": false,
-          "strength": 0.5,
-          "targetCurve": "flat",
-          "timeConstantSec": 3
+          "enabled": true,
+          "strength": 0.25,
+          "targetCurve": "vocal",
+          "timeConstantSec": 4
         },
         "dynamicEq": {
           "enabled": false,
@@ -4081,10 +4086,10 @@
         },
         "limiter": {
           "enabled": true,
-          "thresholdDb": -1,
+          "thresholdDb": -3,
           "lookaheadMs": 5,
           "attackMs": 0.5,
-          "releaseMs": 150,
+          "releaseMs": 250,
           "truePeak": true
         },
         "ieq": {
@@ -4472,10 +4477,10 @@
         },
         "limiter": {
           "enabled": true,
-          "thresholdDb": -1,
+          "thresholdDb": -1.5,
           "lookaheadMs": 5,
           "attackMs": 0.5,
-          "releaseMs": 150,
+          "releaseMs": 200,
           "truePeak": true
         },
         "ieq": {
@@ -4485,31 +4490,31 @@
           "timeConstantSec": 3
         },
         "dynamicEq": {
-          "enabled": false,
+          "enabled": true,
           "strength": 0.5,
-          "thresholdDb": -20,
-          "ratio": 2,
-          "attackMs": 20,
-          "releaseMs": 200,
+          "thresholdDb": -16,
+          "ratio": 4,
+          "attackMs": 15,
+          "releaseMs": 300,
           "bands": [
             {
               "enabled": true,
               "targetGainDb": 0
             },
             {
-              "enabled": true,
+              "enabled": false,
               "targetGainDb": 0
             },
             {
-              "enabled": true,
+              "enabled": false,
               "targetGainDb": 0
             },
             {
-              "enabled": true,
+              "enabled": false,
               "targetGainDb": 0
             },
             {
-              "enabled": true,
+              "enabled": false,
               "targetGainDb": 0
             }
           ]
