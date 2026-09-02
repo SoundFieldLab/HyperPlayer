@@ -14,7 +14,7 @@
 
 ## 当前真实位置
 
-2026-09-03：DSP 全量工作已分批提交（`137af95` D30 核心 → `75f2315` DSP 引擎层 → `92270ee` 控制面 → `8ce0d9e` 切片文档 → `5e6598a` scenes 定制 → `a4ccaff` BS.1770 认证 → `587d888` HRTF 资产 → `b7a8fff` spatial 生产接线）。生产链现接入 Stage `1-15、16/17、18-22` 共 **22 个处理器**（vendored HSE Rust 实时执行，默认全 disabled；spatial 资源经 SHA-256 校验加载、失败显式旁路）。
+2026-09-03：DSP 全量工作已分批提交并推送 `origin/main`（`137af95` D30 核心 → `75f2315` DSP 引擎层 → `92270ee` 控制面 → `8ce0d9e` 切片文档 → `5e6598a` scenes 定制 → `a4ccaff` BS.1770 认证 → `587d888` HRTF 资产 → `b7a8fff` spatial 生产接线 → `498c4c0`/`464131e`/`b239ba8`/`b77c0a5` CI 门禁修复），**Quality 与 Licenses CI 全绿**。生产链现接入 Stage `1-15、16/17、18-22` 共 **22 个处理器**（vendored HSE Rust 实时执行，默认全 disabled；spatial 资源经 SHA-256 校验加载、失败显式旁路）。
 
 DSP 控制面已闭环（切片 09）：版本化持久配置 + fail-close 迁移、revision 跨重启恢复、HSE2/scenes 22-stage round-trip（少量 HyperPlayer-only 参数按缺省还原，清单见切片 09 遗留边界）、HPTM v4（spectrum / dynamic-eq / limiter / LUFS 字段）与 `MeterMode::{HseV151 默认, ItuBs1770_5}` 双模式（标准模式已实现标准通道功率和路径，通过 BS.1770-5 解析向量认证 ±0.1 LU；未使用官方 EBU Tech 3341/3342 测试文件，不宣称 EBU 认证）。12 场景已对 ieq/dynamicEq/modulation/limiter 逐场景定制（TS oracle 导出 fixture，provenance 如实标注）。
 
