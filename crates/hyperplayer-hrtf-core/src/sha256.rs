@@ -30,14 +30,10 @@ pub fn digest(data: &[u8]) -> [u8; 32] {
     let bit_length = (data.len() as u64).wrapping_mul(8);
 
     // 主循环处理所有完整的 64 字节分组。
-    let mut chunks = data.chunks_exact(64);
-    for chunk in &mut chunks {
-        compress(
-            &mut state,
-            chunk.try_into().expect("chunk is exactly 64 bytes"),
-        );
+    let (chunks, remainder) = data.as_chunks::<64>();
+    for chunk in chunks {
+        compress(&mut state, chunk);
     }
-    let remainder = chunks.remainder();
 
     // 填充：0x80、零字节、再拼接 64 位大端消息长度。
     let mut tail = [0u8; 128];
@@ -45,15 +41,14 @@ pub fn digest(data: &[u8]) -> [u8; 32] {
     tail[remainder.len()] = 0x80;
     let tail_length = if remainder.len() + 9 <= 64 { 64 } else { 128 };
     tail[tail_length - 8..tail_length].copy_from_slice(&bit_length.to_be_bytes());
-    for chunk in tail[..tail_length].chunks_exact(64) {
-        compress(
-            &mut state,
-            chunk.try_into().expect("chunk is exactly 64 bytes"),
-        );
+    let (tail_blocks, _) = tail[..tail_length].as_chunks::<64>();
+    for chunk in tail_blocks {
+        compress(&mut state, chunk);
     }
 
     let mut output = [0u8; 32];
-    for (word, slot) in state.iter().zip(output.chunks_exact_mut(4)) {
+    let (output_words, _) = output.as_chunks_mut::<4>();
+    for (word, slot) in state.iter().zip(output_words) {
         slot.copy_from_slice(&word.to_be_bytes());
     }
     output
@@ -73,8 +68,9 @@ pub fn digest_hex(data: &[u8]) -> String {
 fn compress(state: &mut [u32; 8], block: &[u8; 64]) {
     let mut w = [0u32; 64];
     // SHA-256 的消息调度按大端序读取 32 位字。
-    for (word, chunk) in w.iter_mut().zip(block.chunks_exact(4)) {
-        *word = u32::from_be_bytes(chunk.try_into().expect("chunk is exactly 4 bytes"));
+    let (block_words, _) = block.as_chunks::<4>();
+    for (word, chunk) in w.iter_mut().zip(block_words) {
+        *word = u32::from_be_bytes(*chunk);
     }
     for index in 16..64 {
         let s0 =
