@@ -1,3 +1,5 @@
+pub mod resource_probe;
+
 use crate::{
     dto::{FileAssociationRequestDto, IntegrationCapabilityDto, WindowsIntegrationStatusDto},
     error::{AppError, CommandResult},

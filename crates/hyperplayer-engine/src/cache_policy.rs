@@ -256,6 +256,7 @@ pub struct ReconciliationInput {
     pub db_objects: Vec<DbCacheObject>,
     pub object_paths: Vec<PathBuf>,
     pub partials: Vec<StoredPartial>,
+    pub protected_hashes: HashSet<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -301,6 +302,10 @@ pub fn plan_reconciliation(
         .db_objects
         .iter()
         .filter(|object| {
+            // The repository lowers a leased missing object to `partial` at apply time.
+            // We therefore still include it in `missing_db_objects` so the apply step can
+            // make that lease-safe decision; the protected-hash filter is intentionally
+            // not applied to missing objects (it is reserved for the deletion paths).
             object
                 .relative_path
                 .file_name()
@@ -313,7 +318,10 @@ pub fn plan_reconciliation(
     let mut orphan_objects: Vec<_> = input
         .object_paths
         .iter()
-        .filter(|path| !expected.contains(path.as_path()))
+        .filter(|path| {
+            !expected.contains(path.as_path())
+                && !input.protected_hashes.contains(hash_from_object_path(path))
+        })
         .cloned()
         .collect();
     expired_partials.sort();
@@ -324,6 +332,12 @@ pub fn plan_reconciliation(
         missing_db_objects,
         orphan_objects,
     })
+}
+
+fn hash_from_object_path(path: &Path) -> &str {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
 }
 
 fn validate_relative_cache_path(path: &Path) -> Result<()> {
@@ -497,6 +511,7 @@ mod tests {
                     relative_path: "partial/old.part".into(),
                     created_unix_ms: 0,
                 }],
+                protected_hashes: HashSet::new(),
             },
         )
         .unwrap();
@@ -506,6 +521,26 @@ mod tests {
         );
         assert_eq!(plan.missing_db_objects, vec!["missing"]);
         assert_eq!(plan.orphan_objects, vec![PathBuf::from("objects/orphan")]);
+    }
+
+    #[test]
+    fn reconciliation_skips_lease_protected_orphans() {
+        let plan = plan_reconciliation(
+            &CachePolicy::default(),
+            ReconciliationInput {
+                cache_root: PathBuf::from("C:/cache"),
+                now_unix_ms: 25 * 60 * 60 * 1_000,
+                db_objects: vec![],
+                object_paths: vec!["objects/leased-orphan".into(), "objects/free-orphan".into()],
+                partials: vec![],
+                protected_hashes: HashSet::from(["leased-orphan".into()]),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            plan.orphan_objects,
+            vec![PathBuf::from("objects/free-orphan")]
+        );
     }
 
     #[test]
@@ -519,6 +554,7 @@ mod tests {
                     db_objects: vec![],
                     object_paths: vec![bad],
                     partials: vec![],
+                    protected_hashes: HashSet::new(),
                 },
             );
             assert!(matches!(result, Err(EngineError::InvalidInput(_))));
