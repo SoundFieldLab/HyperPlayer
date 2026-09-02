@@ -33,7 +33,6 @@ jobs:
           filters: |
             crates:
               - 'crates/**'
-              - '!crates/hyperplayer-source-netease/**'
               - 'tests/fixtures/**'
               - 'rust-toolchain.toml'
               - '.github/workflows/quality.yml'
