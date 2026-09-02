@@ -55,4 +55,6 @@ D30 `01 → 10 → 11 → 12 → 13` 与 DSP `02 → 03 → 04 → 05 → 06 →
 
 每份切片完成后执行适用的前端 Vitest/build、engine/Tauri Rust fmt、strict Clippy、workspace tests、网易云 oracle 和许可证门禁。涉及 UI、音频设备、账号、WebGPU 或安装器时，自动测试不能替代正式 Tauri/WebView2、真实硬件/账号或 Windows 安装升级验收。
 
+本地工具链由仓库根 `rust-toolchain.toml` 钉定为 Rust 1.98.0（与 CI 一致）；Quality CI 按提交路径选择性启动各门禁 job（文档-only 提交不启动 Rust/前端测试），workflow 自身改动全量触发。
+
 完成后同步 `handover.md`、`tests/ACCEPTANCE_MATRIX.md`，并只把已经实测的状态回写 `docs/需求基线.md` 或相关定调记录。
