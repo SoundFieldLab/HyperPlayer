@@ -2,12 +2,13 @@
 //!
 //! # 状态说明（重要）
 //!
-//! **HRTF/SOFA 资源的合规审计尚未完成**：仓库当前没有任何可再分发、已审计
-//! 的产品级 HRTF 资产，HIR/SOFA 数据只能由用户通过本 API 显式注入（提供
-//! 文件路径 + 期望 SHA-256 + 来源声明），产品资产待审计后另行引入。因此
-//! Stage 22 Spatial/HRTF 的产品接线（engine/Tauri/前端）处于**受阻**状态，
-//! 本模块只提供受限范围内的加载、验证、失败回退与 identity 记录能力，
-//! **不得据此宣称产品完成**。
+//! **产品资产已审计入库（2026-09-03）**：`assets/hrtf/mit-kemar-normal-pinna.sofa`
+//! （MIT KEMAR，710 位置，44.1 kHz 原生；来源、许可证、分发义务与 hash 见
+//! `provenance/hrtf-mit-kemar/README.md`）。engine/Tauri 侧加载产品资产同样
+//! 必须走本模块的校验通道：期望 hash 固定为 provenance 记录所列值，hash 不
+//! 匹配、文件缺失或解析失败一律显式拒绝并回退旁路，绝不静默使用错误数据。
+//! 用户自备的外部 SOFA 资源仍可经本 API 注入（提供文件路径 + 期望 SHA-256 +
+//! 来源声明）。
 //!
 //! # 设计
 //!
@@ -24,8 +25,7 @@
 //!    由宿主侧退回旁路（不渲染空间场）。
 //!
 //! 加载完成后可通过 [`HrtfResourceIdentity`] 查询资源的 hash/来源/版本/
-//! 采样率/网格规模，供后续 provenance 记录使用（provenance 归档本身属于
-//! 资产门禁范围，本轮未接线）。
+//! 采样率/网格规模，供 provenance 记录与运行时诊断使用。
 
 use std::{error::Error, fmt, path::PathBuf};
 
@@ -38,7 +38,8 @@ const SUPPORTED_SAMPLE_RATES: [u32; 3] = [44_100, 48_000, 96_000];
 ///
 /// 这些字段是资产门禁（数据来源、版本、许可证、分发义务）的最小记录，
 /// 加载成功后原样进入 [`HrtfResourceIdentity`]，供 provenance 归档。
-/// 当前所有产品级资产均未通过审计，调用方必须如实填写。
+/// 调用方必须如实填写（随产品分发的 MIT KEMAR 资产的声明见
+/// `provenance/hrtf-mit-kemar/README.md`）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HrtfResourceProvenance {
     /// 资源的人类可读名称（例如数据集名称）。
@@ -270,8 +271,8 @@ impl From<SofaError> for ResourceError {
 /// 重采样到目标采样率 → 构建 [`HrtfGrid`]。任何一步失败都会返回显式
 /// [`ResourceError`]，不会产出「部分可用」的网格。
 ///
-/// 注意：资源合规审计未完成，本函数只应使用用户自备的文件；产品接线
-/// （engine asset loader/adapter、Tauri capability/DTO 等）待资产就绪后实施。
+/// 注意：产品接线（engine asset loader/adapter、Tauri capability/DTO）已按本
+/// API 实施；用户自备资源与随产品分发的资产都经本函数校验。
 pub fn load_verified_resource(
     descriptor: &HrtfResourceDescriptor,
 ) -> Result<VerifiedHrtfResource, ResourceError> {
@@ -337,7 +338,8 @@ pub fn load_verified_resource(
 ///   `false`，宿主侧应退回旁路（不渲染空间场）。
 ///
 /// 实时音频线程不得直接持有本管理器；宿主应在控制线程完成资源切换后，
-/// 将新 [`HrtfGrid`] 交给渲染器重建（属于后续产品接线范围，本轮未实施）。
+/// 将新 [`HrtfGrid`] 交给渲染器重建（engine 侧 SpatialProcessor 已按此实现，
+/// 热更换走「新资源先验证再原子替换」）。
 #[derive(Debug, Default)]
 pub struct HrtfResourceManager {
     current: Option<VerifiedHrtfResource>,

@@ -286,7 +286,11 @@ impl AmbienceState {
     }
 }
 
-struct SpatialStage {
+/// Stage 22 空间/HRTF 权威舞台：HRTF 渲染器 + 模式化扬声器布局 + 干湿/主增益/
+/// 环境声/软限幅。参数解析与渲染器构造统一走 [`build_spatial_stage`]；宿主
+/// （HyperPlayer engine 适配器）仅在非实时控制路径构造与 `prepare`，实时路径
+/// 只调用 [`process`](Self::process)。
+pub struct SpatialStage {
     renderer: BinauralRenderer,
     speakers: Vec<SpatialSpeaker>,
     amount: f32,
@@ -342,7 +346,8 @@ impl SpatialStage {
         })
     }
 
-    fn prepare(&mut self, max_frames: usize) {
+    /// 预备渲染器与工作缓冲（非实时控制路径；`max_frames` 为本链最大块长）。
+    pub fn prepare(&mut self, max_frames: usize) {
         self.input_left.resize(max_frames, 0.0);
         self.input_right.resize(max_frames, 0.0);
         self.dry_left.resize(max_frames, 0.0);
@@ -356,7 +361,11 @@ impl SpatialStage {
             .expect("有效的 stage22 prepare 容量");
     }
 
-    fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+    /// 渲染一个立体声块（实时路径；块长不得超过 `prepare` 容量，左右等长）。
+    ///
+    /// 声道语义：立体声输入按模式布局映射为双耳扬声器对象，渲染结果仍是
+    /// 立体声（双耳左右声道）——不扩展声道数，也不做额外下混。
+    pub fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
         assert_eq!(left.len(), right.len(), "左右声道块长必须一致");
         assert!(
             left.len() <= self.input_left.len(),
@@ -446,7 +455,8 @@ impl SpatialStage {
         }
     }
 
-    fn reset(&mut self) {
+    /// 清空渲染器与环境声运行状态（参数保留）。
+    pub fn reset(&mut self) {
         self.renderer.reset();
         if let Some(ambience) = &mut self.ambience {
             ambience.reset();
@@ -460,8 +470,14 @@ impl SpatialStage {
         self.dry_right.fill(0.0);
     }
 
-    fn latency_samples(&self) -> usize {
+    /// 渲染器当前延迟（分区卷积为分区大小，时域卷积为 0；如实上报）。
+    pub fn latency_samples(&self) -> usize {
         self.renderer.latency_samples()
+    }
+
+    /// 渲染器 HRIR 长度（采样点）；用于宿主侧 tail 语义。
+    pub fn hrir_length(&self) -> usize {
+        self.renderer.hrir_length()
     }
 
     fn listener_velocity(&self) -> Option<Vec3> {
@@ -480,7 +496,14 @@ fn spatial_soft_clip(value: f32) -> f32 {
     value.signum() * clipped
 }
 
-fn spatial_stage(
+/// 由完整引擎链参数 JSON 构造 Stage 22 舞台（非实时控制路径）。
+///
+/// `v` 必须是包含 `/spatial` 段的完整参数对象（[`EngineChainParams`] 的
+/// `as_value`）。`mode == "off"` 返回 `Ok(None)`（逐位直通）。`grid` 是已验证
+/// 的 HRTF 网格；非 off 模式缺 grid 或 grid 采样率与 `fs` 不一致时显式报错，
+/// 绝不静默旁路。`previous` 为上一份参数对象（同模式 world 连续性：听者速度
+/// 与稳定 slot 沿用）。失败时返回人类可读的中文诊断。
+pub fn build_spatial_stage(
     v: &Value,
     fs: f64,
     grid: Option<HrtfGrid>,
@@ -1696,7 +1719,7 @@ impl EngineChainStage {
     ) -> Result<Self, String> {
         let value = p.as_value().clone();
         let v = &value;
-        let spatial = spatial_stage(v, fs, hrtf_grid, previous)?;
+        let spatial = build_spatial_stage(v, fs, hrtf_grid, previous)?;
         let eo = o(v, "/eq")?;
         let eq_mode = enum_value(eo, "mode", "/eq/mode", &["simple", "pro"])?;
         let mut eq = EqChainStage::new(fs, 20.)?;

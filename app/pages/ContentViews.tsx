@@ -364,8 +364,9 @@ const DSP_MODULES: Array<[string, string, DspSectionKey | "midSide" | "lufsTap"]
   ["15", "等响度补偿", "loudnessComp"], ["16/17", "智能均衡 + 频谱分析", "ieq"],
   ["18", "动态均衡", "dynamicEq"], ["19", "LUFS 测量", "lufsTap"],
   ["20", "参数调制", "modulation"], ["21", "限制器", "limiter"],
+  ["22", "空间音频", "spatial"],
 ];
-const LABELS: Record<string, string> = { targetLufs: "目标 LUFS", maxGainDb: "最大增益 dB", minGainDb: "最小增益 dB", useRealtimeMeter: "实时测量", externalGainDb: "外部增益 dB", distance: "距离", speed: "速度", angle: "角度", direction: "方向", stereoWidth: "宽度", voiceBalance: "人声平衡", bandCount: "频段数", qCompensation: "Q 补偿", stereoMode: "立体声模式", centerHz: "中心频率 Hz", q: "Q", thresholdDb: "阈值 dB", ratio: "压缩比", attackMs: "启动 ms", releaseMs: "释放 ms", splitBand: "分频处理", mix: "混合", kneeDb: "拐点 dB", makeupDb: "补偿 dB", outputGain: "输出增益", amount: "强度", delayMs: "延迟 ms", feedback: "反馈", rateHz: "速率 Hz", depthMs: "深度 ms", depth: "深度", stages: "级数", cutoffHz: "截止频率 Hz", harmonicType: "谐波类型", harmonicGain: "谐波增益", levelDb: "电平 dB", lowBoostDb: "低频提升 dB", mode: "模式", reverbType: "混响类型", roomSize: "房间大小", damping: "阻尼", wet: "湿声增益", dry: "干声增益", preDelayMs: "预延迟 ms", width: "声场宽度", fdnLines: "FDN 线数", partitionSize: "最短分区（样本）", shortRegionMs: "短区段时长 ms", preset: "场景预设", volumePercent: "音量百分比", smoothingSeconds: "平滑时间 s", blockSize: "分析块长（样本）", strength: "处理强度", truePeak: "真峰值检测", targetGainDb: "目标增益 dB", frequency: "频率 Hz", gain: "增益 dB", targetCurve: "目标曲线", timeConstantSec: "平滑时间 s", lfoShape: "LFO 波形", lfoRateHz: "LFO 速率 Hz", lfoDepth: "LFO 深度", envelopeAttackMs: "包络启动 ms", envelopeReleaseMs: "包络释放 ms", envelopeAmount: "包络输出量", polarity: "极性", smoothingMs: "路由平滑 ms" };
+const LABELS: Record<string, string> = { targetLufs: "目标 LUFS", maxGainDb: "最大增益 dB", minGainDb: "最小增益 dB", useRealtimeMeter: "实时测量", externalGainDb: "外部增益 dB", distance: "距离", speed: "速度", angle: "角度", direction: "方向", stereoWidth: "宽度", voiceBalance: "人声平衡", bandCount: "频段数", qCompensation: "Q 补偿", stereoMode: "立体声模式", centerHz: "中心频率 Hz", q: "Q", thresholdDb: "阈值 dB", ratio: "压缩比", attackMs: "启动 ms", releaseMs: "释放 ms", splitBand: "分频处理", mix: "混合", kneeDb: "拐点 dB", makeupDb: "补偿 dB", outputGain: "输出增益", amount: "强度", delayMs: "延迟 ms", feedback: "反馈", rateHz: "速率 Hz", depthMs: "深度 ms", depth: "深度", stages: "级数", cutoffHz: "截止频率 Hz", harmonicType: "谐波类型", harmonicGain: "谐波增益", levelDb: "电平 dB", lowBoostDb: "低频提升 dB", mode: "模式", reverbType: "混响类型", roomSize: "房间大小", damping: "阻尼", wet: "湿声增益", dry: "干声增益", preDelayMs: "预延迟 ms", width: "声场宽度", fdnLines: "FDN 线数", partitionSize: "最短分区（样本）", shortRegionMs: "短区段时长 ms", preset: "场景预设", volumePercent: "音量百分比", smoothingSeconds: "平滑时间 s", blockSize: "分析块长（样本）", strength: "处理强度", truePeak: "真峰值检测", targetGainDb: "目标增益 dB", frequency: "频率 Hz", gain: "增益 dB", targetCurve: "目标曲线", timeConstantSec: "平滑时间 s", lfoShape: "LFO 波形", lfoRateHz: "LFO 速率 Hz", lfoDepth: "LFO 深度", envelopeAttackMs: "包络启动 ms", envelopeReleaseMs: "包络释放 ms", envelopeAmount: "包络输出量", polarity: "极性", smoothingMs: "路由平滑 ms", masterGain: "主增益", instantAmount: "干湿量", instantSpreadDeg: "展开角 度", instantRoom: "房间预设", instantRoomAmount: "房间混合", distanceModel: "距离模型", refDistance: "参考距离 m", maxDistance: "最大距离 m", convolution: "卷积实现", hrtfInterp: "HRTF 插值", stagePreset: "舞台布局", seat: "座位", stageRoomSize: "房间缩放", stageReverbAmount: "混响量", worldOcclusion: "遮挡量", ambienceEnabled: "环境声层", ambienceAmount: "环境声强度" };
 type DspNumberConstraint = { min: number; max: number; step: number; integer?: boolean };
 const DSP_CONSTRAINTS: Record<string, Record<string, DspNumberConstraint>> = {
   loudnessNormalization: {
@@ -389,6 +390,7 @@ const DSP_CONSTRAINTS: Record<string, Record<string, DspNumberConstraint>> = {
   dynamicEq: { strength: { min: 0, max: 1, step: 0.01 }, thresholdDb: { min: -80, max: 0, step: 0.1 }, ratio: { min: 1, max: 100, step: 0.1 }, kneeDb: { min: 0, max: 40, step: 0.1 }, attackMs: { min: 0, max: 1000, step: 0.1 }, releaseMs: { min: 0, max: 5000, step: 1 }, blockSize: { min: 16, max: 2048, step: 1, integer: true }, frequency: { min: 30, max: 20_000, step: 1 }, targetGainDb: { min: -12, max: 12, step: 0.1 } },
   modulation: { lfoRateHz: { min: 0, max: 1000, step: 0.1 }, lfoDepth: { min: 0, max: 1, step: 0.01 }, envelopeAttackMs: { min: 0.05, max: 5000, step: 0.1 }, envelopeReleaseMs: { min: 0.05, max: 5000, step: 1 }, envelopeAmount: { min: 0, max: 1, step: 0.01 } },
   limiter: { thresholdDb: { min: -60, max: 0, step: 0.1 }, lookaheadMs: { min: 0, max: 20, step: 0.1 }, attackMs: { min: 0, max: 100, step: 0.1 }, releaseMs: { min: 0, max: 1000, step: 1 } },
+  spatial: { masterGain: { min: 0.5, max: 1, step: 0.01 }, instantAmount: { min: 0, max: 1, step: 0.01 }, instantSpreadDeg: { min: 20, max: 120, step: 1 }, instantRoomAmount: { min: 0, max: 1, step: 0.01 }, refDistance: { min: 0.1, max: 100, step: 0.1 }, maxDistance: { min: 0.2, max: 1000, step: 1 }, stageRoomSize: { min: 0.5, max: 2, step: 0.01 }, stageReverbAmount: { min: 0, max: 1, step: 0.01 }, worldOcclusion: { min: 0, max: 1, step: 0.01 }, ambienceAmount: { min: 0, max: 1, step: 0.01 } },
 };
 
 function validateNumber(value: unknown, constraint: DspNumberConstraint, label: string): string | null {
@@ -457,6 +459,14 @@ function validateDspDraft(draft: DspConfigurationDto | null): string[] {
     if (!["masterGain", "stereoWidth"].includes(route.target)) errors.push(`路由 ${index + 1} 目标无效`);
     if (route.polarity !== 1 && route.polarity !== -1) errors.push(`路由 ${index + 1} 极性必须为 +1 或 -1`);
   });
+  if (!["off", "instant", "headLocked", "world", "stage"].includes(draft.spatial.mode)) errors.push("空间模式无效");
+  if (!["off", "studio", "hall", "stage", "church", "outdoor", "bathroom", "corridor"].includes(draft.spatial.instantRoom)) errors.push("空间房间预设无效");
+  if (!["inverse", "linear", "exponential"].includes(draft.spatial.distanceModel)) errors.push("距离模型无效");
+  if (!["time", "partitioned"].includes(draft.spatial.convolution)) errors.push("空间卷积实现无效");
+  if (!["nearest", "spherical"].includes(draft.spatial.hrtfInterp)) errors.push("HRTF 插值无效");
+  if (!["stage", "cinema", "piano", "nature"].includes(draft.spatial.stagePreset)) errors.push("舞台布局无效");
+  if (!["front", "middle", "back"].includes(draft.spatial.seat)) errors.push("座位无效");
+  if (draft.spatial.maxDistance <= draft.spatial.refDistance + 0.1) errors.push("最大距离必须大于参考距离 + 0.1");
   return errors;
 }
 
@@ -490,6 +500,15 @@ const DSP_ENUM_FIELDS: Record<string, Record<string, Array<[string, string]>>> =
     mode: [["auto", "自动"], ["preset", "预设"], ["custom", "自定义"]],
     preset: [["flat", "平直"], ["bass", "低频"], ["vocal", "人声"], ["warm", "温暖"], ["bright", "明亮"], ["night", "夜间"]],
   },
+  spatial: {
+    mode: [["off", "关闭"], ["instant", "即时展开"], ["headLocked", "头锁定"], ["world", "世界模式"], ["stage", "舞台模式"]],
+    instantRoom: [["off", "无"], ["studio", "录音室"], ["hall", "音乐厅"], ["stage", "舞台"], ["church", "教堂"], ["outdoor", "户外"], ["bathroom", "浴室"], ["corridor", "走廊"]],
+    distanceModel: [["inverse", "反比"], ["linear", "线性"], ["exponential", "指数"]],
+    convolution: [["partitioned", "分区卷积"], ["time", "时域卷积"]],
+    hrtfInterp: [["nearest", "最近邻"], ["spherical", "球面插值"]],
+    stagePreset: [["stage", "舞台"], ["cinema", "影院"], ["piano", "钢琴"], ["nature", "自然"]],
+    seat: [["front", "前排"], ["middle", "中排"], ["back", "后排"]],
+  },
 };
 
 function formatLufs(value: number): string {
@@ -499,6 +518,35 @@ function formatLufs(value: number): string {
 function formatPeak(left: number | null, right: number | null): string {
   if (left === null || right === null) return "—";
   return `${Math.max(left, right).toFixed(2)} dBFS`;
+}
+
+function SpatialFieldSvg({ mode, spreadDeg }: { mode: DspConfigurationDto["spatial"]["mode"]; spreadDeg: number }): React.JSX.Element | null {
+  // 克制的 2D 顶视示意（DOM/SVG，无 GPU context，UI-D80 边界）：中心听者 +
+  // 按模式示意扬声器/音源布局；仅静态示意，不代表实际 HRTF 采样位置。
+  if (mode === "off") return null;
+  const heading = <text x="44" y="52" textAnchor="middle" fontSize="9" fill="currentColor">前</text>;
+  const listener = <g><circle cx="44" cy="30" r="5" fill="none" stroke="currentColor" strokeWidth="1.2"/><line x1="44" y1="25" x2="44" y2="21" stroke="currentColor" strokeWidth="1.2"/></g>;
+  const speaker = (angleDeg: number, radius: number) => {
+    const rad = ((angleDeg - 90) * Math.PI) / 180;
+    return <circle key={`${angleDeg}-${radius}`} cx={44 + radius * Math.cos(rad)} cy={30 - radius * Math.sin(rad)} r="2.4" fill="currentColor"/>;
+  };
+  const points: React.JSX.Element[] = [];
+  if (mode === "instant") {
+    const half = Math.max(10, Math.min(60, spreadDeg / 2));
+    points.push(speaker(-half, 22), speaker(half, 22));
+  } else if (mode === "headLocked") {
+    points.push(speaker(-90, 10), speaker(90, 10));
+  } else if (mode === "world") {
+    for (const angle of [-30, 30, -110, 110, 180]) points.push(speaker(angle, 22));
+  } else if (mode === "stage") {
+    points.push(speaker(-25, 20), speaker(0, 22), speaker(25, 20), speaker(-110, 18), speaker(110, 18));
+  }
+  return <svg className="spatial-field" role="img" aria-label={`空间场示意（${mode} 模式）`} viewBox="0 0 88 60" width="88" height="60">
+    {heading}
+    {mode === "stage" && <rect x="16" y="10" width="56" height="40" rx="3" fill="none" stroke="currentColor" strokeWidth="0.6" opacity="0.5"/>}
+    {listener}
+    {points}
+  </svg>;
 }
 
 function DspModule({ index, title, sectionKey, draft, setDraft, frame }: { index: string; title: string; sectionKey: DspSectionKey | "midSide" | "lufsTap"; draft: DspConfigurationDto; setDraft(next: DspConfigurationDto): void; frame?: TelemetryFrame | null }): React.JSX.Element {
@@ -511,6 +559,20 @@ function DspModule({ index, title, sectionKey, draft, setDraft, frame }: { index
   }
   if (sectionKey === "midSide") {
     return <article className="dsp-module"><span>{index}</span><div className="dsp-module-body"><b>{title}</b><div className="dsp-fields"><DspField label="stereoWidth" value={draft.midSide.stereoWidth} constraint={DSP_CONSTRAINTS.midSide.stereoWidth} onChange={(value) => setDraft({ ...draft, midSide: { ...draft.midSide, stereoWidth: value as number } })}/><DspField label="voiceBalance" value={draft.midSide.voiceBalance} constraint={DSP_CONSTRAINTS.midSide.voiceBalance} onChange={(value) => setDraft({ ...draft, midSide: { ...draft.midSide, voiceBalance: value as number } })}/></div></div><input aria-label={`${title}启用`} type="checkbox" checked={draft.midSide.enabled} onChange={(event) => setDraft({ ...draft, midSide: { ...draft.midSide, enabled: event.target.checked } })}/></article>;
+  }
+  if (sectionKey === "spatial") {
+    const spatialUpdate = (field: string, value: unknown) => setDraft({ ...draft, spatial: { ...draft.spatial, [field]: value } });
+    const spatialFields = Object.entries(draft.spatial).filter(([field]) => field !== "mode");
+    const enumFields = DSP_ENUM_FIELDS.spatial;
+    return <article className="dsp-module"><span>{index}</span><div className="dsp-module-body"><b>{title}</b>
+      <SpatialFieldSvg mode={draft.spatial.mode} spreadDeg={draft.spatial.instantSpreadDeg}/>
+      <div className="dsp-fields">
+        <label><span>{LABELS.mode ?? "模式"}</span><select aria-label={LABELS.mode ?? "模式"} value={draft.spatial.mode} onChange={(event) => spatialUpdate("mode", event.target.value)}>{enumFields.mode.map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}</select></label>
+        {spatialFields.map(([field, value]) => field in enumFields
+          ? <label key={field}><span>{LABELS[field] ?? field}</span><select aria-label={LABELS[field] ?? field} value={String(value)} onChange={(event) => spatialUpdate(field, event.target.value)}>{(enumFields[field] ?? []).map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}</select></label>
+          : <DspField key={field} label={field} value={value} constraint={DSP_CONSTRAINTS.spatial[field]} onChange={(next) => spatialUpdate(field, next)}/>)}
+      </div>
+    </div><em>{draft.spatial.mode === "off" ? "OFF" : "ACTIVE"}</em></article>;
   }
   const section = draft[sectionKey] as Record<string, unknown>;
   const update = (field: string, value: unknown) => setDraft({ ...draft, [sectionKey]: { ...section, [field]: value } } as DspConfigurationDto);
@@ -546,14 +608,14 @@ function DspWorkspaceView(): React.JSX.Element {
   const bypassed = playback?.dsp.bypassed ?? true;
   return <Page title="音效工作台" subtitle="Rust 音频引擎是实际播放权威">
     <section className="dsp-console">
-      <header><div><span className="eyebrow">ENGINE CHAIN</span><h2>{safeBypass ? "Rust 安全旁路" : bypassed ? "Rust 配置编译中" : "Rust 处理链在线"}</h2><p>Stage 1–15、16/17、18–21 共 21 个处理器由 vendored HSE Rust 实时执行；配置 revision {configuration?.revision ?? "-"}。</p></div><span className={`engine-indicator ${bypassed ? "" : "online"}`}><i/>{bypassed ? "BYPASS" : "LIVE"}</span></header>
+      <header><div><span className="eyebrow">ENGINE CHAIN</span><h2>{safeBypass ? "Rust 安全旁路" : bypassed ? "Rust 配置编译中" : "Rust 处理链在线"}</h2><p>Stage 1–15、16/17、18–22 共 22 个处理器由 vendored HSE Rust 实时执行（spatial 资源经 SHA-256 校验加载）；配置 revision {configuration?.revision ?? "-"}。</p></div><span className={`engine-indicator ${bypassed ? "" : "online"}`}><i/>{bypassed ? "BYPASS" : "LIVE"}</span></header>
       <div className="dsp-toolbar"><select aria-label="DSP 预设" defaultValue="" disabled={busy} onChange={(event) => { if (event.target.value) void applyPreset(event.target.value); }}><option value="">选择 HSE 场景</option>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select><button className="button primary" aria-describedby={draftErrors.length ? "dsp-validation-errors" : undefined} disabled={!draft || busy || draftErrors.length > 0} onClick={() => { if (draft && validateDspDraft(draft).length === 0) void configure(draft); }}>{busy ? "编译中" : "应用参数"}</button></div>
       {draft && draftErrors.length > 0 && <div id="dsp-validation-errors" className="notice dsp-validation-errors" role="alert"><Info/><span><b>参数尚未通过校验</b>{draftErrors.map((error) => <small key={error}>{error}</small>)}</span></div>}
-      {busy && <div className="notice"><Info/><span>配置已提交，正在等待 Rust 处理链应用。</span></div>}{partial && <div className="notice"><Info/><span>HSE2 导入遵循 HSE codec 清洗与缺省值还原；当前仅应用 21 阶段投影。未应用：{unsupported.join("、")}</span></div>}{rejection && <div className="notice"><Info/><span>{rejection}</span></div>}
+      {busy && <div className="notice"><Info/><span>配置已提交，正在等待 Rust 处理链应用。</span></div>}{partial && <div className="notice"><Info/><span>HSE2 导入遵循 HSE codec 清洗与缺省值还原；当前仅应用 22 阶段投影。未应用：{unsupported.join("、")}</span></div>}{rejection && <div className="notice"><Info/><span>{rejection}</span></div>}
       {draft ? <div className="dsp-chain" aria-label="DSP 参数模块">{DSP_MODULES.map(([index, title, key]) => <DspModule key={key} index={index} title={title} sectionKey={key} draft={draft} setDraft={setDraft} frame={frame}/>)}</div> : <div className="remote-state empty"><span>{busy ? "正在读取 DSP 配置" : "DSP 配置不可用"}</span></div>}
       <div className="eq-preview" aria-label="参数均衡器只读预览"><div className="eq-axis"><span>+12</span><span>0 dB</span><span>-12</span></div><div className="eq-bands"><section className="eq-reference"><ResponseCurveSvg points={FLAT_DSP_RESPONSE} minGainDb={-12} maxGainDb={12} ariaLabel="固定 0 dB 参考响应"/><small>固定平直参考，不代表当前 DSP 配置</small></section></div></div>
       <section className="dsp-telemetry" aria-label="实时 RMS 和峰值遥测"><h3>RMS / Peak</h3>{frame?.spectrum ? <SpectrumCanvas2D bins={frame.spectrum} ariaLabel="实时音频频谱"/> : <div aria-label="频谱暂无数据"/>}<MeterStrip meters={frame?.meters ?? null}/></section>
-      <section className="dsp-share"><SectionTitle>HSE2 分享码</SectionTitle><textarea aria-label="HSE2 分享码" rows={4} value={shareCode} onChange={(event) => setShareCode(event.target.value)} placeholder="粘贴 HSE2 分享码"/><div className="dsp-share-actions"><button className="button secondary" disabled={!shareCode.trim() || busy} onClick={() => void importHse2(shareCode)}>导入 21 阶段投影</button><button className="button secondary" disabled={busy} onClick={() => void exportHse2().then(setShareCode)}>导出当前配置</button></div></section>
+      <section className="dsp-share"><SectionTitle>HSE2 分享码</SectionTitle><textarea aria-label="HSE2 分享码" rows={4} value={shareCode} onChange={(event) => setShareCode(event.target.value)} placeholder="粘贴 HSE2 分享码"/><div className="dsp-share-actions"><button className="button secondary" disabled={!shareCode.trim() || busy} onClick={() => void importHse2(shareCode)}>导入 22 阶段投影</button><button className="button secondary" disabled={busy} onClick={() => void exportHse2().then(setShareCode)}>导出当前配置</button></div></section>
       <footer><div><b>配置由 actor 后台编译</b><small>严格 revision · 故障自动旁路 · 进程内配置权威</small></div></footer>
     </section>
   </Page>;

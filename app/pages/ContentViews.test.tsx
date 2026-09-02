@@ -90,6 +90,7 @@ const dspConfiguration: DspConfigurationDto = {
   ieq: { enabled: false, strength: 0.5, targetCurve: "flat", timeConstantSec: 3 },
   modulation: { enabled: false, lfoShape: "sine", lfoRateHz: 1, lfoDepth: 0.5, envelopeAttackMs: 10, envelopeReleaseMs: 200, envelopeAmount: 0.5, routes: [] },
   lufsMetering: { mode: "hseV151" },
+  spatial: { mode: "off", masterGain: 0.9, instantAmount: 0.7, instantSpreadDeg: 60, instantRoom: "studio", instantRoomAmount: 0.15, distanceModel: "inverse", refDistance: 1, maxDistance: 50, convolution: "partitioned", hrtfInterp: "nearest", stagePreset: "stage", seat: "middle", stageRoomSize: 1, stageReverbAmount: 0.35, worldOcclusion: 0, ambienceEnabled: false, ambienceAmount: 0.3 },
 };
 
 function button(container: HTMLElement, label: string): HTMLButtonElement {
@@ -434,7 +435,7 @@ describe("CurrentView 页面能力边界", () => {
     await act(async () => root.render(<CurrentView />));
     expect(container.textContent).toContain("音效工作台");
     expect(container.textContent).toContain("Rust 配置编译中");
-    expect(container.textContent).toContain("21 个处理器");
+    expect(container.textContent).toContain("22 个处理器");
     expect(container.textContent).toContain("vendored HSE Rust");
     expect(container.textContent).toContain("BYPASS");
     expect(container.textContent).not.toContain("LIVE");

@@ -758,7 +758,9 @@ impl LufsMeter {
     fn record_block(&mut self) {
         let p = match self.mode {
             MeterMode::HseV151 => self.sum_sq / self.block_len as f64,
-            MeterMode::ItuBs1770_5 => (self.sum_sq_left + self.sum_sq_right) / self.block_len as f64,
+            MeterMode::ItuBs1770_5 => {
+                (self.sum_sq_left + self.sum_sq_right) / self.block_len as f64
+            }
         };
         let lk = if p > 1e-30 {
             -0.691 + 10.0 * p.log10()

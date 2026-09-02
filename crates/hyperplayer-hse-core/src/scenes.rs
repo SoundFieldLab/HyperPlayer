@@ -117,7 +117,13 @@ fn set_deesser(p: &mut Value, center: f64, threshold: f64, ratio: f64, mix: f64)
 /// 每个场景都完整写出这四个 stage 的全部字段（哪怕 disabled，取值与默认快照
 /// 一致），与 TS `ScenePresets.ts` 逐字段镜像；冻结夹具 `scenes.48000.json`
 /// 由 `scripts/export-scenes-fixture.mjs` 从 TS oracle 重新导出对拍。
-fn set_ieq(p: &mut Value, enabled: bool, strength: f64, target_curve: &str, time_constant_sec: f64) {
+fn set_ieq(
+    p: &mut Value,
+    enabled: bool,
+    strength: f64,
+    target_curve: &str,
+    time_constant_sec: f64,
+) {
     let i = &mut p["ieq"];
     i["enabled"] = json!(enabled);
     i["strength"] = json!(strength);
@@ -256,7 +262,16 @@ fn build_scene(id: &str) -> Option<Value> {
             // 新 stage：dynamicEq 只动态收敛低频带（<200 Hz）抑制低音堆积、保留泵感；
             // 限幅器收 1.5 dB 余量 + 快恢复，匹配舞曲高能量连续输出
             set_ieq(&mut p, false, 0.5, "flat", 3.0);
-            set_dynamic_eq(&mut p, true, 0.4, -18.0, 3.0, 20.0, 250.0, [true, false, false, false, false]);
+            set_dynamic_eq(
+                &mut p,
+                true,
+                0.4,
+                -18.0,
+                3.0,
+                20.0,
+                250.0,
+                [true, false, false, false, false],
+            );
             disable_modulation(&mut p);
             set_limiter(&mut p, true, -1.5, 5.0, 0.5, 120.0, true);
             finish(
@@ -406,7 +421,16 @@ fn build_scene(id: &str) -> Option<Value> {
             // 新 stage：dynamicEq 只动态收敛低频带（<200 Hz）——超低频 EQ + 0.9 谐波增强
             // 的峰值堆积由它兜底；限幅器收 1.5 dB 余量 + 稍慢恢复控住次低频真峰值
             set_ieq(&mut p, false, 0.5, "flat", 3.0);
-            set_dynamic_eq(&mut p, true, 0.5, -16.0, 4.0, 15.0, 300.0, [true, false, false, false, false]);
+            set_dynamic_eq(
+                &mut p,
+                true,
+                0.5,
+                -16.0,
+                4.0,
+                15.0,
+                300.0,
+                [true, false, false, false, false],
+            );
             disable_modulation(&mut p);
             set_limiter(&mut p, true, -1.5, 5.0, 0.5, 200.0, true);
             finish(
@@ -540,7 +564,10 @@ mod tests {
         assert_eq!(classical["params"]["ieq"]["enabled"], true);
         assert_eq!(classical["params"]["ieq"]["targetCurve"], "flat");
         assert_eq!(classical["params"]["ieq"]["strength"].as_f64(), Some(0.3));
-        assert_eq!(classical["params"]["ieq"]["timeConstantSec"].as_f64(), Some(5.0));
+        assert_eq!(
+            classical["params"]["ieq"]["timeConstantSec"].as_f64(),
+            Some(5.0)
+        );
 
         let vocal = scene_by_id("vocal-stage").unwrap();
         assert_eq!(vocal["params"]["ieq"]["enabled"], true);
@@ -550,7 +577,10 @@ mod tests {
         let dance = scene_by_id("dance").unwrap();
         assert_eq!(dance["params"]["dynamicEq"]["enabled"], true);
         assert_eq!(dance["params"]["dynamicEq"]["strength"].as_f64(), Some(0.4));
-        assert_eq!(dance["params"]["dynamicEq"]["thresholdDb"].as_f64(), Some(-18.0));
+        assert_eq!(
+            dance["params"]["dynamicEq"]["thresholdDb"].as_f64(),
+            Some(-18.0)
+        );
         assert_eq!(dance["params"]["dynamicEq"]["ratio"].as_f64(), Some(3.0));
         assert_eq!(dance["params"]["dynamicEq"]["bands"][0]["enabled"], true);
         assert_eq!(dance["params"]["dynamicEq"]["bands"][1]["enabled"], false);
@@ -559,15 +589,39 @@ mod tests {
         assert_eq!(heavy["params"]["dynamicEq"]["enabled"], true);
         assert_eq!(heavy["params"]["dynamicEq"]["ratio"].as_f64(), Some(4.0));
         assert_eq!(heavy["params"]["dynamicEq"]["bands"][0]["enabled"], true);
-        assert_eq!(heavy["params"]["limiter"]["thresholdDb"].as_f64(), Some(-1.5));
+        assert_eq!(
+            heavy["params"]["limiter"]["thresholdDb"].as_f64(),
+            Some(-1.5)
+        );
 
         // 限幅器差异化：dts -2 / night-bass -3，其余保持透明默认 -1 dB。
-        assert_eq!(scene_by_id("dts").unwrap()["params"]["limiter"]["thresholdDb"].as_f64(), Some(-2.0));
-        assert_eq!(scene_by_id("dts").unwrap()["params"]["limiter"]["releaseMs"].as_f64(), Some(200.0));
+        assert_eq!(
+            scene_by_id("dts").unwrap()["params"]["limiter"]["thresholdDb"].as_f64(),
+            Some(-2.0)
+        );
+        assert_eq!(
+            scene_by_id("dts").unwrap()["params"]["limiter"]["releaseMs"].as_f64(),
+            Some(200.0)
+        );
         let night = scene_by_id("night-bass").unwrap();
-        assert_eq!(night["params"]["limiter"]["thresholdDb"].as_f64(), Some(-3.0));
-        assert_eq!(night["params"]["limiter"]["releaseMs"].as_f64(), Some(250.0));
-        for id in ["pop", "enhance", "jazz", "classical", "livehouse", "studio", "warm", "vocal-stage"] {
+        assert_eq!(
+            night["params"]["limiter"]["thresholdDb"].as_f64(),
+            Some(-3.0)
+        );
+        assert_eq!(
+            night["params"]["limiter"]["releaseMs"].as_f64(),
+            Some(250.0)
+        );
+        for id in [
+            "pop",
+            "enhance",
+            "jazz",
+            "classical",
+            "livehouse",
+            "studio",
+            "warm",
+            "vocal-stage",
+        ] {
             assert_eq!(
                 scene_by_id(id).unwrap()["params"]["limiter"]["thresholdDb"].as_f64(),
                 Some(-1.0)

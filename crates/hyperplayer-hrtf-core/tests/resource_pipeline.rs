@@ -1,11 +1,15 @@
-//! 外部 HRTF 资源注入 API 的验收测试（Stage 22 受限范围）。
+//! 外部 HRTF 资源注入 API 的验收测试（Stage 22 生产接线的基础层）。
 //!
 //! 覆盖：正常加载与 identity 记录、hash 不匹配、文件缺失、损坏数据、
 //! 采样率不支持、重载切换与失败回退、资源失败后的渲染旁路（零分配）。
 //!
 //! 全部使用 `common::synthetic_hrir_sofa` 程序化生成的合成
-//! SimpleFreeFieldHRIR 数据，不依赖任何真实 SOFA 资产（资产合规审计
-//! 未完成，产品接线受阻）。
+//! SimpleFreeFieldHRIR 数据，不依赖任何真实 SOFA 资产；真实 MIT KEMAR
+//! 资产的兼容性验收见 `sofa.rs` 中被 ignore 的 `HSE_TEST_SOFA` 测试
+//! （`HSE_TEST_SOFA=assets/hrtf/mit-kemar-normal-pinna.sofa`）。
+//! fixture 生成器位于 feature `test-fixtures` 之后，本测试仅在启用该
+//! feature 时编译（`--all-features` 门禁与 engine dev-dependencies 均启用）。
+#![cfg(feature = "test-fixtures")]
 
 mod common;
 

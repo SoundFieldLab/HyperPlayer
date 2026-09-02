@@ -1,12 +1,13 @@
 //! Platform-independent HRTF spatial geometry and rendering primitives.
 //!
-//! # 状态说明
+//! # 产品资产状态（2026-09-03 起）
 //!
-//! HRTF/SOFA 数据的**资源合规审计尚未完成**：本 crate 不捆绑任何 SOFA/HRTF
-//! 产品资产，HIR/SOFA 数据只能通过 [`resource`] 模块的外部注入 API 由用户
-//! 提供（路径 + SHA-256 + 来源声明）。Stage 22 Spatial/HRTF 的产品接线
-//! （engine asset loader/adapter、Tauri capability/DTO、空间场 UI）在资产
-//! 门禁通过前保持受阻，不得据此宣称产品完成。
+//! 已审计的 MIT KEMAR HRTF 资产随产品分发：`assets/hrtf/mit-kemar-normal-pinna.sofa`
+//! （来源、许可证、hash 与分发义务见 `provenance/hrtf-mit-kemar/README.md` 与
+//! `third_party_licenses/MIT-KEMAR-HRTF.txt`）。运行时加载必须经 [`resource`]
+//! 的 SHA-256 校验通道；hash 不匹配、文件缺失或解析失败一律显式拒绝并回退
+//! 旁路，绝不静默使用错误数据。[`fixtures`] 模块（feature `test-fixtures`）
+//! 只服务测试，不是生产 API。
 
 pub mod grid;
 pub mod interpolation;
@@ -18,6 +19,9 @@ pub mod room;
 pub mod sha256;
 pub mod sofa;
 pub mod world;
+
+#[cfg(feature = "test-fixtures")]
+pub mod fixtures;
 
 pub use grid::{GridError, HrirPair, HrtfGrid, NearestIndex};
 pub use interpolation::{InterpolationError, InterpolationMode};

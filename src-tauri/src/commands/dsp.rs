@@ -18,15 +18,77 @@ use hyperplayer_engine::dsp_algorithms::{
     night_mode::NightModeSettings,
     phaser::PhaserSettings,
     reverb::{IrRecipe, ReverbMode, ReverbSettings, ReverbType},
+    spatial::{
+        SpatialConvolution, SpatialDistanceModel, SpatialInterpolation, SpatialMode,
+        SpatialResourceSpec, SpatialRoomPreset, SpatialSeat, SpatialSettings, SpatialStagePreset,
+    },
     surround3d::Surround3dSettings,
     tremolo::TremoloSettings,
     DspConfig, EqBandParam, EqChainConfig, EqStereoMode,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::str::FromStr;
 use tauri::State;
 
-const UNSUPPORTED_STAGES: [&str; 1] = ["22:spatialAndHrtf"];
+// Stage 22（spatial/HRTF）已接入生产链：HSE2 预设与分享码不再是 partial 投影，
+// unsupported() 恒为空（保留函数以稳定 preset/导入/导出的响应形状）。
+const UNSUPPORTED_STAGES: [&str; 0] = [];
+
+/// 随产品分发的 MIT KEMAR HRTF 资产（`assets/hrtf/mit-kemar-normal-pinna.sofa`）
+/// 的固定期望 SHA-256；加载在 engine 编译线程复核，hash 不匹配拒绝并回退旁路。
+/// 来源/许可证/分发义务见 `provenance/hrtf-mit-kemar/README.md`。
+const SPATIAL_ASSET_SHA256: &str =
+    "e7035994f5fd754058424c061380ee92b1d5ed58fccef2887a4266916616acdf";
+const SPATIAL_ASSET_FILE: &str = "mit-kemar-normal-pinna.sofa";
+
+/// 定位随 bundle 分发的 HRTF 资源（非实时路径）。
+///
+/// 候选顺序：`HYPERPLAYER_HRTF_ASSET` 环境变量（测试/特殊部署）→ 安装目录下
+/// `hrtf/`（tauri bundle resources 映射目标）→ 常见相对布局 → 开发仓库
+/// `assets/hrtf/`。找不到时返回 `None`，由 engine 显式报告资源缺失诊断。
+fn resolve_bundled_spatial_asset() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("HYPERPLAYER_HRTF_ASSET") {
+        let path = std::path::PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for layout in ["hrtf", "resources/hrtf", "assets/hrtf", "../assets/hrtf"] {
+                candidates.push(dir.join(layout).join(SPATIAL_ASSET_FILE));
+            }
+        }
+    }
+    candidates.push(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("assets")
+            .join("hrtf")
+            .join(SPATIAL_ASSET_FILE),
+    );
+    candidates
+        .iter()
+        .find(|path| path.is_file())
+        .cloned()
+        .or_else(|| candidates.first().cloned())
+}
+
+/// 为启用空间场的配置注入 bundle 资源引用（幂等；已有引用不覆盖）。
+///
+/// 资源路径仅进入 engine `DspConfig`（编译线程校验加载），不进入 DTO、
+/// 不持久化、不参与 HSE2 分享码序列化。
+pub(crate) fn attach_spatial_resource(config: &mut DspConfig) {
+    if !config.spatial.is_active() || config.spatial.resource.is_some() {
+        return;
+    }
+    config.spatial.resource = resolve_bundled_spatial_asset().map(|path| SpatialResourceSpec {
+        path,
+        expected_sha256_hex: SPATIAL_ASSET_SHA256.into(),
+    });
+}
 
 /// 卷积模式确定性 IR 配方（DTO 不携带 IR；无第三方 IR 文件解码，见
 /// `dsp_algorithms/reverb.rs` 的切片铁律）。
@@ -62,6 +124,61 @@ pub struct DspConfigurationDto {
     pub modulation: ModulationDto,
     pub limiter: LimiterDto,
     pub lufs_metering: LufsMeteringDto,
+    /// Stage 22 空间/HRTF 段。资源路径由宿主注入 engine，不进入 DTO/持久化。
+    #[serde(default)]
+    pub spatial: SpatialDto,
+}
+
+/// Stage 22 空间/HRTF DTO（camelCase；与 HSE `/spatial` 段字段一一对应；
+/// headLocked/world/stage 的对象布局本轮使用 HSE 默认布局，由 engine 舞台
+/// 构造统一解析）。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SpatialDto {
+    pub mode: String,
+    pub master_gain: f64,
+    pub instant_amount: f64,
+    pub instant_spread_deg: f64,
+    pub instant_room: String,
+    pub instant_room_amount: f64,
+    pub distance_model: String,
+    pub ref_distance: f64,
+    pub max_distance: f64,
+    pub convolution: String,
+    pub hrtf_interp: String,
+    pub stage_preset: String,
+    pub seat: String,
+    pub stage_room_size: f64,
+    pub stage_reverb_amount: f64,
+    pub world_occlusion: f64,
+    pub ambience_enabled: bool,
+    pub ambience_amount: f64,
+}
+
+impl Default for SpatialDto {
+    fn default() -> Self {
+        // 与 engine `SpatialSettings::default()`（HSE `/spatial` 缺省）一致。
+        Self {
+            mode: "off".into(),
+            master_gain: 0.9,
+            instant_amount: 0.7,
+            instant_spread_deg: 60.0,
+            instant_room: "studio".into(),
+            instant_room_amount: 0.15,
+            distance_model: "inverse".into(),
+            ref_distance: 1.0,
+            max_distance: 50.0,
+            convolution: "partitioned".into(),
+            hrtf_interp: "nearest".into(),
+            stage_preset: "stage".into(),
+            seat: "middle".into(),
+            stage_room_size: 1.0,
+            stage_reverb_amount: 0.35,
+            world_occlusion: 0.0,
+            ambience_enabled: false,
+            ambience_amount: 0.3,
+        }
+    }
 }
 
 /// LUFS 计量段（Stage 19 分析 tap）。`mode` 默认 `hseV151`（兼容）；`ituBs17705`
@@ -966,6 +1083,61 @@ impl DspConfigurationDto {
                 }
                 _ => hyperplayer_engine::dsp_algorithms::lufs_meter::LufsMeterMode::HseV151,
             },
+            spatial: {
+                let mode = SpatialMode::from_str(&self.spatial.mode)
+                    .map_err(|_| AppError::InvalidArgument("spatial.mode is invalid".into()))?;
+                let instant_room = SpatialRoomPreset::from_str(&self.spatial.instant_room)
+                    .map_err(|_| AppError::InvalidArgument("spatial.instantRoom is invalid".into()))?;
+                let distance_model = SpatialDistanceModel::from_str(&self.spatial.distance_model)
+                    .map_err(|_| AppError::InvalidArgument("spatial.distanceModel is invalid".into()))?;
+                let convolution = SpatialConvolution::from_str(&self.spatial.convolution)
+                    .map_err(|_| AppError::InvalidArgument("spatial.convolution is invalid".into()))?;
+                let hrtf_interp = SpatialInterpolation::from_str(&self.spatial.hrtf_interp)
+                    .map_err(|_| AppError::InvalidArgument("spatial.hrtfInterp is invalid".into()))?;
+                let stage_preset = SpatialStagePreset::from_str(&self.spatial.stage_preset)
+                    .map_err(|_| AppError::InvalidArgument("spatial.stagePreset is invalid".into()))?;
+                let seat = SpatialSeat::from_str(&self.spatial.seat)
+                    .map_err(|_| AppError::InvalidArgument("spatial.seat is invalid".into()))?;
+                let ref_distance = finite(
+                    self.spatial.ref_distance,
+                    "spatial.refDistance",
+                    0.1,
+                    100.0,
+                )?;
+                let max_distance = finite(
+                    self.spatial.max_distance,
+                    "spatial.maxDistance",
+                    0.2,
+                    1_000.0,
+                )?;
+                if max_distance <= ref_distance + 0.1 {
+                    return Err(AppError::InvalidArgument(
+                        "spatial.maxDistance must be greater than refDistance + 0.1".into(),
+                    ));
+                }
+                SpatialSettings {
+                    mode,
+                    master_gain: finite(self.spatial.master_gain, "spatial.masterGain", 0.5, 1.0)?,
+                    instant_amount: finite(self.spatial.instant_amount, "spatial.instantAmount", 0.0, 1.0)?,
+                    instant_spread_deg: finite(self.spatial.instant_spread_deg, "spatial.instantSpreadDeg", 20.0, 120.0)?,
+                    instant_room,
+                    instant_room_amount: finite(self.spatial.instant_room_amount, "spatial.instantRoomAmount", 0.0, 1.0)?,
+                    distance_model,
+                    ref_distance,
+                    max_distance,
+                    convolution,
+                    hrtf_interp,
+                    stage_preset,
+                    seat,
+                    stage_room_size: finite(self.spatial.stage_room_size, "spatial.stageRoomSize", 0.5, 2.0)?,
+                    stage_reverb_amount: finite(self.spatial.stage_reverb_amount, "spatial.stageReverbAmount", 0.0, 1.0)?,
+                    world_occlusion: finite(self.spatial.world_occlusion, "spatial.worldOcclusion", 0.0, 1.0)?,
+                    ambience_enabled: self.spatial.ambience_enabled,
+                    ambience_amount: finite(self.spatial.ambience_amount, "spatial.ambienceAmount", 0.0, 1.0)?,
+                    // 资源引用由宿主（attach_spatial_resource）注入，不来自前端。
+                    resource: None,
+                }
+            },
         })
     }
 }
@@ -1243,6 +1415,26 @@ impl DspConfigurationDto {
                 }
                 .into(),
             },
+            spatial: SpatialDto {
+                mode: c.spatial.mode.as_str().into(),
+                master_gain: c.spatial.master_gain,
+                instant_amount: c.spatial.instant_amount,
+                instant_spread_deg: c.spatial.instant_spread_deg,
+                instant_room: c.spatial.instant_room.as_str().into(),
+                instant_room_amount: c.spatial.instant_room_amount,
+                distance_model: c.spatial.distance_model.as_str().into(),
+                ref_distance: c.spatial.ref_distance,
+                max_distance: c.spatial.max_distance,
+                convolution: c.spatial.convolution.as_str().into(),
+                hrtf_interp: c.spatial.hrtf_interp.as_str().into(),
+                stage_preset: c.spatial.stage_preset.as_str().into(),
+                seat: c.spatial.seat.as_str().into(),
+                stage_room_size: c.spatial.stage_room_size,
+                stage_reverb_amount: c.spatial.stage_reverb_amount,
+                world_occlusion: c.spatial.world_occlusion,
+                ambience_enabled: c.spatial.ambience_enabled,
+                ambience_amount: c.spatial.ambience_amount,
+            },
         }
     }
 }
@@ -1280,6 +1472,12 @@ fn require_hse_schema(value: &Value) -> Result<(), AppError> {
         &["modEffects", "flanger"],
         &["modEffects", "phaser"],
         &["modEffects", "tremolo"],
+        &["spatial"],
+        &["spatial", "instant"],
+        &["spatial", "headLocked"],
+        &["spatial", "world"],
+        &["spatial", "stage"],
+        &["spatial", "ambience"],
     ];
     const BOOLEANS: &[&[&str]] = &[
         &["eq", "enabled"],
@@ -1383,6 +1581,9 @@ fn require_hse_schema(value: &Value) -> Result<(), AppError> {
         &["modEffects", "tremolo", "rateHz"],
         &["modEffects", "tremolo", "depth"],
         &["modEffects", "tremolo", "mix"],
+        &["spatial", "masterGain"],
+        &["spatial", "refDistance"],
+        &["spatial", "maxDistance"],
     ];
     for path in OBJECTS {
         if !value_at(value, path).is_some_and(Value::is_object) {
@@ -1414,6 +1615,11 @@ fn require_hse_schema(value: &Value) -> Result<(), AppError> {
     if !value_at(value, &["bassEnhancer", "harmonicType"]).is_some_and(Value::is_string) {
         return Err(AppError::InvalidArgument(
             "HSE2 field bassEnhancer.harmonicType must be string".into(),
+        ));
+    }
+    if !value_at(value, &["spatial", "mode"]).is_some_and(Value::is_string) {
+        return Err(AppError::InvalidArgument(
+            "HSE2 field spatial.mode must be string".into(),
         ));
     }
     let bands = value_at(value, &["eq", "proBands"])
@@ -1761,6 +1967,66 @@ fn config_from_hse(value: &Value, revision: u64) -> Result<DspConfigurationDto, 
             })
             .unwrap_or_default(),
     };
+    // spatial：HSE `/spatial` 段字段级投影（mode 未知值按 off fail-safe；
+    // headLocked/world/stage 的对象布局由 engine 舞台按 HSE 默认布局解析）。
+    {
+        let spatial = value.get("spatial");
+        let spatial_str = |field: &str| {
+            spatial
+                .and_then(|v| v.get(field))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        dto.spatial.mode = spatial_str("mode")
+            .and_then(|mode| SpatialMode::from_str(&mode).ok().map(|_| mode))
+            .unwrap_or_else(|| "off".into());
+        dto.spatial.master_gain = number(value, &["spatial", "masterGain"], 0.9);
+        dto.spatial.ref_distance = number(value, &["spatial", "refDistance"], 1.0);
+        dto.spatial.max_distance = number(value, &["spatial", "maxDistance"], 50.0);
+        dto.spatial.instant_amount = number(value, &["spatial", "instant", "amount"], 0.7);
+        dto.spatial.instant_spread_deg = number(value, &["spatial", "instant", "spreadDeg"], 60.0);
+        dto.spatial.instant_room_amount =
+            number(value, &["spatial", "instant", "roomAmount"], 0.15);
+        dto.spatial.instant_room = spatial
+            .and_then(|v| v.get("instant"))
+            .and_then(|v| v.get("room"))
+            .and_then(Value::as_str)
+            .unwrap_or("studio")
+            .into();
+        dto.spatial.distance_model = spatial
+            .and_then(|v| v.get("distanceModel"))
+            .and_then(Value::as_str)
+            .unwrap_or("inverse")
+            .into();
+        dto.spatial.convolution = spatial
+            .and_then(|v| v.get("convolution"))
+            .and_then(Value::as_str)
+            .unwrap_or("partitioned")
+            .into();
+        dto.spatial.hrtf_interp = spatial
+            .and_then(|v| v.get("hrtfInterp"))
+            .and_then(Value::as_str)
+            .unwrap_or("nearest")
+            .into();
+        dto.spatial.stage_preset = spatial
+            .and_then(|v| v.get("stage"))
+            .and_then(|v| v.get("preset"))
+            .and_then(Value::as_str)
+            .unwrap_or("stage")
+            .into();
+        dto.spatial.seat = spatial
+            .and_then(|v| v.get("stage"))
+            .and_then(|v| v.get("seat"))
+            .and_then(Value::as_str)
+            .unwrap_or("middle")
+            .into();
+        dto.spatial.stage_room_size = number(value, &["spatial", "stage", "roomSize"], 1.0);
+        dto.spatial.stage_reverb_amount =
+            number(value, &["spatial", "stage", "reverbAmount"], 0.35);
+        dto.spatial.world_occlusion = number(value, &["spatial", "world", "occlusion"], 0.0);
+        dto.spatial.ambience_enabled = boolean(value, &["spatial", "ambience", "enabled"], false);
+        dto.spatial.ambience_amount = number(value, &["spatial", "ambience", "amount"], 0.3);
+    }
     let _ = dto.clone().into_engine()?;
     Ok(dto)
 }
@@ -1874,13 +2140,34 @@ fn hse_from_config(config: &DspConfig) -> Value {
             "smoothingMs": route.smoothing_ms,
         })).collect::<Vec<_>>(),
     });
+    // spatial：字段级投影（对象布局沿用 HSE 默认值，仅覆盖可配置标量；
+    // 资源路径是本机路径，绝不进入分享码）。
+    value["spatial"]["mode"] = json!(dto.spatial.mode);
+    value["spatial"]["masterGain"] = json!(dto.spatial.master_gain);
+    value["spatial"]["distanceModel"] = json!(dto.spatial.distance_model);
+    value["spatial"]["refDistance"] = json!(dto.spatial.ref_distance);
+    value["spatial"]["maxDistance"] = json!(dto.spatial.max_distance);
+    value["spatial"]["convolution"] = json!(dto.spatial.convolution);
+    value["spatial"]["hrtfInterp"] = json!(dto.spatial.hrtf_interp);
+    value["spatial"]["instant"]["spreadDeg"] = json!(dto.spatial.instant_spread_deg);
+    value["spatial"]["instant"]["amount"] = json!(dto.spatial.instant_amount);
+    value["spatial"]["instant"]["room"] = json!(dto.spatial.instant_room);
+    value["spatial"]["instant"]["roomAmount"] = json!(dto.spatial.instant_room_amount);
+    value["spatial"]["stage"]["preset"] = json!(dto.spatial.stage_preset);
+    value["spatial"]["stage"]["seat"] = json!(dto.spatial.seat);
+    value["spatial"]["stage"]["roomSize"] = json!(dto.spatial.stage_room_size);
+    value["spatial"]["stage"]["reverbAmount"] = json!(dto.spatial.stage_reverb_amount);
+    value["spatial"]["world"]["occlusion"] = json!(dto.spatial.world_occlusion);
+    value["spatial"]["ambience"]["enabled"] = json!(dto.spatial.ambience_enabled);
+    value["spatial"]["ambience"]["amount"] = json!(dto.spatial.ambience_amount);
     value["modEffects"] = json!({ "delay": dto.delay, "chorus": dto.chorus, "flanger": dto.flanger, "phaser": dto.phaser, "tremolo": dto.tremolo });
     value
 }
 
 fn apply(state: &AppState, dto: DspConfigurationDto) -> Result<DspApplyResultDto, AppError> {
     let revision = dto.revision;
-    let config = dto.clone().into_engine()?;
+    let mut config = dto.clone().into_engine()?;
+    attach_spatial_resource(&mut config);
     let _operation = state
         .dsp_operation
         .lock()
@@ -2019,7 +2306,7 @@ pub fn dsp_export_hse2(state: State<'_, AppState>) -> CommandResult<DspHse2Expor
                 .map_err(AppError::InvalidArgument)?;
         Ok(DspHse2ExportDto {
             code,
-            scope: "current21StageProjection".into(),
+            scope: "current22StageProjection".into(),
             unsupported_stages: unsupported(),
         })
     })())
@@ -2043,7 +2330,11 @@ mod tests {
             .map(|scene| config_from_hse(&scene["params"], 2).unwrap())
             .collect();
         assert_eq!(presets.len(), 12);
-        assert_eq!(unsupported(), vec!["22:spatialAndHrtf"]);
+        // Stage 22 已接入：预设不再是 partial 投影，unsupported 恒为空。
+        assert!(unsupported().is_empty());
+        for preset in &presets {
+            assert_eq!(preset.spatial.mode, "off", "12 场景 spatial 全部 off");
+        }
         // 13/15/18/21 已接线：默认 HSE 参数投影可完整回读（limiter 在 HSE 默认
         // 参数中启用）。
         let mapped = config_from_hse(&hyperplayer_engine::hse_default_params(48_000.0), 2)
@@ -2091,6 +2382,137 @@ mod tests {
         assert_eq!(back.loudness_comp, config.loudness_comp);
         assert_eq!(back.dynamic_eq, config.dynamic_eq);
         assert_eq!(back.limiter, config.limiter);
+    }
+
+    #[test]
+    fn spatial_dtos_roundtrip_through_engine_with_strict_defaults() {
+        // 默认：mode=off，逐位直通语义，resource 引用恒空（由宿主注入）。
+        let dto = DspConfigurationDto::from_engine(2, &DspConfig::default());
+        assert_eq!(dto.spatial.mode, "off");
+        assert_eq!(dto.spatial, SpatialDto::default());
+        let config = dto.clone().into_engine().unwrap();
+        assert!(!config.spatial.is_active());
+        assert!(config.spatial.resource.is_none());
+        assert_eq!(
+            DspConfigurationDto::from_engine(2, &config).spatial,
+            dto.spatial
+        );
+
+        // 启用 instant：字段严格往返。
+        let mut dto = DspConfigurationDto::from_engine(3, &DspConfig::default());
+        dto.spatial = SpatialDto {
+            mode: "instant".into(),
+            master_gain: 1.0,
+            instant_amount: 0.55,
+            instant_spread_deg: 90.0,
+            instant_room: "hall".into(),
+            instant_room_amount: 0.4,
+            distance_model: "linear".into(),
+            ref_distance: 2.0,
+            max_distance: 30.0,
+            convolution: "time".into(),
+            hrtf_interp: "nearest".into(),
+            stage_preset: "piano".into(),
+            seat: "front".into(),
+            stage_room_size: 1.5,
+            stage_reverb_amount: 0.25,
+            world_occlusion: 0.1,
+            ambience_enabled: true,
+            ambience_amount: 0.5,
+        };
+        let config = dto.clone().into_engine().unwrap();
+        assert!(config.spatial.is_active());
+        let back = DspConfigurationDto::from_engine(3, &config);
+        assert_eq!(back.spatial, dto.spatial);
+    }
+
+    #[test]
+    fn spatial_dtos_reject_unknown_enums_and_out_of_range_values() {
+        let reject = |mutate: &dyn Fn(&mut SpatialDto)| {
+            let mut dto = DspConfigurationDto::from_engine(2, &DspConfig::default());
+            mutate(&mut dto.spatial);
+            assert!(dto.into_engine().is_err());
+        };
+        reject(&|spatial| spatial.mode = "bogus".into());
+        reject(&|spatial| spatial.master_gain = 0.4);
+        reject(&|spatial| spatial.master_gain = 1.1);
+        reject(&|spatial| spatial.instant_room = "cathedral".into());
+        reject(&|spatial| spatial.instant_spread_deg = 10.0);
+        reject(&|spatial| spatial.instant_room_amount = 1.5);
+        reject(&|spatial| spatial.distance_model = "log".into());
+        reject(&|spatial| spatial.ref_distance = 0.05);
+        reject(&|spatial| spatial.max_distance = 0.15);
+        reject(&|spatial| {
+            spatial.ref_distance = 2.0;
+            spatial.max_distance = 2.0;
+        });
+        reject(&|spatial| spatial.convolution = "fft".into());
+        reject(&|spatial| spatial.hrtf_interp = "bilinear".into());
+        reject(&|spatial| spatial.stage_preset = "arena".into());
+        reject(&|spatial| spatial.seat = "left".into());
+        reject(&|spatial| spatial.stage_room_size = 3.0);
+        reject(&|spatial| spatial.stage_reverb_amount = -0.1);
+        reject(&|spatial| spatial.world_occlusion = 2.0);
+        reject(&|spatial| spatial.ambience_amount = 1.5);
+    }
+
+    #[test]
+    fn spatial_resource_reference_is_host_injected_and_absent_from_hse2() {
+        // DTO → engine 永远不带资源引用；宿主注入只发生在 attach 层。
+        let mut dto = DspConfigurationDto::from_engine(2, &DspConfig::default());
+        dto.spatial.mode = "instant".into();
+        let mut config = dto.clone().into_engine().unwrap();
+        assert!(config.spatial.resource.is_none());
+        std::env::set_var("HYPERPLAYER_HRTF_ASSET", {
+            let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            manifest
+                .join("..")
+                .join("assets")
+                .join("hrtf")
+                .join("mit-kemar-normal-pinna.sofa")
+        });
+        attach_spatial_resource(&mut config);
+        let resource = config.spatial.resource.clone().expect("仓库资产必须可定位");
+        assert_eq!(
+            resource.expected_sha256_hex.to_ascii_lowercase(),
+            SPATIAL_ASSET_SHA256
+        );
+        assert!(resource.path.is_file());
+        // 幂等：已有引用不覆盖。
+        let again = config.clone();
+        attach_spatial_resource(&mut config);
+        assert_eq!(config.spatial.resource, again.spatial.resource);
+
+        // HSE2 分享码不含本机路径：导出→解码后 spatial 段字段往返、路径缺失。
+        let code = hyperplayer_engine::hse_encode_share_code(&hse_from_config(&config)).unwrap();
+        assert!(!code.is_empty());
+        let decoded = hyperplayer_engine::hse_decode_share_code(&code).unwrap();
+        let mapped = config_from_hse(&decoded, 3).unwrap();
+        assert_eq!(mapped.spatial.mode, "instant");
+        assert_eq!(mapped.spatial.master_gain, config.spatial.master_gain);
+        assert_eq!(mapped.spatial.instant_room, "studio");
+        assert_eq!(
+            mapped.spatial.seat, "middle",
+            "未覆盖的布局字段按 HSE 默认还原"
+        );
+        let back = mapped.into_engine().unwrap();
+        assert!(back.spatial.resource.is_none(), "DTO/engine 不携带路径");
+        std::env::remove_var("HYPERPLAYER_HRTF_ASSET");
+    }
+
+    #[test]
+    fn hse_import_projects_spatial_mode_and_defaults_off_for_unknown() {
+        let mut value = hyperplayer_engine::hse_default_params(48_000.0);
+        value["spatial"]["mode"] = json!("stage");
+        value["spatial"]["masterGain"] = json!(1.0);
+        let mapped = config_from_hse(&value, 2).unwrap();
+        assert_eq!(mapped.spatial.mode, "stage");
+        assert_eq!(mapped.spatial.master_gain, 1.0);
+
+        let mut value = hyperplayer_engine::hse_default_params(48_000.0);
+        value["spatial"]["mode"] = json!("bogus");
+        let mapped = config_from_hse(&value, 2).unwrap();
+        assert_eq!(mapped.spatial.mode, "off", "未知 mode 按 off fail-safe");
     }
 
     #[test]

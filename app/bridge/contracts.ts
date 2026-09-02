@@ -523,10 +523,11 @@ export interface DspConfigurationDto {
   modulation: { enabled: boolean; lfoShape: "sine" | "triangle" | "square" | "saw"; lfoRateHz: number; lfoDepth: number; envelopeAttackMs: number; envelopeReleaseMs: number; envelopeAmount: number; routes: { source: "lfo" | "envelope"; target: "masterGain" | "stereoWidth"; depth: number; polarity: number; smoothingMs: number }[] };
   limiter: { enabled: boolean; thresholdDb: number; lookaheadMs: number; attackMs: number; releaseMs: number; truePeak: boolean };
   lufsMetering: { mode: "hseV151" | "ituBs17705" };
+  spatial: { mode: "off" | "instant" | "headLocked" | "world" | "stage"; masterGain: number; instantAmount: number; instantSpreadDeg: number; instantRoom: "off" | "studio" | "hall" | "stage" | "church" | "outdoor" | "bathroom" | "corridor"; instantRoomAmount: number; distanceModel: "inverse" | "linear" | "exponential"; refDistance: number; maxDistance: number; convolution: "time" | "partitioned"; hrtfInterp: "nearest" | "spherical"; stagePreset: "stage" | "cinema" | "piano" | "nature"; seat: "front" | "middle" | "back"; stageRoomSize: number; stageReverbAmount: number; worldOcclusion: number; ambienceEnabled: boolean; ambienceAmount: number };
 }
 export interface DspPresetDto { id: string; name: string; description: string; partial: boolean; unsupportedStages: string[]; }
 export interface DspApplyResultDto { revision: string; status: "applied" | "pending"; partial: boolean; unsupportedStages: string[]; engine: BackendEngineSnapshotDto; configuration: DspConfigurationDto; }
-export interface DspHse2ExportDto { code: string; scope: "current21StageProjection"; unsupportedStages: string[]; }
+export interface DspHse2ExportDto { code: string; scope: "current22StageProjection"; unsupportedStages: string[]; }
 
 export interface BridgeContract {
   bootstrap(): Promise<BridgeBootstrap>;

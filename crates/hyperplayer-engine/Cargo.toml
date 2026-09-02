@@ -10,6 +10,7 @@ claxon = "0.4.3"
 cpal = "0.18.2"
 crossbeam-queue = "0.3"
 hse-core = { package = "hyperplayer-hse-core", version = "=1.5.1", path = "../hyperplayer-hse-core" }
+hrtf-core = { package = "hyperplayer-hrtf-core", version = "=1.5.1", path = "../hyperplayer-hrtf-core" }
 lofty = "0.25.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -20,3 +21,5 @@ thiserror = "2.0"
 
 [dev-dependencies]
 tempfile = "3.23"
+# 测试用：启用 hrtf-core 的合成 SOFA fixture 生成器（产品构建不启用）。
+hrtf-core = { package = "hyperplayer-hrtf-core", path = "../hyperplayer-hrtf-core", features = ["test-fixtures"] }

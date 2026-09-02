@@ -32,6 +32,9 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
+    "resources": {
+      "../assets/hrtf/mit-kemar-normal-pinna.sofa": "hrtf/mit-kemar-normal-pinna.sofa"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -52,7 +52,7 @@ describe("bridge contract adapters", () => {
     expect(result.dsp).toEqual({
       available: true,
       bypassed: true,
-      label: "Rust DSP runtime 与参数桥已接通；当前支持 21 阶段实时处理（spatial 待合规资产）",
+      label: "Rust DSP runtime 与参数桥已接通；当前支持 Stage 1–22 实时处理（spatial/HRTF 已接入，资源经 SHA-256 校验加载）",
     });
     expect(result.currentQueueItemId).toBe("queue-current");
     expect(result.nextUp[0].queueItemId).toBe("queue-next");
@@ -191,7 +191,7 @@ describe("bridge contract adapters", () => {
     ]));
   });
 
-  it("defaults the 21-stage DSP configuration to transparent new-stage sections", () => {
+  it("defaults the 22-stage DSP configuration to transparent new-stage sections", () => {
     // 与 Rust `DspConfig::default()` 的 camelCase 投影一致：13/15/16/17/18/20/21 全部禁用、
     // 其余参数对齐各 stage 默认值；本断言同时让 TypeScript 校验完整 DTO 形状。
     const configuration: Omit<DspConfigurationDto, "revision" | "loudnessNormalization" | "surround3d" | "midSide" | "preEq" | "deesser" | "compressor" | "nightMode" | "delay" | "chorus" | "flanger" | "phaser" | "tremolo" | "bassEnhancer"> = {
@@ -208,6 +208,7 @@ describe("bridge contract adapters", () => {
       ieq: { enabled: false, strength: 0.5, targetCurve: "flat", timeConstantSec: 3 },
       modulation: { enabled: false, lfoShape: "sine", lfoRateHz: 1, lfoDepth: 0.5, envelopeAttackMs: 10, envelopeReleaseMs: 200, envelopeAmount: 0.5, routes: [] },
       lufsMetering: { mode: "hseV151" },
+  spatial: { mode: "off", masterGain: 0.9, instantAmount: 0.7, instantSpreadDeg: 60, instantRoom: "studio", instantRoomAmount: 0.15, distanceModel: "inverse", refDistance: 1, maxDistance: 50, convolution: "partitioned", hrtfInterp: "nearest", stagePreset: "stage", seat: "middle", stageRoomSize: 1, stageReverbAmount: 0.35, worldOcclusion: 0, ambienceEnabled: false, ambienceAmount: 0.3 },
     };
     expect(configuration.reverb.enabled).toBe(false);
     expect(configuration.loudnessComp.enabled).toBe(false);

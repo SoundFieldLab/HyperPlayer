@@ -512,13 +512,16 @@ impl AppState {
         let Some(persisted) = services.settings.persisted_dsp_config()? else {
             return Ok(DspConfigurationState::new());
         };
-        let config = match persisted.configuration.clone().into_engine_config() {
+        let mut config = match persisted.configuration.clone().into_engine_config() {
             Ok(config) => config,
             Err(error) => {
                 eprintln!("persisted DSP configuration invalid; falling back to default: {error}");
                 return Ok(DspConfigurationState::new());
             }
         };
+        // 空间场资源路径不入持久化（只存参数态）；恢复时重新解析 bundle 资源并
+        // 注入 engine。资源缺失/校验失败由编译线程显式降级为旁路 + 诊断。
+        crate::commands::dsp::attach_spatial_resource(&mut config);
         // 引擎 apply 失败不得阻断启动：走零 DSP 默认旁路并输出诊断。
         if services
             .playback

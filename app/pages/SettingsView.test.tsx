@@ -156,7 +156,7 @@ describe("SettingsView 更新器与不可用状态", () => {
 
     await act(async () => button(container, "音频与 DSP").click());
     expect(container.textContent).toContain("Rust DSP 核心已接通");
-    expect(container.textContent).toContain("21 个处理器");
+    expect(container.textContent).toContain("22 个处理器");
     expect(container.textContent).toContain("参数配置、预设与 HSE2 分享码通过 DspPort 生效");
     expect(container.textContent).toContain("DspPort");
     expect(container.textContent).toContain("HSE2");

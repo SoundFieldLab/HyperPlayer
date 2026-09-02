@@ -1713,6 +1713,7 @@ dependencies = [
  "claxon",
  "cpal",
  "crossbeam-queue",
+ "hyperplayer-hrtf-core",
  "hyperplayer-hse-core",
  "lofty",
  "rusqlite",

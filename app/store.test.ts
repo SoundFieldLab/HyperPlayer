@@ -73,6 +73,7 @@ const dspConfiguration: DspConfigurationDto = {
   ieq: { enabled: false, strength: 0.5, targetCurve: "flat", timeConstantSec: 3 },
   modulation: { enabled: false, lfoShape: "sine", lfoRateHz: 1, lfoDepth: 0.5, envelopeAttackMs: 10, envelopeReleaseMs: 200, envelopeAmount: 0.5, routes: [] },
   lufsMetering: { mode: "hseV151" },
+  spatial: { mode: "off", masterGain: 0.9, instantAmount: 0.7, instantSpreadDeg: 60, instantRoom: "studio", instantRoomAmount: 0.15, distanceModel: "inverse", refDistance: 1, maxDistance: 50, convolution: "partitioned", hrtfInterp: "nearest", stagePreset: "stage", seat: "middle", stageRoomSize: 1, stageReverbAmount: 0.35, worldOcclusion: 0, ambienceEnabled: false, ambienceAmount: 0.3 },
 };
 
 function deferred<T>() {
@@ -99,7 +100,7 @@ function mockBridge(overrides: Partial<BridgeContract> = {}): BridgeContract {
     dspListPresets: vi.fn(async () => []),
     dspApplyPreset: vi.fn(async () => { throw new Error("not configured"); }),
     dspImportHse2: vi.fn(async () => { throw new Error("not configured"); }),
-    dspExportHse2: vi.fn(async () => ({ code: "", scope: "current21StageProjection" as const, unsupportedStages: [] })),
+    dspExportHse2: vi.fn(async () => ({ code: "", scope: "current22StageProjection" as const, unsupportedStages: [] })),
     updateSettings: vi.fn(async (patch) => ({ ...settings, ...patch })),
     enqueue: vi.fn(async () => playback),
     removeQueueItem: vi.fn(async () => playback),

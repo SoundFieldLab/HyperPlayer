@@ -272,7 +272,7 @@ export function adaptPlayback(snapshot: BackendEngineSnapshotDto): PlaybackSnaps
     dsp: {
       available: true,
       bypassed: BigInt(snapshot.dspExecution.revision) === 0n || snapshot.dspExecution.safeBypassActive,
-      label: "Rust DSP runtime 与参数桥已接通；当前支持 21 阶段实时处理（spatial 待合规资产）",
+      label: "Rust DSP runtime 与参数桥已接通；当前支持 Stage 1–22 实时处理（spatial/HRTF 已接入，资源经 SHA-256 校验加载）",
     },
     dspExecution: {
       revision: BigInt(snapshot.dspExecution.revision),

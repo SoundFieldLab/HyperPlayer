@@ -129,7 +129,12 @@ fn v1_电平锚点_立体声同相997hz_三电平() {
         let mut meter = std_meter_48k();
         feed(&mut meter, &l, &r, 777);
         let integrated = meter.get_integrated_lufs();
-        assert_within(integrated, expected, 0.02, &format!("V1 {dbfs} dBFS integrated"));
+        assert_within(
+            integrated,
+            expected,
+            0.02,
+            &format!("V1 {dbfs} dBFS integrated"),
+        );
         // momentary 为最后一个完整 400ms 块，稳态下与 integrated 同值。
         assert_within(
             meter.get_momentary_lufs(),
@@ -165,7 +170,12 @@ fn v1b_电平锚点_44k1精确系数路径() {
     let r = sine(88_200, fs, 997.0, amp, 0.0);
     let mut meter = LufsMeter::with_mode(fs, MeterMode::ItuBs1770_5).expect("合法采样率");
     feed(&mut meter, &l, &r, 500);
-    assert_within(meter.get_integrated_lufs(), expected, 0.02, "V1b 44.1kHz integrated");
+    assert_within(
+        meter.get_integrated_lufs(),
+        expected,
+        0.02,
+        "V1b 44.1kHz integrated",
+    );
 }
 
 // ---------------- V2：单声道 vs 立体声（通道权重与功率和语义） ----------------
@@ -187,7 +197,12 @@ fn v2_通道功率和语义_dual_mono与单声道馈入差3点01() {
     let mut both = std_meter_48k();
     feed(&mut both, &dual, &dual, 777);
     let dual_loudness = both.get_integrated_lufs();
-    assert_within(dual_loudness, stereo_anchor_48k(-20.0), 0.02, "V2 dual-mono");
+    assert_within(
+        dual_loudness,
+        stereo_anchor_48k(-20.0),
+        0.02,
+        "V2 dual-mono",
+    );
 
     let mut single = std_meter_48k();
     feed(&mut single, &dual, &silent, 777);
@@ -230,7 +245,12 @@ fn v3a_gating_绝对门_响段加纯静音段() {
     let mut meter = std_meter_48k();
     feed(&mut meter, &l, &r, 1024);
     let integrated = meter.get_integrated_lufs();
-    assert_within(integrated, stereo_anchor_48k(-20.0), 0.1, "V3a integrated 贴响段电平");
+    assert_within(
+        integrated,
+        stereo_anchor_48k(-20.0),
+        0.1,
+        "V3a integrated 贴响段电平",
+    );
     // 方向性对照：若无绝对门剔除（把静音功率并入），读数会显著低于响段电平。
     assert!(integrated > -20.5, "V3a 静音段必须被门限剔除：{integrated}");
 }
@@ -265,9 +285,17 @@ fn v3b_gating_相对门_低电平段剔除与纳入对照() {
     let mut meter = std_meter_48k();
     feed(&mut meter, &l, &r, 1024);
     let integrated = meter.get_integrated_lufs();
-    assert_within(integrated, stereo_anchor_48k(-20.0), 0.1, "V3b(a) 低电平段被剔除");
+    assert_within(
+        integrated,
+        stereo_anchor_48k(-20.0),
+        0.1,
+        "V3b(a) 低电平段被剔除",
+    );
     // 方向性对照：若低电平段未被剔除，读数 ≈ -25.3，远低于该界。
-    assert!(integrated > -20.6, "V3b(a) 相对门必须剔除 -45 dBFS 段：{integrated}");
+    assert!(
+        integrated > -20.6,
+        "V3b(a) 相对门必须剔除 -45 dBFS 段：{integrated}"
+    );
 
     // (b) -25 dBFS（高于相对门）→ 纳入，读数为两段功率均值
     let quiet_amp = 10.0_f64.powf(-25.0 / 20.0);
@@ -283,10 +311,21 @@ fn v3b_gating_相对门_低电平段剔除与纳入对照() {
     let p25 = G997_48K * G997_48K * 10.0_f64.powf(-2.5);
     let expected = -0.691 + 10.0 * (((117.0 + 1.5) * p20 + 27.0 * p25) / 147.0).log10();
     let integrated = meter.get_integrated_lufs();
-    assert_within(integrated, expected, 0.05, "V3b(b) -25 dBFS 段纳入后的功率均值");
+    assert_within(
+        integrated,
+        expected,
+        0.05,
+        "V3b(b) -25 dBFS 段纳入后的功率均值",
+    );
     // 方向性对照：读数必须低于纯响段读数（V3a ≈ -20.10），证明低电平段进了均值。
-    assert!(integrated < -20.3, "V3b(b) 低电平段必须被纳入：{integrated}");
-    assert!(integrated > -21.0, "V3b(b) 读数不应被拖到功率均值以下：{integrated}");
+    assert!(
+        integrated < -20.3,
+        "V3b(b) 低电平段必须被纳入：{integrated}"
+    );
+    assert!(
+        integrated > -21.0,
+        "V3b(b) 读数不应被拖到功率均值以下：{integrated}"
+    );
 }
 
 // ---------------- V4：momentary / short-term 块尺寸与时域收敛 ----------------
@@ -332,7 +371,12 @@ fn v4_momentary与short_term_块尺寸与时域收敛() {
         0.02,
         "V4 短时窗（3s）内全稳态 → short-term 命中锚点",
     );
-    assert_within(meter.get_momentary_lufs(), anchor, 0.02, "V4 稳态 momentary");
+    assert_within(
+        meter.get_momentary_lufs(),
+        anchor,
+        0.02,
+        "V4 稳态 momentary",
+    );
 }
 
 // ---------------- V5：true peak（4× 过采样的采样间峰值） ----------------
@@ -374,7 +418,12 @@ fn v5_真峰值_采样间峰值超满刻度而样本峰值低于满刻度() {
         true_peak_db > 0.0,
         "V5 采样间峰必须超满刻度（解析连续峰 +0.2565 dBFS）：{true_peak_db}"
     );
-    assert_within(true_peak_db, 20.0 * 1.03_f64.log10(), 0.2, "V5 true peak 解析近似");
+    assert_within(
+        true_peak_db,
+        20.0 * 1.03_f64.log10(),
+        0.2,
+        "V5 true peak 解析近似",
+    );
 }
 
 // ---------------- V6：两模式分离性 ----------------
@@ -405,7 +454,12 @@ fn v6_两模式分离性_同相偏移_反相判别_去相关一致() {
     feed(&mut std, &l, &r, 777);
     let hse_loudness = hse.get_integrated_lufs();
     let std_loudness = std.get_integrated_lufs();
-    assert_within(hse_loudness, anchor + POWER_OF_TWO_DB, 0.05, "V6(a) HseV151 同相读数");
+    assert_within(
+        hse_loudness,
+        anchor + POWER_OF_TWO_DB,
+        0.05,
+        "V6(a) HseV151 同相读数",
+    );
     assert_within(std_loudness, anchor, 0.05, "V6(a) 标准模式同相读数");
     assert!(
         hse_loudness > std_loudness,

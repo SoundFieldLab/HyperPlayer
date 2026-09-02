@@ -11,6 +11,11 @@ publish = false
 [lib]
 name = "hrtf_core"
 
+[features]
+# 仅测试用：暴露合成 SimpleFreeFieldHRIR fixture 生成器（`fixtures` 模块），
+# 供 engine/Tauri 适配器测试复用；产品构建不启用，不构成生产 API 面。
+test-fixtures = []
+
 [dependencies]
 rustfft = "6.4.1"
 sofar = { version = "0.3.0", default-features = false }

@@ -16,6 +16,7 @@ pub mod modulation;
 pub mod night_mode;
 pub mod phaser;
 pub mod reverb;
+pub mod spatial;
 pub mod surround3d;
 pub mod tremolo;
 
@@ -47,6 +48,12 @@ use modulation::{ModulationProcessor, ModulationSettings};
 use night_mode::{NightModeProcessor, NightModeSettings};
 use phaser::{PhaserProcessor, PhaserSettings};
 use reverb::{ReverbProcessor, ReverbSettings};
+use spatial::SpatialProcessor;
+pub use spatial::{
+    SpatialConvolution, SpatialDistanceModel, SpatialInterpolation, SpatialMode,
+    SpatialResourceSpec, SpatialResourceStatus, SpatialRoomPreset, SpatialSeat, SpatialSettings,
+    SpatialStagePreset,
+};
 use std::sync::Arc;
 use surround3d::{Surround3dProcessor, Surround3dSettings};
 use tremolo::{TremoloProcessor, TremoloSettings};
@@ -113,6 +120,9 @@ pub struct DspConfig {
     pub limiter: LimiterSettings,
     /// LUFS 计量模式（Stage 19 分析 tap；默认 `HseV151` 兼容）。
     pub metering_lufs_mode: LufsMeterMode,
+    /// Stage 22 空间/HRTF 设置（默认 mode=off 逐位直通；资源引用仅由宿主注入，
+    /// 不参与 HSE2 序列化）。
+    pub spatial: SpatialSettings,
 }
 
 pub type GroupOneConfig = DspConfig;
@@ -150,6 +160,7 @@ impl Default for DspConfig {
             modulation: ModulationSettings::default(),
             limiter: LimiterSettings::default(),
             metering_lufs_mode: LufsMeterMode::HseV151,
+            spatial: SpatialSettings::default(),
         }
     }
 }
@@ -229,10 +240,40 @@ pub(crate) fn validate_dsp_config(config: &DspConfig) -> Result<()> {
             "limiter settings must be finite".into(),
         ));
     }
+    // spatial 的范围校验在适配器构造期内置（SpatialProcessor::new）；这里前置
+    // 拦截非有限值并兜底资源引用 hash 形状，保持 fail-fast 一致性。
+    if [
+        config.spatial.master_gain,
+        config.spatial.instant_amount,
+        config.spatial.instant_spread_deg,
+        config.spatial.instant_room_amount,
+        config.spatial.ref_distance,
+        config.spatial.max_distance,
+        config.spatial.stage_room_size,
+        config.spatial.stage_reverb_amount,
+        config.spatial.world_occlusion,
+        config.spatial.ambience_amount,
+    ]
+    .into_iter()
+    .any(|value| !value.is_finite())
+    {
+        return Err(EngineError::InvalidInput(
+            "spatial settings must be finite".into(),
+        ));
+    }
+    if let Some(resource) = &config.spatial.resource {
+        let hash = &resource.expected_sha256_hex;
+        let hash_is_hex = hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit());
+        if !hash_is_hex {
+            return Err(EngineError::InvalidInput(
+                "spatial resource hash must be 64 hex characters".into(),
+            ));
+        }
+    }
     Ok(())
 }
 
-/// 按 HSE 固定阶段相对顺序构建当前已迁入处理链：响度归一化(1) → Surround3D(2) → M/S(3) → pre-EQ(4) → De-esser(5) → Compressor(6) → Night Mode(7) → Delay(8) → Chorus(9) → Flanger(10) → Phaser(11) → Tremolo(12) → Reverb(13) → Bass(14) → LoudnessComp(15) → Dynamic EQ(18) → LUFS tap(19) → Limiter(21)。
+/// 按 HSE 固定阶段相对顺序构建当前已迁入处理链：响度归一化(1) → Surround3D(2) → M/S(3) → pre-EQ(4) → De-esser(5) → Compressor(6) → Night Mode(7) → Delay(8) → Chorus(9) → Flanger(10) → Phaser(11) → Tremolo(12) → Reverb(13) → Bass(14) → LoudnessComp(15) → Dynamic EQ(18) → LUFS tap(19) → Limiter(21) → Spatial/HRTF(22)。
 pub fn prepare_dsp_chain(
     revision: u64,
     format: PcmFormat,
@@ -340,6 +381,11 @@ pub fn prepare_dsp_chain_with_lufs(
             Box::new(LimiterProcessor::new(
                 f64::from(format.sample_rate),
                 config.limiter,
+            )?),
+            // Stage 22（链尾）：mode=off 或资源不可用时逐位直通（显式旁路 + 诊断）。
+            Box::new(SpatialProcessor::new(
+                f64::from(format.sample_rate),
+                config.spatial,
             )?),
         ],
     )
@@ -1092,6 +1138,7 @@ mod tests {
                 "lufs",
                 "modulation",
                 "limiter",
+                "spatial",
             ]
         );
     }
