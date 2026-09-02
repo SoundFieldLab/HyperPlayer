@@ -10,13 +10,13 @@ HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播�
 
 **项目仍未达到 v1 全功能完成。** 当前主要缺口包括：
 
-- HSE 完整 22 阶段尚未全部进入 HyperPlayer 生产播放链；Stage 13、15–18、20–22 仍未接入；
-- D30 已完成 schema v7、v6 备份、缓存策略/淘汰/离线证明、reconciliation 规划与 durable album-fill 核心；Tauri runtime worker、实际 IO/probes 和 Settings UI 尚未接线；
+- HSE 完整 22 阶段已全部进入 HyperPlayer 生产播放链（Stage 1–22 共 22 个处理器，默认全 disabled）；Stage 22 spatial 资产（MIT KEMAR）已审计入库并经 SHA-256 校验加载，剩实机验收；
+- D30 已完成 schema v7、v6 备份、缓存策略/淘汰/离线证明、runtime worker、Windows 资源探针、album-fill worker 与 Settings UI（切片 01、10-13）；
 - MP3/FLAC 增量解码、真实 codec trim、设备切换、独占模式和完整 Windows 集成未完成；
 - 网易云仍有较多路由、UI 工作流和受控账号外部验收缺口；
 - vGPU/WebGPU 尚未真正接入；
-- DSP 配置已版本化持久化（`settings.json` 内 `dsp` 段，version=1 + revision + DTO），重启恢复 revision 与配置；标准 BS.1770-5 模式以独立 `MeterMode` 存在但尚未过向量认证（默认保持 HSE v1.5.1 兼容）；Stage 19 LUFS/true-peak/limiter/FFT telemetry 已固化到 HPTM v4；
-- 本轮实现、测试、UI 修复和文档更新仍在工作树，尚未提交。
+- DSP 配置已版本化持久化（`settings.json` 内 `dsp` 段，version=1 + revision + DTO），重启恢复 revision 与配置；标准 BS.1770-5 模式已通过解析向量认证 ±0.1 LU（未使用官方 EBU Tech 3341/3342 测试文件，不宣称 EBU 认证；默认保持 HSE v1.5.1 兼容）；Stage 19 LUFS/true-peak/limiter/FFT telemetry 已固化到 HPTM v4；
+- DSP 22-stage 与 D30 shell 接线已分批提交；实机验收（spatial 听感/UI 多尺寸）待用户确认。
 
 功能完成必须满足完整证据链：
 
@@ -117,7 +117,7 @@ TypeScript：
   `06fa8e8df5524d855b91fbbcb018072587a517d056576b2017c7a6665a2f72c5`
 - `pnpm check:hse-source` 会验证 clean checkout、tag、commit、文件选择和 hash。
 - `NOTICE`、`THIRD_PARTY_NOTICES.md` 和 `third_party_licenses/V8-BSD-3-Clause.txt` 已补 HSE、V8/fdlibm、sofar/libmysofa/KD-tree 归属。
-- 没有复制 SOFA/HRTF 数据集；Stage 22 数据许可仍是外部阻塞。
+- Stage 22 数据许可已解除：MIT KEMAR HRTF（「任意用途 + 引用作者」，MIT Media Lab 1994）已审计入库 `assets/hrtf/mit-kemar-normal-pinna.sofa`；声明见 `third_party_licenses/MIT-KEMAR-HRTF.txt`，来源链/hash 见 `provenance/hrtf-mit-kemar/README.md`。
 
 ### 4.3 Destination manifest/hash gate（已完成）
 
@@ -157,10 +157,10 @@ TypeScript：
 缺少生产 stage 编号：
 
 ```text
-13, 15, 16, 17, 18, 20, 21, 22
+（无——Stage 1–22 全部 22 个编号均已进入生产链，默认 disabled）
 ```
 
-因此不是"还剩 10 个阶段"，而是**8 个 stage 编号尚未进入当前 HyperPlayer 生产链**。
+生产链顺序：1–15、16/17（IEQ+Analysis 合并 adapter）、18、19 tap、20、21、22。
 
 ### 5.2 已直接委托 vendored HSE Rust core 的部分
 
@@ -247,13 +247,13 @@ TypeScript：
 
 - Rust DSP runtime availability 真实报告；`revision == 0` 的启动空链、有效 configured chain 和 `SafeBypass` 在 UI 分开展示。
 - 正式 Tauri commands：`dsp_get_configuration`、`dsp_configure`、`dsp_list_presets`、`dsp_apply_preset`、`dsp_import_hse2`、`dsp_export_hse2`。
-- 当前 14 processor 的显式 typed DTO、finite/range/枚举/EQ band 校验和严格单调 revision。
+- 当前 22 processor 的显式 typed DTO、finite/range/枚举/EQ band 校验和严格单调 revision。
 - 默认 `revision 1 / DspConfig::default()` 通过 actor 配置；mono source 仍使用 stereo F32 输出格式编译 DSP。
-- 12 个 HSE scenes 接入；当前只应用 14-stage 投影，未支持 Stage 13、15–18、20–22 明确返回 `partial + unsupportedStages`。
-- HSE2 使用 vendored Rust ShareCodec；导入遵循 HSE codec sanitize/rehydrate，再验证当前投影；导出标记 `current14StageProjection`。
+- 12 个 HSE scenes 接入（含 ieq/dynamicEq/modulation/limiter 逐场景定制，TS oracle 导出 fixture）；HSE2 导入导出为完整 22-stage 投影（scope `current22StageProjection`），仅少量 HyperPlayer-only 参数按缺省还原。
+- HSE2 使用 vendored Rust ShareCodec；导入遵循 HSE codec sanitize/rehydrate，再验证当前投影。
 - requested/applied 分离：pending 在 actor request 前登记，只在 matching `DspExecutionChanged` 后晋升；matching rejection 清除 pending；读取/导出只使用 applied config。
 - 配置拒绝包含稳定 code、脱敏 reason、可选 stage；所有 DSP `u64` 在 IPC 使用十进制字符串，前端领域层使用 `bigint`。
-- HyperPlayer 原生工作台覆盖 13 个可编辑处理器、Stage 19 只读状态、EQ bandCount/frequency/gain/Q、预设和 HSE2；输入范围与 Rust DTO 一致并在提交前校验。
+- HyperPlayer 原生工作台覆盖全部 22 个模块（Stage 19 只读遥测、spatial 带克制 2D SVG 空间场示意）、EQ bandCount/frequency/gain/Q、预设和 HSE2；输入范围与 Rust DTO 一致并在提交前校验。
 
 仍缺：
 
@@ -577,15 +577,15 @@ Build / UI：
 3. **BSD 分发文本需再审计**
    - 已有 attribution 和 V8 license；libmysofa/KD-tree 的完整 BSD 条款是否随 installer 分发仍需确认。
 
-4. **完整 22-stage production 尚未接入**
-   - Stage 13、15–18、20–22 已存在 vendored 实现，但仍缺 typed state/checkpoint/tail/adapter 与产品链门禁。
+4. **Stage 22 实机验收未做**
+   - 生产接线与自动化门禁已完成；正式 Tauri/WebView2 下的空间场 UI 多尺寸、真实设备双耳听感与安装包资源/许可证复审待用户确认。
 
 ### P2 / 已知但非阻塞
 
 5. 默认并行前端测试历史上出现过 timeout/act 污染，本轮 222 项未复现。
 6. DSP 配置已版本化持久化（`settings.json` `dsp` 段，version=1/revision/DTO），重启恢复 revision；未知版本/损坏回落默认并诊断。
-7. HPTM 已升级到 v4（856B），Stage 19 LUFS/true-peak/limiter 动态字段已分配给工作台展示；标准 BS.1770-5 为独立模式待认证。
-8. 已上线 14 processor 的 direct façade、参数钳位、tail 派生与 Tremolo clone checkpoint 已完成去重；后续 adapter 工作只针对新增 stage。
+7. HPTM 已升级到 v4（856B），Stage 19 LUFS/true-peak/limiter 动态字段已分配给工作台展示；标准 BS.1770-5 已通过解析向量认证 ±0.1 LU（官方 EBU 测试集验证仍开放）。
+8. 全部 22 processor 的 direct façade、参数钳位、tail 派生与 Tremolo clone checkpoint 已完成去重。
 
 ---
 
@@ -593,13 +593,10 @@ Build / UI：
 
 ### DSP / D29
 
-- Stage 13、15–18、20–22 生产融合。
-- 已上线 14 processor 的 direct façade、参数钳位、tail 派生与 Tremolo clone checkpoint 已完成去重；后续 adapter 工作只针对新增 stage。
-- 标准 BS.1770-5 模式（`MeterMode::ItuBs1770_5` 已实现并以独立模式存在；标准模式待向量认证）。
+- Stage 22 实机验收（UI 多尺寸、真实设备听感、安装资源复审）。
+- 标准 BS.1770-5 官方 EBU Tech 3341/3342 测试集验证（解析向量认证已通过，±0.1 LU）。
 - 完整 Stage 19 telemetry schema：LUFS（integrated/momentary/short-term）与 true peak/limiter reduction 已固化到 HPTM v4 并接入工作台；FFT 复用既有 spectrum。
-- 22-stage 逐场景（scenes.rs 逐 stage）参数定制尚未逐场景覆盖（保留 default 骨架）。
-- Stage 22 HRTF 数据来源与许可证。
-- DSP 配置持久化已完成；完整 22-stage 工作台。
+- DSP 配置持久化与完整 22-stage 工作台已完成。
 
 ### D30
 

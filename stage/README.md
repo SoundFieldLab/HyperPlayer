@@ -1,7 +1,7 @@
 # HyperPlayer 后续实施切片
 
-> 更新日期：2026-09-02  
-> 状态：01、02-07、09、10-13 已完成；08 受阻；其余待选择  
+> 更新日期：2026-09-03  
+> 状态：01、02-07、09、10-13 已完成；08 进行中（生产接线完成，待实机验收）；其余待选择  
 > 性质：实施切片索引，不取代正式需求、ADR 或定调记录
 
 ## 使用规则
@@ -14,11 +14,13 @@
 
 ## 当前真实位置
 
-2026-09-02：基于 HEAD `954a261` 的工作树（DSP 全量改动**尚未提交**）已完成 DSP 切片 `02-07、09`。生产链现接入 Stage `1-15、16/17、18-21` 共 21 个处理器（vendored HSE Rust 实时执行，默认全 disabled）；仅 Stage 22 spatial 因合规 HRTF 资产缺失保持受阻（受限外部注入 API 与测试 fixture 已交付，见切片 08）。
+2026-09-03：DSP 全量工作已分批提交（`137af95` D30 核心 → `75f2315` DSP 引擎层 → `92270ee` 控制面 → `8ce0d9e` 切片文档 → `5e6598a` scenes 定制 → `a4ccaff` BS.1770 认证 → `587d888` HRTF 资产 → `b7a8fff` spatial 生产接线）。生产链现接入 Stage `1-15、16/17、18-22` 共 **22 个处理器**（vendored HSE Rust 实时执行，默认全 disabled；spatial 资源经 SHA-256 校验加载、失败显式旁路）。
 
-DSP 控制面已闭环（切片 09）：版本化持久配置 + fail-close 迁移、revision 跨重启恢复、HSE2/scenes 21-stage round-trip（少量 HyperPlayer-only 参数按缺省还原，清单见切片 09 遗留边界）、HPTM v4（spectrum / dynamic-eq / limiter / LUFS 字段）与 `MeterMode::{HseV151 默认, ItuBs1770_5}` 双模式（标准模式已实现标准通道功率和路径，通过 BS.1770-5 解析向量认证 ±0.1 LU；未使用官方 EBU Tech 3341/3342 测试文件，官方测试集验证仍开放，不宣称 EBU 认证）。
+DSP 控制面已闭环（切片 09）：版本化持久配置 + fail-close 迁移、revision 跨重启恢复、HSE2/scenes 22-stage round-trip（少量 HyperPlayer-only 参数按缺省还原，清单见切片 09 遗留边界）、HPTM v4（spectrum / dynamic-eq / limiter / LUFS 字段）与 `MeterMode::{HseV151 默认, ItuBs1770_5}` 双模式（标准模式已实现标准通道功率和路径，通过 BS.1770-5 解析向量认证 ±0.1 LU；未使用官方 EBU Tech 3341/3342 测试文件，不宣称 EBU 认证）。12 场景已对 ieq/dynamicEq/modulation/limiter 逐场景定制（TS oracle 导出 fixture，provenance 如实标注）。
 
-D30 切片 `01、10-13` 已完成（schema v7、quota runtime、Windows 资源探针、album-fill worker、Settings UI）。剩余主线：`14` gapless/增量解码 → `15` Windows 集成 → `16` 网易云 → `17` vGPU → `18` 发布。`handover.md` 中"工作树待提交"仍成立：本轮 DSP 改动等待用户审阅后按切片分批提交。
+Stage 22 spatial 已解除资产阻塞：MIT KEMAR HRTF（Apache 兼容的「引用即用」条款）已审计入库并接线生产链；切片状态「进行中」——剩正式 Tauri/WebView2 实机验收（多尺寸 UI、真实设备听感、安装资源复审）。
+
+D30 切片 `01、10-13` 已完成（schema v7、quota runtime、Windows 资源探针、album-fill worker、Settings UI）。剩余主线：`14` gapless/增量解码 → `15` Windows 集成 → `16` 网易云 → `17` vGPU → `18` 发布。
 
 ## 切片地图
 
@@ -31,7 +33,7 @@ D30 切片 `01、10-13` 已完成（schema v7、quota runtime、Windows 资源�
 | 05 | [HSE Stage 21 Limiter](05-hse-stage-21-limiter.md) | 无 | 大 | lookahead、true peak、drain | 已完成 |
 | 06 | [HSE Stage 20 Modulation](06-hse-stage-20-modulation.md) | 目标接口稳定 | 大 | 跨 Stage 控制信号 | 已完成 |
 | 07 | [HSE Stage 16/17 IEQ + Analysis](07-hse-stage-16-17-ieq-analysis.md) | telemetry 设计 | 大 | FFT 高频数据、联合状态 | 已完成 |
-| 08 | [HSE Stage 22 Spatial/HRTF](08-hse-stage-22-spatial-hrtf.md) | 合规 HRTF 资产 | 特大 | 许可证、资源、latency | 受阻 |
+| 08 | [HSE Stage 22 Spatial/HRTF](08-hse-stage-22-spatial-hrtf.md) | 合规 HRTF 资产 | 特大 | 许可证、资源、latency | 进行中 |
 | 09 | [DSP 控制面闭环](09-dsp-control-plane-closure.md) | 02-08 | 大 | 配置迁移、计量语义 | 已完成 |
 | 10 | [D30 quota runtime](10-d30-quota-runtime.md) | 01 | 中 | 淘汰正确性、lease 保护 | 已完成 |
 | 11 | [D30 Windows 资源探针](11-d30-windows-resource-probes.md) | 01 | 中 | 系统 API 与未知状态 | 已完成 |
@@ -45,7 +47,7 @@ D30 切片 `01、10-13` 已完成（schema v7、quota runtime、Windows 资源�
 
 ## 推荐顺序
 
-D30 `01 → 10 → 11 → 12 → 13` 与 DSP `02 → 03 → 04 → 05 → 06 → 07 → 09` 已于 2026-09-02 完成（门禁全绿、待提交）；Stage 08 保持受阻，必须等待合规 HRTF 资产。播放正确性在平台和发布前完成：`14 → 15`。网易云、可视化和发布分别在依赖成熟后进入 `16 → 17 → 18`。
+D30 `01 → 10 → 11 → 12 → 13` 与 DSP `02 → 03 → 04 → 05 → 06 → 07 → 09` 已完成；Stage 08 生产接线完成、实机验收后即可关闭。播放正确性在平台和发布前完成：`14 → 15`。网易云、可视化和发布分别在依赖成熟后进入 `16 → 17 → 18`。
 
 若优先播放核心正确性，选 14；若优先可视化，选 17（其依赖的 07/09 telemetry 已就绪）；不要把解码、网易云和发布三条高风险线混入同一提交。
 

@@ -21,7 +21,7 @@
 
 | 领域 | 当前状态 | 合并/发布门槛 |
 |---|---|---|
-| DSP | D29 已定调；Stage 09（DSP 控制面闭环）已实施 | 按 HSE v1.5.1 专项授权接入完整 22 阶段 Rust/TS 核心、参数、预设和一致性测试；Rust 为播放权威，不复用 HSE UI。DSP 配置已版本化持久化（`settings.json` `dsp` 段，启动恢复 + 迁移 fail-close）；重启恢复 revision；标准 BS.1770-5 为独立 `MeterMode`（默认 HSE v1.5.1 兼容，标准模式待向量认证）；Stage 19 LUFS/true-peak/limiter 动态字段已接入 HPTM v4 telemetry 与工作台。HRTF 第三方 SOFA 数据须单独审计 |
+| DSP | D29 已定调；Stage 09（DSP 控制面闭环）已完成，Stage 22 生产接线完成待实机验收 | 按 HSE v1.5.1 专项授权接入完整 22 阶段（1–22 全部生产接线，默认 disabled）Rust/TS 核心、参数、预设和一致性测试；Rust 为播放权威，不复用 HSE UI。DSP 配置已版本化持久化（`settings.json` `dsp` 段，启动恢复 + 迁移 fail-close）；重启恢复 revision；标准 BS.1770-5 为独立 `MeterMode`（默认 HSE v1.5.1 兼容；标准模式已通过解析向量认证 ±0.1 LU，未使用官方 EBU 测试文件，不宣称 EBU 认证）；Stage 19 LUFS/true-peak/limiter 动态字段已接入 HPTM v4 telemetry 与工作台。HRTF 资产：MIT KEMAR 已审计入库（引用义务履行，见 `provenance/hrtf-mit-kemar/`），spatial 实机验收（UI 多尺寸、真实设备听感、安装资源复审）通过前不得宣称产品完成 |
 | D25 缓存策略 | D30 已定调，待实现 | 默认 10 GiB、最近 100 个不同远程曲目保护、Public 7 天离线证明、AccountEntitled 离线拒绝、整专补齐受 AC/非计费网络/磁盘保留条件约束 |
 | VIP 缓存权益 | D23 硬门禁 | 离线测试必须覆盖未登录、非 VIP、过期、切号、服务端校验失败均拒绝；仅同一 `AccountEntitled(userId)` 且实时权益有效时放行 |
 | 专辑缓存晋升 | D24 硬门禁 | 离线测试覆盖专辑上下文、完整一首或累计 5 分钟、每日最多计一次、5 次晋升、空闲低优先级补齐及权益门禁 |
