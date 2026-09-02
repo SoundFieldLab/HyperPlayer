@@ -1,10 +1,16 @@
 //! lufs_meter —— HSE v1.5.1 兼容响度计量（分析型模块，无音频输出）。
 //!
-//! 当前实现冻结为 HSE v1.5.1 行为兼容模式。它沿用该版本标称的
-//! ITU-R BS.1770-4 / EBU R128 计算路径，但这里不声明新增的标准校正模式；后者必须以
-//! 独立模式和单独对拍引入，不能改变本模块的既有数值语义。
+//! 双模式结构：
+//! - `MeterMode::HseV151`（默认）：冻结为 HSE v1.5.1 行为兼容模式，沿用该版本标称的
+//!   ITU-R BS.1770-4 / EBU R128 计算路径；所有既有 golden 数值语义归一于此，不得改变。
+//! - `MeterMode::ItuBs1770_5`：BS.1770-5 标准路径分支。与兼容路径的唯一算法差异是块
+//!   功率按标准「通道功率和」Σ G_i·z_i（2.0 声道 G_L = G_R = 1.0）累积，取代兼容
+//!   模式的波形和 z = yL + yR（同相内容下波形和比功率和高 10·log10(2) ≈ 3.010 LU）。
+//!   该模式已通过 **BS.1770-5 解析向量认证（±0.1 LU）**（见 tests/bs1770_vectors.rs）；
+//!   未使用、未分发官方 EBU Tech 3341/3342 测试文件（有版权限制），官方测试集验证
+//!   仍开放，不得宣称「已通过 EBU 认证」。
 //!
-//! 行为事实标准：仓库根 src/dsp/LufsMeter.ts；规格：specs/dsp/lufs-meter.md。
+//! 行为事实标准：仓库根 src/dsp/LufsMeter.ts（HseV151 路径）；规格：specs/dsp/lufs-meter.md。
 //! 分析型语义（规格 §一/§二）：`process_stereo` 为**就地分析**——L/R 均过 K 加权
 //! （TDF2 两级串联），z = 左右 K 加权输出之和；**不改写输入缓冲、无音频输出**，
 //! 不进入引擎 22 级处理链的音频路径，行为契约由六个 getter 读数承载。
@@ -58,8 +64,13 @@ pub struct LufsReadings {
 ///
 /// - `HseV151`（默认）：HSE v1.5.1 兼容语义，即 ITU-R BS.1770-4 / EBU R128 计算路径。
 ///   **保持默认不可破坏**——所有既有 golden/LRA 数值语义归一于此。
-/// - `ItuBs1770_5`：BS.1770-5 / EBU R128 标准校正分支。当前为占位模式：标准
-///   vectors 与误差范围通过前不得宣称合规，仅作为独立模式存在并标注「标准模式待认证」。
+/// - `ItuBs1770_5`：BS.1770-5 / EBU R128 标准路径分支。块功率按标准通道功率和
+///   Σ G_i·z_i（2.0 声道 G_L = G_R = 1.0）累积，取代兼容模式的波形和 z = yL + yR；
+///   绝对门 -70 LUFS、相对门（gated mean -10 LU）、400ms 块 75% 重叠、momentary
+///   400ms / short-term 3s、true peak 4× 过采样与兼容路径一致（本就是标准规定）。
+///   认证状态：**BS.1770-5 解析向量认证通过（±0.1 LU）**；未使用/未分发官方 EBU
+///   Tech 3341/3342 测试文件（有版权限制），官方测试集验证仍开放，不得宣称
+///   「已通过 EBU 认证」。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MeterMode {
     #[default]
@@ -175,9 +186,16 @@ pub struct LufsMeter {
     shelf_r: BiquadState,
 
     // 滑动窗口（400ms）内 z 环形缓冲（f32 落盘）与 z² 之和（f64 累加）
+    // 仅 HseV151 使用：z = yL + yR 波形和（TS 语义冻结）。
     z_buf: Vec<f32>,
     z_pos: usize,
     sum_sq: f64,
+    // 仅 ItuBs1770_5 使用：标准通道功率和 Σ G_i·z_i 的左右双环形（G_L = G_R = 1.0，
+    // z_i 即各通道 K 加权输出），落盘纪律与上同（f32 环形 + f64 累加、f32 evict²）。
+    z_left_buf: Vec<f32>,
+    z_right_buf: Vec<f32>,
+    sum_sq_left: f64,
+    sum_sq_right: f64,
     total_samples: usize,
 
     // 块历史（环形；容量 = 1 小时 @100ms 步进；f32 落盘）
@@ -213,6 +231,20 @@ impl LufsMeter {
     /// 采样率路径（规格 §四.1）：44100/48000 用本采样率精确 K 加权系数；其余采样率
     /// 一律按 48000 系数近似（blockLen/hopLen 仍按实际 fs 缩放，GWT-LUFSMETER-07）。
     pub fn new(fs: f64) -> Result<Self, String> {
+        Self::build(fs, MeterMode::HseV151)
+    }
+
+    /// 构造并指定计量模式（`new` 恒为 `HseV151` 兼容；本方法用于显式选择标准模式）。
+    ///
+    /// 标准模式与兼容模式共用 K 加权系数设计（含非 44.1/48k 采样率的 48k 近似约定）、
+    /// 块/步长、双门限、真峰值核；差异仅在块功率累积（见 [`MeterMode::ItuBs1770_5`]）。
+    pub fn with_mode(fs: f64, mode: MeterMode) -> Result<Self, String> {
+        Self::build(fs, mode)
+    }
+
+    /// 统一构造路径：模式只决定滑动窗功率累积的缓冲形态，其余完全一致。
+    /// `new(fs)` 等价 `build(fs, HseV151)`，HseV151 数值语义不受本次重构影响。
+    fn build(fs: f64, mode: MeterMode) -> Result<Self, String> {
         // TS L113：if (fs <= 0 || !Number.isFinite(fs)) throw new Error('invalid sample rate')
         if !(fs > 0.0) || !fs.is_finite() {
             return Err("invalid sample rate".to_string());
@@ -237,17 +269,29 @@ impl LufsMeter {
         let block_len = js_round(0.4 * fs).max(1.0) as usize;
         let hop_len = js_round(0.1 * fs).max(1.0) as usize;
 
+        // 滑动窗缓冲按模式分配（避免为兼容路径常驻多付两份 400ms 环形）：
+        // - HseV151：单环形存波形和 z；
+        // - ItuBs1770_5：左右双环形存各通道 K 加权输出（标准功率和 Σ G_i·z_i）。
+        let (z_buf, z_left_buf, z_right_buf) = match mode {
+            MeterMode::HseV151 => (vec![0.0; block_len], Vec::new(), Vec::new()),
+            MeterMode::ItuBs1770_5 => (Vec::new(), vec![0.0; block_len], vec![0.0; block_len]),
+        };
+
         let mut meter = Self {
-            mode: MeterMode::HseV151,
+            mode,
             block_len,
             hop_len,
             rlb_l: state(rlb),
             shelf_l: state(shelf),
             rlb_r: state(rlb),
             shelf_r: state(shelf),
-            z_buf: vec![0.0; block_len],
+            z_buf,
             z_pos: 0,
             sum_sq: 0.0,
+            z_left_buf,
+            z_right_buf,
+            sum_sq_left: 0.0,
+            sum_sq_right: 0.0,
             total_samples: 0,
             block_loud: vec![0.0; BLOCK_CAP],
             block_power: vec![0.0; BLOCK_CAP],
@@ -267,13 +311,6 @@ impl LufsMeter {
             sort_scratch: vec![0.0; BLOCK_CAP],
         };
         meter.build_true_peak_kernel();
-        Ok(meter)
-    }
-
-    /// 构造并指定计量模式（`new` 恒为 `HseV151` 兼容；本方法用于显式选择标准模式）。
-    pub fn with_mode(fs: f64, mode: MeterMode) -> Result<Self, String> {
-        let mut meter = Self::new(fs)?;
-        meter.mode = mode;
         Ok(meter)
     }
 
@@ -319,10 +356,12 @@ impl LufsMeter {
         }
     }
 
-    /// 就地分析立体声（L/R 均过 K 加权；z = L' + R'）。
+    /// 就地分析立体声（L/R 均过 K 加权；HseV151 取 z = L' + R'，ItuBs1770_5 取
+    /// 通道功率和 Σ G_i·z_i）。
     ///
-    /// 逐样本运算次序（TS L154–L211）：K 加权两级 TDF2 → 滑动窗/sumSq/totalSamples →
-    /// 样本峰值 → 真峰值历史推进与插值 → 块边界判定。输入缓冲不被改写（分析型语义）。
+    /// 逐样本运算次序（TS L154–L211）：K 加权两级 TDF2 → 滑动窗/块功率累积
+    /// （按模式分派）/totalSamples → 样本峰值 → 真峰值历史推进与插值 → 块边界判定。
+    /// 输入缓冲不被改写（分析型语义）。
     pub fn process_stereo(&mut self, l: &[f32], r: &[f32]) {
         let count = l.len().min(r.len());
         for i in 0..count {
@@ -359,17 +398,33 @@ impl LufsMeter {
                 y
             };
 
-            // 块功率：z = yL + yR（BS.1770 通道求和）；加项用 f64 原值、减项（evict²）
-            // 用 f32 量化值的平方，sumSq 本身 f64 累加（TS 不对称落盘语义）。
-            let z = yl + yr;
-            let zsq = z * z;
-            let evict = f64::from(self.z_buf[self.z_pos]);
-            self.z_buf[self.z_pos] = z as f32;
+            // 块功率累积按模式分派（加项用 f64 原值、减项 evict² 用 f32 量化值的平方、
+            // 累加器 f64——两条路径同一落盘纪律）：
+            // - HseV151：z = yL + yR 波形和（TS L154–L211 语义冻结）；
+            // - ItuBs1770_5：标准通道功率和 Σ G_i·z_i（BS.1770-5 §单值响度，2.0 声道
+            //   G_L = G_R = 1.0），不做波形和、无交叉项——同相内容下波形和会高
+            //   10·log10(2) ≈ 3.010 LU，反相内容会静音，均非标准语义。
+            match self.mode {
+                MeterMode::HseV151 => {
+                    let z = yl + yr;
+                    let zsq = z * z;
+                    let evict = f64::from(self.z_buf[self.z_pos]);
+                    self.z_buf[self.z_pos] = z as f32;
+                    self.sum_sq += zsq - evict * evict;
+                }
+                MeterMode::ItuBs1770_5 => {
+                    let evict_l = f64::from(self.z_left_buf[self.z_pos]);
+                    self.z_left_buf[self.z_pos] = yl as f32;
+                    self.sum_sq_left += yl * yl - evict_l * evict_l;
+                    let evict_r = f64::from(self.z_right_buf[self.z_pos]);
+                    self.z_right_buf[self.z_pos] = yr as f32;
+                    self.sum_sq_right += yr * yr - evict_r * evict_r;
+                }
+            }
             self.z_pos += 1;
             if self.z_pos >= self.block_len {
                 self.z_pos = 0;
             }
-            self.sum_sq += zsq - evict * evict;
             self.total_samples += 1;
 
             // 样本峰值（f32 输入取绝对值后 f64 比较）
@@ -607,10 +662,13 @@ impl LufsMeter {
                 && target.a1.to_bits() == source.a1.to_bits()
                 && target.a2.to_bits() == source.a2.to_bits()
         });
-        if self.block_len != source.block_len
+        if self.mode != source.mode
+            || self.block_len != source.block_len
             || self.hop_len != source.hop_len
             || !coefficients_compatible
             || self.z_buf.len() != source.z_buf.len()
+            || self.z_left_buf.len() != source.z_left_buf.len()
+            || self.z_right_buf.len() != source.z_right_buf.len()
             || self.block_loud.len() != source.block_loud.len()
             || self.block_power.len() != source.block_power.len()
             || self.short_power.len() != source.short_power.len()
@@ -634,6 +692,10 @@ impl LufsMeter {
         self.z_buf.copy_from_slice(&source.z_buf);
         self.z_pos = source.z_pos;
         self.sum_sq = source.sum_sq;
+        self.z_left_buf.copy_from_slice(&source.z_left_buf);
+        self.z_right_buf.copy_from_slice(&source.z_right_buf);
+        self.sum_sq_left = source.sum_sq_left;
+        self.sum_sq_right = source.sum_sq_right;
         self.total_samples = source.total_samples;
         self.block_loud.copy_from_slice(&source.block_loud);
         self.block_power.copy_from_slice(&source.block_power);
@@ -657,6 +719,10 @@ impl LufsMeter {
         self.z_buf.fill(0.0);
         self.z_pos = 0;
         self.sum_sq = 0.0;
+        self.z_left_buf.fill(0.0);
+        self.z_right_buf.fill(0.0);
+        self.sum_sq_left = 0.0;
+        self.sum_sq_right = 0.0;
         self.total_samples = 0;
         self.block_loud.fill(0.0);
         self.block_power.fill(0.0);
@@ -686,8 +752,14 @@ impl LufsMeter {
 
     /// 记录一个完整 400ms 块（静音块 p ≤ 1e-30 响度记 NaN，防 -Infinity 泄漏进门限
     /// 统计；p 照常落盘；TS recordBlock L345–L360）。
+    ///
+    /// 块功率 p 按模式取累积器：HseV151 用波形和 sumSq；ItuBs1770_5 用左右通道
+    /// 功率之和（标准 Σ G_i·z_i）。门限、块历史与短时环形对两模式完全一致。
     fn record_block(&mut self) {
-        let p = self.sum_sq / self.block_len as f64;
+        let p = match self.mode {
+            MeterMode::HseV151 => self.sum_sq / self.block_len as f64,
+            MeterMode::ItuBs1770_5 => (self.sum_sq_left + self.sum_sq_right) / self.block_len as f64,
+        };
         let lk = if p > 1e-30 {
             -0.691 + 10.0 * p.log10()
         } else {

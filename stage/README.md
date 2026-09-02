@@ -16,7 +16,7 @@
 
 2026-09-02：基于 HEAD `954a261` 的工作树（DSP 全量改动**尚未提交**）已完成 DSP 切片 `02-07、09`。生产链现接入 Stage `1-15、16/17、18-21` 共 21 个处理器（vendored HSE Rust 实时执行，默认全 disabled）；仅 Stage 22 spatial 因合规 HRTF 资产缺失保持受阻（受限外部注入 API 与测试 fixture 已交付，见切片 08）。
 
-DSP 控制面已闭环（切片 09）：版本化持久配置 + fail-close 迁移、revision 跨重启恢复、HSE2/scenes 21-stage round-trip（少量 HyperPlayer-only 参数按缺省还原，清单见切片 09 遗留边界）、HPTM v4（spectrum / dynamic-eq / limiter / LUFS 字段）与 `MeterMode::{HseV151 默认, ItuBs1770_5}` 双模式（标准模式待向量认证，不得宣称合规）。
+DSP 控制面已闭环（切片 09）：版本化持久配置 + fail-close 迁移、revision 跨重启恢复、HSE2/scenes 21-stage round-trip（少量 HyperPlayer-only 参数按缺省还原，清单见切片 09 遗留边界）、HPTM v4（spectrum / dynamic-eq / limiter / LUFS 字段）与 `MeterMode::{HseV151 默认, ItuBs1770_5}` 双模式（标准模式已实现标准通道功率和路径，通过 BS.1770-5 解析向量认证 ±0.1 LU；未使用官方 EBU Tech 3341/3342 测试文件，官方测试集验证仍开放，不宣称 EBU 认证）。
 
 D30 切片 `01、10-13` 已完成（schema v7、quota runtime、Windows 资源探针、album-fill worker、Settings UI）。剩余主线：`14` gapless/增量解码 → `15` Windows 集成 → `16` 网易云 → `17` vGPU → `18` 发布。`handover.md` 中"工作树待提交"仍成立：本轮 DSP 改动等待用户审阅后按切片分批提交。
 

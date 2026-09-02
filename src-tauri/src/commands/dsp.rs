@@ -65,7 +65,8 @@ pub struct DspConfigurationDto {
 }
 
 /// LUFS 计量段（Stage 19 分析 tap）。`mode` 默认 `hseV151`（兼容）；`ituBs17705`
-/// 为独立标准模式（待向量认证，不宣称合规）。
+/// 为独立标准模式（BS.1770-5 解析向量认证通过，±0.1 LU；未使用官方 EBU
+/// Tech 3341/3342 测试文件，官方测试集验证仍开放，不宣称 EBU 认证）。
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LufsMeteringDto {
