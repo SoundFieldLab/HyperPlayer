@@ -71,7 +71,7 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 
 ## 环境备忘（2026-08-30 实测）
 
-- Node 25.4 / pnpm 11.21 / Rust 1.95（`x86_64-pc-windows-msvc`）
+- Node 25.4 / pnpm 11.21 / Rust 1.98.0（`x86_64-pc-windows-msvc`；由仓库根 rust-toolchain.toml 钉定，与 CI quality.yml 一致）
 - MSVC Build Tools 2022 + Windows 11 SDK 已安装
 - WebView2 Runtime `151.0.4129.107` 已安装
 - `@tauri-apps/cli` 与 `@tauri-apps/api` 2.x 已安装
