@@ -16,6 +16,10 @@ HyperPlayer 使用并修改 HyperSoundEngine v1.5.1（commit `f7017621b7d84005fb
 
 - `app/assets/shenzhen-skyline-night.jpg`：**“Shenzhen Skyline At Night”**，作者 Andreas Bunen，依据 [Creative Commons Attribution 3.0 Unported](https://creativecommons.org/licenses/by/3.0/) 授权。原图来自 [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Shenzhen_Skyline_At_Night_(214551663).jpeg)。HyperPlayer 在天气卡中以 CSS 裁切并叠加暗色遮罩；图片本身不按 Apache-2.0 授权。
 
+## HRTF 数据资产
+
+- `assets/hrtf/mit-kemar-normal-pinna.sofa`：**MIT KEMAR 人工头 HRTF 数据集**（SOFA SimpleFreeFieldHRIR 转换版，710 空间位置，44.1 kHz 原生）。原始数据 **Copyright 1994 MIT Media Laboratory**，条款为 "provided free with no restrictions on use, provided the authors are cited"——允许任意用途与再分发，义务为引用作者。强制引用：Gardner, B., & Martin, K. (1994). *HRTF measurements of a KEMAR dummy-head microphone*. MIT Media Lab Perceptual Computing Technical Report #280。完整许可声明见 `third_party_licenses/MIT-KEMAR-HRTF.txt`，来源链与 hash 见 `provenance/hrtf-mit-kemar/README.md`。数据本身不按 Apache-2.0 授权，随应用分发时保留上述声明。
+
 ## DSP 算法参考
 
 | 项目 | 许可证 | 用途 |

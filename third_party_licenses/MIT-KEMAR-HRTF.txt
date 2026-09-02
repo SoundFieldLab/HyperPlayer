@@ -1,0 +1,38 @@
+MIT KEMAR HRTF 数据集（SOFA 转换版）许可声明
+=============================================
+
+本文件对应随 HyperPlayer 分发的资产 `assets/hrtf/mit-kemar-normal-pinna.sofa`。
+
+原始数据版权与使用条款（引自 MIT Media Lab 官方页面
+https://sound.media.mit.edu/resources/KEMAR.html，2026-09-03 存档核验）：
+
+    This data is Copyright 1994 by the MIT Media Laboratory.
+
+    It is provided free with no restrictions on use, provided the authors
+    are cited when the data is used in any research or commercial
+    application.
+
+即：数据可免费用于任何用途（含商业应用与再分发），唯一义务是在研究或
+商业应用中使用该数据时引用作者。
+
+强制引用（Citation）：
+
+    Gardner, B., & Martin, K. (1994). HRTF measurements of a KEMAR
+    dummy-head microphone. MIT Media Lab Perceptual Computing Technical
+    Report #280.
+
+    原始数据：Bill Gardner 与 Keith Martin，MIT Media Lab，1994 年 5 月
+    测量（710 个空间位置，44.1 kHz，KEMAR 人工头）。
+
+SOFA 转换版说明：
+
+- 本文件为 SOFA 社区（sofacoustics.org，SOFA conventions 数据库 `mit`
+  条目）提供的 KEMAR SOFA 转换版 `mit_kemar_normal_pinna.sofa`
+  （2020-03-24 版本，1,171,764 字节）。转换版随原始数据一并按上述条款
+  分发；转换本身未附加额外限制。
+- 下载页：https://sofacoustics.org/data/database/mit/
+- HyperPlayer 引用履行位置：`THIRD_PARTY_NOTICES.md`「HRTF 数据资产」
+  章节、关于页与 `provenance/hrtf-mit-kemar/` provenance 记录。
+
+免责声明：数据按“原样”提供，不含任何明示或默示担保。原始页面
+未随附担保条款，Apache-2.0 项目分发流程按同等严格程度处理。
