@@ -76,7 +76,20 @@ const dspConfiguration: DspConfigurationDto = {
   flanger: { enabled: false, rateHz: 1, depthMs: 2, feedback: 0.2, mix: 0.2 },
   phaser: { enabled: true, rateHz: 1, depth: 0.5, feedback: 0.2, mix: 0.5, stages: 4 },
   tremolo: { enabled: false, rateHz: 4, depth: 0.5, mix: 0.5 },
+  reverb: { enabled: false, mode: "algorithmic", reverbType: "hall", roomSize: 0.5, damping: 0.5, wet: 0.3, dry: 0.7, preDelayMs: 0, width: 1, fdnLines: 8, mix: 0.3, partitionSize: 512, shortRegionMs: 100 },
   bassEnhancer: { enabled: false, cutoffHz: 120, q: 1, harmonicType: "soft", harmonicGain: 0.5, mix: 0.5, levelDb: 0, lowBoostDb: null },
+  loudnessComp: { enabled: false, mode: "auto", preset: "flat", volumePercent: 100, maxBoostDb: 12, smoothingSeconds: 0.2, bands: [] },
+  dynamicEq: { enabled: false, strength: 1, thresholdDb: -20, ratio: 2, kneeDb: 6, attackMs: 20, releaseMs: 200, blockSize: 128, bands: [
+    { enabled: true, frequency: 200, targetGainDb: 0 },
+    { enabled: true, frequency: 800, targetGainDb: 0 },
+    { enabled: true, frequency: 2500, targetGainDb: 0 },
+    { enabled: true, frequency: 8000, targetGainDb: 0 },
+    { enabled: true, frequency: 0, targetGainDb: 0 },
+  ] },
+  limiter: { enabled: false, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true },
+  ieq: { enabled: false, strength: 0.5, targetCurve: "flat", timeConstantSec: 3 },
+  modulation: { enabled: false, lfoShape: "sine", lfoRateHz: 1, lfoDepth: 0.5, envelopeAttackMs: 10, envelopeReleaseMs: 200, envelopeAmount: 0.5, routes: [] },
+  lufsMetering: { mode: "hseV151" },
 };
 
 function button(container: HTMLElement, label: string): HTMLButtonElement {
@@ -421,7 +434,7 @@ describe("CurrentView 页面能力边界", () => {
     await act(async () => root.render(<CurrentView />));
     expect(container.textContent).toContain("音效工作台");
     expect(container.textContent).toContain("Rust 配置编译中");
-    expect(container.textContent).toContain("14 个处理器");
+    expect(container.textContent).toContain("21 个处理器");
     expect(container.textContent).toContain("vendored HSE Rust");
     expect(container.textContent).toContain("BYPASS");
     expect(container.textContent).not.toContain("LIVE");
@@ -438,7 +451,7 @@ describe("CurrentView 页面能力边界", () => {
     await act(async () => root.render(<CurrentView />));
     await settle();
 
-    expect(container.textContent).toContain("LUFS tap 已接，当前 HPTM v2 未发布 LUFS");
+    expect(container.textContent).toContain("LUFS tap 已接；等待实时读数（需播放中）。");
     expect(container.querySelector('[aria-label="实时 RMS 和峰值遥测"]')).not.toBeNull();
     const direction = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("方向"))?.querySelector("select");
     expect([...direction?.options ?? []].map((option) => option.value)).toEqual(["-1", "1"]);
@@ -473,20 +486,22 @@ describe("CurrentView 页面能力边界", () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(bandCount, "3");
       bandCount?.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(container.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(3);
-    expect([...container.querySelectorAll<HTMLInputElement>(".dsp-eq-bands fieldset input")].every((input) => Number.isFinite(Number(input.value)))).toBe(true);
+    const preEqModule = [...container.querySelectorAll(".dsp-module")].find((module) => module.textContent?.includes("参数均衡"));
+    if (!preEqModule) throw new Error("找不到参数均衡模块");
+    expect(preEqModule.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(3);
+    expect([...preEqModule.querySelectorAll<HTMLInputElement>(".dsp-eq-bands fieldset input")].every((input) => Number.isFinite(Number(input.value)))).toBe(true);
 
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(bandCount, "1");
       bandCount?.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(container.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(1);
+    expect(preEqModule.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(1);
 
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(bandCount, "25");
       bandCount?.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(container.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(20);
+    expect(preEqModule.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(20);
   });
 
   it("blocks invalid DSP drafts and exposes accessible validation errors", async () => {

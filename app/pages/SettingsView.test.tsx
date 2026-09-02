@@ -44,6 +44,11 @@ const settings: AppSettingsDto = {
   restoreQueue: true,
   autoPlayOnLaunch: false,
   neteaseEnabled: true,
+  cacheCapacityBytes: 10 * 1024 * 1024 * 1024,
+  cacheTrimPercent: 90,
+  cacheRecentTrackLimit: 100,
+  albumFillEnabled: true,
+  albumFillQuality: "standard",
 };
 
 function button(container: HTMLElement, label: string): HTMLButtonElement {
@@ -131,13 +136,27 @@ describe("SettingsView 更新器与不可用状态", () => {
     expect(container.textContent).not.toContain("可用更新");
   });
 
+  it("renders cache capacity and album-fill controls from settings", async () => {
+    await act(async () => root.render(<SettingsView />));
+    await settle();
+
+    await act(async () => button(container, "缓存").click());
+    expect(container.textContent).toContain("缓存容量上限");
+    expect(container.textContent).toContain("10 GiB");
+    expect(container.textContent).toContain("最近曲目保护");
+    expect(container.textContent).toContain("100 首");
+    expect(container.textContent).toContain("专辑背景补齐");
+    expect(container.querySelector("[aria-label='补齐音质']")).toBeTruthy();
+    expect(button(container, "清理缓存")).toBeTruthy();
+  });
+
   it("states unavailable and read-only settings explicitly", async () => {
     await act(async () => root.render(<SettingsView />));
     await settle();
 
     await act(async () => button(container, "音频与 DSP").click());
     expect(container.textContent).toContain("Rust DSP 核心已接通");
-    expect(container.textContent).toContain("14 个处理器");
+    expect(container.textContent).toContain("21 个处理器");
     expect(container.textContent).toContain("参数配置、预设与 HSE2 分享码通过 DspPort 生效");
     expect(container.textContent).toContain("DspPort");
     expect(container.textContent).toContain("HSE2");

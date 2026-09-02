@@ -1,5 +1,33 @@
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_CACHE_CAPACITY_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+pub const DEFAULT_CACHE_TRIM_PERCENT: u8 = 90;
+pub const DEFAULT_CACHE_RECENT_TRACK_LIMIT: usize = 100;
+pub const DEFAULT_ALBUM_FILL_ENABLED: bool = true;
+pub const DEFAULT_ALBUM_FILL_QUALITY: &str = "standard";
+
+// Cache policy defaults mirror `hyperplayer_engine::cache_policy::CachePolicy::default()`
+// so an older settings.json missing these fields falls back to the engine defaults.
+const fn default_cache_capacity_bytes() -> u64 {
+    DEFAULT_CACHE_CAPACITY_BYTES
+}
+
+const fn default_cache_trim_percent() -> u8 {
+    DEFAULT_CACHE_TRIM_PERCENT
+}
+
+const fn default_cache_recent_track_limit() -> usize {
+    DEFAULT_CACHE_RECENT_TRACK_LIMIT
+}
+
+const fn default_album_fill_enabled() -> bool {
+    DEFAULT_ALBUM_FILL_ENABLED
+}
+
+fn default_album_fill_quality() -> String {
+    String::from(DEFAULT_ALBUM_FILL_QUALITY)
+}
+
 pub(crate) mod u64_decimal_string {
     use serde::{de::Error, Deserialize, Deserializer, Serializer};
 
@@ -463,7 +491,7 @@ pub enum CloseBehaviorDto {
     Exit,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDto {
     pub theme: ThemeDto,
@@ -474,6 +502,47 @@ pub struct SettingsDto {
     pub autoplay_on_start: bool,
     pub close_behavior: CloseBehaviorDto,
     pub netease_enabled: bool,
+    #[serde(default = "default_cache_capacity_bytes")]
+    pub cache_capacity_bytes: u64,
+    #[serde(default = "default_cache_trim_percent")]
+    pub cache_trim_percent: u8,
+    #[serde(default = "default_cache_recent_track_limit")]
+    pub cache_recent_track_limit: usize,
+    #[serde(default = "default_album_fill_enabled")]
+    pub album_fill_enabled: bool,
+    #[serde(default = "default_album_fill_quality")]
+    pub album_fill_quality: String,
+    /// 版本化 DSP 配置持久化。缺失（旧 settings.json）或版本未知一律回落默认；
+    /// `revision` 为跨进程递增基准（见 `DspConfigurationState`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsp: Option<PersistedDspConfig>,
+}
+
+/// 持久化的 DSP 配置（version + revision + 配置 DTO）。
+///
+/// 迁移纪律（Stage 09）：
+/// - `version` 缺失或非当前版本 → 回落默认（fail-close），不尝试跨版本映射；
+/// - `revision` 缺失 → 回落 1（与 `DspConfigurationState::new()` 的 pending 基准一致）；
+/// - 写时总是携带当前 `DSP_CONFIG_VERSION`。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedDspConfig {
+    #[serde(default = "default_dsp_config_version")]
+    pub version: u32,
+    #[serde(with = "u64_decimal_string", default = "default_dsp_revision")]
+    pub revision: u64,
+    pub configuration: crate::commands::dsp::DspConfigurationDto,
+}
+
+/// 当前持久化 DSP 配置 schema 版本（版本化迁移的单一权威）。
+pub const DSP_CONFIG_VERSION: u32 = 1;
+
+const fn default_dsp_config_version() -> u32 {
+    DSP_CONFIG_VERSION
+}
+
+const fn default_dsp_revision() -> u64 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -487,6 +556,11 @@ pub struct UpdateSettingsRequestDto {
     pub autoplay_on_start: Option<bool>,
     pub close_behavior: Option<CloseBehaviorDto>,
     pub netease_enabled: Option<bool>,
+    pub cache_capacity_bytes: Option<u64>,
+    pub cache_trim_percent: Option<u8>,
+    pub cache_recent_track_limit: Option<usize>,
+    pub album_fill_enabled: Option<bool>,
+    pub album_fill_quality: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

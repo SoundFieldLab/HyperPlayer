@@ -15,7 +15,7 @@ HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播�
 - MP3/FLAC 增量解码、真实 codec trim、设备切换、独占模式和完整 Windows 集成未完成；
 - 网易云仍有较多路由、UI 工作流和受控账号外部验收缺口；
 - vGPU/WebGPU 尚未真正接入；
-- DSP 配置当前为进程内权威，尚未持久化；标准 BS.1770 模式和完整 Stage 19 LUFS/true-peak/limiter/FFT telemetry 未实现；
+- DSP 配置已版本化持久化（`settings.json` 内 `dsp` 段，version=1 + revision + DTO），重启恢复 revision 与配置；标准 BS.1770-5 模式以独立 `MeterMode` 存在但尚未过向量认证（默认保持 HSE v1.5.1 兼容）；Stage 19 LUFS/true-peak/limiter/FFT telemetry 已固化到 HPTM v4；
 - 本轮实现、测试、UI 修复和文档更新仍在工作树，尚未提交。
 
 功能完成必须满足完整证据链：
@@ -257,8 +257,8 @@ TypeScript：
 
 仍缺：
 
-- DSP 配置跨进程持久化；当前重启恢复默认 revision 1。
-- 完整 22-stage DTO/工作台和 Stage 19 LUFS/true-peak/limiter/FFT 动态数据。
+- DSP 配置已版本化持久化；重启经 `settings.json` 的 `dsp` 段恢复 revision 与配置（未知版本/损坏回落默认并诊断）。
+- Stage 19 LUFS/true-peak/limiter 动态数据已固化到 HPTM v4 telemetry 与工作台展示；标准 BS.1770-5 模式为独立 `MeterMode`（默认 HSE v1.5.1 兼容，标准模式待向量认证）。
 
 ### 5.8 LUFS 兼容性说明
 
@@ -582,9 +582,9 @@ Build / UI：
 
 ### P2 / 已知但非阻塞
 
-5. 默认并行前端测试历史上出现过 timeout/act 污染，本轮 189 项未复现。
-6. DSP 配置尚未持久化，重启回到 revision 1 default。
-7. HPTM v2 未分配 LUFS/true-peak/limiter/FFT 动态字段；Stage 19 工作台明确显示只读 unavailable。
+5. 默认并行前端测试历史上出现过 timeout/act 污染，本轮 222 项未复现。
+6. DSP 配置已版本化持久化（`settings.json` `dsp` 段，version=1/revision/DTO），重启恢复 revision；未知版本/损坏回落默认并诊断。
+7. HPTM 已升级到 v4（856B），Stage 19 LUFS/true-peak/limiter 动态字段已分配给工作台展示；标准 BS.1770-5 为独立模式待认证。
 8. 已上线 14 processor 的 direct façade、参数钳位、tail 派生与 Tremolo clone checkpoint 已完成去重；后续 adapter 工作只针对新增 stage。
 
 ---
@@ -595,10 +595,11 @@ Build / UI：
 
 - Stage 13、15–18、20–22 生产融合。
 - 已上线 14 processor 的 direct façade、参数钳位、tail 派生与 Tremolo clone checkpoint 已完成去重；后续 adapter 工作只针对新增 stage。
-- 标准 BS.1770 模式。
-- 完整 Stage 19 telemetry schema：LUFS/true peak/limiter reduction/FFT。
+- 标准 BS.1770-5 模式（`MeterMode::ItuBs1770_5` 已实现并以独立模式存在；标准模式待向量认证）。
+- 完整 Stage 19 telemetry schema：LUFS（integrated/momentary/short-term）与 true peak/limiter reduction 已固化到 HPTM v4 并接入工作台；FFT 复用既有 spectrum。
+- 22-stage 逐场景（scenes.rs 逐 stage）参数定制尚未逐场景覆盖（保留 default 骨架）。
 - Stage 22 HRTF 数据来源与许可证。
-- DSP 配置持久化和完整 22-stage 工作台。
+- DSP 配置持久化已完成；完整 22-stage 工作台。
 
 ### D30
 
@@ -639,7 +640,7 @@ Build / UI：
 
 1. 先复审并提交当前工作树；按 parity/provenance、HSE core migration、DspPort、UI、telemetry golden、docs 拆分审查提交，避免继续扩大未提交面。
 2. 按 `13 → 15 → 18 → 21 → 20 → 16+17 → 22` 接入缺失阶段；每阶段先补 vendored typed state/checkpoint/tail API，再接 HyperPlayer adapter。
-3. 增加 DSP 配置持久化和标准 BS.1770 模式；HSE v1.5.1 compatibility 路径保持不变。
+3. DSP 配置持久化（Stage 09，已完成：`settings.json` `dsp` 版本化段 + 启动恢复 + 迁移 fail-close）与标准 BS.1770-5 模式（`MeterMode` 独立模式，标准模式待向量认证）；HSE v1.5.1 compatibility 路径保持不变。
 4. 接入 D30 Tauri runtime supervisor、实际 reconciliation/quota IO、Windows 资源 probes、album-fill 下载调度和 Settings UI。
 5. 再推进 decoder preparation/incremental codec/device、网易云剩余能力、vGPU 和 Windows 发布能力。
 

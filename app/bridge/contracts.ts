@@ -72,6 +72,11 @@ export interface AppSettingsDto {
   restoreQueue: boolean;
   autoPlayOnLaunch: boolean;
   neteaseEnabled: boolean;
+  cacheCapacityBytes: number;
+  cacheTrimPercent: number;
+  cacheRecentTrackLimit: number;
+  albumFillEnabled: boolean;
+  albumFillQuality: string;
 }
 
 export type BackendPlaybackStatus = "stopped" | "paused" | "playing" | "buffering" | "error";
@@ -126,6 +131,11 @@ export interface BackendSettingsDto {
   autoplayOnStart: boolean;
   closeBehavior: "ask" | "minimizeToTray" | "exit";
   neteaseEnabled: boolean;
+  cacheCapacityBytes: number;
+  cacheTrimPercent: number;
+  cacheRecentTrackLimit: number;
+  albumFillEnabled: boolean;
+  albumFillQuality: string;
 }
 
 export interface BackendNeteaseStatusDto {
@@ -489,6 +499,8 @@ export interface BridgeEventHandlers {
 export type Unlisten = () => void;
 
 export interface DspEqBandDto { frequency: number; gain: number; q: number; }
+export interface DspReverbBandDto { frequency: number; gain: number; }
+export interface DspDynamicEqBandDto { enabled: boolean; frequency: number; targetGainDb: number; }
 export interface DspConfigurationDto {
   revision: string;
   loudnessNormalization: { enabled: boolean; targetLufs: number; maxGainDb: number; minGainDb: number; useRealtimeMeter: boolean; externalGainDb: number };
@@ -503,11 +515,18 @@ export interface DspConfigurationDto {
   flanger: { enabled: boolean; rateHz: number; depthMs: number; feedback: number; mix: number };
   phaser: { enabled: boolean; rateHz: number; depth: number; feedback: number; mix: number; stages: number };
   tremolo: { enabled: boolean; rateHz: number; depth: number; mix: number };
+  reverb: { enabled: boolean; mode: "algorithmic" | "fdn" | "convolution"; reverbType: "hall" | "room" | "plate" | "spring" | "stage"; roomSize: number; damping: number; wet: number; dry: number; preDelayMs: number; width: number; fdnLines: number; mix: number; partitionSize: number; shortRegionMs: number };
   bassEnhancer: { enabled: boolean; cutoffHz: number; q: number; harmonicType: "odd" | "even" | "atan" | "soft"; harmonicGain: number; mix: number; levelDb: number; lowBoostDb: number | null };
+  loudnessComp: { enabled: boolean; mode: "auto" | "preset" | "custom"; preset: "flat" | "bass" | "vocal" | "warm" | "bright" | "night"; volumePercent: number; maxBoostDb: number; smoothingSeconds: number; bands: DspReverbBandDto[] };
+  ieq: { enabled: boolean; strength: number; targetCurve: "flat" | "warm" | "bright" | "vocal"; timeConstantSec: number };
+  dynamicEq: { enabled: boolean; strength: number; thresholdDb: number; ratio: number; kneeDb: number; attackMs: number; releaseMs: number; blockSize: number; bands: DspDynamicEqBandDto[] };
+  modulation: { enabled: boolean; lfoShape: "sine" | "triangle" | "square" | "saw"; lfoRateHz: number; lfoDepth: number; envelopeAttackMs: number; envelopeReleaseMs: number; envelopeAmount: number; routes: { source: "lfo" | "envelope"; target: "masterGain" | "stereoWidth"; depth: number; polarity: number; smoothingMs: number }[] };
+  limiter: { enabled: boolean; thresholdDb: number; lookaheadMs: number; attackMs: number; releaseMs: number; truePeak: boolean };
+  lufsMetering: { mode: "hseV151" | "ituBs17705" };
 }
 export interface DspPresetDto { id: string; name: string; description: string; partial: boolean; unsupportedStages: string[]; }
 export interface DspApplyResultDto { revision: string; status: "applied" | "pending"; partial: boolean; unsupportedStages: string[]; engine: BackendEngineSnapshotDto; configuration: DspConfigurationDto; }
-export interface DspHse2ExportDto { code: string; scope: "current14StageProjection"; unsupportedStages: string[]; }
+export interface DspHse2ExportDto { code: string; scope: "current21StageProjection"; unsupportedStages: string[]; }
 
 export interface BridgeContract {
   bootstrap(): Promise<BridgeBootstrap>;

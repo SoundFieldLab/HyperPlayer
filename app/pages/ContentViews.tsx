@@ -14,7 +14,7 @@ import { useAppStore } from "../store";
 import { SettingsView } from "./SettingsView";
 import { DiscoverView } from "./DiscoverView";
 import { MeterStrip, ResponseCurveSvg, SpectrumCanvas2D } from "../visualization/renderers";
-import { useMainWindowTelemetry } from "../visualization/telemetry";
+import { useMainWindowTelemetry, type TelemetryFrame } from "../visualization/telemetry";
 
 type GridItem = { id: string | number; title: string; sub: string; cover: string };
 
@@ -360,9 +360,12 @@ const DSP_MODULES: Array<[string, string, DspSectionKey | "midSide" | "lufsTap"]
   ["05", "齿音控制", "deesser"], ["06", "动态压缩", "compressor"],
   ["07", "夜间模式", "nightMode"], ["08", "延迟", "delay"], ["09", "合唱", "chorus"],
   ["10", "镶边", "flanger"], ["11", "移相", "phaser"], ["12", "颤音", "tremolo"],
-  ["14", "低频增强", "bassEnhancer"], ["19", "LUFS 测量", "lufsTap"],
+  ["13", "混响", "reverb"], ["14", "低频增强", "bassEnhancer"],
+  ["15", "等响度补偿", "loudnessComp"], ["16/17", "智能均衡 + 频谱分析", "ieq"],
+  ["18", "动态均衡", "dynamicEq"], ["19", "LUFS 测量", "lufsTap"],
+  ["20", "参数调制", "modulation"], ["21", "限制器", "limiter"],
 ];
-const LABELS: Record<string, string> = { targetLufs: "目标 LUFS", maxGainDb: "最大增益 dB", minGainDb: "最小增益 dB", useRealtimeMeter: "实时测量", externalGainDb: "外部增益 dB", distance: "距离", speed: "速度", angle: "角度", direction: "方向", stereoWidth: "宽度", voiceBalance: "人声平衡", bandCount: "频段数", qCompensation: "Q 补偿", stereoMode: "立体声模式", centerHz: "中心频率 Hz", q: "Q", thresholdDb: "阈值 dB", ratio: "压缩比", attackMs: "启动 ms", releaseMs: "释放 ms", splitBand: "分频处理", mix: "混合", kneeDb: "拐点 dB", makeupDb: "补偿 dB", outputGain: "输出增益", amount: "强度", delayMs: "延迟 ms", feedback: "反馈", rateHz: "速率 Hz", depthMs: "深度 ms", depth: "深度", stages: "级数", cutoffHz: "截止频率 Hz", harmonicType: "谐波类型", harmonicGain: "谐波增益", levelDb: "电平 dB", lowBoostDb: "低频提升 dB" };
+const LABELS: Record<string, string> = { targetLufs: "目标 LUFS", maxGainDb: "最大增益 dB", minGainDb: "最小增益 dB", useRealtimeMeter: "实时测量", externalGainDb: "外部增益 dB", distance: "距离", speed: "速度", angle: "角度", direction: "方向", stereoWidth: "宽度", voiceBalance: "人声平衡", bandCount: "频段数", qCompensation: "Q 补偿", stereoMode: "立体声模式", centerHz: "中心频率 Hz", q: "Q", thresholdDb: "阈值 dB", ratio: "压缩比", attackMs: "启动 ms", releaseMs: "释放 ms", splitBand: "分频处理", mix: "混合", kneeDb: "拐点 dB", makeupDb: "补偿 dB", outputGain: "输出增益", amount: "强度", delayMs: "延迟 ms", feedback: "反馈", rateHz: "速率 Hz", depthMs: "深度 ms", depth: "深度", stages: "级数", cutoffHz: "截止频率 Hz", harmonicType: "谐波类型", harmonicGain: "谐波增益", levelDb: "电平 dB", lowBoostDb: "低频提升 dB", mode: "模式", reverbType: "混响类型", roomSize: "房间大小", damping: "阻尼", wet: "湿声增益", dry: "干声增益", preDelayMs: "预延迟 ms", width: "声场宽度", fdnLines: "FDN 线数", partitionSize: "最短分区（样本）", shortRegionMs: "短区段时长 ms", preset: "场景预设", volumePercent: "音量百分比", smoothingSeconds: "平滑时间 s", blockSize: "分析块长（样本）", strength: "处理强度", truePeak: "真峰值检测", targetGainDb: "目标增益 dB", frequency: "频率 Hz", gain: "增益 dB", targetCurve: "目标曲线", timeConstantSec: "平滑时间 s", lfoShape: "LFO 波形", lfoRateHz: "LFO 速率 Hz", lfoDepth: "LFO 深度", envelopeAttackMs: "包络启动 ms", envelopeReleaseMs: "包络释放 ms", envelopeAmount: "包络输出量", polarity: "极性", smoothingMs: "路由平滑 ms" };
 type DspNumberConstraint = { min: number; max: number; step: number; integer?: boolean };
 const DSP_CONSTRAINTS: Record<string, Record<string, DspNumberConstraint>> = {
   loudnessNormalization: {
@@ -379,7 +382,13 @@ const DSP_CONSTRAINTS: Record<string, Record<string, DspNumberConstraint>> = {
   flanger: { rateHz: { min: 0.01, max: 20, step: 0.01 }, depthMs: { min: 0, max: 50, step: 0.1 }, feedback: { min: 0, max: 0.98, step: 0.01 }, mix: { min: 0, max: 1, step: 0.01 } },
   phaser: { rateHz: { min: 0.01, max: 20, step: 0.01 }, depth: { min: 0, max: 1, step: 0.01 }, feedback: { min: 0, max: 0.98, step: 0.01 }, mix: { min: 0, max: 1, step: 0.01 }, stages: { min: 2, max: 8, step: 1, integer: true } },
   tremolo: { rateHz: { min: 0.01, max: 30, step: 0.01 }, depth: { min: 0, max: 1, step: 0.01 }, mix: { min: 0, max: 1, step: 0.01 } },
+  reverb: { roomSize: { min: 0, max: 1, step: 0.01 }, damping: { min: 0, max: 1, step: 0.01 }, wet: { min: 0, max: 4, step: 0.01 }, dry: { min: 0, max: 4, step: 0.01 }, preDelayMs: { min: 0, max: 1000, step: 1 }, width: { min: 0, max: 2, step: 0.01 }, fdnLines: { min: 2, max: 16, step: 1, integer: true }, mix: { min: 0, max: 1, step: 0.01 }, partitionSize: { min: 32, max: 8192, step: 1, integer: true }, shortRegionMs: { min: 0, max: 5000, step: 10 } },
   bassEnhancer: { cutoffHz: { min: 20, max: 500, step: 1 }, q: { min: 0.1, max: 10, step: 0.1 }, harmonicGain: { min: 0, max: 1, step: 0.01 }, mix: { min: 0, max: 1, step: 0.01 }, levelDb: { min: -6, max: 6, step: 0.1 }, lowBoostDb: { min: -6, max: 12, step: 0.1 } },
+  loudnessComp: { volumePercent: { min: 0, max: 100, step: 1 }, maxBoostDb: { min: 0, max: 24, step: 0.1 }, smoothingSeconds: { min: 0.01, max: 10, step: 0.01 }, frequency: { min: 20, max: 20_000, step: 1 }, gain: { min: -24, max: 24, step: 0.1 } },
+  ieq: { strength: { min: 0, max: 1, step: 0.01 }, timeConstantSec: { min: 0.1, max: 10, step: 0.01 } },
+  dynamicEq: { strength: { min: 0, max: 1, step: 0.01 }, thresholdDb: { min: -80, max: 0, step: 0.1 }, ratio: { min: 1, max: 100, step: 0.1 }, kneeDb: { min: 0, max: 40, step: 0.1 }, attackMs: { min: 0, max: 1000, step: 0.1 }, releaseMs: { min: 0, max: 5000, step: 1 }, blockSize: { min: 16, max: 2048, step: 1, integer: true }, frequency: { min: 30, max: 20_000, step: 1 }, targetGainDb: { min: -12, max: 12, step: 0.1 } },
+  modulation: { lfoRateHz: { min: 0, max: 1000, step: 0.1 }, lfoDepth: { min: 0, max: 1, step: 0.01 }, envelopeAttackMs: { min: 0.05, max: 5000, step: 0.1 }, envelopeReleaseMs: { min: 0.05, max: 5000, step: 1 }, envelopeAmount: { min: 0, max: 1, step: 0.01 } },
+  limiter: { thresholdDb: { min: -60, max: 0, step: 0.1 }, lookaheadMs: { min: 0, max: 20, step: 0.1 }, attackMs: { min: 0, max: 100, step: 0.1 }, releaseMs: { min: 0, max: 1000, step: 1 } },
 };
 
 function validateNumber(value: unknown, constraint: DspNumberConstraint, label: string): string | null {
@@ -393,10 +402,13 @@ function validateDspDraft(draft: DspConfigurationDto | null): string[] {
   if (!draft) return ["DSP 配置尚未加载"];
   const errors: string[] = [];
   if (!Number.isSafeInteger(Number(draft.revision)) || Number(draft.revision) <= 0) errors.push("配置 revision 必须是正整数");
+  // bands 专属约束键不作为标量校验（与 preEq 同理，另行逐带校验）。
+  const bandOnlyFields = new Set(["frequency", "gain", "targetGainDb"]);
   for (const [sectionKey, constraints] of Object.entries(DSP_CONSTRAINTS)) {
     if (sectionKey === "preEq") continue;
     const section = draft[sectionKey as keyof DspConfigurationDto] as unknown as Record<string, unknown>;
     for (const [field, constraint] of Object.entries(constraints)) {
+      if (bandOnlyFields.has(field) && "bands" in section) continue;
       if (sectionKey === "bassEnhancer" && field === "lowBoostDb" && section[field] === null) continue;
       const error = validateNumber(section[field], constraint, `${LABELS[field] ?? field}`);
       if (error) errors.push(error);
@@ -414,6 +426,37 @@ function validateDspDraft(draft: DspConfigurationDto | null): string[] {
   if (![-1, 1].includes(draft.surround3d.direction)) errors.push("方向必须为逆向或正向");
   if (!["independent", "hseShared"].includes(draft.preEq.stereoMode)) errors.push("立体声模式无效");
   if (!["odd", "even", "atan", "soft"].includes(draft.bassEnhancer.harmonicType)) errors.push("谐波类型无效");
+  if (!["algorithmic", "fdn", "convolution"].includes(draft.reverb.mode)) errors.push("混响模式无效");
+  if (!["hall", "room", "plate", "spring", "stage"].includes(draft.reverb.reverbType)) errors.push("混响类型无效");
+  if (![2, 4, 8, 16].includes(draft.reverb.fdnLines)) errors.push("FDN 线数必须为 2、4、8 或 16");
+  if (!["auto", "preset", "custom"].includes(draft.loudnessComp.mode)) errors.push("等响度模式无效");
+  if (!["flat", "bass", "vocal", "warm", "bright", "night"].includes(draft.loudnessComp.preset)) errors.push("等响度场景预设无效");
+  draft.loudnessComp.bands.forEach((band, index) => {
+    const frequencyError = validateNumber(band.frequency, DSP_CONSTRAINTS.loudnessComp.frequency, `等响度频点 ${index + 1} 频率`);
+    if (frequencyError) errors.push(frequencyError);
+    const gainError = validateNumber(band.gain, DSP_CONSTRAINTS.loudnessComp.gain, `等响度频点 ${index + 1} 增益`);
+    if (gainError) errors.push(gainError);
+  });
+  if (draft.dynamicEq.bands.length !== 5) errors.push("动态均衡必须固定 5 个频段");
+  draft.dynamicEq.bands.forEach((band, index) => {
+    // 末带（第 5 带）交叉频率被引擎忽略，仅要求有限值。
+    if (index < 4) {
+      const frequencyError = validateNumber(band.frequency, DSP_CONSTRAINTS.dynamicEq.frequency, `动态均衡频段 ${index + 1} 频率`);
+      if (frequencyError) errors.push(frequencyError);
+    } else if (!Number.isFinite(band.frequency)) {
+      errors.push(`动态均衡频段 5 频率不能为空且必须是有限数值`);
+    }
+    const gainError = validateNumber(band.targetGainDb, DSP_CONSTRAINTS.dynamicEq.targetGainDb, `动态均衡频段 ${index + 1} 目标增益`);
+    if (gainError) errors.push(gainError);
+  });
+  if (!["flat", "warm", "bright", "vocal"].includes(draft.ieq.targetCurve)) errors.push("智能均衡目标曲线无效");
+  if (!["sine", "triangle", "square", "saw"].includes(draft.modulation.lfoShape)) errors.push("LFO 波形无效");
+  if (draft.modulation.routes.length > 8) errors.push("调制路由最多 8 条");
+  draft.modulation.routes.forEach((route, index) => {
+    if (!["lfo", "envelope"].includes(route.source)) errors.push(`路由 ${index + 1} 源无效`);
+    if (!["masterGain", "stereoWidth"].includes(route.target)) errors.push(`路由 ${index + 1} 目标无效`);
+    if (route.polarity !== 1 && route.polarity !== -1) errors.push(`路由 ${index + 1} 极性必须为 +1 或 -1`);
+  });
   return errors;
 }
 
@@ -436,15 +479,47 @@ function resizeEqBands(draft: DspConfigurationDto, requestedCount: number): DspC
   return { ...draft, preEq: { ...draft.preEq, bandCount, bands } };
 }
 
-function DspModule({ index, title, sectionKey, draft, setDraft }: { index: string; title: string; sectionKey: DspSectionKey | "midSide" | "lufsTap"; draft: DspConfigurationDto; setDraft(next: DspConfigurationDto): void }): React.JSX.Element {
-  if (sectionKey === "lufsTap") return <article className="dsp-module dsp-readonly"><span>{index}</span><div className="dsp-module-body"><b>{title}</b><small>LUFS tap 已接，当前 HPTM v2 未发布 LUFS</small></div><em>READ ONLY</em></article>;
+// 枚举型字段（mode/reverbType/preset/fdnLines）以下拉选择渲染，不进入数字输入。
+const DSP_ENUM_FIELDS: Record<string, Record<string, Array<[string, string]>>> = {
+  reverb: {
+    mode: [["algorithmic", "算法混响"], ["fdn", "FDN 混响"], ["convolution", "卷积混响"]],
+    reverbType: [["hall", "音乐厅"], ["room", "房间"], ["plate", "金属板"], ["spring", "弹簧"], ["stage", "舞台"]],
+    fdnLines: [["2", "2 线"], ["4", "4 线"], ["8", "8 线"], ["16", "16 线"]],
+  },
+  loudnessComp: {
+    mode: [["auto", "自动"], ["preset", "预设"], ["custom", "自定义"]],
+    preset: [["flat", "平直"], ["bass", "低频"], ["vocal", "人声"], ["warm", "温暖"], ["bright", "明亮"], ["night", "夜间"]],
+  },
+};
+
+function formatLufs(value: number): string {
+  return Number.isFinite(value) ? `${value.toFixed(2)} LUFS` : "—";
+}
+
+function formatPeak(left: number | null, right: number | null): string {
+  if (left === null || right === null) return "—";
+  return `${Math.max(left, right).toFixed(2)} dBFS`;
+}
+
+function DspModule({ index, title, sectionKey, draft, setDraft, frame }: { index: string; title: string; sectionKey: DspSectionKey | "midSide" | "lufsTap"; draft: DspConfigurationDto; setDraft(next: DspConfigurationDto): void; frame?: TelemetryFrame | null }): React.JSX.Element {
+  if (sectionKey === "lufsTap") {
+    if (!frame?.lufs) {
+      return <article className="dsp-module dsp-readonly"><span>{index}</span><div className="dsp-module-body"><b>{title}</b><small>LUFS tap 已接；等待实时读数（需播放中）。</small></div><em>READ ONLY</em></article>;
+    }
+    const { lufs, meters } = frame;
+    return <article className="dsp-module dsp-readonly"><span>{index}</span><div className="dsp-module-body"><b>{title}</b><div className="dsp-lufs"><dl><dt>Integrated LUFS</dt><dd>{formatLufs(lufs.integrated)}</dd><dt>Momentary LUFS</dt><dd>{formatLufs(lufs.momentary)}</dd><dt>Short-term LUFS</dt><dd>{formatLufs(lufs.shortTerm)}</dd><dt>True Peak dBFS</dt><dd>{formatPeak(meters.truePeakLeft, meters.truePeakRight)}</dd><dt>Limiter Reduction dB</dt><dd>{meters.limiterReduction !== null ? `${meters.limiterReduction.toFixed(2)}` : "—"}</dd></dl></div></div><em>LIVE</em></article>;
+  }
   if (sectionKey === "midSide") {
     return <article className="dsp-module"><span>{index}</span><div className="dsp-module-body"><b>{title}</b><div className="dsp-fields"><DspField label="stereoWidth" value={draft.midSide.stereoWidth} constraint={DSP_CONSTRAINTS.midSide.stereoWidth} onChange={(value) => setDraft({ ...draft, midSide: { ...draft.midSide, stereoWidth: value as number } })}/><DspField label="voiceBalance" value={draft.midSide.voiceBalance} constraint={DSP_CONSTRAINTS.midSide.voiceBalance} onChange={(value) => setDraft({ ...draft, midSide: { ...draft.midSide, voiceBalance: value as number } })}/></div></div><input aria-label={`${title}启用`} type="checkbox" checked={draft.midSide.enabled} onChange={(event) => setDraft({ ...draft, midSide: { ...draft.midSide, enabled: event.target.checked } })}/></article>;
   }
   const section = draft[sectionKey] as Record<string, unknown>;
   const update = (field: string, value: unknown) => setDraft({ ...draft, [sectionKey]: { ...section, [field]: value } } as DspConfigurationDto);
+  const enumFields = DSP_ENUM_FIELDS[sectionKey] ?? {};
   const fields = Object.entries(section).filter(([field]) => !["enabled", "bands", "bandCount"].includes(field));
-  return <article className="dsp-module"><span>{index}</span><div className="dsp-module-body"><b>{title}</b>{sectionKey === "preEq" && <div className="dsp-band-count"><DspField label="bandCount" value={draft.preEq.bandCount} constraint={DSP_CONSTRAINTS.preEq.bandCount} onChange={(value) => { if (typeof value === "number" && Number.isFinite(value)) setDraft(resizeEqBands(draft, value)); }}/></div>}<div className="dsp-fields">{fields.map(([field, value]) => <DspField key={field} label={field} value={value} constraint={DSP_CONSTRAINTS[sectionKey][field]} onChange={(next) => update(field, next)}/>)}</div>{sectionKey === "preEq" && <div className="dsp-eq-bands">{draft.preEq.bands.map((band, bandIndex) => <fieldset key={bandIndex}><legend>频段 {bandIndex + 1}</legend><DspField label="频率 Hz" value={band.frequency} constraint={DSP_CONSTRAINTS.preEq.frequency} onChange={(value) => { const bands = draft.preEq.bands.map((item, currentIndex) => currentIndex === bandIndex ? { ...item, frequency: value as number } : item); setDraft({ ...draft, preEq: { ...draft.preEq, bands } }); }}/><DspField label="增益 dB" value={band.gain} constraint={DSP_CONSTRAINTS.preEq.gain} onChange={(value) => { const bands = draft.preEq.bands.map((item, currentIndex) => currentIndex === bandIndex ? { ...item, gain: value as number } : item); setDraft({ ...draft, preEq: { ...draft.preEq, bands } }); }}/><DspField label="Q" value={band.q} constraint={DSP_CONSTRAINTS.preEq.q} onChange={(value) => { const bands = draft.preEq.bands.map((item, currentIndex) => currentIndex === bandIndex ? { ...item, q: value as number } : item); setDraft({ ...draft, preEq: { ...draft.preEq, bands } }); }}/></fieldset>)}</div>}</div><input aria-label={`${title}启用`} type="checkbox" checked={Boolean(section.enabled)} onChange={(event) => update("enabled", event.target.checked)}/></article>;
+  const updateBand = (bands: unknown[], bandIndex: number, patch: Record<string, unknown>) => setDraft({ ...draft, [sectionKey]: { ...section, bands: bands.map((band, current) => current === bandIndex ? { ...(band as Record<string, unknown>), ...patch } : band) } } as DspConfigurationDto);
+  return <article className="dsp-module"><span>{index}</span><div className="dsp-module-body"><b>{title}</b>{sectionKey === "preEq" && <div className="dsp-band-count"><DspField label="bandCount" value={draft.preEq.bandCount} constraint={DSP_CONSTRAINTS.preEq.bandCount} onChange={(value) => { if (typeof value === "number" && Number.isFinite(value)) setDraft(resizeEqBands(draft, value)); }}/></div>}<div className="dsp-fields">{fields.map(([field, value]) => field in enumFields
+    ? <label key={field}><span>{LABELS[field] ?? field}</span><select aria-label={LABELS[field] ?? field} value={String(value)} onChange={(event) => update(field, field === "fdnLines" ? Number(event.target.value) : event.target.value)}>{enumFields[field].map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}</select></label>
+    : <DspField key={field} label={field} value={value} constraint={DSP_CONSTRAINTS[sectionKey][field]} onChange={(next) => update(field, next)}/>)}</div>{sectionKey === "preEq" && <div className="dsp-eq-bands">{draft.preEq.bands.map((band, bandIndex) => <fieldset key={bandIndex}><legend>频段 {bandIndex + 1}</legend><DspField label="频率 Hz" value={band.frequency} constraint={DSP_CONSTRAINTS.preEq.frequency} onChange={(value) => { const bands = draft.preEq.bands.map((item, currentIndex) => currentIndex === bandIndex ? { ...item, frequency: value as number } : item); setDraft({ ...draft, preEq: { ...draft.preEq, bands } }); }}/><DspField label="增益 dB" value={band.gain} constraint={DSP_CONSTRAINTS.preEq.gain} onChange={(value) => { const bands = draft.preEq.bands.map((item, currentIndex) => currentIndex === bandIndex ? { ...item, gain: value as number } : item); setDraft({ ...draft, preEq: { ...draft.preEq, bands } }); }}/><DspField label="Q" value={band.q} constraint={DSP_CONSTRAINTS.preEq.q} onChange={(value) => { const bands = draft.preEq.bands.map((item, currentIndex) => currentIndex === bandIndex ? { ...item, q: value as number } : item); setDraft({ ...draft, preEq: { ...draft.preEq, bands } }); }}/></fieldset>)}</div>}{sectionKey === "loudnessComp" && <div className="dsp-eq-bands">{draft.loudnessComp.bands.map((band, bandIndex) => <fieldset key={bandIndex}><legend>频点 {bandIndex + 1}</legend><DspField label="frequency" value={band.frequency} constraint={DSP_CONSTRAINTS.loudnessComp.frequency} onChange={(value) => updateBand(draft.loudnessComp.bands, bandIndex, { frequency: value })}/><DspField label="gain" value={band.gain} constraint={DSP_CONSTRAINTS.loudnessComp.gain} onChange={(value) => updateBand(draft.loudnessComp.bands, bandIndex, { gain: value })}/><button type="button" onClick={() => update("bands", draft.loudnessComp.bands.filter((_, current) => current !== bandIndex))}>移除频点</button></fieldset>)}<button type="button" onClick={() => update("bands", [...draft.loudnessComp.bands, { frequency: 1_000, gain: 0 }])}>添加频点</button></div>}{sectionKey === "dynamicEq" && <div className="dsp-eq-bands">{draft.dynamicEq.bands.map((band, bandIndex) => <fieldset key={bandIndex}><legend>频段 {bandIndex + 1}</legend><label className="dsp-toggle-field"><input type="checkbox" checked={band.enabled} onChange={(event) => updateBand(draft.dynamicEq.bands, bandIndex, { enabled: event.target.checked })}/><span>启用</span></label><DspField label="frequency" value={band.frequency} constraint={DSP_CONSTRAINTS.dynamicEq.frequency} onChange={(value) => updateBand(draft.dynamicEq.bands, bandIndex, { frequency: value })}/><DspField label="targetGainDb" value={band.targetGainDb} constraint={DSP_CONSTRAINTS.dynamicEq.targetGainDb} onChange={(value) => updateBand(draft.dynamicEq.bands, bandIndex, { targetGainDb: value })}/></fieldset>)}</div>}</div><input aria-label={`${title}启用`} type="checkbox" checked={Boolean(section.enabled)} onChange={(event) => update("enabled", event.target.checked)}/></article>;
 }
 
 function DspWorkspaceView(): React.JSX.Element {
@@ -471,14 +546,14 @@ function DspWorkspaceView(): React.JSX.Element {
   const bypassed = playback?.dsp.bypassed ?? true;
   return <Page title="音效工作台" subtitle="Rust 音频引擎是实际播放权威">
     <section className="dsp-console">
-      <header><div><span className="eyebrow">ENGINE CHAIN</span><h2>{safeBypass ? "Rust 安全旁路" : bypassed ? "Rust 配置编译中" : "Rust 处理链在线"}</h2><p>Stage 1–12、14、19 共 14 个处理器由 vendored HSE Rust 实时执行；配置 revision {configuration?.revision ?? "-"}。</p></div><span className={`engine-indicator ${bypassed ? "" : "online"}`}><i/>{bypassed ? "BYPASS" : "LIVE"}</span></header>
+      <header><div><span className="eyebrow">ENGINE CHAIN</span><h2>{safeBypass ? "Rust 安全旁路" : bypassed ? "Rust 配置编译中" : "Rust 处理链在线"}</h2><p>Stage 1–15、16/17、18–21 共 21 个处理器由 vendored HSE Rust 实时执行；配置 revision {configuration?.revision ?? "-"}。</p></div><span className={`engine-indicator ${bypassed ? "" : "online"}`}><i/>{bypassed ? "BYPASS" : "LIVE"}</span></header>
       <div className="dsp-toolbar"><select aria-label="DSP 预设" defaultValue="" disabled={busy} onChange={(event) => { if (event.target.value) void applyPreset(event.target.value); }}><option value="">选择 HSE 场景</option>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select><button className="button primary" aria-describedby={draftErrors.length ? "dsp-validation-errors" : undefined} disabled={!draft || busy || draftErrors.length > 0} onClick={() => { if (draft && validateDspDraft(draft).length === 0) void configure(draft); }}>{busy ? "编译中" : "应用参数"}</button></div>
       {draft && draftErrors.length > 0 && <div id="dsp-validation-errors" className="notice dsp-validation-errors" role="alert"><Info/><span><b>参数尚未通过校验</b>{draftErrors.map((error) => <small key={error}>{error}</small>)}</span></div>}
-      {busy && <div className="notice"><Info/><span>配置已提交，正在等待 Rust 处理链应用。</span></div>}{partial && <div className="notice"><Info/><span>HSE2 导入遵循 HSE codec 清洗与缺省值还原；当前仅应用 14 阶段投影。未应用：{unsupported.join("、")}</span></div>}{rejection && <div className="notice"><Info/><span>{rejection}</span></div>}
-      {draft ? <div className="dsp-chain" aria-label="DSP 参数模块">{DSP_MODULES.map(([index, title, key]) => <DspModule key={key} index={index} title={title} sectionKey={key} draft={draft} setDraft={setDraft}/>)}</div> : <div className="remote-state empty"><span>{busy ? "正在读取 DSP 配置" : "DSP 配置不可用"}</span></div>}
+      {busy && <div className="notice"><Info/><span>配置已提交，正在等待 Rust 处理链应用。</span></div>}{partial && <div className="notice"><Info/><span>HSE2 导入遵循 HSE codec 清洗与缺省值还原；当前仅应用 21 阶段投影。未应用：{unsupported.join("、")}</span></div>}{rejection && <div className="notice"><Info/><span>{rejection}</span></div>}
+      {draft ? <div className="dsp-chain" aria-label="DSP 参数模块">{DSP_MODULES.map(([index, title, key]) => <DspModule key={key} index={index} title={title} sectionKey={key} draft={draft} setDraft={setDraft} frame={frame}/>)}</div> : <div className="remote-state empty"><span>{busy ? "正在读取 DSP 配置" : "DSP 配置不可用"}</span></div>}
       <div className="eq-preview" aria-label="参数均衡器只读预览"><div className="eq-axis"><span>+12</span><span>0 dB</span><span>-12</span></div><div className="eq-bands"><section className="eq-reference"><ResponseCurveSvg points={FLAT_DSP_RESPONSE} minGainDb={-12} maxGainDb={12} ariaLabel="固定 0 dB 参考响应"/><small>固定平直参考，不代表当前 DSP 配置</small></section></div></div>
       <section className="dsp-telemetry" aria-label="实时 RMS 和峰值遥测"><h3>RMS / Peak</h3>{frame?.spectrum ? <SpectrumCanvas2D bins={frame.spectrum} ariaLabel="实时音频频谱"/> : <div aria-label="频谱暂无数据"/>}<MeterStrip meters={frame?.meters ?? null}/></section>
-      <section className="dsp-share"><SectionTitle>HSE2 分享码</SectionTitle><textarea aria-label="HSE2 分享码" rows={4} value={shareCode} onChange={(event) => setShareCode(event.target.value)} placeholder="粘贴 HSE2 分享码"/><div className="dsp-share-actions"><button className="button secondary" disabled={!shareCode.trim() || busy} onClick={() => void importHse2(shareCode)}>导入 14 阶段投影</button><button className="button secondary" disabled={busy} onClick={() => void exportHse2().then(setShareCode)}>导出当前配置</button></div></section>
+      <section className="dsp-share"><SectionTitle>HSE2 分享码</SectionTitle><textarea aria-label="HSE2 分享码" rows={4} value={shareCode} onChange={(event) => setShareCode(event.target.value)} placeholder="粘贴 HSE2 分享码"/><div className="dsp-share-actions"><button className="button secondary" disabled={!shareCode.trim() || busy} onClick={() => void importHse2(shareCode)}>导入 21 阶段投影</button><button className="button secondary" disabled={busy} onClick={() => void exportHse2().then(setShareCode)}>导出当前配置</button></div></section>
       <footer><div><b>配置由 actor 后台编译</b><small>严格 revision · 故障自动旁路 · 进程内配置权威</small></div></footer>
     </section>
   </Page>;

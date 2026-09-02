@@ -8,13 +8,20 @@ import {
   Biquad,
   ChorusEffect,
   Compressor,
+  Convolver,
   Deesser,
   DelayEffect,
+  DynamicEq,
   EqChain,
   FlangerEffect,
+  FdnReverb,
   HyperSoundEngine,
+  Limiter,
+  LoudnessComp,
   MidSide,
+  ModulationMatrix,
   PhaserEffect,
+  ReverbSimple,
   TremoloEffect,
   createDefaultParams,
   type BassEnhancerSettings,
@@ -26,6 +33,7 @@ import {
   type EqBand,
   type FlangerSettings,
   type HyperSoundEngineParams,
+  type ModulationRoute,
   type PhaserSettings,
   type TremoloSettings,
 } from '@hyperplayer/hse-ts-core'
@@ -69,7 +77,7 @@ function discoverCases(): VectorCase[] {
 function validate(vector: VectorCase): void {
   const { meta, label, bytes } = vector
   if (meta.schemaVersion !== 1) throw new Error(`${label}: schemaVersion 必须为 1`)
-  if (!['biquad', 'mid-side', 'compressor', 'chorus', 'deesser', 'delay', 'flanger', 'phaser', 'bass-enhancer', 'eq-chain', 'loudness-normalization', 'night-mode', 'surround3d', 'tremolo'].includes(meta.module)) {
+  if (!['biquad', 'mid-side', 'compressor', 'chorus', 'deesser', 'delay', 'flanger', 'phaser', 'bass-enhancer', 'eq-chain', 'loudness-normalization', 'night-mode', 'surround3d', 'tremolo', 'reverb-simple', 'fdn-reverb', 'convolver', 'loudness-comp', 'dynamic-eq', 'limiter', 'modulation-matrix'].includes(meta.module)) {
     throw new Error(`${label}: 未知 DSP 模块 ${meta.module}`)
   }
   if (`${meta.module}.${meta.case}` !== label) throw new Error(`${label}: 文件名与元数据不一致`)
@@ -150,6 +158,34 @@ function inlineEngineProcessor(meta: VectorMeta): Process {
     left.set(outputLeft)
     right.set(outputRight)
   }
+}
+
+/// 确定性 IR 配方（逐字复刻 HSE v1.5.1 `buildIrRecipe`：f64 求值、存入 f32
+/// 一次量化；LCG 先推进再取值，结合序 `((u·2 − 1)·amp)·exp(−decay·i/(length−1))`）。
+function buildIrRecipe(ir: Record<string, unknown>): Float32Array {
+  const kind = ir.kind as string
+  if (kind === 'delta') {
+    const delay = Math.round(ir.delay as number)
+    if (!(delay >= 0)) throw new Error('delta IR 配方 delay 非法')
+    const irData = new Float32Array(delay + 1)
+    irData[delay] = 1
+    return irData
+  }
+  if (kind === 'expNoise') {
+    const length = Math.round(ir.length as number)
+    const decay = ir.decay as number
+    const amp = ir.amp as number
+    if (!(length >= 2) || !(decay > 0)) throw new Error('expNoise IR 配方 length/decay 非法')
+    let s = ir.seed as number
+    const irData = new Float32Array(length)
+    for (let index = 0; index < length; index++) {
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0
+      const u = s / 4294967296
+      irData[index] = ((u * 2 - 1) * amp) * Math.exp((-decay * index) / (length - 1))
+    }
+    return irData
+  }
+  throw new Error(`unsupported ir recipe kind ${kind}`)
 }
 
 function processor(meta: VectorMeta): Process {
@@ -245,6 +281,71 @@ function processor(meta: VectorMeta): Process {
       processor.setQCompensation(params.qCompensation)
       return (left, right) => processor.processStereo(left, right)
     }
+    case 'reverb-simple': {
+      const processor = new ReverbSimple(meta.sampleRate)
+      processor.setParams(meta.params as unknown as Parameters<ReverbSimple['setParams']>[0])
+      return (left, right) => processor.processStereo(left, right)
+    }
+    case 'fdn-reverb': {
+      const processor = new FdnReverb(meta.sampleRate)
+      processor.setParams(meta.params as unknown as Parameters<FdnReverb['setParams']>[0])
+      return (left, right) => processor.processStereo(left, right)
+    }
+    case 'convolver': {
+      const processor = new Convolver(meta.sampleRate, {
+        partitionSize: meta.params.partitionSize as number,
+        longPartitionSize: meta.params.longPartitionSize as number,
+        shortRegionMs: meta.params.shortRegionMs as number,
+        dePeriodize: meta.params.dePeriodize as boolean,
+      })
+      processor.loadIR(buildIrRecipe(meta.params.ir as Record<string, unknown>))
+      processor.setMix(meta.params.mix as number)
+      processor.setPreDelayMs(meta.params.preDelayMs as number)
+      return (left, right) => processor.processStereo(left, right)
+    }
+    case 'loudness-comp': {
+      const processor = new LoudnessComp(meta.sampleRate)
+      processor.setParams(meta.params as unknown as Parameters<LoudnessComp['setParams']>[0])
+      return (left, right) => processor.processStereo(left, right)
+    }
+    case 'dynamic-eq': {
+      const processor = new DynamicEq(meta.sampleRate)
+      processor.setParams(meta.params as unknown as Parameters<DynamicEq['setParams']>[0])
+      return (left, right) => processor.processStereo(left, right)
+    }
+    case 'limiter': {
+      const processor = new Limiter(meta.sampleRate)
+      processor.setParams(meta.params as unknown as Parameters<Limiter['setParams']>[0])
+      return (left, right) => processor.processStereo(left, right)
+    }
+    case 'modulation-matrix': {
+      // 复刻 Rust `dsp_parity_modulation.rs` 核心驱动器（specs/dsp/
+      // modulation-matrix.md §4.4）：推进矩阵 + masterGain 逐样本乘；
+      // stereoWidth 产物不入向量（应用路径由适配器单独覆盖）。
+      const params = meta.params as { routes?: ModulationRoute[]; lfo?: { shape: string; rateHz: number; depth: number }; envelope?: { attackMs: number; releaseMs: number; amount: number } }
+      const matrix = new ModulationMatrix(
+        meta.sampleRate,
+        (params.routes ?? []).map((route) => ({ source: route.source, target: route.target, amount: route.amount, offset: route.offset })),
+        {
+          shape: (params.lfo?.shape ?? 'sine') as 'sine' | 'triangle' | 'square' | 'saw',
+          rateHz: params.lfo?.rateHz ?? 1,
+          depth: params.lfo?.depth ?? 0.5,
+        },
+        {
+          attackMs: params.envelope?.attackMs ?? 10,
+          releaseMs: params.envelope?.releaseMs ?? 200,
+          amount: params.envelope?.amount ?? 0.5,
+        },
+      )
+      return (left, right) => {
+        const n = Math.min(left.length, right.length)
+        const targets = matrix.processBlock(left, right, n)
+        const g = targets.masterGain
+        if (g !== 1) {
+          for (let i = 0; i < n; i++) { left[i] = (left[i] * g); right[i] = (right[i] * g) }
+        }
+      }
+    }
     default:
       throw new Error(`未知 DSP 模块 ${meta.module}`)
   }
@@ -318,6 +419,10 @@ describe('HSE 已迁入算法共享冻结向量', () => {
       'compressor.case2',
       'compressor.case3',
       'compressor.case4',
+      'convolver.case1',
+      'convolver.case2',
+      'convolver.case3',
+      'convolver.case4',
       'deesser.case1',
       'deesser.case2',
       'deesser.case3',
@@ -326,19 +431,39 @@ describe('HSE 已迁入算法共享冻结向量', () => {
       'delay.case2',
       'delay.case3',
       'delay.case4',
+      'dynamic-eq.case1',
+      'dynamic-eq.case2',
+      'dynamic-eq.case3',
+      'dynamic-eq.case4',
       'eq-chain.case1',
       'eq-chain.case2',
       'eq-chain.case3',
       'eq-chain.case4',
+      'fdn-reverb.case1',
+      'fdn-reverb.case2',
+      'fdn-reverb.case3',
+      'fdn-reverb.case4',
       'flanger.case1',
       'flanger.case2',
       'flanger.case3',
       'flanger.case4',
+      'limiter.case1',
+      'limiter.case2',
+      'limiter.case3',
+      'limiter.case4',
+      'loudness-comp.case1',
+      'loudness-comp.case2',
+      'loudness-comp.case3',
+      'loudness-comp.case4',
       'loudness-normalization.realtime-400ms',
       'mid-side.case1',
       'mid-side.case2',
       'mid-side.case3',
       'mid-side.case4',
+      'modulation-matrix.case1',
+      'modulation-matrix.case2',
+      'modulation-matrix.case3',
+      'modulation-matrix.case4',
       'night-mode.case1',
       'night-mode.case2',
       'night-mode.case3',
@@ -347,6 +472,9 @@ describe('HSE 已迁入算法共享冻结向量', () => {
       'phaser.case2',
       'phaser.case3',
       'phaser.case4',
+      'reverb-simple.case1',
+      'reverb-simple.case2',
+      'reverb-simple.case3',
       'surround3d.case1',
       'surround3d.case2',
       'surround3d.case3',

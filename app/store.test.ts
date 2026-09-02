@@ -24,6 +24,11 @@ const settings: AppSettingsDto = {
   restoreQueue: true,
   autoPlayOnLaunch: false,
   neteaseEnabled: true,
+  cacheCapacityBytes: 10 * 1024 * 1024 * 1024,
+  cacheTrimPercent: 90,
+  cacheRecentTrackLimit: 100,
+  albumFillEnabled: true,
+  albumFillQuality: "standard",
 };
 
 const playback: PlaybackSnapshotDto = {
@@ -54,7 +59,20 @@ const dspConfiguration: DspConfigurationDto = {
   flanger: { enabled: false, rateHz: 0.5, depthMs: 2, feedback: 0.4, mix: 0.5 },
   phaser: { enabled: false, rateHz: 0.5, depth: 0.5, feedback: 0.4, mix: 0.5, stages: 4 },
   tremolo: { enabled: false, rateHz: 5, depth: 0.5, mix: 1 },
+  reverb: { enabled: false, mode: "algorithmic", reverbType: "hall", roomSize: 0.5, damping: 0.5, wet: 0.3, dry: 0.7, preDelayMs: 0, width: 1, fdnLines: 8, mix: 0.3, partitionSize: 512, shortRegionMs: 100 },
   bassEnhancer: { enabled: false, cutoffHz: 90, q: 0.7, harmonicType: "odd", harmonicGain: 0.6, mix: 0.5, levelDb: 0, lowBoostDb: 0 },
+  loudnessComp: { enabled: false, mode: "auto", preset: "flat", volumePercent: 100, maxBoostDb: 12, smoothingSeconds: 0.2, bands: [] },
+  dynamicEq: { enabled: false, strength: 1, thresholdDb: -20, ratio: 2, kneeDb: 6, attackMs: 20, releaseMs: 200, blockSize: 128, bands: [
+    { enabled: true, frequency: 200, targetGainDb: 0 },
+    { enabled: true, frequency: 800, targetGainDb: 0 },
+    { enabled: true, frequency: 2500, targetGainDb: 0 },
+    { enabled: true, frequency: 8000, targetGainDb: 0 },
+    { enabled: true, frequency: 0, targetGainDb: 0 },
+  ] },
+  limiter: { enabled: false, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true },
+  ieq: { enabled: false, strength: 0.5, targetCurve: "flat", timeConstantSec: 3 },
+  modulation: { enabled: false, lfoShape: "sine", lfoRateHz: 1, lfoDepth: 0.5, envelopeAttackMs: 10, envelopeReleaseMs: 200, envelopeAmount: 0.5, routes: [] },
+  lufsMetering: { mode: "hseV151" },
 };
 
 function deferred<T>() {
@@ -81,7 +99,7 @@ function mockBridge(overrides: Partial<BridgeContract> = {}): BridgeContract {
     dspListPresets: vi.fn(async () => []),
     dspApplyPreset: vi.fn(async () => { throw new Error("not configured"); }),
     dspImportHse2: vi.fn(async () => { throw new Error("not configured"); }),
-    dspExportHse2: vi.fn(async () => ({ code: "", scope: "current14StageProjection" as const, unsupportedStages: [] })),
+    dspExportHse2: vi.fn(async () => ({ code: "", scope: "current21StageProjection" as const, unsupportedStages: [] })),
     updateSettings: vi.fn(async (patch) => ({ ...settings, ...patch })),
     enqueue: vi.fn(async () => playback),
     removeQueueItem: vi.fn(async () => playback),
@@ -268,7 +286,7 @@ describe("app store", () => {
         revision: "2",
         status: "pending",
         partial: kind !== "configure",
-        unsupportedStages: kind === "configure" ? [] : ["13:reverb"],
+        unsupportedStages: kind === "configure" ? [] : ["22:spatialAndHrtf"],
         engine: {
           revision: 1,
           playback: {
@@ -310,6 +328,57 @@ describe("app store", () => {
       });
     },
   );
+
+  it("carries reverb, loudnessComp, dynamicEq and limiter fields through dspConfigure", async () => {
+    const updated: DspConfigurationDto = {
+      ...dspConfiguration,
+      revision: "2",
+      reverb: { ...dspConfiguration.reverb, enabled: true, mode: "fdn", fdnLines: 16 },
+      loudnessComp: {
+        ...dspConfiguration.loudnessComp,
+        enabled: true,
+        mode: "custom",
+        bands: [{ frequency: 1_000, gain: 6 }],
+      },
+      dynamicEq: { ...dspConfiguration.dynamicEq, enabled: true, ratio: 8 },
+      limiter: { ...dspConfiguration.limiter, enabled: true, truePeak: false },
+    };
+    const backendEngine = {
+      revision: 2,
+      playback: {
+        status: "paused" as const,
+        currentTrack: null,
+        positionMs: 0,
+        durationMs: null,
+        volume: 0.5,
+        muted: false,
+        repeatMode: "sequential" as const,
+      },
+      queue: { currentItemId: null, playNext: [], context: [], revision: 2 },
+      dspExecution: { revision: "2", safeBypassActive: false, fault: null },
+    };
+    const dspConfigure = vi.fn(async (configuration: DspConfigurationDto): Promise<DspApplyResultDto> => ({
+      revision: "2",
+      status: "applied",
+      partial: false,
+      unsupportedStages: [],
+      engine: backendEngine,
+      configuration,
+    }));
+    const testBridge = mockBridge({ dspConfigure });
+    const { setBridgeForTests, useAppStore } = await import("./store");
+    setBridgeForTests(testBridge);
+    useAppStore.setState({ dspConfiguration, playback });
+
+    await useAppStore.getState().configureDsp(updated);
+
+    const applied = dspConfigure.mock.calls[0][0];
+    expect(applied.reverb).toMatchObject({ enabled: true, mode: "fdn", fdnLines: 16 });
+    expect(applied.loudnessComp).toMatchObject({ mode: "custom", bands: [{ frequency: 1_000, gain: 6 }] });
+    expect(applied.dynamicEq).toMatchObject({ enabled: true, ratio: 8 });
+    expect(applied.limiter).toMatchObject({ enabled: true, truePeak: false });
+    expect(useAppStore.getState().dspConfiguration).toMatchObject({ revision: "2" });
+  });
 
   it("surfaces asynchronous DSP preparation rejection with its revision", async () => {
     let handlers: BridgeEventHandlers = {};

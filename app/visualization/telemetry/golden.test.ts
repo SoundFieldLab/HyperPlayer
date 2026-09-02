@@ -9,13 +9,13 @@ import {
   TELEMETRY_WAVEFORM_BINS,
 } from "./schema";
 
-const fixturePath = resolve("tests/fixtures/telemetry/hptm_v2_golden.bin");
+const fixturePath = resolve("tests/fixtures/telemetry/hptm_v4_golden.bin");
 const golden = readFileSync(fixturePath);
 const frames = Array.from({ length: 3 }, (_, index) => (
   golden.subarray(index * TELEMETRY_FRAME_BYTES, (index + 1) * TELEMETRY_FRAME_BYTES)
 ));
 
-describe("Rust HPTM v2 golden bytes", () => {
+describe("Rust HPTM v3 golden bytes", () => {
   it("contains exactly three fixed-size frames", () => {
     expect(golden.byteLength).toBe(3 * TELEMETRY_FRAME_BYTES);
     expect(frames).toHaveLength(3);
@@ -61,6 +61,8 @@ describe("Rust HPTM v2 golden bytes", () => {
       limiterReduction: null,
     });
     expect(frame.spectrum).toBeNull();
+    expect(frame.dynamicEq).toBeNull();
+    expect(frame.lufs).toBeNull();
     expect(activityRate({
       open: true,
       visible: true,
@@ -104,6 +106,22 @@ describe("Rust HPTM v2 golden bytes", () => {
       rmsRight: 0.25,
       limiterReduction: 6.25,
     });
+    expect(frame.dynamicEq).not.toBeNull();
+    expect(frame.dynamicEq?.generation).toBe(0xaabbccdd);
+    expect(frame.dynamicEq?.bands[0]).toEqual({
+      gainDb: -1,
+      levelDb: -30,
+      reductionDb: 0.5,
+    });
+    expect(frame.dynamicEq?.bands[4]).toEqual({
+      gainDb: -5,
+      levelDb: -34,
+      reductionDb: 4.5,
+    });
+    expect(frame.lufs).not.toBeNull();
+    expect(frame.lufs?.integrated).toBeCloseTo(-17.5, 3);
+    expect(frame.lufs?.momentary).toBeCloseTo(-17.4, 3);
+    expect(frame.lufs?.shortTerm).toBeCloseTo(-17.6, 3);
   });
 
   it("decodes frame C while 0 Hz activity means paused delivery", () => {
@@ -126,6 +144,8 @@ describe("Rust HPTM v2 golden bytes", () => {
         rmsRight: null,
         limiterReduction: null,
       },
+      dynamicEq: null,
+      lufs: null,
     });
     expect(activityRate({
       open: false,

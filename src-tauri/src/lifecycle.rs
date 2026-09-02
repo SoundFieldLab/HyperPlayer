@@ -26,7 +26,21 @@ pub fn install<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     install_tray(app)?;
     install_main_window_close_handler(app);
     install_progress_forwarder(app)?;
+    install_cache_runtime(app);
     Ok(())
+}
+
+fn install_cache_runtime<R: Runtime>(app: &tauri::AppHandle<R>) {
+    // Start the single-instance cache reconciliation supervisor. It runs once at
+    // startup and is cancelled on exit via `shutdown_services` / close handling.
+    let state = app.state::<AppState>();
+    if let Err(error) = state.services.cache_runtime.clone().start() {
+        log_or_eprintln(&format!("failed to start cache runtime: {error}"));
+    }
+}
+
+fn log_or_eprintln(message: &str) {
+    eprintln!("{message}");
 }
 
 fn install_progress_forwarder<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
@@ -246,6 +260,9 @@ fn request_exit<R: Runtime>(app: &tauri::AppHandle<R>) {
     if let Ok(mut exit_requested) = state.exit_requested.lock() {
         *exit_requested = true;
     }
+    // Cancel the cache reconciliation supervisor so its worker is joined before the
+    // runtime drops. Best-effort; a busy sync run is allowed to finish quickly.
+    state.services.cache_runtime.shutdown();
     app.exit(0);
 }
 

@@ -140,6 +140,10 @@ pub trait LibraryPort: Send + Sync {
 pub trait SettingsPort: Send + Sync {
     fn get(&self) -> AppResult<SettingsDto>;
     fn update(&self, request: UpdateSettingsRequestDto) -> AppResult<SettingsDto>;
+    /// 读取当前持久化的 DSP 配置（供启动恢复）；无/非法配置返回 None。
+    fn persisted_dsp_config(&self) -> AppResult<Option<crate::dto::PersistedDspConfig>>;
+    /// 原子持久化一份最新 DSP 配置（在 Tauri apply 成功路径调用，进磁盘写不落在播放线程）。
+    fn persist_dsp_config(&self, config: &crate::dto::PersistedDspConfig) -> AppResult<()>;
 }
 
 #[async_trait::async_trait]
@@ -235,6 +239,7 @@ pub struct AppServices {
     pub lyrics: Arc<dyn LyricsPort>,
     pub tracks: Arc<dyn TrackResolverPort>,
     pub telemetry: Arc<dyn TelemetryPort>,
+    pub cache_runtime: Arc<crate::cache_runtime::CacheRuntime>,
 }
 
 impl AppServices {
@@ -284,10 +289,14 @@ impl AppServices {
             repository.clone(),
             locations.clone(),
             netease.clone(),
-            cache_root,
+            cache_root.clone(),
             app_data_dir.join("playback-temp"),
         )?);
         let artwork_root = app_data_dir.join("artwork");
+        let cache_runtime = Arc::new(crate::cache_runtime::CacheRuntime::new(
+            repository.clone(),
+            cache_root,
+        ));
         Ok(Self {
             playback: engine.clone(),
             queue: engine.clone(),
@@ -302,6 +311,7 @@ impl AppServices {
             lyrics,
             tracks,
             telemetry: engine,
+            cache_runtime,
         })
     }
 
@@ -337,7 +347,7 @@ impl AppServices {
             repository.clone(),
             locations.clone(),
             netease.clone(),
-            cache_root,
+            cache_root.clone(),
             std::env::temp_dir().join(format!(
                 "hyperplayer-test-playback-{}-{}",
                 std::process::id(),
@@ -348,6 +358,10 @@ impl AppServices {
             "hyperplayer-test-artwork-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
+        ));
+        let cache_runtime = Arc::new(crate::cache_runtime::CacheRuntime::new(
+            repository.clone(),
+            cache_root,
         ));
         Ok(Self {
             playback: engine.clone(),
@@ -363,6 +377,7 @@ impl AppServices {
             lyrics,
             tracks,
             telemetry: engine,
+            cache_runtime,
         })
     }
 }
@@ -416,6 +431,19 @@ impl DspConfigurationState {
         }
     }
 
+    /// 从持久化配置恢复：以持久化 revision 作为已应用基准，清空 pending（下次配置自
+    /// 该 revision 之后递增）。非法（revision 0）由调用方在前置迁移中拦截。
+    pub(crate) fn from_persisted(
+        revision: u64,
+        config: hyperplayer_engine::dsp_algorithms::DspConfig,
+    ) -> Self {
+        Self {
+            applied_revision: revision,
+            applied_config: config,
+            pending: None,
+        }
+    }
+
     pub fn newest_revision(&self) -> u64 {
         self.pending
             .as_ref()
@@ -463,14 +491,50 @@ struct LocationTicket {
 
 impl AppState {
     pub fn new(app_data_dir: &Path) -> AppResult<Self> {
+        let services = AppServices::new(app_data_dir)?;
+        // DSP 配置恢复：以持久化 revision 作为已应用基准，并立即向引擎 apply（进程启动
+        // 首次配置）。损坏/版本未知在 SettingsAdapter::open 中已回落 None → 走 default。
+        let dsp = Self::restore_dsp(&services)?;
         Ok(Self {
-            services: AppServices::new(app_data_dir)?,
+            services,
             telemetry_sessions: crate::commands::telemetry::TelemetrySessions::new(),
             exit_requested: Mutex::new(false),
-            dsp: Mutex::new(DspConfigurationState::new()),
+            dsp: Mutex::new(dsp),
             dsp_operation: Mutex::new(()),
             location_tickets: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// 从 settings 恢复 DSP 配置并 apply 到引擎；无有效持久化配置时返回 default 状态。
+    ///
+    /// 损坏 / 版本未知 / apply 失败均回落 default（fail-close）并输出诊断，不阻断启动。
+    fn restore_dsp(services: &AppServices) -> AppResult<DspConfigurationState> {
+        let Some(persisted) = services.settings.persisted_dsp_config()? else {
+            return Ok(DspConfigurationState::new());
+        };
+        let config = match persisted.configuration.clone().into_engine_config() {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("persisted DSP configuration invalid; falling back to default: {error}");
+                return Ok(DspConfigurationState::new());
+            }
+        };
+        // 引擎 apply 失败不得阻断启动：走零 DSP 默认旁路并输出诊断。
+        if services
+            .playback
+            .configure_dsp(persisted.revision, config.clone())
+            .is_err()
+        {
+            eprintln!(
+                "restoring persisted DSP configuration (revision {}) failed; falling back to default",
+                persisted.revision
+            );
+            return Ok(DspConfigurationState::new());
+        }
+        Ok(DspConfigurationState::from_persisted(
+            persisted.revision,
+            config,
+        ))
     }
 
     pub fn issue_location_ticket(&self, window_label: &str, path: PathBuf) -> AppResult<String> {
@@ -605,5 +669,20 @@ mod tests {
     fn state_is_explicitly_in_memory() {
         let state = AppState::in_memory().unwrap();
         assert_eq!(state.services.library.overview().unwrap().track_count, 0);
+    }
+
+    #[test]
+    fn persisted_dsp_restores_revision_as_applied_baseline() {
+        let config = hyperplayer_engine::dsp_algorithms::DspConfig::default();
+        let state = DspConfigurationState::from_persisted(7, config.clone());
+        assert_eq!(state.applied_revision, 7);
+        assert_eq!(state.applied_config, config);
+        assert!(state.pending.is_none());
+        assert_eq!(state.newest_revision(), 7);
+
+        // 恢复后的下一次配置必须高于 7。
+        let mut state = state;
+        state.request(8, hyperplayer_engine::dsp_algorithms::DspConfig::default());
+        assert_eq!(state.newest_revision(), 8);
     }
 }

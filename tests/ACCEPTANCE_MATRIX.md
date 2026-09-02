@@ -21,7 +21,7 @@
 
 | 领域 | 当前状态 | 合并/发布门槛 |
 |---|---|---|
-| DSP | D29 已定调，正在实施 | 按 HSE v1.5.1 专项授权接入完整 22 阶段 Rust/TS 核心、参数、预设和一致性测试；Rust 为播放权威，不复用 HSE UI。HRTF 第三方 SOFA 数据须单独审计 |
+| DSP | D29 已定调；Stage 09（DSP 控制面闭环）已实施 | 按 HSE v1.5.1 专项授权接入完整 22 阶段 Rust/TS 核心、参数、预设和一致性测试；Rust 为播放权威，不复用 HSE UI。DSP 配置已版本化持久化（`settings.json` `dsp` 段，启动恢复 + 迁移 fail-close）；重启恢复 revision；标准 BS.1770-5 为独立 `MeterMode`（默认 HSE v1.5.1 兼容，标准模式待向量认证）；Stage 19 LUFS/true-peak/limiter 动态字段已接入 HPTM v4 telemetry 与工作台。HRTF 第三方 SOFA 数据须单独审计 |
 | D25 缓存策略 | D30 已定调，待实现 | 默认 10 GiB、最近 100 个不同远程曲目保护、Public 7 天离线证明、AccountEntitled 离线拒绝、整专补齐受 AC/非计费网络/磁盘保留条件约束 |
 | VIP 缓存权益 | D23 硬门禁 | 离线测试必须覆盖未登录、非 VIP、过期、切号、服务端校验失败均拒绝；仅同一 `AccountEntitled(userId)` 且实时权益有效时放行 |
 | 专辑缓存晋升 | D24 硬门禁 | 离线测试覆盖专辑上下文、完整一首或累计 5 分钟、每日最多计一次、5 次晋升、空闲低优先级补齐及权益门禁 |
@@ -42,7 +42,7 @@
 
 ## 当前已知阻断
 
-- D29 已解除 DSP 规格阻塞；完整 HSE DSP 核心、HyperPlayer 原生工作台、parity/性能/硬件验收仍待实施。
+- D29 已解除 DSP 规格阻塞；完整 HSE DSP 核心、HyperPlayer 原生工作台、22-stage 逐场景定制、标准 BS.1770-5 认证与 parity/性能/硬件验收仍待实施。
 - D30 已确定缓存默认策略；schema v7、淘汰器、Windows 资源探针和整专补齐 worker 仍待实施。
 - 登录/VIP、网易云写操作、Windows 音频/SMTC 与安装升级仍需要受控账号、Windows 实机或签名材料完成外部验收。
 - UI 最终设计令牌仍需按定调文件在真实 Tauri 窗口中逐页确认。浏览器截图或浏览器 mock 不得作为通过依据。

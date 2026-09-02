@@ -23,8 +23,8 @@ use hyperplayer_engine::{
     actor::{EngineCommand, EngineEvent, EngineEventKind, EngineHandle},
     album::{AlbumSession, QUALIFYING_PLAYBACK_MS},
     cache::{
-        authorize_cache, CacheAccessClass, CacheEntry, CacheGateDenial, CacheLease, CacheState,
-        ContentAddressedCache, PlaybackAuthorization, Verification,
+        authorize_cache, CacheAccessClass, CacheEntry, CacheGateDenial, CacheLease, CacheObject,
+        CacheState, ContentAddressedCache, PlaybackAuthorization, Verification,
     },
     library::{
         read_embedded_artwork, ContentAddressedArtwork, LibraryScanner, LoftyMetadataReader,
@@ -1733,11 +1733,14 @@ pub struct SettingsAdapter {
 
 impl SettingsAdapter {
     pub fn open(path: PathBuf) -> AppResult<Self> {
-        let settings = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)?,
+        let mut settings = match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice::<SettingsDto>(&bytes)?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => default_settings(),
             Err(error) => return Err(error.into()),
         };
+        // DSP 配置迁移：未持久化 / 版本未知 / 损坏 → 回落 None（fail-close）；
+        // 合法则保留，供 AppState::new 基准恢复 revision。
+        settings.dsp = migrate_persisted_dsp(settings.dsp.take())?;
         Ok(Self {
             settings: Mutex::new(settings),
             path: Some(path),
@@ -1771,7 +1774,27 @@ impl SettingsAdapter {
     }
 }
 
+// Cache policy defaults mirror `hyperplayer_engine::cache_policy::CachePolicy::default()`.
+// On read, fields that were missing in an older settings.json are backfilled from here so
+// stale configurations never drift from the engine's validated defaults.
+fn default_cache_policy_fields() -> (u64, u8, usize, bool, String) {
+    (
+        DEFAULT_CACHE_CAPACITY_BYTES,
+        DEFAULT_CACHE_TRIM_PERCENT,
+        DEFAULT_CACHE_RECENT_TRACK_LIMIT,
+        DEFAULT_ALBUM_FILL_ENABLED,
+        String::from(DEFAULT_ALBUM_FILL_QUALITY),
+    )
+}
+
 fn default_settings() -> SettingsDto {
+    let (
+        cache_capacity_bytes,
+        cache_trim_percent,
+        cache_recent_track_limit,
+        album_fill_enabled,
+        album_fill_quality,
+    ) = default_cache_policy_fields();
     SettingsDto {
         theme: ThemeDto::Dark,
         dynamic_color: true,
@@ -1781,7 +1804,55 @@ fn default_settings() -> SettingsDto {
         autoplay_on_start: false,
         close_behavior: CloseBehaviorDto::Ask,
         netease_enabled: true,
+        cache_capacity_bytes,
+        cache_trim_percent,
+        cache_recent_track_limit,
+        album_fill_enabled,
+        album_fill_quality,
+        dsp: None,
     }
+}
+
+/// 迁移：读取到的设置若无 DSP 字段、或版本未知、或 revision 非法，一律回落默认
+/// （fail-close），丢弃该配置。返回 `None` = 无有效持久化 DSP 配置（`AppState::new`
+/// 沿用进程内 default，revision 从 1 开始）。
+fn migrate_persisted_dsp(
+    raw: Option<crate::dto::PersistedDspConfig>,
+) -> AppResult<Option<crate::dto::PersistedDspConfig>> {
+    let Some(config) = raw else {
+        return Ok(None);
+    };
+    if config.version != crate::dto::DSP_CONFIG_VERSION {
+        return Ok(None);
+    }
+    if config.revision == 0 {
+        return Ok(None);
+    }
+    Ok(Some(config))
+}
+
+fn validate_cache_policy(settings: &SettingsDto) -> AppResult<()> {
+    if !(2 * 1024 * 1024 * 1024..=100 * 1024 * 1024 * 1024).contains(&settings.cache_capacity_bytes)
+    {
+        return Err(AppError::InvalidArgument(
+            "缓存容量必须在 2 GiB 到 100 GiB 之间".into(),
+        ));
+    }
+    if settings.cache_trim_percent != DEFAULT_CACHE_TRIM_PERCENT {
+        return Err(AppError::InvalidArgument("缓存清理比固定为 90%".into()));
+    }
+    if settings.cache_recent_track_limit != DEFAULT_CACHE_RECENT_TRACK_LIMIT {
+        return Err(AppError::InvalidArgument("最近曲目保护数固定为 100".into()));
+    }
+    if !matches!(
+        settings.album_fill_quality.as_str(),
+        "standard" | "higher" | "exhigh" | "lossless" | "hires"
+    ) {
+        return Err(AppError::InvalidArgument(
+            "专辑补齐音质必须是 standard/higher/exhigh/lossless/hires".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl SettingsPort for SettingsAdapter {
@@ -1790,6 +1861,22 @@ impl SettingsPort for SettingsAdapter {
             .lock()
             .map(|settings| settings.clone())
             .map_err(|_| AppError::StateUnavailable)
+    }
+
+    fn persisted_dsp_config(&self) -> AppResult<Option<crate::dto::PersistedDspConfig>> {
+        self.settings
+            .lock()
+            .map(|settings| settings.dsp.clone())
+            .map_err(|_| AppError::StateUnavailable)
+    }
+
+    fn persist_dsp_config(&self, config: &crate::dto::PersistedDspConfig) -> AppResult<()> {
+        let mut guard = self.settings.app_lock()?;
+        let mut settings = guard.clone();
+        settings.dsp = Some(config.clone());
+        self.persist(&settings)?;
+        *guard = settings;
+        Ok(())
     }
 
     fn update(&self, request: UpdateSettingsRequestDto) -> AppResult<SettingsDto> {
@@ -1819,6 +1906,22 @@ impl SettingsPort for SettingsAdapter {
         if let Some(value) = request.netease_enabled {
             settings.netease_enabled = value;
         }
+        if let Some(value) = request.cache_capacity_bytes {
+            settings.cache_capacity_bytes = value;
+        }
+        if let Some(value) = request.cache_trim_percent {
+            settings.cache_trim_percent = value;
+        }
+        if let Some(value) = request.cache_recent_track_limit {
+            settings.cache_recent_track_limit = value;
+        }
+        if let Some(value) = request.album_fill_enabled {
+            settings.album_fill_enabled = value;
+        }
+        if let Some(value) = request.album_fill_quality {
+            settings.album_fill_quality = value;
+        }
+        validate_cache_policy(&settings)?;
         self.persist(&settings)?;
         *guard = settings.clone();
         Ok(settings)
@@ -1955,100 +2058,28 @@ impl CacheAdapter {
         }
         Ok(())
     }
-}
 
-struct ActiveCacheTask<'a>(&'a Mutex<u32>);
-
-impl Drop for ActiveCacheTask<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut count) = self.0.lock() {
-            *count = count.saturating_sub(1);
-        }
-    }
-}
-
-#[async_trait]
-impl CachePort for CacheAdapter {
-    fn stats(&self) -> AppResult<CacheStatsDto> {
-        let stats = self.repository.app_lock()?.cache_stats()?;
-        Ok(CacheStatsDto {
-            entry_count: stats.entry_count,
-            bytes_used: stats.bytes_used,
-            active_tasks: *self.active_tasks.app_lock()?,
-            locked_entries: stats.locked_entries,
-        })
-    }
-
-    fn status(&self, track: &TrackRefDto) -> AppResult<CacheStatusDto> {
+    /// Resolves the official NetEase source for a track and streams it into the CAS store,
+    /// returning the freshly committed [`CacheObject`] and its metadata [`CacheEntry`].
+    ///
+    /// This is the shared download entry point: both the foreground [`CachePort::cache_track`]
+    /// and the Stage 12 album-fill worker route through it, so they share the same official
+    /// URL discovery, size limit, SHA-256 verification and CAS write path. The caller is
+    /// responsible for persisting `(object, entry)` atomically (see
+    /// `SqliteRepository::complete_album_fill_item_with_cache` for the album-fill path).
+    pub(crate) async fn download_track_to_object(
+        &self,
+        track: &TrackRefDto,
+        quality: &str,
+    ) -> AppResult<(CacheObject, CacheEntry)> {
         validate_track_ref(track)?;
-        let entries = self.entries_for_track(track)?;
-        if entries.is_empty() {
-            return Ok(CacheStatusDto {
-                track: track.clone(),
-                quality: None,
-                cached_versions: 0,
-                status: CacheEntryStatusDto::Missing,
-                access_class: CacheAccessClassDto::Public,
-                owner_user_id: None,
-                last_validated_at: None,
-            });
-        }
-        let cached_versions = u32::try_from(entries.len())
-            .map_err(|_| AppError::Unavailable("too many cached quality versions".into()))?;
-        let status = if entries
-            .iter()
-            .any(|entry| entry.state == CacheState::LockedEntitlement)
-        {
-            CacheEntryStatusDto::LockedEntitlement
-        } else if entries
-            .iter()
-            .any(|entry| entry.state == CacheState::Partial)
-        {
-            CacheEntryStatusDto::Caching
-        } else {
-            CacheEntryStatusDto::Ready
-        };
-        let owner_ids = entries
-            .iter()
-            .filter_map(|entry| match entry.access_class {
-                CacheAccessClass::Public => None,
-                CacheAccessClass::AccountEntitled { owner_user_id } => Some(owner_user_id),
-            })
-            .collect::<std::collections::BTreeSet<_>>();
-        let access_class = if owner_ids.is_empty() {
-            CacheAccessClassDto::Public
-        } else {
-            CacheAccessClassDto::AccountEntitled
-        };
-        let owner_user_id = (owner_ids.len() == 1)
-            .then(|| owner_ids.first().copied().map(|owner| owner.to_string()))
-            .flatten();
-        let quality = (entries.len() == 1).then(|| entries[0].quality.clone());
-        let last_validated_at = entries
-            .iter()
-            .filter_map(|entry| entry.last_validated_unix_ms)
-            .max()
-            .map(|value| value.to_string());
-        Ok(CacheStatusDto {
-            track: track.clone(),
-            quality,
-            cached_versions,
-            status,
-            access_class,
-            owner_user_id,
-            last_validated_at,
-        })
-    }
-
-    async fn cache_track(&self, request: CacheTrackRequestDto) -> AppResult<TaskAcceptedDto> {
-        validate_track_ref(&request.track)?;
-        if request.track.source != TrackSourceDto::Netease {
+        if track.source != TrackSourceDto::Netease {
             return Err(AppError::Unavailable(
                 "local files are library resources and are not copied into playback cache".into(),
             ));
         }
-        let quality = cache_quality(&request.quality)?;
-        let song_id = parse_netease_id(&request.track.id)?;
+        let quality = cache_quality(quality)?;
+        let song_id = parse_netease_id(&track.id)?;
         let service = self.netease.require_service()?;
         let metadata = service
             .song_detail(&[song_id])
@@ -2135,7 +2166,7 @@ impl CachePort for CacheAdapter {
         }
         let object = partial.complete()?;
         let entry = CacheEntry {
-            content_id: MediaId::new(&request.track.id),
+            content_id: MediaId::new(&track.id),
             quality: play_info.level.as_str().into(),
             content_hash: content_hash.clone(),
             access_class,
@@ -2144,11 +2175,102 @@ impl CachePort for CacheAdapter {
             official_source: "netease".into(),
             state: CacheState::Available,
         };
+        Ok((object, entry))
+    }
+}
+
+struct ActiveCacheTask<'a>(&'a Mutex<u32>);
+
+impl Drop for ActiveCacheTask<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut count) = self.0.lock() {
+            *count = count.saturating_sub(1);
+        }
+    }
+}
+
+#[async_trait]
+impl CachePort for CacheAdapter {
+    fn stats(&self) -> AppResult<CacheStatsDto> {
+        let stats = self.repository.app_lock()?.cache_stats()?;
+        Ok(CacheStatsDto {
+            entry_count: stats.entry_count,
+            bytes_used: stats.bytes_used,
+            active_tasks: *self.active_tasks.app_lock()?,
+            locked_entries: stats.locked_entries,
+        })
+    }
+
+    fn status(&self, track: &TrackRefDto) -> AppResult<CacheStatusDto> {
+        validate_track_ref(track)?;
+        let entries = self.entries_for_track(track)?;
+        if entries.is_empty() {
+            return Ok(CacheStatusDto {
+                track: track.clone(),
+                quality: None,
+                cached_versions: 0,
+                status: CacheEntryStatusDto::Missing,
+                access_class: CacheAccessClassDto::Public,
+                owner_user_id: None,
+                last_validated_at: None,
+            });
+        }
+        let cached_versions = u32::try_from(entries.len())
+            .map_err(|_| AppError::Unavailable("too many cached quality versions".into()))?;
+        let status = if entries
+            .iter()
+            .any(|entry| entry.state == CacheState::LockedEntitlement)
+        {
+            CacheEntryStatusDto::LockedEntitlement
+        } else if entries
+            .iter()
+            .any(|entry| entry.state == CacheState::Partial)
+        {
+            CacheEntryStatusDto::Caching
+        } else {
+            CacheEntryStatusDto::Ready
+        };
+        let owner_ids = entries
+            .iter()
+            .filter_map(|entry| match entry.access_class {
+                CacheAccessClass::Public => None,
+                CacheAccessClass::AccountEntitled { owner_user_id } => Some(owner_user_id),
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let access_class = if owner_ids.is_empty() {
+            CacheAccessClassDto::Public
+        } else {
+            CacheAccessClassDto::AccountEntitled
+        };
+        let owner_user_id = (owner_ids.len() == 1)
+            .then(|| owner_ids.first().copied().map(|owner| owner.to_string()))
+            .flatten();
+        let quality = (entries.len() == 1).then(|| entries[0].quality.clone());
+        let last_validated_at = entries
+            .iter()
+            .filter_map(|entry| entry.last_validated_unix_ms)
+            .max()
+            .map(|value| value.to_string());
+        Ok(CacheStatusDto {
+            track: track.clone(),
+            quality,
+            cached_versions,
+            status,
+            access_class,
+            owner_user_id,
+            last_validated_at,
+        })
+    }
+
+    async fn cache_track(&self, request: CacheTrackRequestDto) -> AppResult<TaskAcceptedDto> {
+        let (object, entry) = self
+            .download_track_to_object(&request.track, &request.quality)
+            .await?;
         let repository = self.repository.app_lock()?;
         repository.record_cache_object(&object, unix_millis())?;
         repository.upsert_cache_entry(&entry)?;
         Ok(TaskAcceptedDto {
-            task_id: format!("cache-{}-{quality}", request.track.id),
+            task_id: format!("cache-{}-{}", request.track.id, entry.quality),
             accepted: true,
         })
     }
@@ -5646,6 +5768,169 @@ mod tests {
             updated
         );
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn settings_migrates_missing_cache_policy_fields_to_defaults() {
+        // A legacy settings.json without cache-policy fields must deserialize using the
+        // serde defaults, which mirror the engine's `CachePolicy::default()`.
+        let legacy = r#"{
+            "theme": "light",
+            "dynamicColor": true,
+            "reduceMotion": false,
+            "reduceTransparency": false,
+            "restoreQueue": true,
+            "autoplayOnStart": false,
+            "closeBehavior": "ask",
+            "neteaseEnabled": true
+        }"#;
+        let settings: SettingsDto = serde_json::from_str(legacy).unwrap();
+        assert_eq!(settings.cache_capacity_bytes, 10 * 1024 * 1024 * 1024);
+        assert_eq!(settings.cache_trim_percent, 90);
+        assert_eq!(settings.cache_recent_track_limit, 100);
+        assert!(settings.album_fill_enabled);
+        assert_eq!(settings.album_fill_quality, "standard");
+    }
+
+    #[test]
+    fn settings_update_rejects_invalid_cache_capacity() {
+        let adapter = SettingsAdapter::new();
+        let result = adapter.update(UpdateSettingsRequestDto {
+            cache_capacity_bytes: Some(1),
+            ..Default::default()
+        });
+        assert!(matches!(result, Err(AppError::InvalidArgument(_))));
+        // The optimistic in-memory value must not be overwritten on a rejected update.
+        assert_eq!(
+            adapter.get().unwrap().cache_capacity_bytes,
+            10 * 1024 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn settings_update_rejects_tampered_fixed_fields() {
+        let adapter = SettingsAdapter::new();
+        assert!(matches!(
+            adapter.update(UpdateSettingsRequestDto {
+                cache_trim_percent: Some(50),
+                ..Default::default()
+            }),
+            Err(AppError::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            adapter.update(UpdateSettingsRequestDto {
+                cache_recent_track_limit: Some(42),
+                ..Default::default()
+            }),
+            Err(AppError::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            adapter.update(UpdateSettingsRequestDto {
+                album_fill_quality: Some("studio".into()),
+                ..Default::default()
+            }),
+            Err(AppError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn settings_update_applies_valid_cache_capacity_and_reads_back() {
+        let adapter = SettingsAdapter::new();
+        let updated = adapter
+            .update(UpdateSettingsRequestDto {
+                cache_capacity_bytes: Some(20 * 1024 * 1024 * 1024),
+                album_fill_enabled: Some(false),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(updated.cache_capacity_bytes, 20 * 1024 * 1024 * 1024);
+        assert!(!updated.album_fill_enabled);
+        assert_eq!(
+            adapter.get().unwrap().cache_capacity_bytes,
+            20 * 1024 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn dsp_config_persists_and_survives_reopen() {
+        use crate::commands::dsp::DspConfigurationDto;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        let adapter = SettingsAdapter::open(path.clone()).unwrap();
+        // 初始无持久化 DSP 配置。
+        assert!(adapter.persisted_dsp_config().unwrap().is_none());
+
+        let mut dto = DspConfigurationDto::from_engine_value(
+            7,
+            &hyperplayer_engine::dsp_algorithms::DspConfig::default(),
+        );
+        dto.reverb.enabled = true;
+        adapter
+            .persist_dsp_config(&crate::dto::PersistedDspConfig {
+                version: crate::dto::DSP_CONFIG_VERSION,
+                revision: 7,
+                configuration: dto,
+            })
+            .unwrap();
+
+        let reopened = SettingsAdapter::open(path.clone()).unwrap();
+        let restored = reopened.persisted_dsp_config().unwrap().expect("必须恢复");
+        assert_eq!(restored.version, crate::dto::DSP_CONFIG_VERSION);
+        assert_eq!(restored.revision, 7);
+        assert!(restored.configuration.reverb.enabled);
+    }
+
+    #[test]
+    fn dsp_config_migration_falls_back_on_missing_field() {
+        // 旧 settings.json（无 dsp 字段）→ dsp=None。
+        let no_dsp = r#"{
+            "theme": "dark",
+            "dynamicColor": true,
+            "reduceMotion": false,
+            "reduceTransparency": false,
+            "restoreQueue": true,
+            "autoplayOnStart": false,
+            "closeBehavior": "ask",
+            "neteaseEnabled": true,
+            "cacheCapacityBytes": 10737418240,
+            "cacheTrimPercent": 90,
+            "cacheRecentTrackLimit": 100,
+            "albumFillEnabled": true,
+            "albumFillQuality": "standard"
+        }"#;
+        let settings: SettingsDto = serde_json::from_str(no_dsp).unwrap();
+        assert!(settings.dsp.is_none());
+    }
+
+    #[test]
+    fn dsp_config_upgrade_and_revision_zero_fall_back_to_none() {
+        use crate::commands::dsp::DspConfigurationDto;
+        let config = crate::dto::PersistedDspConfig {
+            version: crate::dto::DSP_CONFIG_VERSION,
+            revision: 7,
+            configuration: DspConfigurationDto::from_engine_value(
+                7,
+                &hyperplayer_engine::dsp_algorithms::DspConfig::default(),
+            ),
+        };
+        // 合法配置原样保留。
+        assert_eq!(
+            migrate_persisted_dsp(Some(config.clone()))
+                .unwrap()
+                .unwrap()
+                .revision,
+            7
+        );
+        // 未知 version → None。
+        let mut stale = config.clone();
+        stale.version = 99;
+        assert!(migrate_persisted_dsp(Some(stale)).unwrap().is_none());
+        // revision 0 → None。
+        let mut zero = config;
+        zero.revision = 0;
+        assert!(migrate_persisted_dsp(Some(zero)).unwrap().is_none());
+        // 缺失 → None。
+        assert!(migrate_persisted_dsp(None).unwrap().is_none());
     }
 
     #[test]

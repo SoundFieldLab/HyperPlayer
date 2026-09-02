@@ -5,6 +5,19 @@ import { bridge } from "../bridge";
 import { useAppStore } from "../store";
 import { Segmented, SettingRow, Toggle } from "../components/ui";
 
+const GIB = 1024 * 1024 * 1024;
+const CACHE_CAPACITY_MIN_GIB = 2;
+const CACHE_CAPACITY_MAX_GIB = 100;
+const CACHE_CAPACITY_OPTIONS = [2, 5, 10, 20, 50, 100] as const;
+
+function cacheCapacityGiB(bytes: number): number {
+  return Math.round(bytes / GIB);
+}
+
+function formatGb(bytes: number): string {
+  return `${(bytes / GIB).toFixed(bytes >= GIB ? 0 : 1)} GB`;
+}
+
 const categories = [
   ["appearance", "外观"], ["playback", "播放"], ["audio", "音频与 DSP"],
   ["library", "曲库"], ["cache", "缓存"], ["account", "网易云账号"],
@@ -91,12 +104,12 @@ export function SettingsView(): React.JSX.Element | null {
     <ReadonlyRow title="当前播放状态" detail="来自 Rust 音频引擎的实时快照" value={playback?.current ? `${playback.current.title} · ${playback.status}` : "暂无曲目"} />
     <ReadonlyRow title="队列" detail="当前上下文与接下来播放由播放坞管理" value={`${(playback?.queue.length ?? 0) + (playback?.nextUp.length ?? 0)} 首`} />
   </>;
-  else if (category === "audio") content = <><div className="dsp-status-summary"><SlidersHorizontal /><div><h3>Rust DSP 核心已接通</h3><p>14 个处理器已进入实时主链；参数配置、预设与 HSE2 分享码通过 DspPort 生效。</p></div><span>14 个处理器</span></div><ReadonlyRow title="处理权威" detail="所有实际播放处理均由 vendored HSE Rust 主链完成；TS 仅用于参数、预设、HSE2、预览、离线诊断、parity 与功能降级，不接管播放" value="Rust Engine" /><ReadonlyRow title="安全状态" detail="Rust 处理器故障时恢复原始 PCM 并锁定旁路，TS 不接管播放" value="SafeBypass" /><ReadonlyRow title="输出设备" detail="播放时由 Rust 音频引擎验证 Windows 默认设备" value="自动选择 · 只读" /></>;
+  else if (category === "audio") content = <><div className="dsp-status-summary"><SlidersHorizontal /><div><h3>Rust DSP 核心已接通</h3><p>21 个处理器已进入实时主链（spatial 待合规资产）；参数配置、预设与 HSE2 分享码通过 DspPort 生效。</p><span>21 个处理器</span></div></div><ReadonlyRow title="处理权威" detail="所有实际播放处理均由 vendored HSE Rust 主链完成；TS 仅用于参数、预设、HSE2、预览、离线诊断、parity 与功能降级，不接管播放" value="Rust Engine" /><ReadonlyRow title="安全状态" detail="Rust 处理器故障时恢复原始 PCM 并锁定旁路，TS 不接管播放" value="SafeBypass" /><ReadonlyRow title="输出设备" detail="播放时由 Rust 音频引擎验证 Windows 默认设备" value="自动选择 · 只读" /></>;
   else if (category === "library") content = <>
     {errorText(library)}<ReadonlyRow title="曲目" detail="来自本地曲库索引" value={library.data ? `${library.data.trackCount} 首` : "读取中"} /><ReadonlyRow title="专辑与艺术家" detail="当前索引中的实体数量" value={library.data ? `${library.data.albumCount} 张专辑 · ${library.data.artistCount} 位艺术家` : "读取中"} /><ReadonlyRow title="扫描状态" detail="扫描进度在状态中心持续报告" value={library.data?.scanActive ? "扫描中" : tasks.some((task) => task.kind === "scan") ? "后台任务进行中" : "空闲"} /><SettingRow title="初始化向导" detail="重新检查外观、账号、目录与输出设备"><button className="button secondary" onClick={rerunOnboarding}>重新运行</button></SettingRow>
   </>;
   else if (category === "cache") content = <>
-    {errorText(cache)}<ReadonlyRow title="缓存占用" detail="应用私有缓存，不提供文件导出" value={cache.data ? `${(cache.data.bytesUsed / 1024 / 1024).toFixed(1)} MB` : "读取中"} /><ReadonlyRow title="缓存条目" detail="包含受账号权益保护的条目" value={cache.data ? `${cache.data.entryCount} 个 · ${cache.data.lockedEntries} 个受保护` : "读取中"} /><ReadonlyRow title="后台任务" detail="预取与缓存状态由状态中心报告" value={cache.data ? `${cache.data.activeTasks} 个活动任务` : "读取中"} /><SettingRow title="清理应用缓存" detail="仅提交后端清理请求，不导出或暴露音乐文件"><button className="button secondary" onClick={() => void updateCache()}>清理缓存</button></SettingRow>{cacheMessage && <div className="notice"><CheckCircle />{cacheMessage}</div>}
+    {errorText(cache)}<SettingRow title="缓存容量上限" detail="缓存达到该上限后自动清理至目标水位（2–100 GiB，默认 10 GiB）"><select aria-label="缓存容量上限" className="select" value={String(cacheCapacityGiB(settings.cacheCapacityBytes))} onChange={(event) => void setSettings({ cacheCapacityBytes: Number(event.target.value) * GIB })}>{CACHE_CAPACITY_OPTIONS.map((value) => <option key={value} value={String(value)}>{value} GiB</option>)}</select></SettingRow><ReadonlyRow title="清理水位" detail="达到上限后清理至该比例（固定 90%）" value={`${settings.cacheTrimPercent}%${cache.data ? ` · 约 ${formatGb(Math.round(cache.data.bytesUsed / settings.cacheTrimPercent * 100))}` : ""}`} /><ReadonlyRow title="最近曲目保护" detail="清理时保留最近播放的曲目（固定 100 首）" value={`${settings.cacheRecentTrackLimit} 首`} /><ReadonlyRow title="缓存占用" detail="应用私有缓存，不提供文件导出" value={cache.data ? `${(cache.data.bytesUsed / 1024 / 1024).toFixed(1)} MB` : "读取中"} /><ReadonlyRow title="缓存条目" detail="包含受账号权益保护的条目" value={cache.data ? `${cache.data.entryCount} 个 · ${cache.data.lockedEntries} 个受保护` : "读取中"} /><ReadonlyRow title="后台任务" detail="预取与缓存状态由状态中心报告" value={cache.data ? `${cache.data.activeTasks} 个活动任务` : "读取中"} /><SettingRow title="专辑背景补齐" detail="同一专辑达成高频后，系统空闲时整专补齐缓存"><Toggle checked={settings.albumFillEnabled} onChange={(albumFillEnabled) => void setSettings({ albumFillEnabled })} /></SettingRow><SettingRow title="补齐音质" detail="专辑补齐时使用的音质等级"><select aria-label="补齐音质" className="select" value={settings.albumFillQuality} onChange={(event) => void setSettings({ albumFillQuality: event.target.value })}><option value="standard">标准</option><option value="higher">较高</option><option value="exhigh">极高</option><option value="lossless">无损</option><option value="hires">Hi-Res</option></select></SettingRow><SettingRow title="清理应用缓存" detail="仅提交后端清理请求，不导出或暴露音乐文件"><button className="button secondary" onClick={() => void updateCache()}>清理缓存</button></SettingRow>{cacheMessage && <div className="notice"><CheckCircle />{cacheMessage}</div>}
   </>;
   else if (category === "account") content = <><div className="account-signed-in"><UserCircle /><div><b>{account.data?.authenticated ? account.data.displayName || "已登录网易云" : "未登录网易云"}</b><small>{account.data?.authenticated ? `账号 ${account.data.userId ?? "未知"}` : "需要账号能力时可前往网易云账号页登录"}</small></div><button className="button secondary" onClick={() => navigate("account")}>{account.data?.authenticated ? "管理账号" : "去登录"}</button></div><SettingRow title="网易云内容域" detail="可整体禁用，完全不影响本地播放器"><Toggle checked={settings.neteaseEnabled} onChange={(value) => void setSettings({ neteaseEnabled: value })} /></SettingRow>{errorText(account)}</>;
   else if (category === "shortcuts") content = <><div className="disabled-dsp"><Keyboard /><h3>桌面快捷键</h3><p>已支持的快捷键由应用全局命令处理，当前没有可编辑的快捷键映射设置。</p></div><ReadonlyRow title="统一搜索" detail="全局命令入口" value="Ctrl+K · 已启用" /><ReadonlyRow title="播放控制" detail="播放坞与系统媒体键操作" value="由播放核心处理" /></>;

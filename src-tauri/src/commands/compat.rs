@@ -48,7 +48,7 @@ pub fn get_playback(state: State<'_, AppState>) -> CommandResult<FrontendPlaybac
         dsp: FrontendDspDto {
             available: true,
             bypassed: engine.dsp_execution.revision == 0 || engine.dsp_execution.safe_bypass_active,
-            label: "Rust DSP runtime 与参数桥已接通；当前支持 14 阶段实时处理".into(),
+            label: "Rust DSP runtime 与参数桥已接通；当前支持 21 阶段实时处理（spatial 待合规资产）".into(),
         },
     })
 }
@@ -128,6 +128,7 @@ pub fn update_settings(
         autoplay_on_start: patch.auto_play_on_launch,
         close_behavior: None,
         netease_enabled: patch.netease_enabled,
+        ..Default::default()
     }))
     .map(frontend_settings)
 }

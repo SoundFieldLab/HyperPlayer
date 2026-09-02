@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { adaptDspConfigurationRejected, adaptPlayback, adaptTrack, bridge, bridgeError, createEngineSnapshotGate, TAURI_COMMANDS, TAURI_EVENTS } from "./index";
-import type { BackendDspExecutionStatusDto, BackendPlaybackStateDto, BackendQueueSnapshotDto, DspProcessingFaultDto } from "./contracts";
+import type { BackendDspExecutionStatusDto, BackendPlaybackStateDto, BackendQueueSnapshotDto, DspConfigurationDto, DspProcessingFaultDto } from "./contracts";
 
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
@@ -52,7 +52,7 @@ describe("bridge contract adapters", () => {
     expect(result.dsp).toEqual({
       available: true,
       bypassed: true,
-      label: "Rust DSP runtime 与参数桥已接通；当前支持 14 阶段实时处理",
+      label: "Rust DSP runtime 与参数桥已接通；当前支持 21 阶段实时处理（spatial 待合规资产）",
     });
     expect(result.currentQueueItemId).toBe("queue-current");
     expect(result.nextUp[0].queueItemId).toBe("queue-next");
@@ -189,5 +189,29 @@ describe("bridge contract adapters", () => {
       "dsp_get_configuration", "dsp_configure", "dsp_list_presets", "dsp_apply_preset", "dsp_import_hse2", "dsp_export_hse2",
       "telemetry_subscribe", "telemetry_ack", "telemetry_set_activity", "telemetry_close",
     ]));
+  });
+
+  it("defaults the 21-stage DSP configuration to transparent new-stage sections", () => {
+    // 与 Rust `DspConfig::default()` 的 camelCase 投影一致：13/15/16/17/18/20/21 全部禁用、
+    // 其余参数对齐各 stage 默认值；本断言同时让 TypeScript 校验完整 DTO 形状。
+    const configuration: Omit<DspConfigurationDto, "revision" | "loudnessNormalization" | "surround3d" | "midSide" | "preEq" | "deesser" | "compressor" | "nightMode" | "delay" | "chorus" | "flanger" | "phaser" | "tremolo" | "bassEnhancer"> = {
+      reverb: { enabled: false, mode: "algorithmic", reverbType: "hall", roomSize: 0.5, damping: 0.5, wet: 0.3, dry: 0.7, preDelayMs: 0, width: 1, fdnLines: 8, mix: 0.3, partitionSize: 512, shortRegionMs: 100 },
+      loudnessComp: { enabled: false, mode: "auto", preset: "flat", volumePercent: 100, maxBoostDb: 12, smoothingSeconds: 0.2, bands: [] },
+      dynamicEq: { enabled: false, strength: 1, thresholdDb: -20, ratio: 2, kneeDb: 6, attackMs: 20, releaseMs: 200, blockSize: 128, bands: [
+        { enabled: true, frequency: 200, targetGainDb: 0 },
+        { enabled: true, frequency: 800, targetGainDb: 0 },
+        { enabled: true, frequency: 2500, targetGainDb: 0 },
+        { enabled: true, frequency: 8000, targetGainDb: 0 },
+        { enabled: true, frequency: 0, targetGainDb: 0 },
+      ] },
+      limiter: { enabled: false, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true },
+      ieq: { enabled: false, strength: 0.5, targetCurve: "flat", timeConstantSec: 3 },
+      modulation: { enabled: false, lfoShape: "sine", lfoRateHz: 1, lfoDepth: 0.5, envelopeAttackMs: 10, envelopeReleaseMs: 200, envelopeAmount: 0.5, routes: [] },
+      lufsMetering: { mode: "hseV151" },
+    };
+    expect(configuration.reverb.enabled).toBe(false);
+    expect(configuration.loudnessComp.enabled).toBe(false);
+    expect(configuration.dynamicEq.bands).toHaveLength(5);
+    expect(configuration.limiter.thresholdDb).toBe(-1);
   });
 });

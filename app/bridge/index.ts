@@ -226,6 +226,11 @@ function adaptSettings(settings: BackendSettingsDto): AppSettingsDto {
     restoreQueue: settings.restoreQueue,
     autoPlayOnLaunch: settings.autoplayOnStart,
     neteaseEnabled: settings.neteaseEnabled,
+    cacheCapacityBytes: settings.cacheCapacityBytes,
+    cacheTrimPercent: settings.cacheTrimPercent,
+    cacheRecentTrackLimit: settings.cacheRecentTrackLimit,
+    albumFillEnabled: settings.albumFillEnabled,
+    albumFillQuality: settings.albumFillQuality,
   };
 }
 
@@ -238,6 +243,11 @@ function settingsRequest(patch: Partial<AppSettingsDto>): Partial<BackendSetting
   if (patch.restoreQueue !== undefined) request.restoreQueue = patch.restoreQueue;
   if (patch.autoPlayOnLaunch !== undefined) request.autoplayOnStart = patch.autoPlayOnLaunch;
   if (patch.neteaseEnabled !== undefined) request.neteaseEnabled = patch.neteaseEnabled;
+  if (patch.cacheCapacityBytes !== undefined) request.cacheCapacityBytes = patch.cacheCapacityBytes;
+  if (patch.cacheTrimPercent !== undefined) request.cacheTrimPercent = patch.cacheTrimPercent;
+  if (patch.cacheRecentTrackLimit !== undefined) request.cacheRecentTrackLimit = patch.cacheRecentTrackLimit;
+  if (patch.albumFillEnabled !== undefined) request.albumFillEnabled = patch.albumFillEnabled;
+  if (patch.albumFillQuality !== undefined) request.albumFillQuality = patch.albumFillQuality;
   return request;
 }
 
@@ -262,7 +272,7 @@ export function adaptPlayback(snapshot: BackendEngineSnapshotDto): PlaybackSnaps
     dsp: {
       available: true,
       bypassed: BigInt(snapshot.dspExecution.revision) === 0n || snapshot.dspExecution.safeBypassActive,
-      label: "Rust DSP runtime 与参数桥已接通；当前支持 14 阶段实时处理",
+      label: "Rust DSP runtime 与参数桥已接通；当前支持 21 阶段实时处理（spatial 待合规资产）",
     },
     dspExecution: {
       revision: BigInt(snapshot.dspExecution.revision),

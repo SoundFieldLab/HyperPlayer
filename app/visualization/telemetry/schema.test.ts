@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeTelemetryFrame,
+  TELEMETRY_DYNAMIC_EQ_BANDS,
   TELEMETRY_FRAME_BYTES,
   TELEMETRY_MAGIC,
   TELEMETRY_MAX_FRAME_BYTES,
   TELEMETRY_SPECTRUM_BINS,
+  TELEMETRY_VALID_DYNAMIC_EQ,
   TELEMETRY_VALID_LIMITER_REDUCTION,
   TELEMETRY_VALID_RMS,
   TELEMETRY_VALID_SAMPLE_PEAK,
@@ -17,7 +19,7 @@ import {
 import { makeTelemetryFrame } from "./test-fixtures";
 
 describe("decodeTelemetryFrame", () => {
-  it("decodes the fixed HPTM v2 frame without losing u64 identifiers", () => {
+  it("decodes the fixed HPTM v4 frame without losing u64 identifiers", () => {
     const binary = makeTelemetryFrame({
       epoch: 18_446_744_073_709_551_613n,
       sequence: 9_007_199_254_740_993n,
@@ -70,7 +72,7 @@ describe("decodeTelemetryFrame", () => {
     ["bad magic", (view: DataView) => view.setUint32(0, 0, true)],
     ["bad version", (view: DataView) => view.setUint16(4, TELEMETRY_VERSION + 1, true)],
     ["unknown validity flag", (view: DataView) => view.setUint16(6, 1 << 15, true)],
-    ["unallocated LUFS validity flag", (view: DataView) => view.setUint16(6, 1 << 6, true)],
+    ["unallocated validity flag", (view: DataView) => view.setUint16(6, 1 << 8, true)],
     ["wrong waveform count", (view: DataView) => view.setUint8(44, TELEMETRY_WAVEFORM_BINS - 1)],
     ["wrong spectrum count", (view: DataView) => view.setUint8(45, TELEMETRY_SPECTRUM_BINS - 1)],
     ["nonzero reserved", (view: DataView) => view.setUint16(46, 1, true)],
@@ -81,10 +83,45 @@ describe("decodeTelemetryFrame", () => {
       view.setInt16(48 + TELEMETRY_WAVEFORM_BINS * 4, -1, true);
     }],
     ["non-finite meter", (view: DataView) => view.setFloat32(752, Number.NaN, true)],
+    ["nonzero dynamic-eq area without validity", (view: DataView) => view.setFloat32(780 + 4, 1, true)],
   ])("rejects %s", (_label, corrupt) => {
     const binary = makeTelemetryFrame();
     corrupt(new DataView(binary));
     expect(() => decodeTelemetryFrame(binary)).toThrow();
+  });
+
+  it("decodes the dynamic-eq block when DYNAMIC_EQ is present", () => {
+    const binary = makeTelemetryFrame({
+      validityFlags: TELEMETRY_VALID_DYNAMIC_EQ,
+      dynamicEq: {
+        generation: 42,
+        gainDb: [-1, -2, -3, -4, -5],
+        levelDb: [-30, -31, -32, -33, -34],
+        reductionDb: [0.5, 1, 1.5, 2, 2.5],
+      },
+    });
+    const frame = decodeTelemetryFrame(binary);
+
+    expect(frame.dynamicEq).not.toBeNull();
+    expect(frame.dynamicEq?.generation).toBe(42);
+    expect(frame.dynamicEq?.bands).toHaveLength(TELEMETRY_DYNAMIC_EQ_BANDS);
+    expect(frame.dynamicEq?.bands[0]).toEqual({
+      gainDb: -1,
+      levelDb: -30,
+      reductionDb: 0.5,
+    });
+    expect(frame.dynamicEq?.bands[4]).toEqual({
+      gainDb: -5,
+      levelDb: -34,
+      reductionDb: 2.5,
+    });
+  });
+
+  it("keeps dynamic-eq absent when the validity flag is missing", () => {
+    const frame = decodeTelemetryFrame(
+      makeTelemetryFrame({ validityFlags: TELEMETRY_VALID_SAMPLE_PEAK | TELEMETRY_VALID_RMS }),
+    );
+    expect(frame.dynamicEq).toBeNull();
   });
 
   it("treats zero counts as unavailable fixed-layout sections", () => {

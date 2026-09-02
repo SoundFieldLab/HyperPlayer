@@ -1,5 +1,6 @@
 mod adapter_mapping;
 mod adapters;
+mod cache_runtime;
 mod commands;
 mod credential_vault;
 pub mod dto;
@@ -176,12 +177,24 @@ mod tests {
             autoplay_on_start: false,
             close_behavior: CloseBehaviorDto::Ask,
             netease_enabled: true,
+            cache_capacity_bytes: 10 * 1024 * 1024 * 1024,
+            cache_trim_percent: 90,
+            cache_recent_track_limit: 100,
+            album_fill_enabled: true,
+            album_fill_quality: "standard".into(),
+            dsp: None,
         })
         .unwrap();
 
         assert!(value.get("dynamicColor").is_some());
         assert!(value.get("closeBehavior").is_some());
         assert!(value.get("dynamic_color").is_none());
+        assert!(value.get("cacheCapacityBytes").is_some());
+        assert!(value.get("cacheTrimPercent").is_some());
+        assert!(value.get("cacheRecentTrackLimit").is_some());
+        assert!(value.get("albumFillEnabled").is_some());
+        assert!(value.get("albumFillQuality").is_some());
+        assert!(value.get("dsp").is_none());
 
         let weather = serde_json::to_value(ShenzhenWeatherDto {
             location: "深圳".into(),

@@ -1,6 +1,6 @@
 export const TELEMETRY_MAGIC = 0x4d545048;
-export const TELEMETRY_VERSION = 2;
-export const TELEMETRY_FRAME_BYTES = 780;
+export const TELEMETRY_VERSION = 4;
+export const TELEMETRY_FRAME_BYTES = 856;
 export const TELEMETRY_MAX_FRAME_BYTES = 1024;
 export const TELEMETRY_WAVEFORM_BINS = 64;
 export const TELEMETRY_SPECTRUM_BINS = 96;
@@ -11,18 +11,36 @@ export const TELEMETRY_VALID_RMS = 1 << 2;
 export const TELEMETRY_VALID_SPECTRUM = 1 << 3;
 export const TELEMETRY_VALID_TRUE_PEAK = 1 << 4;
 export const TELEMETRY_VALID_LIMITER_REDUCTION = 1 << 5;
+export const TELEMETRY_VALID_DYNAMIC_EQ = 1 << 6;
+export const TELEMETRY_VALID_LUFS = 1 << 7;
 
 const TELEMETRY_KNOWN_VALIDITY_FLAGS = TELEMETRY_VALID_WAVEFORM
   | TELEMETRY_VALID_SAMPLE_PEAK
   | TELEMETRY_VALID_RMS
   | TELEMETRY_VALID_SPECTRUM
   | TELEMETRY_VALID_TRUE_PEAK
-  | TELEMETRY_VALID_LIMITER_REDUCTION;
+  | TELEMETRY_VALID_LIMITER_REDUCTION
+  | TELEMETRY_VALID_DYNAMIC_EQ
+  | TELEMETRY_VALID_LUFS;
 
 const HEADER_BYTES = 48;
 const WAVEFORM_ARRAY_BYTES = TELEMETRY_WAVEFORM_BINS * 2;
 const SPECTRUM_OFFSET = HEADER_BYTES + WAVEFORM_ARRAY_BYTES * 4;
 const METERS_OFFSET = SPECTRUM_OFFSET + TELEMETRY_SPECTRUM_BINS * 2;
+
+// HPTM v4 追加块（v3 固定区 0..844 原样保留）：dynamic-eq 块 [780..844] +
+// LUFS 块 [844..856]（integrated/momentary/short-term 各 f32）。
+export const TELEMETRY_DYNAMIC_EQ_BANDS = 5;
+const DYNAMIC_EQ_OFFSET = TELEMETRY_FRAME_BYTES - 76;
+const DYNAMIC_EQ_GENERATION_OFFSET = DYNAMIC_EQ_OFFSET;
+const DYNAMIC_EQ_GAIN_OFFSET = DYNAMIC_EQ_GENERATION_OFFSET + 4;
+const DYNAMIC_EQ_LEVEL_OFFSET = DYNAMIC_EQ_GAIN_OFFSET + TELEMETRY_DYNAMIC_EQ_BANDS * 4;
+const DYNAMIC_EQ_REDUCTION_OFFSET = DYNAMIC_EQ_LEVEL_OFFSET + TELEMETRY_DYNAMIC_EQ_BANDS * 4;
+// LUFS 块紧随 dynamic-eq 块：[844..856]。
+const LUFS_OFFSET = TELEMETRY_FRAME_BYTES - 12;
+const LUFS_INTEGRATED_OFFSET = LUFS_OFFSET;
+const LUFS_MOMENTARY_OFFSET = LUFS_INTEGRATED_OFFSET + 4;
+const LUFS_SHORT_TERM_OFFSET = LUFS_MOMENTARY_OFFSET + 4;
 
 export interface WaveformBin {
   leftMin: number;
@@ -41,6 +59,12 @@ export interface TelemetryMeters {
   limiterReduction: number | null;
 }
 
+export interface TelemetryDynamicEqBand {
+  gainDb: number;
+  levelDb: number;
+  reductionDb: number;
+}
+
 export interface TelemetryFrame {
   epoch: bigint;
   sequence: bigint;
@@ -50,6 +74,15 @@ export interface TelemetryFrame {
   waveform: readonly WaveformBin[] | null;
   spectrum: Float32Array | null;
   meters: TelemetryMeters;
+  dynamicEq: {
+    generation: number;
+    bands: readonly TelemetryDynamicEqBand[];
+  } | null;
+  lufs: {
+    integrated: number;
+    momentary: number;
+    shortTerm: number;
+  } | null;
 }
 
 export class TelemetryDecodeError extends Error {
@@ -138,6 +171,37 @@ export function decodeTelemetryFrame(input: ArrayBuffer | ArrayBufferView): Tele
     limiterReduction: meter(6, "limiterReduction", TELEMETRY_VALID_LIMITER_REDUCTION),
   };
 
+  // HPTM v3 追加块：dynamic-eq 5-band 读数（无有效位时保持全零/缺省）。
+  const dynamicEqAvailable = (validity & TELEMETRY_VALID_DYNAMIC_EQ) !== 0;
+  let dynamicEq: TelemetryFrame["dynamicEq"] = null;
+  if (dynamicEqAvailable) {
+    const generation = view.getUint32(DYNAMIC_EQ_GENERATION_OFFSET, true);
+    const bands = new Array<TelemetryDynamicEqBand>(TELEMETRY_DYNAMIC_EQ_BANDS);
+    for (let index = 0; index < TELEMETRY_DYNAMIC_EQ_BANDS; index += 1) {
+      bands[index] = {
+        gainDb: finite(view.getFloat32(DYNAMIC_EQ_GAIN_OFFSET + index * 4, true), `dynamicEq[${index}].gainDb`),
+        levelDb: finite(view.getFloat32(DYNAMIC_EQ_LEVEL_OFFSET + index * 4, true), `dynamicEq[${index}].levelDb`),
+        reductionDb: finite(view.getFloat32(DYNAMIC_EQ_REDUCTION_OFFSET + index * 4, true), `dynamicEq[${index}].reductionDb`),
+      };
+    }
+    dynamicEq = { generation, bands };
+  } else if (bytes.subarray(DYNAMIC_EQ_OFFSET, DYNAMIC_EQ_OFFSET + 64).some((byte) => byte !== 0)) {
+    fail("Telemetry dynamic-eq area must be zero when unresolved");
+  }
+
+  // HPTM v4 追加块：LUFS 响度（integrated/momentary/short-term 各 f32）。
+  const lufsAvailable = (validity & TELEMETRY_VALID_LUFS) !== 0;
+  let lufs: TelemetryFrame["lufs"] = null;
+  if (lufsAvailable) {
+    lufs = {
+      integrated: finite(view.getFloat32(LUFS_INTEGRATED_OFFSET, true), "lufs.integrated"),
+      momentary: finite(view.getFloat32(LUFS_MOMENTARY_OFFSET, true), "lufs.momentary"),
+      shortTerm: finite(view.getFloat32(LUFS_SHORT_TERM_OFFSET, true), "lufs.shortTerm"),
+    };
+  } else if (bytes.subarray(LUFS_OFFSET, TELEMETRY_FRAME_BYTES).some((byte) => byte !== 0)) {
+    fail("Telemetry LUFS area must be zero when unresolved");
+  }
+
   return {
     epoch: view.getBigUint64(8, true),
     sequence: view.getBigUint64(16, true),
@@ -147,5 +211,7 @@ export function decodeTelemetryFrame(input: ArrayBuffer | ArrayBufferView): Tele
     waveform,
     spectrum,
     meters,
+    dynamicEq,
+    lufs,
   };
 }
