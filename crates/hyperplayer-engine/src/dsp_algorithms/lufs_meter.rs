@@ -5,12 +5,17 @@
 
 use crate::dsp::{PcmBlock, PcmFormat, PcmProcessor, ResetReason};
 use crate::error::{EngineError, Result as EngineResult};
-use hse_core::lufs_meter::{LufsMeter as CoreLufsMeter, LufsReadings as CoreLufsReadings};
+use hse_core::lufs_meter::{
+    LufsMeter as CoreLufsMeter, LufsReadings as CoreLufsReadings, MeterMode,
+};
 use std::array;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+
+/// 响度计量模式（引擎侧透传到 hse-core）。
+pub type LufsMeterMode = MeterMode;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LufsReadings {
@@ -105,6 +110,17 @@ impl SharedLufsState {
         fallback
     }
 
+    /// 当前发布代际（每次 publish 单调递增；用于消费侧判断是否有新读数）。
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    /// 测试辅助：注入一份模拟读数（等价于一次 publish）。
+    #[cfg(test)]
+    pub(crate) fn publish_for_tests(&self, readings: LufsReadings) {
+        self.publish(readings);
+    }
+
     /// Returns only the values needed by realtime normalization without loading a full snapshot.
     pub fn realtime_loudness(&self) -> (f64, f64) {
         (
@@ -195,6 +211,7 @@ struct LufsMeterCheckpoint {
 /// 第 19 级 LUFS tap。构造和 `prepare` 完成全部分配，`process` 只复用声道暂存。
 pub struct LufsMeterProcessor {
     sample_rate: u32,
+    mode: LufsMeterMode,
     meter: CoreLufsMeter,
     shared: Arc<SharedLufsState>,
     left: Vec<f32>,
@@ -204,8 +221,16 @@ pub struct LufsMeterProcessor {
 
 impl LufsMeterProcessor {
     pub fn new(sample_rate: u32, shared: Arc<SharedLufsState>) -> EngineResult<Self> {
+        Self::with_mode(sample_rate, LufsMeterMode::HseV151, shared)
+    }
+
+    pub fn with_mode(
+        sample_rate: u32,
+        mode: LufsMeterMode,
+        shared: Arc<SharedLufsState>,
+    ) -> EngineResult<Self> {
         shared.claim_writer()?;
-        let meter = match CoreLufsMeter::new(f64::from(sample_rate)) {
+        let meter = match CoreLufsMeter::with_mode(f64::from(sample_rate), mode) {
             Ok(meter) => meter,
             Err(error) => {
                 shared.writer_claimed.store(false, Ordering::Release);
@@ -214,6 +239,7 @@ impl LufsMeterProcessor {
         };
         Ok(Self {
             sample_rate,
+            mode,
             meter,
             shared,
             left: Vec::new(),
@@ -242,7 +268,7 @@ impl PcmProcessor for LufsMeterProcessor {
         let Some(previous) = previous.as_any_mut().downcast_mut::<LufsMeterProcessor>() else {
             return false;
         };
-        if self.sample_rate != previous.sample_rate {
+        if self.sample_rate != previous.sample_rate || self.mode != previous.mode {
             return false;
         }
         std::mem::swap(&mut self.meter, &mut previous.meter);
@@ -262,7 +288,9 @@ impl PcmProcessor for LufsMeterProcessor {
     fn runtime_checkpoint_compatible(&self, state: &(dyn std::any::Any + Send)) -> bool {
         state
             .downcast_ref::<LufsMeterCheckpoint>()
-            .is_some_and(|checkpoint| checkpoint.sample_rate == self.sample_rate)
+            .is_some_and(|checkpoint| {
+                checkpoint.sample_rate == self.sample_rate && checkpoint.meter.mode() == self.mode
+            })
     }
 
     fn save_runtime_state(&self, state: &mut (dyn std::any::Any + Send)) -> bool {
@@ -499,6 +527,28 @@ mod tests {
         core.process_stereo(&[0.1], &[0.1]);
         assert_eq!(core.completed_blocks(), 1);
         assert_same_readings(shared.readings(), &mut core);
+    }
+
+    #[test]
+    fn mode_propagates_to_core_and_gates_state_adoption() {
+        let shared = Arc::new(SharedLufsState::new());
+        let mut std =
+            LufsMeterProcessor::with_mode(48_000, LufsMeterMode::ItuBs1770_5, Arc::clone(&shared))
+                .unwrap();
+        assert_eq!(std.mode, LufsMeterMode::ItuBs1770_5);
+        std.prepare(format(48_000), 19_200).unwrap();
+        process_constant(&mut std, 48_000, 19_200, 0.1);
+
+        // 不同 mode 的旧处理器不能 adopt。
+        let next_shared = Arc::new(SharedLufsState::new());
+        let mut next = LufsMeterProcessor::new(48_000, Arc::clone(&next_shared)).unwrap();
+        assert!(!next.adopt_runtime_state_from(&mut std));
+
+        // 相同 mode 可 adopt。
+        let same_shared = Arc::new(SharedLufsState::new());
+        let mut same =
+            LufsMeterProcessor::with_mode(48_000, LufsMeterMode::ItuBs1770_5, same_shared).unwrap();
+        assert!(same.adopt_runtime_state_from(&mut std));
     }
 
     #[test]

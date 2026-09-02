@@ -2,12 +2,14 @@ use crate::audio::{AudioOutput, Decoder, DecoderFactory, GaplessCoordinator, Sta
 use crate::dsp::{
     PcmFormat, PreparedProcessorChain, ProcessorChain, ProcessorChainSnapshot, ResetReason,
 };
-use crate::dsp_algorithms::{prepare_dsp_chain, DspConfig};
+use crate::dsp_algorithms::lufs_meter::SharedLufsState;
+use crate::dsp_algorithms::{prepare_dsp_chain_with_lufs, DspConfig};
 use crate::error::{EngineError, Result};
 use crate::media::TrustedResolvedMedia;
 use crate::model::Track;
 use crate::telemetry::{TelemetryHub, TelemetryProducer, TelemetrySubscriber};
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 pub(crate) const DECODE_BUFFER_FRAMES: usize = 2048;
 const TERMINAL_DRAIN_MAX_SECONDS: u64 = 12;
@@ -413,8 +415,18 @@ impl RuntimeCoordinator {
         config: DspConfig,
     ) -> Result<ProcessorChainSnapshot> {
         self.invalidate_standby_dsp()?;
-        let prepared =
-            prepare_dsp_chain(revision, self.output.format(), DECODE_BUFFER_FRAMES, config)?;
+        // 每次 DSP 配置为链新建独立的 LUFS 发布状态：LufsMeterProcessor 为单写者，
+        // 不能与旧链共享同一状态（旧链处理器仍持有 writer 直至 Drop）。状态随新链生效，
+        // 并同步交给 telemetry 读取（Stage 19 读数闭环）。
+        let lufs = Arc::new(SharedLufsState::new());
+        let prepared = prepare_dsp_chain_with_lufs(
+            revision,
+            self.output.format(),
+            DECODE_BUFFER_FRAMES,
+            config,
+            Arc::clone(&lufs),
+        )?;
+        self.telemetry.set_lufs_source(lufs);
         let _retired = self.dsp.reclaim_retired();
         let _superseded = self.dsp.queue_prepared(prepared)?;
         if self
@@ -898,8 +910,8 @@ mod tests {
     use crate::media::{MediaHandle, TrustedResolvedMedia};
     use crate::model::{MediaId, MediaSource};
     use crate::telemetry::{
-        TelemetryActivity, TELEMETRY_VALID_RMS, TELEMETRY_VALID_SAMPLE_PEAK,
-        TELEMETRY_VALID_WAVEFORM,
+        reset_chain_metering_for_tests, TelemetryActivity, TELEMETRY_VALID_RMS,
+        TELEMETRY_VALID_SAMPLE_PEAK, TELEMETRY_VALID_WAVEFORM,
     };
     use std::fs;
     use std::path::Path;
@@ -2012,6 +2024,9 @@ mod tests {
 
     #[test]
     fn telemetry_analyzes_only_the_prefix_accepted_by_output() {
+        // 复位进程级读数槽：本测试断言「无处理器读数时 validity 恰为基础位」，
+        // 不受其它测试通过 hot 门写入全局槽的残留影响（测试顺序无关）。
+        reset_chain_metering_for_tests();
         let directory = tempdir().unwrap();
         let path = directory.path().join("telemetry-prefix.wav");
         let mut samples = vec![(8192, -8192); 267];

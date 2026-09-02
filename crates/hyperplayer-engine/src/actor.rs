@@ -30,6 +30,9 @@ fn playback_output_format(source: crate::dsp::PcmFormat) -> crate::dsp::PcmForma
     }
 }
 
+// LoadContext 携带整段队列与受信媒体，与轻量控制变体体积差异属设计内
+//（命令经通道逐个传递，非热路径数组容器）。
+#[allow(clippy::large_enum_variant)]
 pub enum EngineCommand {
     LoadContext {
         items: Vec<QueueItem>,

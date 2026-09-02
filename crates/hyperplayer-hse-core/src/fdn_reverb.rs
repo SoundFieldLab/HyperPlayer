@@ -34,7 +34,9 @@
 //! preDelay 各 `ceil(fs)+1`）；`set_params` 只改系数与逻辑长度，不重新分配；
 //! `process` 稳态零分配、零锁、零系统调用。
 
+use crate::reverb_simple::reverb_tail_drain_frames;
 use crate::Stage;
+use std::fmt;
 
 /// 最大延迟线数（TS `MAX_LINES`，构造期预分配上限）。
 const MAX_LINES: usize = 16;
@@ -306,6 +308,44 @@ impl FdnNetwork {
     }
 }
 
+/// FDN 网络连续处理状态快照（单个声道的网络部分）。
+#[derive(Clone)]
+struct FdnNetworkState {
+    buf: Vec<Vec<f32>>,
+    /// 延迟长度拓扑：type/delayScale 变化会改变线长，游标失配时状态迁移不再
+    /// 安全——必须走重建（checkpoint 不兼容语义）。
+    len: [usize; MAX_LINES],
+    pos: [usize; MAX_LINES],
+    store: [f32; MAX_LINES],
+}
+
+/// FDN 混响连续处理状态快照（按值携带全部延迟缓冲，理由见
+/// [`crate::reverb_simple::ReverbSimpleRuntimeState`] 的文档）。
+#[derive(Clone)]
+pub struct FdnReverbRuntimeState {
+    sample_rate_bits: u64,
+    /// 延迟线数拓扑：lines 结构变化即状态失配（规格 §4.2 重建语义）。
+    line_count: usize,
+    left: FdnNetworkState,
+    right: FdnNetworkState,
+    pre_delay_l: Vec<f32>,
+    pre_delay_r: Vec<f32>,
+    pre_delay_pos_l: usize,
+    pre_delay_pos_r: usize,
+}
+
+/// 运行时状态的采样率或线数拓扑与目标混响不一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FdnReverbRuntimeStateMismatch;
+
+impl fmt::Display for FdnReverbRuntimeStateMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("fdn reverb runtime state sample rate or lines mismatch")
+    }
+}
+
+impl std::error::Error for FdnReverbRuntimeStateMismatch {}
+
 /// FDN 算法混响阶段（立体声、就地处理；对齐 TS `FdnReverb` 私有域）。
 pub struct FdnReverbStage {
     fs: f64,
@@ -403,6 +443,147 @@ impl FdnReverbStage {
             self.reset();
         }
         Ok(())
+    }
+
+    /// 返回含全部延迟缓冲内容的定长状态快照（非实时 checkpoint 路径，会分配）。
+    pub fn snapshot_runtime_state(&self) -> FdnReverbRuntimeState {
+        FdnReverbRuntimeState {
+            sample_rate_bits: self.fs.to_bits(),
+            line_count: self.line_count,
+            left: FdnNetworkState {
+                buf: self.left.buf.clone(),
+                len: self.left.len,
+                pos: self.left.pos,
+                store: self.left.store,
+            },
+            right: FdnNetworkState {
+                buf: self.right.buf.clone(),
+                len: self.right.len,
+                pos: self.right.pos,
+                store: self.right.store,
+            },
+            pre_delay_l: self.pre_delay_l.clone(),
+            pre_delay_r: self.pre_delay_r.clone(),
+            pre_delay_pos_l: self.pre_delay_pos_l,
+            pre_delay_pos_r: self.pre_delay_pos_r,
+        }
+    }
+
+    /// 将当前状态写入已有快照；采样率或线数拓扑不符时不修改快照。
+    ///
+    /// 通过 `clone_from` 复用快照既有分配：缓冲容量由采样率与线数上限固定、
+    /// 过程期不增长，稳态重写快照为零分配。
+    pub fn save_runtime_state(
+        &self,
+        state: &mut FdnReverbRuntimeState,
+    ) -> Result<(), FdnReverbRuntimeStateMismatch> {
+        if !self.state_shapes_match(state) {
+            return Err(FdnReverbRuntimeStateMismatch);
+        }
+        state.line_count = self.line_count;
+        state.left.buf.clone_from(&self.left.buf);
+        state.left.len = self.left.len;
+        state.left.pos = self.left.pos;
+        state.left.store = self.left.store;
+        state.right.buf.clone_from(&self.right.buf);
+        state.right.len = self.right.len;
+        state.right.pos = self.right.pos;
+        state.right.store = self.right.store;
+        state.pre_delay_l.clone_from(&self.pre_delay_l);
+        state.pre_delay_r.clone_from(&self.pre_delay_r);
+        state.pre_delay_pos_l = self.pre_delay_pos_l;
+        state.pre_delay_pos_r = self.pre_delay_pos_r;
+        Ok(())
+    }
+
+    /// 恢复全部网络缓冲、游标与 store 及 preDelay 状态，保留目标参数与派生量。
+    pub fn restore_runtime_state(
+        &mut self,
+        state: &FdnReverbRuntimeState,
+    ) -> Result<(), FdnReverbRuntimeStateMismatch> {
+        if !self.state_shapes_match(state) {
+            return Err(FdnReverbRuntimeStateMismatch);
+        }
+        self.left.buf.clone_from(&state.left.buf);
+        self.left.len = state.left.len;
+        self.left.pos = state.left.pos;
+        self.left.store = state.left.store;
+        self.right.buf.clone_from(&state.right.buf);
+        self.right.len = state.right.len;
+        self.right.pos = state.right.pos;
+        self.right.store = state.right.store;
+        self.pre_delay_l.clone_from(&state.pre_delay_l);
+        self.pre_delay_r.clone_from(&state.pre_delay_r);
+        self.pre_delay_pos_l = state.pre_delay_pos_l;
+        self.pre_delay_pos_r = state.pre_delay_pos_r;
+        Ok(())
+    }
+
+    /// 从另一实例复制连续处理状态，保留目标参数与派生量。
+    ///
+    /// 直接逐字段拷贝（`clone_from` 复用既有分配）：稳态调用零分配。线数拓扑
+    /// 或延迟长度（type/delayScale）不一致时报错——此时游标语义失配，必须重建。
+    pub fn copy_runtime_state_from(
+        &mut self,
+        source: &Self,
+    ) -> Result<(), FdnReverbRuntimeStateMismatch> {
+        if self.fs.to_bits() != source.fs.to_bits()
+            || self.line_count != source.line_count
+            || self.left.len != source.left.len
+            || self.right.len != source.right.len
+        {
+            return Err(FdnReverbRuntimeStateMismatch);
+        }
+        self.left.pos = source.left.pos;
+        self.left.store = source.left.store;
+        self.right.pos = source.right.pos;
+        self.right.store = source.right.store;
+        for j in 0..MAX_LINES {
+            self.left.buf[j].clone_from(&source.left.buf[j]);
+            self.right.buf[j].clone_from(&source.right.buf[j]);
+        }
+        self.pre_delay_l.clone_from(&source.pre_delay_l);
+        self.pre_delay_r.clone_from(&source.pre_delay_r);
+        self.pre_delay_pos_l = source.pre_delay_pos_l;
+        self.pre_delay_pos_r = source.pre_delay_pos_r;
+        Ok(())
+    }
+
+    /// 状态形状核对：采样率逐位一致、线数拓扑一致且缓冲长度与本阶段一致。
+    fn state_shapes_match(&self, state: &FdnReverbRuntimeState) -> bool {
+        let network_shape = |a: &FdnNetwork, b: &FdnNetworkState| {
+            a.buf.len() == b.buf.len()
+                && a.len == b.len
+                && a.buf
+                    .iter()
+                    .zip(b.buf.iter())
+                    .all(|(x, y)| x.len() == y.len())
+        };
+        state.sample_rate_bits == self.fs.to_bits()
+            && state.line_count == self.line_count
+            && network_shape(&self.left, &state.left)
+            && network_shape(&self.right, &state.right)
+            && self.pre_delay_l.len() == state.pre_delay_l.len()
+            && self.pre_delay_r.len() == state.pre_delay_r.len()
+    }
+
+    /// 干路直通、湿路并联——处理延迟为零。
+    pub fn latency_samples(&self) -> usize {
+        0
+    }
+
+    /// 湿路尾音排空估计（−60 dB 保守上限）：preDelay + 最长延迟线的反馈排空。
+    pub fn tail_samples(&self) -> usize {
+        let longest = self
+            .left
+            .len
+            .iter()
+            .chain(self.right.len.iter())
+            .take(self.line_count)
+            .copied()
+            .max()
+            .unwrap_or(0);
+        self.pre_delay_len + reverb_tail_drain_frames(longest, self.left.g, self.fs)
     }
 }
 
@@ -958,5 +1139,144 @@ mod tests {
                 "错误信息应与 TS 一致：{err}"
             );
         }
+    }
+
+    #[test]
+    fn 运行时状态往返保存复制与失配保持原子性() {
+        let prefix_l = lcg_noise(449, 301, 0.8);
+        let prefix_r = lcg_noise(449, 302, 0.6);
+        let continuation_l = lcg_noise(271, 303, 0.7);
+        let continuation_r = lcg_noise(271, 304, 0.5);
+        let mut source = FdnReverbStage::from_params(48_000.0, base_params("hall")).unwrap();
+        source.prepare(89);
+        drive_stereo(&mut source, &prefix_l, &prefix_r, 89);
+        let checkpoint = source.snapshot_runtime_state();
+        let expected = drive_stereo(&mut source, &continuation_l, &continuation_r, 61);
+
+        // 快照往返：restore 后续播与连续处理逐位一致。
+        let mut replay = FdnReverbStage::from_params(48_000.0, base_params("hall")).unwrap();
+        replay.restore_runtime_state(&checkpoint).unwrap();
+        assert_eq!(
+            drive_stereo(&mut replay, &continuation_l, &continuation_r, 61),
+            expected
+        );
+
+        // save 覆盖 + copy：copy 保留目标参数（只改 wet/width 等非拓扑参数）。
+        let mut reusable = checkpoint.clone();
+        replay.save_runtime_state(&mut reusable).unwrap();
+        let mut non_topology = base_params("hall");
+        non_topology.wet = 0.8;
+        non_topology.width = 0.0;
+        let mut target = FdnReverbStage::from_params(48_000.0, non_topology).unwrap();
+        let params_before = (target.left.g, target.left.damp1, target.wet1, target.wet2);
+        target.copy_runtime_state_from(&replay).unwrap();
+        assert_eq!(
+            (target.left.g, target.left.damp1, target.wet1, target.wet2),
+            params_before,
+            "copy 只迁移状态，不覆盖参数"
+        );
+        assert_eq!(
+            drive_stereo(&mut target, &continuation_l, &continuation_r, 61),
+            expected
+        );
+
+        // 延迟长度拓扑失配（type 变化 → 线长变化）：报错（重建语义）。
+        let mut topology = FdnReverbStage::from_params(48_000.0, base_params("plate")).unwrap();
+        assert_eq!(
+            topology.restore_runtime_state(&reusable),
+            Err(FdnReverbRuntimeStateMismatch)
+        );
+
+        // 采样率失配：三路都报错且保持原子性。
+        let mut mismatch = FdnReverbStage::from_params(44_100.0, base_params("hall")).unwrap();
+        let before_pos = mismatch.left.pos;
+        let before_buf = mismatch.left.buf.clone();
+        assert_eq!(
+            mismatch.restore_runtime_state(&reusable),
+            Err(FdnReverbRuntimeStateMismatch)
+        );
+        assert_eq!(
+            mismatch.save_runtime_state(&mut reusable),
+            Err(FdnReverbRuntimeStateMismatch)
+        );
+        assert_eq!(
+            mismatch.copy_runtime_state_from(&replay),
+            Err(FdnReverbRuntimeStateMismatch)
+        );
+        assert_eq!(
+            mismatch.left.pos, before_pos,
+            "失配 restore 不得改动目标状态"
+        );
+        assert_eq!(mismatch.left.buf, before_buf);
+
+        // 线数拓扑失配：8 线快照不可恢复进 16 线实例（重建语义）。
+        let mut lines16 = base_params("hall");
+        lines16.lines = Some(16.0);
+        let mut topology = FdnReverbStage::from_params(48_000.0, lines16).unwrap();
+        assert_eq!(
+            topology.restore_runtime_state(&reusable),
+            Err(FdnReverbRuntimeStateMismatch)
+        );
+    }
+
+    #[test]
+    fn reset后快照与全新实例快照一致_延迟与尾音符合语义() {
+        let mut stage = FdnReverbStage::from_params(48_000.0, base_params("hall")).unwrap();
+        stage.prepare(64);
+        drive_stereo(
+            &mut stage,
+            &lcg_noise(256, 7, 0.7),
+            &lcg_noise(256, 9, 0.7),
+            64,
+        );
+        stage.reset();
+        let reset_state = stage.snapshot_runtime_state();
+        let fresh_state = FdnReverbStage::from_params(48_000.0, base_params("hall")).unwrap();
+        let fresh_state = fresh_state.snapshot_runtime_state();
+        assert_eq!(reset_state.left.pos, fresh_state.left.pos);
+        assert_eq!(reset_state.right.store, fresh_state.right.store);
+        assert_eq!(reset_state.left.buf, fresh_state.left.buf);
+        assert_eq!(reset_state.pre_delay_pos_l, fresh_state.pre_delay_pos_l);
+        assert_eq!(reset_state.pre_delay_l, fresh_state.pre_delay_r);
+
+        // 干路直通、湿路并联——无处理延迟；尾音 = preDelay + 最长线排空。
+        assert_eq!(stage.latency_samples(), 0);
+        let longest = stage
+            .left
+            .len
+            .iter()
+            .chain(stage.right.len.iter())
+            .take(stage.line_count)
+            .copied()
+            .max()
+            .unwrap();
+        let want = stage.pre_delay_len
+            + ((longest as f64) * (-6.907_755_278_982_137_f64 / stage.left.g.ln())).ceil() as usize;
+        assert_eq!(stage.tail_samples(), want);
+        assert!(stage.tail_samples() <= (10.0_f64 * 48_000.0) as usize);
+    }
+
+    /// 按给定块长驱动左右两路输入，返回输出拷贝 (L, R)。
+    fn drive_stereo(
+        stage: &mut FdnReverbStage,
+        l: &[f32],
+        r: &[f32],
+        block: usize,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let mut out_l = l.to_vec();
+        let mut out_r = r.to_vec();
+        let mut offset = 0;
+        while offset < l.len() {
+            let end = (offset + block).min(l.len());
+            let (left_head, left_tail) = out_l.split_at_mut(offset);
+            let (right_head, right_tail) = out_r.split_at_mut(offset);
+            stage.process(
+                &mut left_tail[..end - offset],
+                &mut right_tail[..end - offset],
+            );
+            let _ = (left_head, right_head);
+            offset = end;
+        }
+        (out_l, out_r)
     }
 }

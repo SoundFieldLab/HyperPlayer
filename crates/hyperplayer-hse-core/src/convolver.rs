@@ -40,6 +40,7 @@
 
 use crate::fft::{next_pow2, Fft};
 use crate::Stage;
+use std::fmt;
 
 /// 复刻 JS `Math.min(a, b)` 的 NaN 传播语义（理由同 biquad.rs 的同名助手）。
 fn js_min(a: f64, b: f64) -> f64 {
@@ -203,6 +204,51 @@ impl ChannelState {
     }
 }
 
+/// 每声道独立流式状态快照（[`ConvolverRuntimeState`] 的成员）。
+#[derive(Clone)]
+pub struct ConvolverChannelState {
+    input_block: Vec<f32>,
+    long_in: Vec<f32>,
+    out_accum: Vec<f32>,
+    pending: Vec<f32>,
+    wet_delay: Vec<f32>,
+}
+
+/// 卷积混响连续处理状态快照（按值携带全部流式缓冲，理由见
+/// [`crate::reverb_simple::ReverbSimpleRuntimeState`] 的文档）。
+///
+/// 状态与「同一 IR + 同一分区规划」绑定：IR 身份以 [`ConvolverStage::ir_fingerprint`]
+/// （输入 IR 的 FNV-1a 内容指纹）参与失配判定，IR 更换后的旧状态不可迁移。
+#[derive(Clone)]
+pub struct ConvolverRuntimeState {
+    sample_rate_bits: u64,
+    ir_loaded: bool,
+    ir_fingerprint: u64,
+    ir_length: usize,
+    input_pos: usize,
+    pending_len: usize,
+    pending_pos: usize,
+    total_in: usize,
+    total_wet_out: usize,
+    completed_blocks: usize,
+    total_out: usize,
+    wet_delay_pos: usize,
+    ch_l: ConvolverChannelState,
+    ch_r: ConvolverChannelState,
+}
+
+/// 运行时状态的采样率或 IR 身份与目标卷积器不一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConvolverRuntimeStateMismatch;
+
+impl fmt::Display for ConvolverRuntimeStateMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("convolver runtime state sample rate or IR identity mismatch")
+    }
+}
+
+impl std::error::Error for ConvolverRuntimeStateMismatch {}
+
 /// 非均匀分区卷积混响阶段（对齐 TS `Convolver` 类）。
 ///
 /// 全部缓冲在 `load_ir`（非实时路径）定容分配；`process_stereo` 稳态零分配。
@@ -246,6 +292,8 @@ pub struct ConvolverStage {
     ir_length: usize,
     /// IR 名称标签（无数值行为；TS irName / getIrName）。
     ir_name: Option<String>,
+    /// 输入 IR 的 FNV-1a 内容指纹（f32 位型逐样本哈希；IR 身份判定用，无数值行为）。
+    ir_fingerprint: u64,
 }
 
 impl ConvolverStage {
@@ -313,6 +361,7 @@ impl ConvolverStage {
             ir_loaded: false,
             ir_length: 0,
             ir_name: None,
+            ir_fingerprint: 0,
         })
     }
 
@@ -439,6 +488,15 @@ impl ConvolverStage {
         self.ir_loaded = true;
         self.ir_length = m;
         self.ir_name = ir_name.map(str::to_string);
+        self.ir_fingerprint = {
+            // FNV-1a over f32 位型（输入 IR 原样，非去周期化副本）。
+            let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+            for &v in ir {
+                hash ^= u64::from(v.to_bits());
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            hash
+        };
         self.plan = Some(ConvolverPlan {
             ps,
             pl,
@@ -481,6 +539,172 @@ impl ConvolverStage {
     /// IR 长度 M（去周期化不改变长度；`load_ir` 后有效）。
     pub fn ir_length(&self) -> usize {
         self.ir_length
+    }
+
+    /// IR 内容指纹（输入 IR 的 FNV-1a f32 位型哈希；`load_ir` 后有效）。
+    ///
+    /// 运行时状态迁移（checkpoint/copy）以此判定 IR 身份：同一指纹 + 同一长度
+    /// 才允许迁移；IR 更换后的旧状态必须重建。
+    pub fn ir_fingerprint(&self) -> u64 {
+        self.ir_fingerprint
+    }
+
+    /// 返回含全部流式缓冲内容的定长状态快照（非实时 checkpoint 路径，会分配）。
+    pub fn snapshot_runtime_state(&self) -> ConvolverRuntimeState {
+        ConvolverRuntimeState {
+            sample_rate_bits: self.fs.to_bits(),
+            ir_loaded: self.ir_loaded,
+            ir_fingerprint: self.ir_fingerprint,
+            ir_length: self.ir_length,
+            input_pos: self.input_pos,
+            pending_len: self.pending_len,
+            pending_pos: self.pending_pos,
+            total_in: self.total_in,
+            total_wet_out: self.total_wet_out,
+            completed_blocks: self.completed_blocks,
+            total_out: self.total_out,
+            wet_delay_pos: self.wet_delay_pos,
+            ch_l: self.snapshot_channel(&self.ch_l),
+            ch_r: self.snapshot_channel(&self.ch_r),
+        }
+    }
+
+    fn snapshot_channel(&self, ch: &ChannelState) -> ConvolverChannelState {
+        ConvolverChannelState {
+            input_block: ch.input_block.clone(),
+            long_in: ch.long_in.clone(),
+            out_accum: ch.out_accum.clone(),
+            pending: ch.pending.clone(),
+            wet_delay: ch.wet_delay.clone(),
+        }
+    }
+
+    /// 将当前状态写入已有快照；采样率或 IR 身份不符时不修改快照。
+    ///
+    /// 通过 `clone_from` 复用快照既有分配：缓冲容量由采样率与分区规划固定、
+    /// 过程期不增长，稳态重写快照为零分配。
+    pub fn save_runtime_state(
+        &self,
+        state: &mut ConvolverRuntimeState,
+    ) -> Result<(), ConvolverRuntimeStateMismatch> {
+        if !self.state_shapes_match(state) {
+            return Err(ConvolverRuntimeStateMismatch);
+        }
+        state.ir_loaded = self.ir_loaded;
+        state.ir_length = self.ir_length;
+        state.input_pos = self.input_pos;
+        state.pending_len = self.pending_len;
+        state.pending_pos = self.pending_pos;
+        state.total_in = self.total_in;
+        state.total_wet_out = self.total_wet_out;
+        state.completed_blocks = self.completed_blocks;
+        state.total_out = self.total_out;
+        state.wet_delay_pos = self.wet_delay_pos;
+        self.save_channel(&mut state.ch_l, &self.ch_l);
+        self.save_channel(&mut state.ch_r, &self.ch_r);
+        Ok(())
+    }
+
+    fn save_channel(&self, target: &mut ConvolverChannelState, source: &ChannelState) {
+        target.input_block.clone_from(&source.input_block);
+        target.long_in.clone_from(&source.long_in);
+        target.out_accum.clone_from(&source.out_accum);
+        target.pending.clone_from(&source.pending);
+        target.wet_delay.clone_from(&source.wet_delay);
+    }
+
+    /// 恢复全部流式状态，保留 IR、分区规划与 mix/preDelay 参数。
+    pub fn restore_runtime_state(
+        &mut self,
+        state: &ConvolverRuntimeState,
+    ) -> Result<(), ConvolverRuntimeStateMismatch> {
+        if !self.state_shapes_match(state) {
+            return Err(ConvolverRuntimeStateMismatch);
+        }
+        self.ir_loaded = state.ir_loaded;
+        self.ir_length = state.ir_length;
+        self.input_pos = state.input_pos;
+        self.pending_len = state.pending_len;
+        self.pending_pos = state.pending_pos;
+        self.total_in = state.total_in;
+        self.total_wet_out = state.total_wet_out;
+        self.completed_blocks = state.completed_blocks;
+        self.total_out = state.total_out;
+        self.wet_delay_pos = state.wet_delay_pos;
+        for (target, source) in [(&mut self.ch_l, &state.ch_l), (&mut self.ch_r, &state.ch_r)] {
+            target.input_block.clone_from(&source.input_block);
+            target.long_in.clone_from(&source.long_in);
+            target.out_accum.clone_from(&source.out_accum);
+            target.pending.clone_from(&source.pending);
+            target.wet_delay.clone_from(&source.wet_delay);
+        }
+        Ok(())
+    }
+
+    /// 从另一实例复制连续处理状态，保留目标 mix/preDelay 参数。
+    ///
+    /// 直接逐字段拷贝（`clone_from` 复用既有分配）：稳态调用零分配。采样率、
+    /// IR 身份或分区规划不一致时报错——此时缓冲形状失配，必须重建。
+    pub fn copy_runtime_state_from(
+        &mut self,
+        source: &Self,
+    ) -> Result<(), ConvolverRuntimeStateMismatch> {
+        if self.fs.to_bits() != source.fs.to_bits()
+            || self.ir_fingerprint != source.ir_fingerprint
+            || self.ir_length != source.ir_length
+            || self.partition_size != source.partition_size
+            || self.long_partition_size != source.long_partition_size
+            || self.ir_loaded != source.ir_loaded
+        {
+            return Err(ConvolverRuntimeStateMismatch);
+        }
+        self.input_pos = source.input_pos;
+        self.pending_len = source.pending_len;
+        self.pending_pos = source.pending_pos;
+        self.total_in = source.total_in;
+        self.total_wet_out = source.total_wet_out;
+        self.completed_blocks = source.completed_blocks;
+        self.total_out = source.total_out;
+        self.wet_delay_pos = source.wet_delay_pos;
+        for (target, src) in [
+            (&mut self.ch_l, &source.ch_l),
+            (&mut self.ch_r, &source.ch_r),
+        ] {
+            target.input_block.clone_from(&src.input_block);
+            target.long_in.clone_from(&src.long_in);
+            target.out_accum.clone_from(&src.out_accum);
+            target.pending.clone_from(&src.pending);
+            target.wet_delay.clone_from(&src.wet_delay);
+        }
+        Ok(())
+    }
+
+    /// 状态形状核对：采样率逐位一致、IR 身份（指纹 + 长度）一致且缓冲长度
+    /// 与本阶段一致（缓冲长度由采样率与分区规划唯一决定）。
+    fn state_shapes_match(&self, state: &ConvolverRuntimeState) -> bool {
+        if state.sample_rate_bits != self.fs.to_bits()
+            || state.ir_fingerprint != self.ir_fingerprint
+            || state.ir_length != self.ir_length
+        {
+            return false;
+        }
+        for (ch, snapshot) in [(&self.ch_l, &state.ch_l), (&self.ch_r, &state.ch_r)] {
+            if ch.input_block.len() != snapshot.input_block.len()
+                || ch.long_in.len() != snapshot.long_in.len()
+                || ch.out_accum.len() != snapshot.out_accum.len()
+                || ch.pending.len() != snapshot.pending.len()
+                || ch.wet_delay.len() != snapshot.wet_delay.len()
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// 湿路尾音长度（样本数，精确值）：湿路延迟 Ls + 湿路 preDelay + IR 长度
+    /// （输入停止后湿路继续输出的完整窗口；干路不延迟、无尾音）。
+    pub fn tail_samples(&self) -> usize {
+        self.partition_size + self.pre_delay_samples + self.ir_length
     }
 
     /// 流式立体声就地处理（逐行对齐 TS `processStereo`，Convolver.ts L386–L464）。
@@ -1458,5 +1682,186 @@ mod tests {
             result.is_err(),
             "未载入 IR 的 Stage::process 应 panic（镜像 TS 抛错）"
         );
+    }
+
+    #[test]
+    fn 运行时状态往返保存复制与失配保持原子性() {
+        let prefix_l = lcg_noise(777, 0x0101);
+        let prefix_r = lcg_noise(777, 0x0202);
+        let continuation_l = lcg_noise(611, 0x0303);
+        let continuation_r = lcg_noise(611, 0x0404);
+        let mk = || {
+            let mut s = ConvolverStage::new(
+                48000.0,
+                ConvolverOptions {
+                    partition_size: 64.0,
+                    long_partition_size: 256.0,
+                    short_region_ms: 100.0,
+                    de_periodize: true,
+                },
+            )
+            .unwrap();
+            s.load_ir(
+                &build_ir_recipe(&IrRecipe::ExpNoise {
+                    length: 512.0,
+                    seed: 777,
+                    decay: 6.0,
+                    amp: 0.5,
+                })
+                .unwrap(),
+                Some("identity"),
+            )
+            .unwrap();
+            s.set_mix(0.7);
+            s.set_pre_delay_ms(3.0);
+            s
+        };
+
+        let mut source = mk();
+        source.prepare(93);
+        drive(&mut source, &prefix_l, &prefix_r, 93);
+        let checkpoint = source.snapshot_runtime_state();
+        let expected = drive(&mut source, &continuation_l, &continuation_r, 61);
+
+        // 快照往返：restore 后续播与连续处理逐位一致。
+        let mut replay = mk();
+        replay.restore_runtime_state(&checkpoint).unwrap();
+        assert_eq!(
+            drive(&mut replay, &continuation_l, &continuation_r, 61),
+            expected
+        );
+
+        // save 覆盖 + copy：copy 保留目标 mix/preDelay 参数（同 IR 同分区才可迁移）。
+        // copy 源（replay）已推进到「前缀 + 续播」之后，故用第二段续播对齐比较。
+        let mut reusable = checkpoint.clone();
+        replay.save_runtime_state(&mut reusable).unwrap();
+        let second_l = lcg_noise(307, 0x0505);
+        let second_r = lcg_noise(307, 0x0606);
+        let expected_second = drive(&mut source, &second_l, &second_r, 53);
+        let mut target = mk();
+        target.set_mix(0.2);
+        target.set_pre_delay_ms(7.0);
+        target.copy_runtime_state_from(&replay).unwrap();
+        assert_eq!(target.mix, 0.2, "copy 不得覆盖目标 mix 参数");
+        assert_eq!(
+            target.pre_delay_samples, 336,
+            "copy 不得覆盖目标 preDelay 参数"
+        );
+        target.set_mix(0.7);
+        target.set_pre_delay_ms(3.0);
+        assert_eq!(
+            drive(&mut target, &second_l, &second_r, 53),
+            expected_second
+        );
+
+        // IR 身份失配：换 IR 后旧状态不可迁移（指纹/长度失配保持原子性）。
+        let mut other_ir = ConvolverStage::new(
+            48000.0,
+            ConvolverOptions {
+                partition_size: 64.0,
+                long_partition_size: 256.0,
+                short_region_ms: 100.0,
+                de_periodize: true,
+            },
+        )
+        .unwrap();
+        other_ir
+            .load_ir(
+                &build_ir_recipe(&IrRecipe::ExpNoise {
+                    length: 512.0,
+                    seed: 778,
+                    decay: 6.0,
+                    amp: 0.5,
+                })
+                .unwrap(),
+                None,
+            )
+            .unwrap();
+        assert_ne!(other_ir.ir_fingerprint(), replay.ir_fingerprint());
+        assert_eq!(
+            other_ir.restore_runtime_state(&reusable),
+            Err(ConvolverRuntimeStateMismatch)
+        );
+        assert_eq!(
+            other_ir.save_runtime_state(&mut reusable),
+            Err(ConvolverRuntimeStateMismatch)
+        );
+        assert_eq!(
+            other_ir.copy_runtime_state_from(&replay),
+            Err(ConvolverRuntimeStateMismatch)
+        );
+        assert_eq!(other_ir.total_out, 0, "失配 restore 不得改动目标状态");
+
+        // 采样率失配。
+        let mut other_rate = ConvolverStage::new(
+            44_100.0,
+            ConvolverOptions {
+                partition_size: 64.0,
+                long_partition_size: 256.0,
+                short_region_ms: 100.0,
+                de_periodize: true,
+            },
+        )
+        .unwrap();
+        other_rate
+            .load_ir(
+                &build_ir_recipe(&IrRecipe::ExpNoise {
+                    length: 512.0,
+                    seed: 777,
+                    decay: 6.0,
+                    amp: 0.5,
+                })
+                .unwrap(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            other_rate.restore_runtime_state(&reusable),
+            Err(ConvolverRuntimeStateMismatch)
+        );
+    }
+
+    #[test]
+    fn ir身份指纹与尾音语义() {
+        let mut s = ConvolverStage::new(48000.0, ConvolverOptions::default()).unwrap();
+        assert_eq!(s.ir_fingerprint(), 0, "未载入 IR 时指纹为 0");
+        s.load_ir(
+            &build_ir_recipe(&IrRecipe::Delta { delay: 5.0 }).unwrap(),
+            None,
+        )
+        .unwrap();
+        let delta_fp = s.ir_fingerprint();
+        // 同配方两次载入指纹一致（确定性）。
+        let mut s2 = ConvolverStage::new(48000.0, ConvolverOptions::default()).unwrap();
+        s2.load_ir(
+            &build_ir_recipe(&IrRecipe::Delta { delay: 5.0 }).unwrap(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(s2.ir_fingerprint(), delta_fp);
+        // reset 保留 IR 身份。
+        s.reset();
+        assert_eq!(s.ir_fingerprint(), delta_fp);
+        assert_eq!(s.ir_length(), 6);
+
+        // 尾音 = 湿路延迟 Ls + 湿路 preDelay + IR 长度（精确、与 mix 无关；
+        // 此处 preDelay = 0）。
+        assert_eq!(s.tail_samples(), 512 + 6);
+        s.set_pre_delay_ms(12.0); // 576 样本 @48k
+        assert_eq!(s.tail_samples(), 512 + 576 + 6);
+        let mut long_ir = ConvolverStage::new(48000.0, ConvolverOptions::default()).unwrap();
+        long_ir
+            .load_ir(
+                &build_ir_recipe(&IrRecipe::ExpNoise {
+                    length: 4096.0,
+                    seed: 777,
+                    decay: 5.0,
+                    amp: 0.5,
+                })
+                .unwrap(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(long_ir.tail_samples(), 512 + 4096);
     }
 }

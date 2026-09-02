@@ -17,6 +17,7 @@
 //!   与 Rust `f64::round`/`f64::ceil` 结果一致（正数域"半值向上"="半值远离零"）。
 
 use crate::Stage;
+use std::fmt;
 
 /// 对齐 TS `ReverbSimpleParams` 的参数快照。
 #[derive(Debug, Clone)]
@@ -227,6 +228,158 @@ impl ReverbSimpleStage {
         }
     }
 
+    /// 返回含全部延迟缓冲内容的定长状态快照（非实时 checkpoint 路径，会分配）。
+    pub fn snapshot_runtime_state(&self) -> ReverbSimpleRuntimeState {
+        ReverbSimpleRuntimeState {
+            sample_rate_bits: self.sample_rate.to_bits(),
+            comb_len_l: self.comb_len_l,
+            comb_len_r: self.comb_len_r,
+            ap_len: self.ap_len,
+            comb_pos_l: self.comb_pos_l,
+            comb_pos_r: self.comb_pos_r,
+            comb_store_l: self.comb_store_l,
+            comb_store_r: self.comb_store_r,
+            ap_pos_l: self.ap_pos_l,
+            ap_pos_r: self.ap_pos_r,
+            pre_delay_pos: self.pre_delay_pos,
+            comb_buf_l: self.comb_buf_l.clone(),
+            comb_buf_r: self.comb_buf_r.clone(),
+            ap_buf_l: self.ap_buf_l.clone(),
+            ap_buf_r: self.ap_buf_r.clone(),
+            pre_delay_l: self.pre_delay_l.clone(),
+            pre_delay_r: self.pre_delay_r.clone(),
+        }
+    }
+
+    /// 将当前状态写入已有快照；采样率（或由其决定的缓冲长度）不符时不修改快照。
+    ///
+    /// 通过 `clone_from` 复用快照既有分配：缓冲容量由采样率固定、过程期不增长，
+    /// 稳态重写快照为零分配。
+    pub fn save_runtime_state(
+        &self,
+        state: &mut ReverbSimpleRuntimeState,
+    ) -> Result<(), ReverbSimpleRuntimeStateMismatch> {
+        if !self.state_shapes_match(state) {
+            return Err(ReverbSimpleRuntimeStateMismatch);
+        }
+        state.comb_pos_l = self.comb_pos_l;
+        state.comb_pos_r = self.comb_pos_r;
+        state.comb_store_l = self.comb_store_l;
+        state.comb_store_r = self.comb_store_r;
+        state.ap_pos_l = self.ap_pos_l;
+        state.ap_pos_r = self.ap_pos_r;
+        state.pre_delay_pos = self.pre_delay_pos;
+        state.comb_buf_l.clone_from(&self.comb_buf_l);
+        state.comb_buf_r.clone_from(&self.comb_buf_r);
+        state.ap_buf_l.clone_from(&self.ap_buf_l);
+        state.ap_buf_r.clone_from(&self.ap_buf_r);
+        state.pre_delay_l.clone_from(&self.pre_delay_l);
+        state.pre_delay_r.clone_from(&self.pre_delay_r);
+        Ok(())
+    }
+
+    /// 恢复全部延迟缓冲、游标与阻尼 store 状态，保留目标参数与派生量。
+    pub fn restore_runtime_state(
+        &mut self,
+        state: &ReverbSimpleRuntimeState,
+    ) -> Result<(), ReverbSimpleRuntimeStateMismatch> {
+        if !self.state_shapes_match(state) {
+            return Err(ReverbSimpleRuntimeStateMismatch);
+        }
+        self.comb_pos_l = state.comb_pos_l;
+        self.comb_pos_r = state.comb_pos_r;
+        self.comb_store_l = state.comb_store_l;
+        self.comb_store_r = state.comb_store_r;
+        self.ap_pos_l = state.ap_pos_l;
+        self.ap_pos_r = state.ap_pos_r;
+        self.pre_delay_pos = state.pre_delay_pos;
+        self.comb_buf_l.clone_from(&state.comb_buf_l);
+        self.comb_buf_r.clone_from(&state.comb_buf_r);
+        self.ap_buf_l.clone_from(&state.ap_buf_l);
+        self.ap_buf_r.clone_from(&state.ap_buf_r);
+        self.pre_delay_l.clone_from(&state.pre_delay_l);
+        self.pre_delay_r.clone_from(&state.pre_delay_r);
+        Ok(())
+    }
+
+    /// 从另一实例复制连续处理状态，保留目标参数与派生量。
+    ///
+    /// 直接逐字段拷贝（`clone_from` 复用既有分配）：稳态调用零分配。延迟长度
+    /// 拓扑（梳状/全通长度）与采样率不一致时报错——此时游标语义失配，必须重建。
+    pub fn copy_runtime_state_from(
+        &mut self,
+        source: &Self,
+    ) -> Result<(), ReverbSimpleRuntimeStateMismatch> {
+        if self.sample_rate.to_bits() != source.sample_rate.to_bits()
+            || self.comb_len_l != source.comb_len_l
+            || self.comb_len_r != source.comb_len_r
+            || self.ap_len != source.ap_len
+        {
+            return Err(ReverbSimpleRuntimeStateMismatch);
+        }
+        self.comb_pos_l = source.comb_pos_l;
+        self.comb_pos_r = source.comb_pos_r;
+        self.comb_store_l = source.comb_store_l;
+        self.comb_store_r = source.comb_store_r;
+        self.ap_pos_l = source.ap_pos_l;
+        self.ap_pos_r = source.ap_pos_r;
+        self.pre_delay_pos = source.pre_delay_pos;
+        for c in 0..4 {
+            self.comb_buf_l[c].clone_from(&source.comb_buf_l[c]);
+            self.comb_buf_r[c].clone_from(&source.comb_buf_r[c]);
+            self.ap_buf_l[c].clone_from(&source.ap_buf_l[c]);
+            self.ap_buf_r[c].clone_from(&source.ap_buf_r[c]);
+        }
+        self.pre_delay_l.clone_from(&source.pre_delay_l);
+        self.pre_delay_r.clone_from(&source.pre_delay_r);
+        Ok(())
+    }
+
+    /// 状态形状核对：采样率逐位一致（延迟缓冲物理长度由其唯一决定）且快照
+    /// 缓冲长度与本阶段一致（防绕过构造器的非常规实例）。
+    fn state_shapes_match(&self, state: &ReverbSimpleRuntimeState) -> bool {
+        if state.sample_rate_bits != self.sample_rate.to_bits() {
+            return false;
+        }
+        if state.comb_len_l != self.comb_len_l
+            || state.comb_len_r != self.comb_len_r
+            || state.ap_len != self.ap_len
+        {
+            return false;
+        }
+        let shape = |buffers: (&[Vec<f32>], &[Vec<f32>])| {
+            buffers.0.len() == buffers.1.len()
+                && buffers
+                    .0
+                    .iter()
+                    .zip(buffers.1.iter())
+                    .all(|(a, b)| a.len() == b.len())
+        };
+        shape((&self.comb_buf_l, &state.comb_buf_l))
+            && shape((&self.comb_buf_r, &state.comb_buf_r))
+            && shape((&self.ap_buf_l, &state.ap_buf_l))
+            && shape((&self.ap_buf_r, &state.ap_buf_r))
+            && self.pre_delay_l.len() == state.pre_delay_l.len()
+            && self.pre_delay_r.len() == state.pre_delay_r.len()
+    }
+
+    /// 干路直通、湿路并联——处理延迟为零。
+    pub fn latency_samples(&self) -> usize {
+        0
+    }
+
+    /// 湿路尾音排空估计（−60 dB 保守上限）：preDelay + 最长梳状线的反馈排空。
+    pub fn tail_samples(&self) -> usize {
+        let longest = self
+            .comb_len_l
+            .iter()
+            .chain(self.comb_len_r.iter())
+            .copied()
+            .max()
+            .unwrap_or(0);
+        self.pre_delay_len + reverb_tail_drain_frames(longest, self.feedback, self.sample_rate)
+    }
+
     /// 单路梳状递推（左声道第 c 路，对齐 TS 内联块，运算顺序逐行一致）。
     ///
     /// `filt` 为 f64 运算；但 `store` 写回即量化 f32（TS Float32Array 语义）。
@@ -284,6 +437,75 @@ impl ReverbSimpleStage {
         self.ap_pos_r[c] = if pos + 1 >= len { 0 } else { pos + 1 };
         ap_out
     }
+}
+
+/// 算法混响连续处理状态快照。
+///
+/// 与 [`crate::compressor::CompressorRuntimeState`] 的纯标量形态不同，反馈混响的
+/// 记忆驻留在延迟线缓冲中——不含缓冲内容的 checkpoint 无法逐位续播（冲激在缓冲中
+/// 的驻留会整体丢失）。因此本快照按值携带全部延迟缓冲；构造/写入快照属**非实时**
+/// checkpoint 路径（[`ReverbSimpleStage::save_runtime_state`] 通过 `clone_from`
+/// 复用已有分配，稳态下零分配），`process` 实时路径不受影响。
+#[derive(Clone)]
+pub struct ReverbSimpleRuntimeState {
+    sample_rate_bits: u64,
+    /// 延迟长度拓扑：type/delayScale 变化会改变梳状/全通长度，游标失配时
+    /// 状态迁移不再安全——必须走重建（checkpoint 不兼容语义）。
+    comb_len_l: [usize; 4],
+    comb_len_r: [usize; 4],
+    ap_len: [usize; 4],
+    comb_pos_l: [usize; 4],
+    comb_pos_r: [usize; 4],
+    comb_store_l: [f32; 4],
+    comb_store_r: [f32; 4],
+    ap_pos_l: [usize; 4],
+    ap_pos_r: [usize; 4],
+    pre_delay_pos: usize,
+    comb_buf_l: Vec<Vec<f32>>,
+    comb_buf_r: Vec<Vec<f32>>,
+    ap_buf_l: Vec<Vec<f32>>,
+    ap_buf_r: Vec<Vec<f32>>,
+    pre_delay_l: Vec<f32>,
+    pre_delay_r: Vec<f32>,
+}
+
+/// 运行时状态的采样率与目标混响不一致（延迟缓冲物理长度由采样率唯一决定，
+/// 二者必须逐位一致才允许迁移）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReverbSimpleRuntimeStateMismatch;
+
+impl fmt::Display for ReverbSimpleRuntimeStateMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("reverb simple runtime state sample rate mismatch")
+    }
+}
+
+impl std::error::Error for ReverbSimpleRuntimeStateMismatch {}
+
+/// 混响尾音的 −60 dB 排空估计（本 crate 三种混响模式共用；单位 = 采样帧）。
+///
+/// 反馈回路的振幅每经过 `longest_line` 帧衰减 `feedback` 倍，衰减到 −60 dB
+/// （1e-3）所需帧数 ≈ `longest_line · ln(1e-3) / ln(feedback)`；阻尼低通只会
+/// 加快衰减，故该估计是保守上限。`feedback ≤ 0`（无再循环）时尾音止于最长
+/// 延迟线本身；结果钳制在 10 秒内，防止 feedback→1 时估计发散。
+pub(crate) fn reverb_tail_drain_frames(
+    longest_line: usize,
+    feedback: f64,
+    sample_rate: f64,
+) -> usize {
+    let recirculated = if feedback > 0.0 && feedback < 1.0 {
+        let frames = (longest_line as f64) * (-6.907_755_278_982_137_f64 / feedback.ln());
+        if frames.is_finite() {
+            frames.ceil() as usize
+        } else {
+            // ln(feedback) → −0 时理论尾音发散，按 10 秒封顶。
+            (10.0 * sample_rate) as usize
+        }
+    } else {
+        longest_line
+    };
+    let cap = (10.0 * sample_rate) as usize;
+    recirculated.min(cap)
 }
 
 /// TS `clamp01`：v < 0 → 0；v > 1 → 1；否则原值。
@@ -778,5 +1000,141 @@ mod tests {
         assert!(ReverbSimpleStage::from_params(-44100.0, p.clone()).is_err());
         assert!(ReverbSimpleStage::from_params(f64::NAN, p.clone()).is_err());
         assert!(ReverbSimpleStage::from_params(f64::INFINITY, p).is_err());
+    }
+
+    #[test]
+    fn 运行时状态往返保存复制与失配保持原子性() {
+        let prefix = lcg_noise(513, 201);
+        let continuation = lcg_noise(331, 203);
+        let mut source = ReverbSimpleStage::from_params(48_000.0, base_params("hall")).unwrap();
+        source.prepare(73);
+        drive_chunks(&mut source, &prefix, 73);
+        let checkpoint = source.snapshot_runtime_state();
+        let expected = drive_chunks(&mut source, &continuation, 61);
+
+        // 快照往返：restore 后续播与连续处理逐位一致。
+        let mut replay = ReverbSimpleStage::from_params(48_000.0, base_params("hall")).unwrap();
+        replay.restore_runtime_state(&checkpoint).unwrap();
+        assert_eq!(drive_chunks(&mut replay, &continuation, 61), expected);
+
+        // save 覆盖 + copy：copy 保留目标参数（只改 wet/width 等非拓扑参数）。
+        let mut reusable = checkpoint.clone();
+        replay.save_runtime_state(&mut reusable).unwrap();
+        let mut non_topology = base_params("hall");
+        non_topology.wet = 0.8;
+        non_topology.width = 0.0;
+        let mut target = ReverbSimpleStage::from_params(48_000.0, non_topology).unwrap();
+        let params_before = (target.feedback, target.wet1, target.wet2, target.dry_gain);
+        target.copy_runtime_state_from(&replay).unwrap();
+        assert_eq!(
+            (target.feedback, target.wet1, target.wet2, target.dry_gain),
+            params_before,
+            "copy 只迁移状态，不覆盖参数"
+        );
+        assert_eq!(drive_chunks(&mut target, &continuation, 61), expected);
+
+        // 延迟长度拓扑失配（type 变化 → 梳状/全通长度变化）：报错（重建语义）。
+        let mut topology = ReverbSimpleStage::from_params(48_000.0, base_params("plate")).unwrap();
+        assert_eq!(
+            topology.restore_runtime_state(&reusable),
+            Err(ReverbSimpleRuntimeStateMismatch)
+        );
+
+        // 采样率失配：save/restore/copy 三路都报错且保持原子性。
+        let mut mismatch = ReverbSimpleStage::from_params(44_100.0, base_params("hall")).unwrap();
+        let mismatch_before = mismatch.snapshot_runtime_state();
+        assert_eq!(
+            mismatch.restore_runtime_state(&reusable),
+            Err(ReverbSimpleRuntimeStateMismatch)
+        );
+        assert_eq!(
+            mismatch.save_runtime_state(&mut reusable),
+            Err(ReverbSimpleRuntimeStateMismatch)
+        );
+        assert_eq!(
+            mismatch.copy_runtime_state_from(&replay),
+            Err(ReverbSimpleRuntimeStateMismatch)
+        );
+        let mismatch_after = mismatch.snapshot_runtime_state();
+        assert_eq!(
+            mismatch_after.comb_pos_l, mismatch_before.comb_pos_l,
+            "失配 restore 不得改动目标状态"
+        );
+        assert_eq!(mismatch_after.pre_delay_pos, mismatch_before.pre_delay_pos);
+        assert_eq!(mismatch_after.comb_buf_l, mismatch_before.comb_buf_l);
+    }
+
+    #[test]
+    fn reset后快照与全新实例快照逐位一致() {
+        let mut stage = ReverbSimpleStage::from_params(48_000.0, base_params("hall")).unwrap();
+        stage.prepare(64);
+        drive_chunks(&mut stage, &lcg_noise(256, 7), 64);
+        stage.reset();
+        let reset_state = stage.snapshot_runtime_state();
+        let fresh = ReverbSimpleStage::from_params(48_000.0, base_params("hall")).unwrap();
+        let fresh_state = fresh.snapshot_runtime_state();
+        assert_eq!(reset_state.comb_pos_l, fresh_state.comb_pos_l);
+        assert_eq!(reset_state.ap_pos_r, fresh_state.ap_pos_r);
+        assert_eq!(reset_state.pre_delay_pos, fresh_state.pre_delay_pos);
+        assert_eq!(reset_state.comb_store_l, fresh_state.comb_store_l);
+        assert_eq!(reset_state.comb_buf_l, fresh_state.comb_buf_l);
+        assert_eq!(reset_state.pre_delay_l, fresh_state.pre_delay_r);
+    }
+
+    #[test]
+    fn 延迟为零_尾音估计与参数语义一致() {
+        // hall @48000：最长梳状 1356×1.0 缩放 ≈ 1476（fs/44100 缩放 + 下限），
+        // feedback=0.7 → 排空 = ceil(1476 · ln(1e-3)/ln(0.7))。
+        let s = ReverbSimpleStage::from_params(48_000.0, base_params("hall")).unwrap();
+        assert_eq!(s.latency_samples(), 0, "干路直通、湿路并联，无处理延迟");
+        let longest = *s
+            .comb_len_l
+            .iter()
+            .chain(s.comb_len_r.iter())
+            .max()
+            .unwrap();
+        let want = s.pre_delay_len
+            + ((longest as f64) * (-6.907_755_278_982_137_f64 / 0.7_f64.ln())).ceil() as usize;
+        assert_eq!(s.tail_samples(), want);
+        assert!(s.tail_samples() > longest);
+
+        // 阻尼=1（feedback→0.2 下限方向）排空显著缩短；feedback=0 时尾音止于
+        // 最长延迟线本身（无再循环）。
+        let mut damped = base_params("spring");
+        damped.room_size = 0.0;
+        let s = ReverbSimpleStage::from_params(48_000.0, damped).unwrap();
+        let longest = *s
+            .comb_len_l
+            .iter()
+            .chain(s.comb_len_r.iter())
+            .max()
+            .unwrap();
+        let want = s.pre_delay_len
+            + ((longest as f64) * (-6.907_755_278_982_137_f64 / s.feedback.ln())).ceil() as usize;
+        assert_eq!(s.tail_samples(), want);
+
+        // 10 秒封顶：feedback→1 的病态配置不得发散。
+        let mut hot = base_params("hall");
+        hot.room_size = 1.0; // feedback = 0.95，接近发散
+        let s = ReverbSimpleStage::from_params(48_000.0, hot).unwrap();
+        assert!(s.tail_samples() <= (10.0_f64 * 48_000.0) as usize);
+    }
+
+    /// 按给定块长驱动整段输入（左右声道独立同源缓冲），返回左声道输出拷贝。
+    fn drive_chunks(stage: &mut ReverbSimpleStage, input: &[f32], block: usize) -> Vec<f32> {
+        let mut out_l = input.to_vec();
+        let mut out_r = input.to_vec();
+        let mut offset = 0;
+        while offset < input.len() {
+            let end = (offset + block).min(input.len());
+            let (_left_head, left_tail) = out_l.split_at_mut(offset);
+            let (_right_head, right_tail) = out_r.split_at_mut(offset);
+            stage.process(
+                &mut left_tail[..end - offset],
+                &mut right_tail[..end - offset],
+            );
+            offset = end;
+        }
+        out_l
     }
 }

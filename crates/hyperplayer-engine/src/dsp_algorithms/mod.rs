@@ -5,11 +5,17 @@ pub mod chorus;
 pub mod compressor;
 pub mod deesser;
 pub mod delay;
+pub mod dynamic_eq;
 pub mod flanger;
+pub mod ieq;
+pub mod limiter;
+pub mod loudness_comp;
 pub mod loudness_normalization;
 pub mod lufs_meter;
+pub mod modulation;
 pub mod night_mode;
 pub mod phaser;
+pub mod reverb;
 pub mod surround3d;
 pub mod tremolo;
 
@@ -22,18 +28,25 @@ use chorus::{ChorusProcessor, ChorusSettings};
 use compressor::CompressorSettings;
 use deesser::DeesserSettings;
 use delay::{DelayProcessor, DelaySettings};
+use dynamic_eq::{DynamicEqProcessor, DynamicEqSettings};
 use flanger::{FlangerProcessor, FlangerSettings};
 use hse_core::bass_enhancer::{BassEnhancerRuntimeState, BassEnhancerStage};
 use hse_core::compressor::{CompressorRuntimeState, CompressorStage};
 use hse_core::deesser::{DeesserRuntimeState, DeesserStage};
+pub use hse_core::engine_chain::IeqTargetCurve;
 pub use hse_core::eq_chain::EqBandParam;
 use hse_core::eq_chain::{EqChainRuntimeState, EqChainStage};
 use hse_core::mid_side::MidSideStage;
 use hse_core::Stage as HseStage;
+use ieq::{IeqProcessor, IeqSettings};
+use limiter::{LimiterProcessor, LimiterSettings};
+use loudness_comp::{LoudnessCompProcessor, LoudnessCompSettings};
 use loudness_normalization::{LoudnessNormalizationProcessor, LoudnessNormalizationSettings};
-use lufs_meter::{LufsMeterProcessor, SharedLufsState};
+use lufs_meter::{LufsMeterMode, LufsMeterProcessor, SharedLufsState};
+use modulation::{ModulationProcessor, ModulationSettings};
 use night_mode::{NightModeProcessor, NightModeSettings};
 use phaser::{PhaserProcessor, PhaserSettings};
+use reverb::{ReverbProcessor, ReverbSettings};
 use std::sync::Arc;
 use surround3d::{Surround3dProcessor, Surround3dSettings};
 use tremolo::{TremoloProcessor, TremoloSettings};
@@ -91,7 +104,15 @@ pub struct DspConfig {
     pub flanger: FlangerSettings,
     pub phaser: PhaserSettings,
     pub tremolo: TremoloSettings,
+    pub reverb: ReverbSettings,
     pub bass_enhancer: BassEnhancerSettings,
+    pub loudness_comp: LoudnessCompSettings,
+    pub ieq: IeqSettings,
+    pub dynamic_eq: DynamicEqSettings,
+    pub modulation: ModulationSettings,
+    pub limiter: LimiterSettings,
+    /// LUFS 计量模式（Stage 19 分析 tap；默认 `HseV151` 兼容）。
+    pub metering_lufs_mode: LufsMeterMode,
 }
 
 pub type GroupOneConfig = DspConfig;
@@ -118,10 +139,17 @@ impl Default for DspConfig {
             flanger: FlangerSettings::default(),
             phaser: PhaserSettings::default(),
             tremolo: TremoloSettings::default(),
+            reverb: ReverbSettings::default(),
             bass_enhancer: BassEnhancerSettings {
                 enabled: false,
                 ..BassEnhancerSettings::default()
             },
+            loudness_comp: LoudnessCompSettings::default(),
+            ieq: IeqSettings::default(),
+            dynamic_eq: DynamicEqSettings::default(),
+            modulation: ModulationSettings::default(),
+            limiter: LimiterSettings::default(),
+            metering_lufs_mode: LufsMeterMode::HseV151,
         }
     }
 }
@@ -149,19 +177,88 @@ pub(crate) fn validate_dsp_config(config: &DspConfig) -> Result<()> {
             "EQ band count must be between 1 and 20".into(),
         ));
     }
+    config.loudness_comp.validate()?;
+    // ieq / modulation 的严格范围校验在各自适配器构造期内置；这里前置拦截非有限值。
+    if !config.ieq.strength.is_finite() || !config.ieq.time_constant_sec.is_finite() {
+        return Err(EngineError::InvalidInput(
+            "ieq settings must be finite".into(),
+        ));
+    }
+    config.modulation.validate()?;
+    // reverb / dynamic-eq 的范围校验在适配器构造期内置（ReverbProcessor::new /
+    // DynamicEqProcessor::new）；这里提前拦截非有限值，保持 fail-fast 一致性。
+    if [
+        config.reverb.room_size,
+        config.reverb.damping,
+        config.reverb.wet,
+        config.reverb.dry,
+        config.reverb.pre_delay_ms,
+        config.reverb.width,
+        config.reverb.mix,
+        config.reverb.partition_size,
+        config.reverb.long_partition_size,
+        config.reverb.short_region_ms,
+    ]
+    .into_iter()
+    .any(|value| !value.is_finite())
+    {
+        return Err(EngineError::InvalidInput(
+            "reverb settings must be finite".into(),
+        ));
+    }
+    if config
+        .dynamic_eq
+        .bands
+        .iter()
+        .any(|band| !band.frequency.is_finite() || !band.target_gain_db.is_finite())
+    {
+        return Err(EngineError::InvalidInput(
+            "dynamic eq band settings must be finite".into(),
+        ));
+    }
+    if [
+        config.limiter.threshold_db,
+        config.limiter.lookahead_ms,
+        config.limiter.attack_ms,
+        config.limiter.release_ms,
+    ]
+    .into_iter()
+    .any(|value| !value.is_finite())
+    {
+        return Err(EngineError::InvalidInput(
+            "limiter settings must be finite".into(),
+        ));
+    }
     Ok(())
 }
 
-/// 按 HSE 固定阶段相对顺序构建当前已迁入处理链：响度归一化(1) → Surround3D(2) → M/S(3) → pre-EQ(4) → De-esser(5) → Compressor(6) → Night Mode(7) → Delay(8) → Chorus(9) → Flanger(10) → Phaser(11) → Tremolo(12) → Bass(14) → LUFS tap(19)。
+/// 按 HSE 固定阶段相对顺序构建当前已迁入处理链：响度归一化(1) → Surround3D(2) → M/S(3) → pre-EQ(4) → De-esser(5) → Compressor(6) → Night Mode(7) → Delay(8) → Chorus(9) → Flanger(10) → Phaser(11) → Tremolo(12) → Reverb(13) → Bass(14) → LoudnessComp(15) → Dynamic EQ(18) → LUFS tap(19) → Limiter(21)。
 pub fn prepare_dsp_chain(
     revision: u64,
     format: PcmFormat,
     max_block_frames: usize,
     config: DspConfig,
 ) -> Result<PreparedProcessorChain> {
+    prepare_dsp_chain_with_lufs(
+        revision,
+        format,
+        max_block_frames,
+        config,
+        Arc::new(SharedLufsState::new()),
+    )
+}
+
+/// 同 [`prepare_dsp_chain`]，但接受调用方提供的 LUFS 发布状态——便于运行时把同一
+/// `SharedLufsState` 同时交给 LUFS tap 与 telemetry 读取（Stage 19 读数闭环）。
+pub fn prepare_dsp_chain_with_lufs(
+    revision: u64,
+    format: PcmFormat,
+    max_block_frames: usize,
+    config: DspConfig,
+    lufs_state: Arc<SharedLufsState>,
+) -> Result<PreparedProcessorChain> {
     require_stereo(format)?;
     validate_dsp_config(&config)?;
-    let lufs_state = Arc::new(SharedLufsState::new());
     PreparedProcessorChain::prepare(
         revision,
         format,
@@ -211,11 +308,39 @@ pub fn prepare_dsp_chain(
                 f64::from(format.sample_rate),
                 config.tremolo,
             )?),
+            Box::new(ReverbProcessor::new(
+                f64::from(format.sample_rate),
+                config.reverb,
+            )?),
             Box::new(BassEnhancerProcessor::new(
                 format.sample_rate,
                 config.bass_enhancer,
             )?),
-            Box::new(LufsMeterProcessor::new(format.sample_rate, lufs_state)?),
+            Box::new(LoudnessCompProcessor::new(
+                format.sample_rate,
+                config.loudness_comp,
+            )?),
+            Box::new(IeqProcessor::new(
+                f64::from(format.sample_rate),
+                config.ieq,
+            )?),
+            Box::new(DynamicEqProcessor::new(
+                format.sample_rate,
+                config.dynamic_eq,
+            )?),
+            Box::new(LufsMeterProcessor::with_mode(
+                format.sample_rate,
+                config.metering_lufs_mode,
+                lufs_state,
+            )?),
+            Box::new(ModulationProcessor::new(
+                f64::from(format.sample_rate),
+                config.modulation,
+            )?),
+            Box::new(LimiterProcessor::new(
+                f64::from(format.sample_rate),
+                config.limiter,
+            )?),
         ],
     )
 }
@@ -959,8 +1084,14 @@ mod tests {
                 "flanger",
                 "phaser",
                 "tremolo",
+                "reverb",
                 "bass-enhancer",
+                "loudness-comp",
+                "ieq-post",
+                "dynamic-eq",
                 "lufs",
+                "modulation",
+                "limiter",
             ]
         );
     }

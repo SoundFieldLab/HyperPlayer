@@ -54,6 +54,38 @@ pub struct LufsReadings {
     pub true_peak_db: f64,
 }
 
+/// 响度计量模式。
+///
+/// - `HseV151`（默认）：HSE v1.5.1 兼容语义，即 ITU-R BS.1770-4 / EBU R128 计算路径。
+///   **保持默认不可破坏**——所有既有 golden/LRA 数值语义归一于此。
+/// - `ItuBs1770_5`：BS.1770-5 / EBU R128 标准校正分支。当前为占位模式：标准
+///   vectors 与误差范围通过前不得宣称合规，仅作为独立模式存在并标注「标准模式待认证」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MeterMode {
+    #[default]
+    HseV151,
+    ItuBs1770_5,
+}
+
+impl MeterMode {
+    /// 序列化键名（前端/持久化共用的稳定字符串）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MeterMode::HseV151 => "hseV151",
+            MeterMode::ItuBs1770_5 => "ituBs17705",
+        }
+    }
+
+    /// 按字符串解析；未知值回落 `HseV151`（兼容默认）。
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "ituBs17705" => MeterMode::ItuBs1770_5,
+            _ => MeterMode::HseV151,
+        }
+    }
+}
+
 /// 音频线程可按块读取的有界工作量读数。
 ///
 /// 不包含需要扫描完整块历史的 integrated/LRA；各 getter 保持 HSE v1.5.1 原算法。
@@ -129,6 +161,8 @@ fn shelf_coeffs(fs: f64) -> BiquadCoeffs {
 /// 馈入完成后一次性读取六项 getter。
 #[derive(Clone)]
 pub struct LufsMeter {
+    /// 计量模式（默认 `HseV151` 兼容）。
+    mode: MeterMode,
     /// 400ms 块长（样本数）。
     block_len: usize,
     /// 100ms 步进（样本数）。
@@ -204,6 +238,7 @@ impl LufsMeter {
         let hop_len = js_round(0.1 * fs).max(1.0) as usize;
 
         let mut meter = Self {
+            mode: MeterMode::HseV151,
             block_len,
             hop_len,
             rlb_l: state(rlb),
@@ -233,6 +268,18 @@ impl LufsMeter {
         };
         meter.build_true_peak_kernel();
         Ok(meter)
+    }
+
+    /// 构造并指定计量模式（`new` 恒为 `HseV151` 兼容；本方法用于显式选择标准模式）。
+    pub fn with_mode(fs: f64, mode: MeterMode) -> Result<Self, String> {
+        let mut meter = Self::new(fs)?;
+        meter.mode = mode;
+        Ok(meter)
+    }
+
+    /// 当前计量模式。
+    pub fn mode(&self) -> MeterMode {
+        self.mode
     }
 
     /// 预计算 4× 多相插值核（Blackman 窗 sinc，截止 = 原 Nyquist = 4× 率的 1/4，
@@ -898,6 +945,22 @@ mod tests {
     }
 
     // ---------------- 单元测试 ----------------
+
+    #[test]
+    fn meter_mode_defaults_to_hse_v151_and_parses_stably() {
+        // 默认构造恒为 HseV151（兼容），既有 golden 数值语义不受影响。
+        let meter = LufsMeter::new(48_000.0).expect("合法采样率");
+        assert_eq!(meter.mode(), MeterMode::HseV151);
+        // with_mode 可显式选择标准模式。
+        let standard = LufsMeter::with_mode(48_000.0, MeterMode::ItuBs1770_5).expect("合法采样率");
+        assert_eq!(standard.mode(), MeterMode::ItuBs1770_5);
+        // 序列化键名稳定；未知字符串回落兼容默认。
+        assert_eq!(MeterMode::HseV151.as_str(), "hseV151");
+        assert_eq!(MeterMode::ItuBs1770_5.as_str(), "ituBs17705");
+        assert_eq!(MeterMode::from_str("ituBs17705"), MeterMode::ItuBs1770_5);
+        assert_eq!(MeterMode::from_str("bogus"), MeterMode::HseV151);
+        assert_eq!(MeterMode::default(), MeterMode::HseV151);
+    }
 
     #[test]
     fn 非法采样率构造报错() {

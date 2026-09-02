@@ -26,6 +26,11 @@
 //! - reset 语义（规格 §4.5.5）：currentGains 直接钉到 targetGains 并立即重算全部
 //!   6 槽系数（**含目标为 0 的槽**——按 targetFreqs=0 钳到 1Hz 设计出的系数并非
 //!   恒等，这是 TS 行为事实），TDF2 状态清零；reset 后重放与首次从零爬升不同。
+//! - typed 状态四件套：[`LoudnessCompRuntimeState`]（6 槽平滑增益 + 左右 TDF2
+//!   状态 + 采样率 + 参数代次）与 snapshot/save/restore/copy API；恢复与复制后
+//!   按当前目标拓扑重算系数，保证平滑状态迁移不丢失、输出逐位可复现。
+//! - 模式 typed 化：[`LoudnessCompMode`] 枚举（Auto/Preset/Custom），serde/JSON
+//!   兼容旧字符串（as_str/from_params_str，枚举外回退 Auto，HSE v1.5.1 行为）。
 //!
 //! # 数值精度铁律的落点
 //!
@@ -42,6 +47,57 @@
 
 use crate::biquad::BiquadCoeffs;
 use crate::Stage;
+use std::fmt;
+
+/// 对齐 TS `mode: 'auto' | 'preset' | 'custom'` 的模式枚举。
+///
+/// serde/JSON 兼容：[`LoudnessCompMode::as_str`] 产出的字符串与 TS 载荷逐字一致；
+/// [`LoudnessCompMode::from_params_str`] 解析旧字符串载荷，枚举外取值一律回退
+/// [`LoudnessCompMode::Auto`]（保留 HSE v1.5.1 的白名单回退行为）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LoudnessCompMode {
+    /// 随音量线性等响度（ISO 226 简化近似，`maxBoostDb × (1 − v) × w(f)`）。
+    #[default]
+    Auto,
+    /// 六条固定场景曲线（flat/bass/vocal/warm/bright/night）的对数线性插值。
+    Preset,
+    /// 用户自定义控制点：low/high 组钳制均值 shelf + mid 组 peaking。
+    Custom,
+}
+
+impl LoudnessCompMode {
+    /// serde/JSON 兼容的旧字符串形态（与 TS 载荷取值逐字一致）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Preset => "preset",
+            Self::Custom => "custom",
+        }
+    }
+
+    /// 解析旧字符串载荷：枚举外值回退 Auto（对齐 TS 模式白名单回退语义）。
+    pub fn from_params_str(value: &str) -> Self {
+        match value {
+            "preset" => Self::Preset,
+            "custom" => Self::Custom,
+            _ => Self::Auto,
+        }
+    }
+}
+
+impl fmt::Display for LoudnessCompMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for LoudnessCompMode {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from_params_str(s))
+    }
+}
 
 /// 1/3 倍频程中心频率（31 段，20Hz–20kHz；与 TS `THIRD_OCTAVE_FREQS` 逐项一致）。
 const THIRD_OCTAVE_FREQS: [f64; 31] = [
@@ -71,8 +127,8 @@ pub struct LoudnessCompSettings {
     pub preset: String,
     /// custom 模式目标曲线控制点。
     pub bands: Vec<LoudnessBandParam>,
-    /// 'auto' | 'preset' | 'custom'；枚举外值回退 'auto'。
-    pub mode: String,
+    /// 处理模式（typed 枚举；serde/JSON 兼容旧字符串见 [`LoudnessCompMode`]）。
+    pub mode: LoudnessCompMode,
     pub smoothing_seconds: f64,
 }
 
@@ -82,6 +138,43 @@ pub struct LoudnessBandParam {
     pub frequency: f64,
     pub gain: f64,
 }
+
+/// 等响度补偿连续处理状态快照：6 槽平滑增益（currentGains）+ 左右声道各自独立
+/// 的 TDF2 状态，附带采样率与参数代次（generation）。不含参数、biquad 系数与
+/// 目标曲线——系数由 [`LoudnessCompStage`] 在恢复/复制时按当前目标拓扑重算。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoudnessCompRuntimeState {
+    sample_rate_bits: u64,
+    generation: u64,
+    current_gains: [f64; MAX_BANDS],
+    z_l: [(f64, f64); MAX_BANDS],
+    z_r: [(f64, f64); MAX_BANDS],
+}
+
+impl LoudnessCompRuntimeState {
+    /// 快照中的 6 槽平滑增益（诊断/测试用途；与 [`LoudnessCompStage::targets_snapshot`]
+    /// 的槽序一致）。
+    pub fn current_gains(&self) -> [f64; MAX_BANDS] {
+        self.current_gains
+    }
+
+    /// 快照中的参数代次。
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
+/// 运行时状态的采样率或参数代次与目标等响度补偿不一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoudnessCompRuntimeStateMismatch;
+
+impl fmt::Display for LoudnessCompRuntimeStateMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("loudness compensation runtime state mismatch")
+    }
+}
+
+impl std::error::Error for LoudnessCompRuntimeStateMismatch {}
 
 /// 复刻 JS Math.min(a, b) 的 NaN 传播语义（理由见 biquad.rs 的同名函数）。
 fn js_min(a: f64, b: f64) -> f64 {
@@ -339,7 +432,7 @@ pub struct LoudnessCompStage {
     fs: f64,
 
     // 当前目标参数（set_params 计算）。
-    mode: String,
+    mode: LoudnessCompMode,
     volume_percent: f64,
     max_boost_db: f64,
     preset: String,
@@ -348,6 +441,8 @@ pub struct LoudnessCompStage {
     target_freqs: [f64; MAX_BANDS],
     target_types: [i32; MAX_BANDS],
     current_gains: [f64; MAX_BANDS],
+    /// 参数代次：每次 `configure` 递增，checkpoint 保存/恢复用它做参数一致性检查。
+    generation: u64,
 
     // 内部 biquad 链（6 段，0 增益时为恒等）；左右声道各自独立状态、系数共享。
     coeffs: [BiquadCoeffs; MAX_BANDS],
@@ -365,7 +460,7 @@ impl LoudnessCompStage {
         }
         let mut stage = Self {
             fs: sample_rate,
-            mode: "auto".to_string(),
+            mode: LoudnessCompMode::Auto,
             volume_percent: 100.0,
             max_boost_db: 12.0,
             preset: "flat".to_string(),
@@ -374,6 +469,7 @@ impl LoudnessCompStage {
             target_freqs: [0.0; MAX_BANDS],
             target_types: [0; MAX_BANDS],
             current_gains: [0.0; MAX_BANDS],
+            generation: 0,
             // 初始为恒等链（0 增益），与 currentGains=0 一致（TS 构造器）。
             coeffs: [BiquadCoeffs {
                 b0: 1.0,
@@ -392,12 +488,11 @@ impl LoudnessCompStage {
     /// 覆盖参数快照（对齐 TS `setParams`，逐行同序）。
     ///
     /// 只重算目标段数组（不改动滤波器当前状态与 currentGains——参数即时生效、
-    /// 历史爬升保留，由后续 process 平滑逼近新目标）。
+    /// 历史爬升保留，由后续 process 平滑逼近新目标）。每次调用递增参数代次
+    /// [`Self::generation`]。
     pub fn configure(&mut self, p: LoudnessCompSettings) {
-        self.mode = match p.mode.as_str() {
-            "auto" | "preset" | "custom" => p.mode.clone(),
-            _ => "auto".to_string(),
-        };
+        self.generation = self.generation.wrapping_add(1);
+        self.mode = p.mode;
         self.volume_percent = clamp_finite(p.volume_percent, 0.0, 100.0);
         self.max_boost_db = clamp_finite(p.max_boost_db, 0.0, 24.0);
         self.preset = p.preset;
@@ -407,6 +502,95 @@ impl LoudnessCompStage {
         self.target_gains = gains;
         self.target_freqs = freqs;
         self.target_types = types;
+    }
+
+    /// 当前参数代次（每次 `configure` 递增；checkpoint 一致性检查用）。
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// 当前处理模式（typed 枚举）。
+    pub fn mode(&self) -> LoudnessCompMode {
+        self.mode
+    }
+
+    /// 返回仅含平滑状态（currentGains + 左右 TDF2）与采样率/参数代次的定长快照。
+    pub fn snapshot_runtime_state(&self) -> LoudnessCompRuntimeState {
+        LoudnessCompRuntimeState {
+            sample_rate_bits: self.fs.to_bits(),
+            generation: self.generation,
+            current_gains: self.current_gains,
+            z_l: self.z_l,
+            z_r: self.z_r,
+        }
+    }
+
+    /// 将当前平滑状态写入已有快照；采样率或参数代次不符时不修改快照。
+    pub fn save_runtime_state(
+        &self,
+        state: &mut LoudnessCompRuntimeState,
+    ) -> Result<(), LoudnessCompRuntimeStateMismatch> {
+        if state.sample_rate_bits != self.fs.to_bits() || state.generation != self.generation {
+            return Err(LoudnessCompRuntimeStateMismatch);
+        }
+        state.current_gains = self.current_gains;
+        state.z_l = self.z_l;
+        state.z_r = self.z_r;
+        Ok(())
+    }
+
+    /// 恢复平滑状态，保留目标参数、接线语义与采样率。
+    ///
+    /// 恢复后按当前目标拓扑重算全部 6 槽系数（见 [`Self::apply_runtime_state`]）：
+    /// 同参数代次下重算结果与源实例系数逐位一致，延续输出逐位可复现。
+    pub fn restore_runtime_state(
+        &mut self,
+        state: &LoudnessCompRuntimeState,
+    ) -> Result<(), LoudnessCompRuntimeStateMismatch> {
+        if state.sample_rate_bits != self.fs.to_bits() || state.generation != self.generation {
+            return Err(LoudnessCompRuntimeStateMismatch);
+        }
+        self.apply_runtime_state(state.current_gains, state.z_l, state.z_r);
+        Ok(())
+    }
+
+    /// 从另一实例复制连续处理状态，保留目标参数。
+    ///
+    /// 只要求采样率一致：参数代次允许不同（引擎 revision 迁移会携带新参数），
+    /// 平滑状态按绝对 dB 增益迁移，并由 [`Self::apply_runtime_state`] 重算系数
+    /// 保证「currentGains ↔ 系数」不变量在新目标拓扑下成立，随后向新目标继续
+    /// 平滑收敛（音量变化不产生增益跳变）。
+    pub fn copy_runtime_state_from(
+        &mut self,
+        source: &Self,
+    ) -> Result<(), LoudnessCompRuntimeStateMismatch> {
+        if self.fs.to_bits() != source.fs.to_bits() {
+            return Err(LoudnessCompRuntimeStateMismatch);
+        }
+        self.apply_runtime_state(source.current_gains, source.z_l, source.z_r);
+        Ok(())
+    }
+
+    /// 写入平滑状态并按当前目标拓扑重算全部 6 槽系数。
+    ///
+    /// 不变量：任意时刻槽 i 的系数恒等于 design(target_freqs[i], target_types[i],
+    /// current_gains[i])。process 只在 currentGains 变化时重算，因此跨参数代次
+    /// 迁移后必须显式重算一次，避免「current == target 但系数仍属旧拓扑」的
+    /// 一块失配；同代次下重算与源系数逐位一致（确定性设计函数），0 dB 槽重算
+    /// 结果为数学恒等链，输出与字面恒等系数逐位相同。
+    fn apply_runtime_state(
+        &mut self,
+        current_gains: [f64; MAX_BANDS],
+        z_l: [(f64, f64); MAX_BANDS],
+        z_r: [(f64, f64); MAX_BANDS],
+    ) {
+        self.current_gains = current_gains;
+        self.z_l = z_l;
+        self.z_r = z_r;
+        for i in 0..MAX_BANDS {
+            let gain = self.current_gains[i];
+            self.recompute_coeffs(i, gain);
+        }
     }
 
     /// 按模式计算目标曲线并拟合为 2–6 段（对齐 TS `computeTargets`，逐行同序）。
@@ -419,7 +603,7 @@ impl LoudnessCompStage {
         let mut types = [0_i32; MAX_BANDS];
         let mut n = 0_usize;
 
-        if self.mode == "custom" {
+        if self.mode == LoudnessCompMode::Custom {
             // custom：低/高频段增益取用户低/高频 bands 钳制均值；中频直接用用户
             // bands 做 peaking（钳制 → 丢弃 |gain|<0.25 → |增益| 降序取 4 → 频率升序）。
             let low: Vec<f64> = bands
@@ -481,7 +665,7 @@ impl LoudnessCompStage {
 
         // auto / preset：先构造 1/3 倍频程目标表。
         let mut table = [0.0_f64; THIRD_OCTAVE_FREQS.len()];
-        if self.mode == "preset" {
+        if self.mode == LoudnessCompMode::Preset {
             let curve = preset_curve(&self.preset);
             for (i, &f) in THIRD_OCTAVE_FREQS.iter().enumerate() {
                 table[i] = interp_log_curve(f, curve);
@@ -655,7 +839,7 @@ mod tests {
             max_boost_db: 12.0,
             preset: "flat".to_string(),
             bands: Vec::new(),
-            mode: "auto".to_string(),
+            mode: LoudnessCompMode::Auto,
             smoothing_seconds: smoothing,
         }
     }
@@ -665,7 +849,7 @@ mod tests {
             volume_percent: 42.0,
             max_boost_db: 12.0,
             preset: "flat".to_string(),
-            mode: "custom".to_string(),
+            mode: LoudnessCompMode::Custom,
             smoothing_seconds: 0.05,
             bands: vec![
                 LoudnessBandParam {
@@ -702,7 +886,7 @@ mod tests {
             max_boost_db: 12.0,
             preset: "night".to_string(),
             bands: Vec::new(),
-            mode: "preset".to_string(),
+            mode: LoudnessCompMode::Preset,
             smoothing_seconds: 0.05,
         }
     }
@@ -1204,5 +1388,169 @@ mod tests {
         let (b_l, b_r) = run();
         assert_eq!(a_l, b_l, "同参数同块长必须逐位可复现（左）");
         assert_eq!(a_r, b_r, "同参数同块长必须逐位可复现（右）");
+    }
+
+    #[test]
+    fn mode枚举_旧字符串兼容与未知回退() {
+        // typed 枚举与 TS 旧字符串载荷逐字互转；枚举外值回退 Auto（HSE v1.5.1 白名单）。
+        for (value, want) in [
+            ("auto", LoudnessCompMode::Auto),
+            ("preset", LoudnessCompMode::Preset),
+            ("custom", LoudnessCompMode::Custom),
+        ] {
+            assert_eq!(LoudnessCompMode::from_params_str(value), want);
+            assert_eq!(want.as_str(), value);
+            assert_eq!(want.to_string(), value);
+        }
+        for bad in ["", "Auto", "PRESET", "manual", "自动"] {
+            assert_eq!(
+                LoudnessCompMode::from_params_str(bad),
+                LoudnessCompMode::Auto,
+                "枚举外值 {bad:?} 必须回退 Auto"
+            );
+        }
+        // 默认 Auto；stage 的 mode() 反映 configure 后的枚举。
+        assert_eq!(LoudnessCompMode::default(), LoudnessCompMode::Auto);
+        let stage = LoudnessCompStage::from_settings(48_000.0, settings_case4()).unwrap();
+        assert_eq!(stage.mode(), LoudnessCompMode::Preset);
+    }
+
+    #[test]
+    fn 运行时状态往返_保存恢复复制与失配保持原子性() {
+        let prefix_l = lcg_noise(257, 201, 0.8);
+        let prefix_r = lcg_noise(257, 202, 0.6);
+        let continuation_l = lcg_noise(193, 203, 0.7);
+        let continuation_r = lcg_noise(193, 204, 0.5);
+        let tail_l = lcg_noise(161, 205, 0.6);
+        let tail_r = lcg_noise(161, 206, 0.6);
+        let mut source =
+            LoudnessCompStage::from_settings(48_000.0, settings_auto(20.0, 0.05)).unwrap();
+        let _ = drive_chunks(&mut source, &prefix_l, &prefix_r, 73);
+        let checkpoint = source.snapshot_runtime_state();
+        let (expected_l, expected_r) =
+            drive_chunks(&mut source, &continuation_l, &continuation_r, 61);
+        let (tail_want_l, tail_want_r) = drive_chunks(&mut source, &tail_l, &tail_r, 59);
+
+        // 1) restore：checkpoint 往返后延续输出与源逐位一致（平滑状态不丢失）。
+        let mut replay =
+            LoudnessCompStage::from_settings(48_000.0, settings_auto(20.0, 0.05)).unwrap();
+        assert_eq!(replay.generation(), source.generation());
+        replay.restore_runtime_state(&checkpoint).unwrap();
+        let (actual_l, actual_r) = drive_chunks(&mut replay, &continuation_l, &continuation_r, 61);
+        assert_eq!(
+            (actual_l, actual_r),
+            (expected_l.clone(), expected_r.clone())
+        );
+
+        // 2) copy：保留目标参数，仅迁移平滑状态。
+        let mut target_params = settings_auto(60.0, 0.3);
+        target_params.mode = LoudnessCompMode::Preset;
+        target_params.preset = "night".to_string();
+        let mut target = LoudnessCompStage::from_settings(48_000.0, target_params).unwrap();
+        let targets_before = target.targets_snapshot();
+        target.copy_runtime_state_from(&replay).unwrap();
+        assert_eq!(
+            target.targets_snapshot(),
+            targets_before,
+            "copy 不得改写目标参数"
+        );
+
+        // 3) save：把延续段 A 之后的状态写回已有快照，恢复到另一实例后接续段 B
+        //    与源逐位一致（save 往返不丢失平滑状态，也不重复消费任何段）。
+        let mut reusable = checkpoint;
+        replay.save_runtime_state(&mut reusable).unwrap();
+        let mut second =
+            LoudnessCompStage::from_settings(48_000.0, settings_auto(20.0, 0.05)).unwrap();
+        second.restore_runtime_state(&reusable).unwrap();
+        let (tail_got_l, tail_got_r) = drive_chunks(&mut second, &tail_l, &tail_r, 59);
+        assert_eq!((tail_got_l, tail_got_r), (tail_want_l, tail_want_r));
+
+        // 4) 失配原子性：采样率不符时 save/restore/copy 均失败且不改动任何状态。
+        let mut mismatch =
+            LoudnessCompStage::from_settings(44_100.0, settings_auto(20.0, 0.05)).unwrap();
+        let mismatch_state = mismatch.snapshot_runtime_state();
+        let reusable_before = reusable.current_gains();
+        assert_eq!(
+            mismatch.restore_runtime_state(&reusable),
+            Err(LoudnessCompRuntimeStateMismatch)
+        );
+        assert_eq!(
+            mismatch.copy_runtime_state_from(&replay),
+            Err(LoudnessCompRuntimeStateMismatch)
+        );
+        assert_eq!(
+            mismatch.save_runtime_state(&mut reusable),
+            Err(LoudnessCompRuntimeStateMismatch)
+        );
+        assert_eq!(reusable.current_gains(), reusable_before);
+        assert_eq!(mismatch.snapshot_runtime_state(), mismatch_state);
+
+        // 5) generation 失配：snapshot 后 configure 使代次递增，restore 拒绝。
+        let mut stale =
+            LoudnessCompStage::from_settings(48_000.0, settings_auto(20.0, 0.05)).unwrap();
+        let stale_checkpoint = stale.snapshot_runtime_state();
+        stale.configure(settings_auto(80.0, 0.1));
+        assert_eq!(stale.generation(), stale_checkpoint.generation() + 1);
+        let before = stale.snapshot_runtime_state();
+        assert_eq!(
+            stale.restore_runtime_state(&stale_checkpoint),
+            Err(LoudnessCompRuntimeStateMismatch)
+        );
+        assert_eq!(stale.snapshot_runtime_state(), before);
+
+        // 6) reset 后状态与「全新实例 + reset」逐位一致（current 钉到 target，TDF2 清零）。
+        replay.reset();
+        let reset_state = replay.snapshot_runtime_state();
+        let mut fresh =
+            LoudnessCompStage::from_settings(48_000.0, settings_auto(20.0, 0.05)).unwrap();
+        fresh.reset();
+        assert_eq!(reset_state, fresh.snapshot_runtime_state());
+    }
+
+    #[test]
+    fn copy跨参数代次_平滑状态迁移后向新目标连续收敛() {
+        // 音量变化（revision 迁移）不产生增益跳变：copy 携带爬升中的平滑状态，
+        // currentGains 与目标参数各自独立，后续 process 向新目标一阶逼近。
+        let mut source =
+            LoudnessCompStage::from_settings(48_000.0, settings_auto(20.0, 0.05)).unwrap();
+        source.prepare(384);
+        let silent = vec![0.0_f32; 384];
+        let _ = drive_chunks(&mut source, &silent, &silent, 3);
+        let mid_climb = source.snapshot_runtime_state().current_gains();
+        assert!(
+            mid_climb[0] > 0.0 && mid_climb[0] < 9.6,
+            "爬升中态必须介于 0 与目标之间"
+        );
+
+        let mut next =
+            LoudnessCompStage::from_settings(48_000.0, settings_auto(100.0, 0.05)).unwrap();
+        next.copy_runtime_state_from(&source).unwrap();
+        let copied = next.snapshot_runtime_state().current_gains();
+        assert_eq!(copied, mid_climb, "copy 必须完整携带 6 槽平滑状态");
+        // 新目标（volume=100 → 全 0）：继续下降而非跳变/回升到旧目标。
+        next.prepare(384);
+        let _ = drive_chunks(&mut next, &silent, &silent, 3);
+        let after = next.snapshot_runtime_state().current_gains();
+        assert!(
+            after[0] < copied[0],
+            "copy 后必须向新目标继续平滑，实际 {after:?}"
+        );
+    }
+
+    fn drive_chunks(
+        stage: &mut LoudnessCompStage,
+        left: &[f32],
+        right: &[f32],
+        block: usize,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let mut out_l = left.to_vec();
+        let mut out_r = right.to_vec();
+        let mut off = 0_usize;
+        while off < out_l.len() {
+            let end = (off + block).min(out_l.len());
+            stage.process(&mut out_l[off..end], &mut out_r[off..end]);
+            off = end;
+        }
+        (out_l, out_r)
     }
 }

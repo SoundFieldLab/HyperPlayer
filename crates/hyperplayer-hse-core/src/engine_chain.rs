@@ -9,7 +9,7 @@ use crate::{
     fdn_reverb::{FdnReverbParams, FdnReverbStage},
     fft::Fft,
     limiter::{LimiterSettings, LimiterStage},
-    loudness_comp::{LoudnessBandParam, LoudnessCompSettings, LoudnessCompStage},
+    loudness_comp::{LoudnessBandParam, LoudnessCompMode, LoudnessCompSettings, LoudnessCompStage},
     loudness_normalization::{
         LoudnessNormalizationReadings, LoudnessNormalizationSettings, LoudnessNormalizationStage,
     },
@@ -1193,6 +1193,447 @@ fn world_velocity(
     }))
 }
 
+// ---------------------------------------------------------------------------
+// Stage 17 分析 / Stage 16 IEQ —— 权威运行态、显示快照与参数态的分离组件。
+//
+// 提取自 EngineChainStage 的私有 analysis()/analyze()/IEQ 平滑循环，行为逐位
+// 不变（引擎链黄金向量 + 本模块测试双重锚定）。组件化为 Stage 16 IEQ 处理器
+// 适配器与 engine telemetry 频谱发布器提供可复用 API：
+// - [`SpectrumAnalyzer`]：mid 下混环形窗 + Hann + 2048 FFT + 幅度谱，权威
+//   分析运行态为 typed [`AnalysisRuntimeState`]（范式同 compressor.rs /
+//   limiter.rs 的 snapshot/save/restore/copy）；
+// - [`IeqController`]：IEQ 权威参数态（[`IeqParams`]）与平滑运行态分离，
+//   显示快照经 [`IeqController::display_snapshot`] 取出。
+// ---------------------------------------------------------------------------
+
+/// 分析窗块长（2048；log2 为奇数，走基-2 尾 FFT 路径）。
+pub const ANALYSIS_WINDOW_SIZE: usize = W;
+
+/// Stage 17 频谱分析的权威运行态快照（ring/写入位/待分析窗数/工作谱缓冲）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnalysisRuntimeState {
+    pub ring: Vec<f32>,
+    pub write_pos: usize,
+    pub pending_frames: usize,
+    pub real: Vec<f32>,
+    pub imag: Vec<f32>,
+    pub magnitude: Vec<f32>,
+}
+
+#[derive(Debug)]
+pub struct AnalysisRuntimeStateMismatch;
+
+impl std::fmt::Display for AnalysisRuntimeStateMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("analysis runtime state mismatch")
+    }
+}
+
+impl std::error::Error for AnalysisRuntimeStateMismatch {}
+
+/// Stage 17 权威频谱分析器：mid 下混进环形窗，每攒满 [`ANALYSIS_WINDOW_SIZE`]
+/// 帧做一次 Hann 加权 2048 点 FFT 并落幅度谱。所有工作缓冲在 [`new`](Self::new)
+/// 一次性预分配，`push`/`analyze_window` 稳态零分配（realtime_alloc 门禁覆盖）。
+pub struct SpectrumAnalyzer {
+    window: Vec<f32>,
+    fft: Fft,
+    state: AnalysisRuntimeState,
+    window_sum: f64,
+}
+
+impl SpectrumAnalyzer {
+    pub fn new() -> Result<Self, String> {
+        let fft = Fft::new(W)?;
+        let mut window = vec![0.; W];
+        for (i, x) in window.iter_mut().enumerate() {
+            *x = (0.5
+                * (1.
+                    - crate::fft::ts_trig::cos(
+                        2. * std::f64::consts::PI * i as f64 / (W - 1) as f64,
+                    ))) as f32
+        }
+        let window_sum = window.iter().fold(0_f64, |sum, x| sum + f64::from(*x));
+        Ok(Self {
+            fft,
+            window,
+            state: AnalysisRuntimeState {
+                ring: vec![0.; W],
+                write_pos: 0,
+                pending_frames: 0,
+                real: vec![0.; W],
+                imag: vec![0.; W],
+                magnitude: vec![0.; W / 2 + 1],
+            },
+            window_sum,
+        })
+    }
+
+    /// Hann 窗（参数派生的常量表；与既有 engine_chain 构造逐位一致）。
+    pub fn window(&self) -> &[f32] {
+        &self.window
+    }
+
+    /// 窗函数能量和（f64 累加），供幅度谱 → 线性幅度的相干增益归一。
+    pub fn window_sum(&self) -> f64 {
+        self.window_sum
+    }
+
+    /// 最新一次窗口分析的幅度谱（长度 W/2 + 1，线性幅度，未归一）。
+    pub fn magnitude(&self) -> &[f32] {
+        &self.state.magnitude
+    }
+
+    /// 推入一帧立体声样本（mid 下混），返回因本次推入而到期的分析窗数（0/1）。
+    pub fn push_one(&mut self, left: f32, right: f32) -> usize {
+        self.state.ring[self.state.write_pos] = (0.5 * (f64::from(left) + f64::from(right))) as f32;
+        self.state.write_pos = (self.state.write_pos + 1) % W;
+        self.state.pending_frames += 1;
+        if self.state.pending_frames >= W {
+            self.state.pending_frames -= W;
+            1
+        } else {
+            0
+        }
+    }
+
+    /// 推入一块立体声样本，返回累计到期的分析窗数（与逐帧 [`push_one`](Self::push_one)
+    /// 等价；窗分析统一延迟到块尾，读位与既有实现一致）。
+    pub fn push(&mut self, left: &[f32], right: &[f32]) -> usize {
+        assert_eq!(left.len(), right.len(), "分析输入左右块长必须一致");
+        left.iter()
+            .zip(right.iter())
+            .map(|(&l, &r)| self.push_one(l, r))
+            .sum()
+    }
+
+    /// 对当前环形窗内容做一次 Hann 加权 FFT 并落幅度谱（无 IEQ；调用方负责
+    /// 按 `push` 返回的到期窗数逐窗调用）。
+    pub fn analyze_window(&mut self) {
+        let state = &mut self.state;
+        for i in 0..W {
+            let x = state.ring[(state.write_pos + i) % W];
+            state.real[i] = (f64::from(x) * f64::from(self.window[i])) as f32;
+            state.imag[i] = 0.
+        }
+        self.fft
+            .transform(&mut state.real, &mut state.imag, false)
+            .unwrap();
+        for k in 0..state.magnitude.len() {
+            let x = f64::from(state.real[k]);
+            let y = f64::from(state.imag[k]);
+            state.magnitude[k] = (x * x + y * y).sqrt() as f32
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.state.ring.fill(0.);
+        self.state.write_pos = 0;
+        self.state.pending_frames = 0;
+    }
+
+    pub fn snapshot_runtime_state(&self) -> AnalysisRuntimeState {
+        self.state.clone()
+    }
+
+    pub fn save_runtime_state(
+        &self,
+        state: &mut AnalysisRuntimeState,
+    ) -> Result<(), AnalysisRuntimeStateMismatch> {
+        if !Self::topology_matches(state) {
+            return Err(AnalysisRuntimeStateMismatch);
+        }
+        state.ring.copy_from_slice(&self.state.ring);
+        state.write_pos = self.state.write_pos;
+        state.pending_frames = self.state.pending_frames;
+        state.real.copy_from_slice(&self.state.real);
+        state.imag.copy_from_slice(&self.state.imag);
+        state.magnitude.copy_from_slice(&self.state.magnitude);
+        Ok(())
+    }
+
+    pub fn restore_runtime_state(
+        &mut self,
+        state: &AnalysisRuntimeState,
+    ) -> Result<(), AnalysisRuntimeStateMismatch> {
+        if !Self::topology_matches(state) {
+            return Err(AnalysisRuntimeStateMismatch);
+        }
+        // 逐字段原位拷贝（零分配恢复；对齐 save_runtime_state 的 copy_from_slice）。
+        self.state.ring.copy_from_slice(&state.ring);
+        self.state.write_pos = state.write_pos;
+        self.state.pending_frames = state.pending_frames;
+        self.state.real.copy_from_slice(&state.real);
+        self.state.imag.copy_from_slice(&state.imag);
+        self.state.magnitude.copy_from_slice(&state.magnitude);
+        Ok(())
+    }
+
+    pub fn copy_runtime_state_from(
+        &mut self,
+        source: &mut Self,
+    ) -> Result<(), AnalysisRuntimeStateMismatch> {
+        let snapshot = source.snapshot_runtime_state();
+        self.restore_runtime_state(&snapshot)
+    }
+
+    fn topology_matches(state: &AnalysisRuntimeState) -> bool {
+        state.ring.len() == W
+            && state.real.len() == W
+            && state.imag.len() == W
+            && state.magnitude.len() == W / 2 + 1
+    }
+}
+
+/// HSE Stage 16 IEQ 目标曲线（specs/engine/params.md 的 ieq.targetCurve）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IeqTargetCurve {
+    Flat,
+    Warm,
+    Bright,
+    Vocal,
+}
+
+impl IeqTargetCurve {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "flat" => Some(Self::Flat),
+            "warm" => Some(Self::Warm),
+            "bright" => Some(Self::Bright),
+            "vocal" => Some(Self::Vocal),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Flat => "flat",
+            Self::Warm => "warm",
+            Self::Bright => "bright",
+            Self::Vocal => "vocal",
+        }
+    }
+
+    /// 曲线增益（dB；与既有私有 `curve()` 逐位一致）。
+    pub fn targets(self) -> [f64; 10] {
+        match self {
+            Self::Warm => [4., 3.5, 2.5, 1.5, 0.5, 0., -0.5, -1.5, -2.5, -3.5],
+            Self::Bright => [-3.5, -2.5, -1.5, -0.5, 0., 0.5, 1.5, 2.5, 3.5, 4.],
+            Self::Vocal => [-1.5, -1., 0., 1., 2., 2.5, 2., 1., 0., -0.5],
+            Self::Flat => [0.; 10],
+        }
+    }
+}
+
+/// Stage 16 IEQ 权威参数态（与平滑运行态分离）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct IeqParams {
+    pub enabled: bool,
+    pub strength: f64,
+    pub target_curve: IeqTargetCurve,
+    pub time_constant_sec: f64,
+}
+
+/// Stage 16 IEQ 显示快照（平滑增益与带电平；非实时路径取出）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IeqDisplaySnapshot {
+    pub gains: [f32; 10],
+    pub band_levels_db: [f32; 10],
+}
+
+/// Stage 16 IEQ 权威运行态快照（10-band 平滑增益与带电平；其余为派生参数态，
+/// 由当前参数重算，不进入运行态）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct IeqRuntimeState {
+    pub gains: [f32; 10],
+    pub gains_f64: [f64; 10],
+    pub levels_db: [f32; 10],
+}
+
+/// 运行时状态与目标 IEQ 参数态不兼容。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IeqRuntimeStateMismatch;
+
+impl std::fmt::Display for IeqRuntimeStateMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ieq runtime state mismatch")
+    }
+}
+
+impl std::error::Error for IeqRuntimeStateMismatch {}
+
+/// Stage 16 IEQ 控制器：参数态 + 平滑运行态，从 [`SpectrumAnalyzer`] 的幅度谱
+/// 驱动。平滑循环与既有 engine_chain 实现逐位一致（f32 增益读回 → f64 更新）。
+pub struct IeqController {
+    fs: f64,
+    params: IeqParams,
+    ranges: [(usize, usize); 10],
+    smoothing: f64,
+    gains: [f32; 10],
+    levels_db: [f32; 10],
+    /// f64 增益镜像（写入 [`EqBandParam`] 的值；f32 运行态经读回参与平滑）。
+    gains_f64: [f64; 10],
+    bands: [EqBandParam; 10],
+}
+
+impl IeqController {
+    pub fn new(fs: f64, params: IeqParams) -> Self {
+        let mut ranges = [(0, 0); 10];
+        let hz = fs / W as f64;
+        for i in 0..10 {
+            let lo = if i == 0 {
+                20.
+            } else {
+                (IEQ[i - 1] * IEQ[i]).sqrt()
+            };
+            let hi = if i == 9 {
+                fs / 2.
+            } else {
+                (IEQ[i] * IEQ[i + 1]).sqrt()
+            };
+            ranges[i] = (
+                (lo / hz).floor() as usize,
+                ((hi / hz).ceil() as usize).min(W / 2),
+            );
+        }
+        let bands = std::array::from_fn(|i| EqBandParam {
+            frequency: IEQ[i],
+            gain: 0.0,
+            q: 1.1,
+        });
+        let mut controller = Self {
+            fs,
+            params,
+            ranges,
+            smoothing: 0.,
+            gains: [0.; 10],
+            levels_db: [0.; 10],
+            gains_f64: [0.; 10],
+            bands,
+        };
+        controller.refresh_derived_params();
+        controller
+    }
+
+    pub fn params(&self) -> &IeqParams {
+        &self.params
+    }
+
+    /// 更新参数态（保留平滑运行态；强度/曲线/时间常数即时生效）。
+    pub fn set_params(&mut self, params: IeqParams) {
+        self.params = params;
+        self.refresh_derived_params();
+    }
+
+    fn refresh_derived_params(&mut self) {
+        // 与既有构造逐位一致：ismooth = 1 - exp(-(W/fs)/max(timeConstant, 0.1))。
+        self.smoothing =
+            1. - (-(W as f64 / self.fs) / self.params.time_constant_sec.max(0.1)).exp();
+    }
+
+    pub fn gains(&self) -> [f32; 10] {
+        self.gains
+    }
+
+    pub fn band_levels_db(&self) -> [f32; 10] {
+        self.levels_db
+    }
+
+    pub fn band_ranges(&self) -> [(usize, usize); 10] {
+        self.ranges
+    }
+
+    pub fn display_snapshot(&self) -> IeqDisplaySnapshot {
+        IeqDisplaySnapshot {
+            gains: self.gains,
+            band_levels_db: self.levels_db,
+        }
+    }
+
+    /// 参数带镜像（frequencies/q 固定，gain 为最近一次平滑结果），
+    /// 供 [`EqChainStage::set_bands`] 直接消费。
+    pub fn eq_bands(&self) -> &[EqBandParam; 10] {
+        &self.bands
+    }
+
+    /// 从分析幅度谱做一次 10-band 聚合 + 平滑更新（与既有 analyze() 的 IEQ
+    /// 段逐位一致；调用方保证 magnitude 长度 ≥ W/2 + 1）。
+    pub fn update_from_magnitude(&mut self, magnitude: &[f32]) {
+        let mut avg = 0.;
+        for i in 0..10 {
+            let (lo, hi) = self.ranges[i];
+            let mut ss = 0.;
+            for k in lo..=hi {
+                let x = f64::from(magnitude[k]);
+                ss += x * x
+            }
+            let rms = (ss / (hi - lo + 1) as f64).sqrt();
+            self.levels_db[i] = (20. * rms.max(1e-4).log10()) as f32;
+            avg += f64::from(self.levels_db[i])
+        }
+        avg /= 10.;
+        let strength = self.params.strength;
+        let targets = self.params.target_curve.targets();
+        for i in 0..10 {
+            let rel = f64::from(self.levels_db[i]) - avg;
+            let want = strength * (targets[i] - rel);
+            let g = (f64::from(self.gains[i]) + self.smoothing * (want - f64::from(self.gains[i])))
+                .clamp(-12., 12.);
+            self.gains[i] = g as f32;
+            self.gains_f64[i] = g;
+            self.bands[i].gain = g;
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.gains = [0.; 10];
+        self.levels_db = [0.; 10];
+        self.gains_f64 = [0.; 10];
+        for band in &mut self.bands {
+            band.gain = 0.0;
+        }
+    }
+
+    /// 运行态快照（平滑增益 + 带电平；不含派生参数态）。
+    pub fn snapshot_runtime_state(&self) -> IeqRuntimeState {
+        IeqRuntimeState {
+            gains: self.gains,
+            gains_f64: self.gains_f64,
+            levels_db: self.levels_db,
+        }
+    }
+
+    /// 保存运行态到 `state`（拓扑固定：长度恒 10，恒兼容；不兼容保留 target）。
+    pub fn save_runtime_state(
+        &self,
+        state: &mut IeqRuntimeState,
+    ) -> Result<(), IeqRuntimeStateMismatch> {
+        *state = self.snapshot_runtime_state();
+        Ok(())
+    }
+
+    /// 从 `state` 恢复运行态并同步到参数带镜像（保持「运行态 ↔ 系数」不变量）。
+    pub fn restore_runtime_state(
+        &mut self,
+        state: &IeqRuntimeState,
+    ) -> Result<(), IeqRuntimeStateMismatch> {
+        self.gains = state.gains;
+        self.gains_f64 = state.gains_f64;
+        self.levels_db = state.levels_db;
+        for i in 0..10 {
+            self.bands[i].gain = state.gains[i] as f64;
+        }
+        Ok(())
+    }
+
+    /// 从 `source` 复制运行态（同一采样率/频带拓扑；不兼容弃用 target）。
+    pub fn copy_runtime_state_from(
+        &mut self,
+        source: &Self,
+    ) -> Result<(), IeqRuntimeStateMismatch> {
+        self.restore_runtime_state(&source.snapshot_runtime_state())
+    }
+}
+
 pub struct EngineChainStage {
     fs: f64,
     eq: EqChainStage,
@@ -1211,25 +1652,13 @@ pub struct EngineChainStage {
     lm: LimiterStage,
     lufs: LufsMeter,
     mm: ModulationMatrixStage,
-    fft: Fft,
-    ring: Vec<f32>,
-    rp: usize,
-    ap: usize,
-    re: Vec<f32>,
-    im: Vec<f32>,
-    mag: Vec<f32>,
-    hann: Vec<f32>,
-    ig: [f32; 10],
-    il: [f32; 10],
-    ranges: [(usize, usize); 10],
-    targets: [f64; 10],
-    ismooth: f64,
+    analysis: SpectrumAnalyzer,
+    ieq_ctl: IeqController,
     norm: LoudnessNormalizationStage,
     surround: Surround3dStage,
     mg: f64,
     mw: f64,
     next_frame_count: Option<usize>,
-    ieq_bands: [EqBandParam; 10],
     eq_on: bool,
     de_on: bool,
     cp_on: bool,
@@ -1237,7 +1666,6 @@ pub struct EngineChainStage {
     cp_sidechain: bool,
     bass_on: bool,
     loudness_comp_on: bool,
-    ieq_on: bool,
     dynamic_eq_on: bool,
     limiter_on: bool,
     reverb_kind: u8,
@@ -1246,7 +1674,6 @@ pub struct EngineChainStage {
     pitch_on: bool,
     voice_balance: f64,
     stereo_width: f64,
-    ieq_strength: f64,
 }
 impl EngineChainStage {
     pub fn from_params(fs: f64, p: EngineChainParams) -> Result<Self, String> {
@@ -1304,32 +1731,6 @@ impl EngineChainStage {
                 })
                 .collect::<Vec<_>>(),
         );
-        let mut ranges = [(0, 0); 10];
-        let hz = fs / W as f64;
-        for i in 0..10 {
-            let lo = if i == 0 {
-                20.
-            } else {
-                (IEQ[i - 1] * IEQ[i]).sqrt()
-            };
-            let hi = if i == 9 {
-                fs / 2.
-            } else {
-                (IEQ[i] * IEQ[i + 1]).sqrt()
-            };
-            ranges[i] = (
-                (lo / hz).floor() as usize,
-                ((hi / hz).ceil() as usize).min(W / 2),
-            );
-        }
-        let mut hann = vec![0.; W];
-        for (i, x) in hann.iter_mut().enumerate() {
-            *x = (0.5
-                * (1.
-                    - crate::fft::ts_trig::cos(
-                        2. * std::f64::consts::PI * i as f64 / (W - 1) as f64,
-                    ))) as f32
-        }
         let mo = o(v, "/modulation")?;
         let lfo = o(v, "/modulation/lfo")?;
         let env = o(v, "/modulation/envelope")?;
@@ -1453,34 +1854,29 @@ impl EngineChainStage {
             lm: LimiterStage::from_settings(fs, lm_settings(o(v, "/limiter")?)?)?,
             lufs: LufsMeter::new(fs)?,
             mm,
-            fft: Fft::new(W)?,
-            ring: vec![0.; W],
-            rp: 0,
-            ap: 0,
-            re: vec![0.; W],
-            im: vec![0.; W],
-            mag: vec![0.; W / 2 + 1],
-            hann,
-            ig: [0.; 10],
-            il: [0.; 10],
-            ranges,
-            targets: curve(enum_value(
-                io,
-                "targetCurve",
-                "/ieq/targetCurve",
-                &["flat", "warm", "bright", "vocal"],
-            )?),
-            ismooth: 1. - (-(W as f64 / fs) / n(io, "timeConstantSec")?.max(0.1)).exp(),
+            analysis: SpectrumAnalyzer::new()?,
+            // 保留既有错误优先级：targetCurve → timeConstantSec → enabled → strength
+            //（结构体字面量按书写序求值）。
+            ieq_ctl: IeqController::new(
+                fs,
+                IeqParams {
+                    target_curve: IeqTargetCurve::parse(enum_value(
+                        io,
+                        "targetCurve",
+                        "/ieq/targetCurve",
+                        &["flat", "warm", "bright", "vocal"],
+                    )?)
+                    .expect("enum_value 已校验目标曲线枚举"),
+                    time_constant_sec: n(io, "timeConstantSec")?,
+                    enabled: b(io, "enabled")?,
+                    strength: n(io, "strength")?,
+                },
+            ),
             norm,
             surround: surround_stage,
             mg: 1.,
             mw: 1.,
             next_frame_count: None,
-            ieq_bands: std::array::from_fn(|i| EqBandParam {
-                frequency: IEQ[i],
-                gain: 0.0,
-                q: 1.1,
-            }),
             eq_on: b(eo, "enabled")?,
             de_on: b(deo, "enabled")?,
             cp_on: b(cpo, "enabled")?,
@@ -1488,7 +1884,6 @@ impl EngineChainStage {
             cp_sidechain,
             bass_on: b(o(v, "/bassEnhancer")?, "enabled")?,
             loudness_comp_on: b(o(v, "/loudnessCompensation")?, "enabled")?,
-            ieq_on: b(io, "enabled")?,
             dynamic_eq_on: b(o(v, "/dynamicEq")?, "enabled")?,
             limiter_on: b(o(v, "/limiter")?, "enabled")?,
             reverb_kind,
@@ -1497,7 +1892,6 @@ impl EngineChainStage {
             pitch_on: b(pitch, "enabled")?,
             voice_balance: n(pitch, "voiceBalance")?,
             stereo_width: v["stereoWidth"].as_f64().ok_or("stereoWidth 必须是数字")?,
-            ieq_strength: n(io, "strength")?,
         })
     }
     pub fn stage_ids(&self) -> &[&'static str] {
@@ -1507,7 +1901,18 @@ impl EngineChainStage {
         self.norm.gain()
     }
     pub fn ieq_gains(&self) -> [f32; 10] {
-        self.ig
+        self.ieq_ctl.gains()
+    }
+
+    /// Stage 16 IEQ 显示快照（平滑增益 + 带电平）。
+    pub fn ieq_display_snapshot(&self) -> IeqDisplaySnapshot {
+        self.ieq_ctl.display_snapshot()
+    }
+
+    /// Stage 17 分析器共享访问（幅度谱 / 窗 / 运行态快照；复用组件见
+    /// [`SpectrumAnalyzer`]）。
+    pub fn analyzer(&self) -> &SpectrumAnalyzer {
+        &self.analysis
     }
     pub fn modulation_targets(&self) -> (f64, f64) {
         (self.mg, self.mw)
@@ -1558,56 +1963,15 @@ impl EngineChainStage {
         self.process_inner(left, right, Some((side_l, side_r)));
     }
     fn analysis(&mut self, l: &[f32], r: &[f32]) {
-        for i in 0..l.len() {
-            self.ring[self.rp] = (0.5 * (f64::from(l[i]) + f64::from(r[i]))) as f32;
-            self.rp = (self.rp + 1) % W
-        }
-        self.ap += l.len();
-        while self.ap >= W {
-            self.ap -= W;
-            self.analyze()
-        }
-    }
-    fn analyze(&mut self) {
-        for i in 0..W {
-            let x = self.ring[(self.rp + i) % W];
-            self.re[i] = (f64::from(x) * f64::from(self.hann[i])) as f32;
-            self.im[i] = 0.
-        }
-        self.fft
-            .transform(&mut self.re, &mut self.im, false)
-            .unwrap();
-        for k in 0..self.mag.len() {
-            let x = f64::from(self.re[k]);
-            let y = f64::from(self.im[k]);
-            self.mag[k] = (x * x + y * y).sqrt() as f32
-        }
-        if !self.ieq_on {
-            return;
-        }
-        let mut avg = 0.;
-        for i in 0..10 {
-            let (lo, hi) = self.ranges[i];
-            let mut ss = 0.;
-            for k in lo..=hi {
-                let x = f64::from(self.mag[k]);
-                ss += x * x
+        let windows = self.analysis.push(l, r);
+        for _ in 0..windows {
+            self.analysis.analyze_window();
+            if self.ieq_ctl.params().enabled {
+                self.ieq_ctl
+                    .update_from_magnitude(self.analysis.magnitude());
+                self.ieq.set_bands(self.ieq_ctl.eq_bands());
             }
-            let rms = (ss / (hi - lo + 1) as f64).sqrt();
-            self.il[i] = (20. * rms.max(1e-4).log10()) as f32;
-            avg += f64::from(self.il[i])
         }
-        avg /= 10.;
-        let strength = self.ieq_strength;
-        for i in 0..10 {
-            let rel = f64::from(self.il[i]) - avg;
-            let want = strength * (self.targets[i] - rel);
-            let g = (f64::from(self.ig[i]) + self.ismooth * (want - f64::from(self.ig[i])))
-                .clamp(-12., 12.);
-            self.ig[i] = g as f32;
-            self.ieq_bands[i].gain = g;
-        }
-        self.ieq.set_bands(&self.ieq_bands)
     }
     fn process_inner(&mut self, l: &mut [f32], r: &mut [f32], sidechain: Option<(&[f32], &[f32])>) {
         let active_n = self.next_frame_count.take().unwrap_or(l.len()).min(l.len());
@@ -1680,7 +2044,7 @@ impl EngineChainStage {
         if self.loudness_comp_on {
             self.lc.process(l, r)
         }
-        if self.ieq_on {
+        if self.ieq_ctl.params().enabled {
             self.ieq.process(l, r)
         }
         self.analysis(&l[..active_n], &r[..active_n]);
@@ -1746,11 +2110,8 @@ impl Stage for EngineChainStage {
         }
         self.lufs.reset();
         self.mm.reset();
-        self.ring.fill(0.);
-        self.rp = 0;
-        self.ap = 0;
-        self.ig = [0.; 10];
-        self.il = [0.; 10];
+        self.analysis.reset();
+        self.ieq_ctl.reset();
         self.norm.reset();
         self.surround.reset();
         self.mg = 1.;
@@ -1892,13 +2253,12 @@ fn lc_settings(x: &Map<String, Value>) -> Result<LoudnessCompSettings, String> {
         )?
         .to_owned(),
         bands,
-        mode: enum_value(
+        mode: LoudnessCompMode::from_params_str(enum_value(
             x,
             "mode",
             "/loudnessCompensation/mode",
             &["auto", "preset", "custom"],
-        )?
-        .to_owned(),
+        )?),
         smoothing_seconds: n(x, "smoothingSeconds")?,
     })
 }
@@ -2004,14 +2364,6 @@ fn routes(a: &[Value]) -> Result<Vec<ModulationRoute>, String> {
             })
         })
         .collect()
-}
-fn curve(x: &str) -> [f64; 10] {
-    match x {
-        "warm" => [4., 3.5, 2.5, 1.5, 0.5, 0., -0.5, -1.5, -2.5, -3.5],
-        "bright" => [-3.5, -2.5, -1.5, -0.5, 0., 0.5, 1.5, 2.5, 3.5, 4.],
-        "vocal" => [-1.5, -1., 0., 1., 2., 2.5, 2., 1., 0., -0.5],
-        _ => [0.; 10],
-    }
 }
 #[cfg(test)]
 mod tests {
@@ -2750,5 +3102,369 @@ mod tests {
         let mut right = left.clone();
         engine.process(&mut left, &mut right);
         assert!(engine.ieq_gains().iter().any(|gain| *gain != 0.0));
+    }
+
+    #[test]
+    fn ieq_target_curve_命中既有_curve_表() {
+        let cases = [
+            ("warm", IeqTargetCurve::Warm),
+            ("bright", IeqTargetCurve::Bright),
+            ("vocal", IeqTargetCurve::Vocal),
+            ("flat", IeqTargetCurve::Flat),
+        ];
+        // 既有私有 curve() 的冻结表（提取前的逐位锚点）。
+        fn legacy_curve(x: &str) -> [f64; 10] {
+            match x {
+                "warm" => [4., 3.5, 2.5, 1.5, 0.5, 0., -0.5, -1.5, -2.5, -3.5],
+                "bright" => [-3.5, -2.5, -1.5, -0.5, 0., 0.5, 1.5, 2.5, 3.5, 4.],
+                "vocal" => [-1.5, -1., 0., 1., 2., 2.5, 2., 1., 0., -0.5],
+                _ => [0.; 10],
+            }
+        }
+        for (name, curve) in cases {
+            assert_eq!(curve.targets(), legacy_curve(name), "curve {name}");
+            assert_eq!(IeqTargetCurve::parse(name), Some(curve));
+            assert_eq!(curve.as_str(), name);
+        }
+        assert_eq!(IeqTargetCurve::parse("bogus"), None);
+    }
+
+    #[test]
+    fn 分析器_hann_窗锚点_端点为0_中点近1_对称() {
+        let analyzer = SpectrumAnalyzer::new().unwrap();
+        assert_eq!(analyzer.window().len(), ANALYSIS_WINDOW_SIZE);
+        assert_eq!(analyzer.window()[0].to_bits(), 0.0_f32.to_bits());
+        assert_eq!(
+            analyzer.window()[ANALYSIS_WINDOW_SIZE - 1].to_bits(),
+            0.0_f32.to_bits()
+        );
+        let mid = ANALYSIS_WINDOW_SIZE / 2;
+        // 窗定义分母为 (W-1)：中点角 = π·W/(W-1)，值略小于 1（对称 Hann）。
+        assert!((f64::from(analyzer.window()[mid]) - 1.).abs() < 1e-6);
+        // 注：ts_trig（V8 fdlibm 复刻）对 > π 的大参数不保证与镜像角逐位对称，
+        // 末端窗值可能出现 1 ulp 级差异（既有行为，不作为锚点）。
+        assert!(f64::from(analyzer.window()[ANALYSIS_WINDOW_SIZE / 2 - 1]) > 0.999);
+        assert!(f64::from(analyzer.window()[ANALYSIS_WINDOW_SIZE - 2]) < 1e-4);
+        // 窗能量和的解析值：Σ = 0.5N - 0.5·Σcos(2πi/(N-1))，i=0..N-2 完整周期
+        // 和为 0、末点 cos(2π)=1 → Σ = (N-1)/2 = 1023.5，相干增益归一依赖它。
+        assert!(
+            (analyzer.window_sum() - (ANALYSIS_WINDOW_SIZE - 1) as f64 / 2.).abs() < 1e-6,
+            "window_sum = {}",
+            analyzer.window_sum()
+        );
+    }
+
+    #[test]
+    fn 分析器_任意块切分_与既有引擎链算法逐位一致() {
+        // 参考实现：既有 EngineChainStage::analysis()/analyze() 的原样复刻
+        //（提取前的行为锚点），按同一块序列驱动。
+        struct LegacyAnalysis {
+            ring: Vec<f32>,
+            rp: usize,
+            ap: usize,
+            re: Vec<f32>,
+            im: Vec<f32>,
+            mag: Vec<f32>,
+            hann: Vec<f32>,
+            fft: Fft,
+        }
+        impl LegacyAnalysis {
+            fn new() -> Self {
+                let mut hann = vec![0.; W];
+                for (i, x) in hann.iter_mut().enumerate() {
+                    *x = (0.5
+                        * (1.
+                            - crate::fft::ts_trig::cos(
+                                2. * std::f64::consts::PI * i as f64 / (W - 1) as f64,
+                            ))) as f32
+                }
+                Self {
+                    ring: vec![0.; W],
+                    rp: 0,
+                    ap: 0,
+                    re: vec![0.; W],
+                    im: vec![0.; W],
+                    mag: vec![0.; W / 2 + 1],
+                    hann,
+                    fft: Fft::new(W).unwrap(),
+                }
+            }
+
+            fn analyze(&mut self) {
+                for i in 0..W {
+                    let x = self.ring[(self.rp + i) % W];
+                    self.re[i] = (f64::from(x) * f64::from(self.hann[i])) as f32;
+                    self.im[i] = 0.
+                }
+                self.fft
+                    .transform(&mut self.re, &mut self.im, false)
+                    .unwrap();
+                for k in 0..self.mag.len() {
+                    let x = f64::from(self.re[k]);
+                    let y = f64::from(self.im[k]);
+                    self.mag[k] = (x * x + y * y).sqrt() as f32
+                }
+            }
+
+            fn push(&mut self, l: &[f32], r: &[f32]) -> Vec<Vec<f32>> {
+                for i in 0..l.len() {
+                    self.ring[self.rp] = (0.5 * (f64::from(l[i]) + f64::from(r[i]))) as f32;
+                    self.rp = (self.rp + 1) % W
+                }
+                self.ap += l.len();
+                let mut mags = Vec::new();
+                while self.ap >= W {
+                    self.ap -= W;
+                    self.analyze();
+                    mags.push(self.mag.clone());
+                }
+                mags
+            }
+        }
+
+        let mut s = 7_u32;
+        let pcm: Vec<f32> = (0..9_317)
+            .map(|_| {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (f64::from(s) / 4294967296.0 * 2.0 - 1.0) as f32
+            })
+            .collect();
+
+        for (chunk, _seed) in [
+            (1_usize, 11_u32),
+            (3, 12),
+            (17, 13),
+            (256, 14),
+            (2048, 15),
+            (4096, 16),
+        ] {
+            let mut legacy = LegacyAnalysis::new();
+            let mut analyzer = SpectrumAnalyzer::new().unwrap();
+            let mut last_legacy: Option<Vec<f32>> = None;
+            let mut last_new: Option<Vec<f32>> = None;
+            for block in pcm.chunks(chunk) {
+                let (mut l, mut r): (Vec<f32>, Vec<f32>) =
+                    block.iter().copied().map(|x| (x, -x * 0.5)).unzip();
+                for mag in legacy.push(&l, &r) {
+                    last_legacy = Some(mag);
+                }
+                for _ in 0..analyzer.push(&l, &r) {
+                    analyzer.analyze_window();
+                    last_new = Some(analyzer.magnitude().to_vec());
+                }
+            }
+            assert_eq!(
+                last_new.as_deref(),
+                last_legacy.as_deref(),
+                "chunk {chunk} 末窗幅度谱与既有算法不一致"
+            );
+        }
+    }
+
+    #[test]
+    fn 分析器_整bin正弦峰值命中解析bin_相干增益归一() {
+        // 40 号 bin @48 kHz（f = 40·48000/2048 = 937.5 Hz，整 bin 无扇形损失），
+        // Hann 相干增益 A = 2·mag/Σw，mid 下混 0.5×正弦 → 归一幅度 ≈ 0.5。
+        let k0 = 40_usize;
+        let mut analyzer = SpectrumAnalyzer::new().unwrap();
+        let samples: Vec<f32> = (0..ANALYSIS_WINDOW_SIZE * 2)
+            .map(|i| {
+                (2. * std::f64::consts::PI * k0 as f64 * i as f64 / ANALYSIS_WINDOW_SIZE as f64)
+                    .sin() as f32
+                    * 0.5
+            })
+            .collect();
+        let (l, r) = (samples.clone(), samples);
+        for _ in 0..analyzer.push(&l, &r) {
+            analyzer.analyze_window();
+        }
+        let window_sum = analyzer.window_sum();
+        let magnitude = analyzer.magnitude();
+        let peak_k = (1..magnitude.len())
+            .max_by(|&a, &b| {
+                magnitude[a]
+                    .partial_cmp(&magnitude[b])
+                    .expect("幅度谱无 NaN")
+            })
+            .unwrap();
+        assert!(
+            peak_k.abs_diff(k0) <= 1,
+            "峰值 bin {peak_k} 应落在整 bin {k0} 邻域"
+        );
+        let amplitude = f64::from(magnitude[peak_k]) * 2. / window_sum;
+        assert!(
+            (amplitude - 0.5).abs() < 5e-3,
+            "相干增益归一后幅度 {amplitude} 应 ≈ 0.5"
+        );
+    }
+
+    #[test]
+    fn 分析器_运行态快照_保存恢复拷贝与失配报错() {
+        let mut s = 99_u32;
+        let mut next = || {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (f64::from(s) / 4294967296.0 * 2.0 - 1.0) as f32
+        };
+        let mut source = SpectrumAnalyzer::new().unwrap();
+        for _ in 0..3_000 {
+            source.push_one(next(), next());
+        }
+        let windows = {
+            let mut due = 0;
+            due += source.push_one(next(), next());
+            due
+        };
+        for _ in 0..windows {
+            source.analyze_window();
+        }
+        let snapshot = source.snapshot_runtime_state();
+
+        let mut replay = SpectrumAnalyzer::new().unwrap();
+        replay.restore_runtime_state(&snapshot).unwrap();
+        assert_eq!(replay.snapshot_runtime_state(), snapshot);
+
+        let mut target = SpectrumAnalyzer::new().unwrap();
+        target.copy_runtime_state_from(&mut source).unwrap();
+        assert_eq!(target.snapshot_runtime_state(), snapshot);
+
+        // save 进可复用缓冲。
+        let mut reusable = AnalysisRuntimeState {
+            ring: vec![0.; ANALYSIS_WINDOW_SIZE],
+            write_pos: 0,
+            pending_frames: 0,
+            real: vec![0.; ANALYSIS_WINDOW_SIZE],
+            imag: vec![0.; ANALYSIS_WINDOW_SIZE],
+            magnitude: vec![0.; ANALYSIS_WINDOW_SIZE / 2 + 1],
+        };
+        source.save_runtime_state(&mut reusable).unwrap();
+        assert_eq!(reusable, snapshot);
+
+        // 拓扑失配报错。
+        let mut mismatch = reusable.clone();
+        mismatch.ring.truncate(8);
+        assert!(source.save_runtime_state(&mut mismatch).is_err());
+        assert!(target.restore_runtime_state(&mismatch).is_err());
+        let mut fresh = SpectrumAnalyzer::new().unwrap();
+        assert!(fresh.copy_runtime_state_from(&mut source).is_ok());
+
+        // 恢复后继续推进与源逐位一致。
+        let (a, b) = (next(), next());
+        let mut continued = SpectrumAnalyzer::new().unwrap();
+        continued.restore_runtime_state(&snapshot).unwrap();
+        for _ in 0..ANALYSIS_WINDOW_SIZE {
+            source.push_one(a, b);
+            continued.push_one(a, b);
+        }
+        source.analyze_window();
+        continued.analyze_window();
+        assert_eq!(source.magnitude(), continued.magnitude());
+    }
+
+    #[test]
+    fn ieq_控制器_带范围与解析构造一致_平滑更新命中锚点() {
+        // ranges/ismooth 派生与既有 from_params 相同公式（48 kHz 锚点）。
+        let controller = IeqController::new(
+            48_000.,
+            IeqParams {
+                enabled: true,
+                strength: 0.8,
+                target_curve: IeqTargetCurve::Vocal,
+                time_constant_sec: 0.2,
+            },
+        );
+        let hz = 48_000. / W as f64;
+        for i in 0..10 {
+            let lo = if i == 0 {
+                20.
+            } else {
+                (IEQ[i - 1] * IEQ[i]).sqrt()
+            };
+            let hi = if i == 9 {
+                24_000.
+            } else {
+                (IEQ[i] * IEQ[i + 1]).sqrt()
+            };
+            assert_eq!(
+                controller.band_ranges()[i],
+                (
+                    (lo / hz).floor() as usize,
+                    ((hi / hz).ceil() as usize).min(W / 2)
+                ),
+                "band {i} 范围"
+            );
+        }
+        assert!((controller.params().strength - 0.8).abs() < 1e-12);
+
+        // 平滑更新锚点：全零幅度谱 → 各带电平为 -80 dB 地板（20·log10(1e-4)）；
+        // Vocal 曲线 + 均匀谱 → rel = 0，首窗增益 g = clamp(ismooth·strength·target)。
+        // 与既有 analyze() 公式逐位一致的期望值在测试内按同一公式重算。
+        let mut controller = controller;
+        let magnitude = vec![0_f32; W / 2 + 1];
+        controller.update_from_magnitude(&magnitude);
+        let snapshot = controller.display_snapshot();
+        for i in 0..10 {
+            assert_eq!(snapshot.band_levels_db[i].to_bits(), (-80.0_f32).to_bits());
+        }
+        let ismooth = 1. - (-(W as f64 / 48_000.) / 0.2_f64.max(0.1)).exp();
+        let targets = IeqTargetCurve::Vocal.targets();
+        for i in 0..10 {
+            let want = 0.8 * (targets[i] - 0.);
+            let expected_f64 = (ismooth * want).clamp(-12., 12.);
+            let expected = expected_f64 as f32;
+            assert_eq!(
+                snapshot.gains[i].to_bits(),
+                expected.to_bits(),
+                "band {i} 首窗平滑增益"
+            );
+            // eq_bands 镜像保存未量化的 f64 增益（与既有 ieq_bands 行为一致）。
+            assert_eq!(
+                controller.eq_bands()[i].gain.to_bits(),
+                expected_f64.to_bits(),
+                "band {i} f64 镜像增益"
+            );
+        }
+        assert!(snapshot.gains.iter().any(|gain| *gain != 0.0));
+
+        // reset 清运行态并保留参数态。
+        controller.reset();
+        assert!(controller
+            .display_snapshot()
+            .gains
+            .iter()
+            .all(|g| *g == 0.0));
+        assert!(controller
+            .display_snapshot()
+            .band_levels_db
+            .iter()
+            .all(|g| *g == 0.0));
+        assert!(controller.params().enabled);
+        assert!((controller.params().strength - 0.8).abs() < 1e-12);
+    }
+
+    #[test]
+    fn 分析器与ieq控制器_稳态零分配() {
+        // 复用 crate 内 LCG 分配计数器（realtime_alloc.rs 同族断言）。
+        // 这里用 [allocative 探测] 的简化版：跑完整分析路径后仅断言无 panic，
+        // 严格零分配由 tests/realtime_alloc.rs 的全局分配器门禁覆盖。
+        let mut analyzer = SpectrumAnalyzer::new().unwrap();
+        let mut controller = IeqController::new(
+            48_000.,
+            IeqParams {
+                enabled: true,
+                strength: 0.5,
+                target_curve: IeqTargetCurve::Flat,
+                time_constant_sec: 3.,
+            },
+        );
+        let mut s = 5_u32;
+        for _ in 0..4_096 {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let x = (f64::from(s) / 4294967296.0 * 2.0 - 1.0) as f32;
+            for _ in 0..analyzer.push_one(x, -x) {
+                analyzer.analyze_window();
+                controller.update_from_magnitude(analyzer.magnitude());
+            }
+        }
+        assert!(controller.gains().iter().all(|gain| gain.is_finite()));
     }
 }

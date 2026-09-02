@@ -30,6 +30,18 @@
 //! - LFO sine 与合成谱三角函数一律用 [`crate::fft::ts_trig`]（V8 fdlibm 逐位
 //!   复刻，与 FFT twiddle 同源）。
 //!
+//! # HyperPlayer 扩展（TS 无对应物，默认关闭时逐位平价）
+//!
+//! - **路由级控制值一阶平滑**：[`ModulationMatrixStage::set_routes_with_smoothing`]
+//!   允许为每条路由给出一阶平滑时长（ms）；`process_block` 在求和前对每条路由
+//!   的原始贡献值 `v = src·amount + offset` 做 `s += coef·(v − s)` 推进。
+//!   平滑时长 ≤ 0 / NaN 时 coef 恒 0，热路径**完全旁路**（不增加任何浮点
+//!   运算，raw 值照记），全部黄金位型测试照常成立；coef 计算与 limiter/
+//!   compressor/modulation 包络同构（`1 − exp(−1/((max(ms,0.05)/1000)·fs))`）；
+//! - **运行时状态四件套**：[`ModulationMatrixRuntimeState`] 携带 LFO 相位、
+//!   包络状态与路由平滑状态，`snapshot / save / restore / copy` + 采样率位型
+//!   与路由数量失配的原子拒绝，范式与 `limiter.rs` / `compressor.rs` 一致。
+//!
 //! # 与 TS 源码的逐行对应关系（modulation.ts 行号）
 //!
 //! - clamp（L18–L20）→ [`clamp`]（三目链，NaN 原样返回）；
@@ -40,6 +52,54 @@
 
 use crate::fft::ts_trig;
 use crate::Stage;
+use std::fmt;
+
+/// 把 `src` 逐元素写入 `dst`；容量充足时零分配（供 checkpoint 复用路径使用）。
+fn assign_vec<T: Clone>(dst: &mut Vec<T>, src: &[T]) {
+    dst.clear();
+    dst.extend_from_slice(src);
+}
+
+/// 路由级平滑系数（HyperPlayer 扩展）：`ms > 0` 时按一阶系数
+/// `1 − exp(−1/((max(ms,0.05)/1000)·fs))` 生效，否则恒 0（完全旁路）。
+/// 平滑在**控制率**按块推进，与 LFO 相位推进同粒度。
+fn route_smooth_coef(ms: f64, sample_rate: f64) -> f64 {
+    if !(ms > 0.0) {
+        // 覆盖 0、负值与 NaN：一律关闭。
+        return 0.0;
+    }
+    1.0 - (-1.0 / ((ms.max(0.05) / 1000.0) * sample_rate)).exp()
+}
+
+/// modulation-matrix 连续处理状态快照（LFO 相位、包络状态、路由平滑状态）。
+/// 字段保持私有，不包含任何参数或平滑系数——这些由参数快照与路由配置决定。
+///
+/// 与 [`crate::limiter::LimiterRuntimeState`] 的四件套范式一致：
+/// [`ModulationMatrixStage::snapshot_runtime_state`] /
+/// [`ModulationMatrixStage::save_runtime_state`] /
+/// [`ModulationMatrixStage::restore_runtime_state`] /
+/// [`ModulationMatrixStage::copy_runtime_state_from`]；采样率位型或路由数量
+/// 不一致时以 [`ModulationMatrixRuntimeStateMismatch`] 原子拒绝（不产生部分迁移）。
+#[derive(Clone)]
+pub struct ModulationMatrixRuntimeState {
+    sample_rate_bits: u64,
+    route_count: usize,
+    lfo_phase: f64,
+    env: f64,
+    route_smoothed: Vec<f64>,
+}
+
+/// 运行时状态的采样率或路由数量与目标调制矩阵不一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModulationMatrixRuntimeStateMismatch;
+
+impl fmt::Display for ModulationMatrixRuntimeStateMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("modulation matrix runtime state sample rate or route count mismatch")
+    }
+}
+
+impl std::error::Error for ModulationMatrixRuntimeStateMismatch {}
 
 /// 复刻 JS `Math.max(a, b)` 的 NaN 传播语义（理由同 biquad.rs 的同名助手）。
 fn js_max(a: f64, b: f64) -> f64 {
@@ -305,10 +365,15 @@ impl EnvelopeFollower {
 /// `mod-master-gain` 阶段与导出驱动器 `outL[i] *= g` 的落点）。
 #[derive(Debug)]
 pub struct ModulationMatrixStage {
+    sample_rate: f64,
     lfo: Lfo,
     env: EnvelopeFollower,
     /// 路由表按 TS `setRoutes(routes.slice())` 语义持有拷贝，求和按表序。
     routes: Vec<ModulationRoute>,
+    // —— HyperPlayer 扩展：路由级平滑（长度恒与 routes 对齐；全 0 = 关闭）——
+    route_smoothing_ms: Vec<f64>,
+    route_smooth_coef: Vec<f64>,
+    route_smoothed: Vec<f64>,
 }
 
 impl ModulationMatrixStage {
@@ -316,9 +381,13 @@ impl ModulationMatrixStage {
     /// （lfo sine/1/0.5、envelope 10/200/0.5，TS L121–L127）。
     pub fn new(sample_rate: f64) -> Result<Self, String> {
         Ok(Self {
+            sample_rate,
             lfo: Lfo::new(sample_rate)?,
             env: EnvelopeFollower::new(sample_rate)?,
             routes: Vec::new(),
+            route_smoothing_ms: Vec::new(),
+            route_smooth_coef: Vec::new(),
+            route_smoothed: Vec::new(),
         })
     }
 
@@ -340,8 +409,43 @@ impl ModulationMatrixStage {
     }
 
     /// TS `setRoutes`（L131–L133）：整体替换并持有拷贝（`routes.slice()`）。
+    ///
+    /// 路由表替换同时清空 HyperPlayer 路由平滑扩展（平滑配置按路由条目键控，
+    /// 不跨表保留；需要平滑时改用 [`Self::set_routes_with_smoothing`]）。
     pub fn set_routes(&mut self, routes: Vec<ModulationRoute>) {
+        let count = routes.len();
         self.routes = routes;
+        self.route_smoothing_ms = vec![0.0; count];
+        self.route_smooth_coef = vec![0.0; count];
+        self.route_smoothed = vec![0.0; count];
+    }
+
+    /// HyperPlayer 扩展：整体替换路由表并按条目配置一阶平滑（ms）。
+    ///
+    /// - `smoothing_ms[i] > 0` 的路由启用控制率平滑（系数随 ms 与 fs 预计算）；
+    ///   ≤ 0 / NaN / 缺省条目一律关闭；
+    /// - 路由表或平滑配置变化会把平滑状态归零（从 0 重新收敛，确定性）；
+    ///   LFO 相位与包络状态不受影响。
+    pub fn set_routes_with_smoothing(
+        &mut self,
+        routes: Vec<ModulationRoute>,
+        smoothing_ms: Vec<f64>,
+    ) {
+        let count = routes.len();
+        self.set_routes(routes);
+        for (index, &ms) in smoothing_ms.iter().take(count).enumerate() {
+            self.route_smoothing_ms[index] = if ms > 0.0 { ms } else { 0.0 };
+        }
+        for index in 0..count {
+            self.route_smooth_coef[index] =
+                route_smooth_coef(self.route_smoothing_ms[index], self.sample_rate);
+        }
+        // set_routes 已把 route_smoothed 归零：平滑从 0 重新收敛。
+    }
+
+    /// 当前生效的路由平滑配置（HyperPlayer 扩展读数，按路由条目对齐）。
+    pub fn route_smoothing_ms(&self) -> &[f64] {
+        &self.route_smoothing_ms
     }
 
     /// TS `setLfoParams`（L135–L137）。
@@ -357,20 +461,31 @@ impl ModulationMatrixStage {
     /// TS `ModulationMatrix.processBlock`（L144–L159）：两源每块**无条件推进**
     /// （与路由表内容无关，§4.3），随后按表序求和、钳制
     /// （masterGain [0,4] / stereoWidth [0,2]，基线均为 1）。
+    ///
+    /// HyperPlayer 扩展：平滑系数 > 0 的路由在求和前对原始贡献值做一阶平滑
+    /// （状态 [`Self::route_smoothed`]）；系数为 0 的路由走原 TS 路径，逐位平价。
     pub fn process_block(&mut self, left: &[f32], right: &[f32]) -> ModulationTargets {
         let lfo_val = self.lfo.process_block(left.len());
         let env_val = self.env.process_block(left, right);
 
         let mut master_gain = 1.0_f64;
         let mut stereo_width = 1.0_f64;
-        for route in &self.routes {
+        for (index, route) in self.routes.iter().enumerate() {
             // TS L151–L152：src = source === 'lfo' ? lfoVal : envVal；
             // v = src * amount + (offset ?? 0)。
             let src = match route.source {
                 ModSource::Lfo => lfo_val,
                 ModSource::Envelope => env_val,
             };
-            let v = src * route.amount + route.offset;
+            let mut v = src * route.amount + route.offset;
+            let coef = self.route_smooth_coef[index];
+            if coef > 0.0 {
+                let smoothed = &mut self.route_smoothed[index];
+                *smoothed += coef * (v - *smoothed);
+                v = *smoothed;
+            } else {
+                self.route_smoothed[index] = v;
+            }
             match route.target {
                 ModTarget::MasterGain => master_gain += v,
                 ModTarget::StereoWidth => stereo_width += v,
@@ -402,9 +517,80 @@ impl Stage for ModulationMatrixStage {
     }
 
     /// TS `reset`（L161–L164）：lfo.reset() + env.reset()。
+    ///
+    /// HyperPlayer 扩展：路由平滑状态一并归零（关闭平滑时本就每块覆写，
+    /// 不影响 TS 平价）。
     fn reset(&mut self) {
         self.lfo.reset();
         self.env.reset();
+        self.route_smoothed.fill(0.0);
+    }
+}
+
+impl ModulationMatrixStage {
+    /// 返回仅含连续处理状态的完整快照（LFO 相位、包络状态、路由平滑状态；
+    /// 不含参数与平滑系数）。会克隆平滑状态缓冲，仅供非实时检查点路径调用。
+    pub fn snapshot_runtime_state(&self) -> ModulationMatrixRuntimeState {
+        ModulationMatrixRuntimeState {
+            sample_rate_bits: self.sample_rate.to_bits(),
+            route_count: self.routes.len(),
+            lfo_phase: self.lfo.phase,
+            env: self.env.env,
+            route_smoothed: self.route_smoothed.clone(),
+        }
+    }
+
+    /// 将当前状态写入已有快照；采样率位型或路由数量不符时不修改快照。
+    ///
+    /// 复用容量充足的既有快照时零分配（Vec 复用 length/capacity）。
+    pub fn save_runtime_state(
+        &self,
+        state: &mut ModulationMatrixRuntimeState,
+    ) -> Result<(), ModulationMatrixRuntimeStateMismatch> {
+        if !self.runtime_state_compatible(state.sample_rate_bits, state.route_count) {
+            return Err(ModulationMatrixRuntimeStateMismatch);
+        }
+        state.lfo_phase = self.lfo.phase;
+        state.env = self.env.env;
+        assign_vec(&mut state.route_smoothed, &self.route_smoothed);
+        Ok(())
+    }
+
+    /// 恢复连续处理状态，保留目标的参数、路由表与平滑系数。
+    pub fn restore_runtime_state(
+        &mut self,
+        state: &ModulationMatrixRuntimeState,
+    ) -> Result<(), ModulationMatrixRuntimeStateMismatch> {
+        if !self.runtime_state_compatible(state.sample_rate_bits, state.route_count)
+            || state.route_smoothed.len() != self.route_smoothed.len()
+        {
+            return Err(ModulationMatrixRuntimeStateMismatch);
+        }
+        self.lfo.phase = state.lfo_phase;
+        self.env.env = state.env;
+        self.route_smoothed.copy_from_slice(&state.route_smoothed);
+        Ok(())
+    }
+
+    /// 从另一实例复制连续处理状态，保留目标的参数与路由表。
+    pub fn copy_runtime_state_from(
+        &mut self,
+        source: &Self,
+    ) -> Result<(), ModulationMatrixRuntimeStateMismatch> {
+        if !self.runtime_state_compatible(source.sample_rate.to_bits(), source.routes.len())
+            || source.route_smoothed.len() != self.route_smoothed.len()
+        {
+            return Err(ModulationMatrixRuntimeStateMismatch);
+        }
+        self.lfo.phase = source.lfo.phase;
+        self.env.env = source.env.env;
+        self.route_smoothed.copy_from_slice(&source.route_smoothed);
+        Ok(())
+    }
+
+    /// 采样率位型与路由数量均一致时，运行时状态才可迁移。
+    fn runtime_state_compatible(&self, sample_rate_bits: u64, route_count: usize) -> bool {
+        self.sample_rate.to_bits() == sample_rate_bits && self.routes.len() == route_count
     }
 }
 
@@ -822,5 +1008,260 @@ mod tests {
         let _ = stage.process_block(&left, &right);
         assert_eq!(left, want_l);
         assert_eq!(right, want_r);
+    }
+
+    // ---- HyperPlayer 扩展：路由级平滑（关闭 = TS 平价；开启 = 收敛有界）----
+
+    fn square_lfo_stage(fs: f64, amount: f64) -> ModulationMatrixStage {
+        let mut stage = ModulationMatrixStage::new(fs).unwrap();
+        stage.set_routes(vec![route_master(ModSource::Lfo, amount)]);
+        stage.set_lfo_params(LfoParams {
+            shape: LfoShape::Square,
+            rate_hz: 2.0,
+            depth: 1.0,
+        });
+        stage
+    }
+
+    #[test]
+    fn 路由平滑关闭时与ts路径逐位一致() {
+        // 平滑 ms 全 0（含 NaN / 负值）→ coef 恒 0，热路径完全旁路：
+        // 块增益轨迹必须与 TS 平价路径（set_routes）逐位一致。
+        let z = vec![0.0_f32; 256];
+        for ms in [0.0_f64, -3.0, f64::NAN] {
+            let mut plain = square_lfo_stage(48000.0, 1.0);
+            let mut smoothed = square_lfo_stage(48000.0, 1.0);
+            smoothed.set_routes_with_smoothing(vec![route_master(ModSource::Lfo, 1.0)], vec![ms]);
+            for b in 0..8 {
+                let a = plain.process_block(&z, &z).master_gain.to_bits();
+                let c = smoothed.process_block(&z, &z).master_gain.to_bits();
+                assert_eq!(a, c, "ms={ms} 块 {b} 必须逐位一致");
+            }
+        }
+    }
+
+    #[test]
+    fn 路由平滑开启时从零收敛且有界() {
+        // rate 0 → 相位冻结 0 → square 恒 +1：raw 贡献恒为 amount（增益恒 2）。
+        // 开启 50ms 平滑后从 1 单调收敛向 2：首块严格介于其间，全程有界。
+        let z = vec![0.0_f32; 256];
+        let mut stage = square_lfo_stage(48000.0, 1.0);
+        stage.set_lfo_params(LfoParams {
+            shape: LfoShape::Square,
+            rate_hz: 0.0,
+            depth: 1.0,
+        });
+        stage.set_routes_with_smoothing(vec![route_master(ModSource::Lfo, 1.0)], vec![50.0]);
+        assert_eq!(stage.route_smoothing_ms(), &[50.0]);
+        let first = stage.process_block(&z, &z).master_gain;
+        assert!(first > 1.0 && first < 2.0, "首块应从 0 收敛，实际 {first}");
+        let mut last = first;
+        for b in 0..4096 {
+            let g = stage.process_block(&z, &z).master_gain;
+            assert!((1.0..=2.0).contains(&g), "块 {b} 增益 {g} 越界");
+            assert!(g.is_finite());
+            last = g;
+        }
+        // 充分多块后应逼近 raw 稳态（恒定贡献 amount=1 → 增益 2）。
+        assert!(last > 1.5, "长期收敛后应逼近 raw 贡献，实际 {last}");
+    }
+
+    #[test]
+    fn set_routes_整体替换清空平滑扩展() {
+        // TS setRoutes 语义：路由表替换后平滑扩展清零（不跨表保留）。
+        let z = vec![0.0_f32; 256];
+        let mut stage = square_lfo_stage(48000.0, 1.0);
+        stage.set_routes_with_smoothing(vec![route_master(ModSource::Lfo, 1.0)], vec![50.0]);
+        stage.set_routes(vec![route_master(ModSource::Lfo, 1.0)]);
+        assert_eq!(stage.route_smoothing_ms(), &[0.0]);
+        // 清空后回到 raw 平价轨迹（square 首块恰为 2 的位型）。
+        assert_eq!(
+            stage.process_block(&z, &z).master_gain.to_bits(),
+            0x4000_0000_0000_0000
+        );
+    }
+
+    // ---- HyperPlayer 扩展：运行时状态四件套（save/restore/copy/失配原子性）----
+
+    #[test]
+    fn 运行时状态往返保存复制与失配保持原子性() {
+        let fs = 48000.0;
+        let build = || {
+            let mut stage = ModulationMatrixStage::new(fs).unwrap();
+            stage.set_routes_with_smoothing(
+                vec![
+                    route_master(ModSource::Lfo, 0.5),
+                    ModulationRoute {
+                        source: ModSource::Envelope,
+                        target: ModTarget::StereoWidth,
+                        amount: 0.9,
+                        offset: 0.0,
+                    },
+                ],
+                vec![30.0, 0.0],
+            );
+            stage.set_lfo_params(LfoParams {
+                shape: LfoShape::Triangle,
+                rate_hz: 3.0,
+                depth: 0.8,
+            });
+            stage.set_envelope_params(EnvelopeParams {
+                attack_ms: 3.0,
+                release_ms: 90.0,
+                amount: 0.9,
+            });
+            stage
+        };
+        let prefix_l = lcg_noise(512, 901, 0.6);
+        let prefix_r = lcg_noise(512, 902, 0.5);
+        let tail_l = lcg_noise(256, 903, 0.6);
+        let tail_r = lcg_noise(256, 904, 0.5);
+        let drive =
+            |stage: &mut ModulationMatrixStage, l: &[f32], r: &[f32], block: usize| -> Vec<u64> {
+                let mut out = Vec::new();
+                let mut off = 0;
+                while off < l.len() {
+                    let end = (off + block).min(l.len());
+                    let t = stage.process_block(&l[off..end], &r[off..end]);
+                    out.push(t.master_gain.to_bits());
+                    out.push(t.stereo_width.to_bits());
+                    off = end;
+                }
+                out
+            };
+
+        let mut source = build();
+        let _ = drive(&mut source, &prefix_l, &prefix_r, 97);
+        let checkpoint = source.snapshot_runtime_state();
+        let expected = drive(&mut source, &tail_l, &tail_r, 61);
+
+        // restore 往返：同参新实例恢复检查点后与原实例逐位一致。
+        let mut replay = build();
+        replay.restore_runtime_state(&checkpoint).unwrap();
+        let actual = drive(&mut replay, &tail_l, &tail_r, 61);
+        assert_eq!(actual, expected, "restore 后重放必须逐位一致");
+
+        // copy：状态迁移但目标参数（路由表、平滑配置、LFO/env 参数）保持不变。
+        let mut target = build();
+        target.set_lfo_params(LfoParams {
+            shape: LfoShape::Saw,
+            rate_hz: 7.0,
+            depth: 1.0,
+        });
+        target.copy_runtime_state_from(&replay).unwrap();
+        assert_eq!(target.lfo.rate_hz, 7.0, "copy 不得覆盖目标参数");
+        assert_eq!(target.routes.len(), replay.routes.len());
+
+        // 失配 1：路由数量不同 → 三种迁移全部拒绝且双方状态不被触碰。
+        let mut fewer = ModulationMatrixStage::new(fs).unwrap();
+        fewer.set_routes(vec![route_master(ModSource::Lfo, 1.0)]);
+        assert_eq!(
+            fewer.restore_runtime_state(&checkpoint),
+            Err(ModulationMatrixRuntimeStateMismatch)
+        );
+        assert_eq!(
+            fewer.copy_runtime_state_from(&replay),
+            Err(ModulationMatrixRuntimeStateMismatch)
+        );
+        let mut reusable = checkpoint.clone();
+        assert_eq!(
+            fewer.save_runtime_state(&mut reusable),
+            Err(ModulationMatrixRuntimeStateMismatch)
+        );
+        assert_eq!(
+            reusable.route_count, checkpoint.route_count,
+            "失败的 save 不得修改已有快照"
+        );
+        assert_eq!(fewer.lfo.phase, 0.0, "失败的 restore 不得修改目标状态");
+
+        // 失配 2：采样率位型不同 → 同样原子拒绝。
+        let mut other_rate = build_with_fs(44100.0);
+        assert_eq!(
+            other_rate.restore_runtime_state(&checkpoint),
+            Err(ModulationMatrixRuntimeStateMismatch)
+        );
+        assert_eq!(
+            other_rate.copy_runtime_state_from(&replay),
+            Err(ModulationMatrixRuntimeStateMismatch)
+        );
+        assert_eq!(
+            other_rate.save_runtime_state(&mut reusable),
+            Err(ModulationMatrixRuntimeStateMismatch)
+        );
+        assert_eq!(
+            (reusable.lfo_phase, reusable.env),
+            (checkpoint.lfo_phase, checkpoint.env),
+            "失败的 save 不得改写快照内容"
+        );
+
+        // reset 后的状态与刚构造实例逐位等价。
+        replay.reset();
+        let reset_state = replay.snapshot_runtime_state();
+        let fresh = build();
+        let fresh_state = fresh.snapshot_runtime_state();
+        assert_eq!(
+            reset_state.lfo_phase.to_bits(),
+            fresh_state.lfo_phase.to_bits()
+        );
+        assert_eq!(reset_state.env.to_bits(), fresh_state.env.to_bits());
+        assert_eq!(reset_state.route_smoothed, fresh_state.route_smoothed);
+    }
+
+    fn build_with_fs(fs: f64) -> ModulationMatrixStage {
+        let mut stage = ModulationMatrixStage::new(fs).unwrap();
+        stage.set_routes_with_smoothing(
+            vec![
+                route_master(ModSource::Lfo, 0.5),
+                ModulationRoute {
+                    source: ModSource::Envelope,
+                    target: ModTarget::StereoWidth,
+                    amount: 0.9,
+                    offset: 0.0,
+                },
+            ],
+            vec![30.0, 0.0],
+        );
+        stage
+    }
+
+    #[test]
+    fn 运行时状态完整携带平滑记忆() {
+        // 快照必须包含路由平滑状态：有/无平滑记忆的实例在相同输入下
+        // 产出不同的块增益（状态确实被迁移，而非仅复位标量）。
+        let fs = 48000.0;
+        let left = lcg_noise(256, 33, 0.5);
+        let right = lcg_noise(256, 34, 0.5);
+        let build = || {
+            let mut stage = ModulationMatrixStage::new(fs).unwrap();
+            stage.set_routes_with_smoothing(
+                vec![ModulationRoute {
+                    source: ModSource::Envelope,
+                    target: ModTarget::MasterGain,
+                    amount: 1.0,
+                    offset: 0.0,
+                }],
+                vec![80.0],
+            );
+            stage.set_envelope_params(EnvelopeParams {
+                attack_ms: 10.0,
+                release_ms: 200.0,
+                amount: 1.0,
+            });
+            stage
+        };
+        let mut warmed = build();
+        let _ = warmed.process_block(&left, &right);
+        let checkpoint = warmed.snapshot_runtime_state();
+        assert!(
+            checkpoint.route_smoothed.iter().any(|&v| v != 0.0),
+            "有激励输入时平滑状态必须非零"
+        );
+
+        let mut with_memory = build();
+        with_memory.restore_runtime_state(&checkpoint).unwrap();
+        let mut without_memory = build();
+        let a = with_memory.process_block(&left, &right).master_gain;
+        let b = without_memory.process_block(&left, &right).master_gain;
+        assert_ne!(a.to_bits(), b.to_bits(), "平滑记忆必须参与求值");
     }
 }

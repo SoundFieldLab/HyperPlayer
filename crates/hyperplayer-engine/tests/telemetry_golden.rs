@@ -1,6 +1,7 @@
 use hyperplayer_engine::telemetry::{
-    TelemetryFrame, SPECTRUM_BINS, TELEMETRY_FRAME_ENCODED_SIZE, TELEMETRY_KNOWN_VALIDITY_FLAGS,
-    TELEMETRY_VALID_RMS, TELEMETRY_VALID_SAMPLE_PEAK, TELEMETRY_VALID_WAVEFORM, WAVEFORM_BINS,
+    TelemetryFrame, DYNAMIC_EQ_BANDS, SPECTRUM_BINS, TELEMETRY_FRAME_ENCODED_SIZE,
+    TELEMETRY_KNOWN_VALIDITY_FLAGS, TELEMETRY_VALID_RMS, TELEMETRY_VALID_SAMPLE_PEAK,
+    TELEMETRY_VALID_WAVEFORM, WAVEFORM_BINS,
 };
 use std::{env, fs, path::PathBuf};
 
@@ -9,7 +10,7 @@ const REBUILD_ENV: &str = "HYPERPLAYER_REBUILD_TELEMETRY_GOLDEN";
 
 fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/telemetry/hptm_v2_golden.bin")
+        .join("../../tests/fixtures/telemetry/hptm_v4_golden.bin")
 }
 
 fn golden_frames() -> [TelemetryFrame; FRAME_COUNT] {
@@ -44,6 +45,10 @@ fn golden_frames() -> [TelemetryFrame; FRAME_COUNT] {
         true_peak: [1.125, 1.0],
         meter: [0.5, 0.25],
         limiter_reduction_db: 6.25,
+        dynamic_eq_generation: 0xAABB_CCDD,
+        integrated_lufs: -17.5,
+        momentary_lufs: -17.4,
+        short_term_lufs: -17.6,
         ..TelemetryFrame::default()
     };
     for index in 0..WAVEFORM_BINS {
@@ -60,6 +65,11 @@ fn golden_frames() -> [TelemetryFrame; FRAME_COUNT] {
             2 => u16::MAX,
             _ => (index as u16) * 521,
         };
+    }
+    for index in 0..DYNAMIC_EQ_BANDS {
+        full.dynamic_eq_gain_db[index] = -1.0 - index as f32;
+        full.dynamic_eq_level_db[index] = -30.0 - index as f32;
+        full.dynamic_eq_reduction_db[index] = 0.5 + index as f32;
     }
 
     let paused = TelemetryFrame {
@@ -83,7 +93,7 @@ fn encoded_golden() -> Vec<u8> {
 }
 
 #[test]
-fn rust_encoding_matches_the_cross_language_hptm_v2_golden_bytes() {
+fn rust_encoding_matches_the_cross_language_hptm_v4_golden_bytes() {
     let expected = encoded_golden();
     assert_eq!(expected.len(), FRAME_COUNT * TELEMETRY_FRAME_ENCODED_SIZE);
 
@@ -101,7 +111,7 @@ fn rust_encoding_matches_the_cross_language_hptm_v2_golden_bytes() {
     });
     assert_eq!(
         committed, expected,
-        "HPTM v2 golden bytes changed; inspect the protocol change before rebuilding with {REBUILD_ENV}=1"
+        "HPTM v4 golden bytes changed; inspect the protocol change before rebuilding with {REBUILD_ENV}=1"
     );
 
     for frame in committed.as_chunks::<TELEMETRY_FRAME_ENCODED_SIZE>().0 {
@@ -117,5 +127,34 @@ fn rust_encoding_matches_the_cross_language_hptm_v2_golden_bytes() {
             .iter()
             .all(|byte| *byte == 0),
         "frame C's unavailable spectrum storage must be zero"
+    );
+    // 无 DYNAMIC_EQ 有效位的帧，其追加块（780..844）必须全零；v4 LUFS 块（844..856）同理。
+    let dynamic_eq_start = 780;
+    assert!(
+        committed[dynamic_eq_start..844]
+            .iter()
+            .all(|byte| *byte == 0),
+        "frame A's unavailable dynamic-eq block must be zero"
+    );
+    assert!(
+        committed[(2 * TELEMETRY_FRAME_ENCODED_SIZE + dynamic_eq_start)
+            ..(2 * TELEMETRY_FRAME_ENCODED_SIZE + 844)]
+            .iter()
+            .all(|byte| *byte == 0),
+        "frame C's unavailable dynamic-eq block must be zero"
+    );
+    let lufs_start = 844;
+    assert!(
+        committed[lufs_start..TELEMETRY_FRAME_ENCODED_SIZE]
+            .iter()
+            .all(|byte| *byte == 0),
+        "frame A's unavailable LUFS block must be zero"
+    );
+    assert!(
+        committed
+            [(2 * TELEMETRY_FRAME_ENCODED_SIZE + lufs_start)..(3 * TELEMETRY_FRAME_ENCODED_SIZE)]
+            .iter()
+            .all(|byte| *byte == 0),
+        "frame C's unavailable LUFS block must be zero"
     );
 }

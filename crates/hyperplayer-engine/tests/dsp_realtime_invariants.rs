@@ -661,6 +661,7 @@ fn prepared_swap_and_builtin_processing_allocate_nothing() {
             harmonic_type: HarmonicType::Soft,
             ..BassEnhancerSettings::default()
         },
+        ..DspConfig::default()
     };
     let prepared = prepare_dsp_chain(1, format(), 128, config.clone()).unwrap();
     let mut chain = ProcessorChain::from_prepared(prepared);

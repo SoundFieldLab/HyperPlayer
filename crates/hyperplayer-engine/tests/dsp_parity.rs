@@ -1,5 +1,13 @@
 use hse_core::{
-    biquad::BiquadStage, compressor::CompressorStage, eq_chain::EqBandParam, Stage as HseStage,
+    biquad::BiquadStage,
+    compressor::CompressorStage,
+    convolver::IrRecipe,
+    eq_chain::EqBandParam,
+    modulation_matrix::{
+        EnvelopeParams, LfoParams, LfoShape, ModSource, ModTarget, ModulationMatrixStage,
+        ModulationRoute,
+    },
+    Stage as HseStage,
 };
 use hyperplayer_engine::dsp::{PcmBlock, PcmFormat, PcmProcessor, PcmSampleFormat, ResetReason};
 use hyperplayer_engine::dsp_algorithms::bass_enhancer::{BassEnhancerSettings, HarmonicType};
@@ -7,13 +15,21 @@ use hyperplayer_engine::dsp_algorithms::chorus::{ChorusProcessor, ChorusSettings
 use hyperplayer_engine::dsp_algorithms::compressor::CompressorSettings;
 use hyperplayer_engine::dsp_algorithms::deesser::DeesserSettings;
 use hyperplayer_engine::dsp_algorithms::delay::{DelayProcessor, DelaySettings};
+use hyperplayer_engine::dsp_algorithms::dynamic_eq::{DynamicEqProcessor, DynamicEqSettings};
 use hyperplayer_engine::dsp_algorithms::flanger::{FlangerProcessor, FlangerSettings};
+use hyperplayer_engine::dsp_algorithms::limiter::{LimiterProcessor, LimiterSettings};
+use hyperplayer_engine::dsp_algorithms::loudness_comp::{
+    LoudnessBandParam, LoudnessCompMode, LoudnessCompProcessor, LoudnessCompSettings,
+};
 use hyperplayer_engine::dsp_algorithms::loudness_normalization::{
     LoudnessNormalizationProcessor, LoudnessNormalizationSettings,
 };
 use hyperplayer_engine::dsp_algorithms::lufs_meter::{LufsMeterProcessor, SharedLufsState};
 use hyperplayer_engine::dsp_algorithms::night_mode::{NightModeProcessor, NightModeSettings};
 use hyperplayer_engine::dsp_algorithms::phaser::{PhaserProcessor, PhaserSettings};
+use hyperplayer_engine::dsp_algorithms::reverb::{
+    ReverbMode, ReverbProcessor, ReverbSettings, ReverbType,
+};
 use hyperplayer_engine::dsp_algorithms::surround3d::{Surround3dProcessor, Surround3dSettings};
 use hyperplayer_engine::dsp_algorithms::tremolo::{TremoloProcessor, TremoloSettings};
 use hyperplayer_engine::dsp_algorithms::{
@@ -299,6 +315,120 @@ impl PcmProcessor for VectorLoudnessNormalization {
     }
 }
 
+/// modulation-matrix 冻结向量驱动器（对齐 `dsp_parity_modulation.rs` 核心
+/// 语义，specs/dsp/modulation-matrix.md §4.4）：推进矩阵 + masterGain
+/// 逐样本乘；stereoWidth 产物不入向量。
+struct VectorModulationMatrix {
+    inner: ModulationMatrixStage,
+    left: Vec<f32>,
+    right: Vec<f32>,
+}
+
+impl VectorModulationMatrix {
+    fn new(meta: &VectorMeta) -> Self {
+        let routes = meta.params["routes"]
+            .as_array()
+            .expect("routes must be an array")
+            .iter()
+            .map(|value| ModulationRoute {
+                source: match value["source"].as_str().expect("route.source") {
+                    "lfo" => ModSource::Lfo,
+                    "envelope" => ModSource::Envelope,
+                    other => panic!("unsupported route source {other}"),
+                },
+                target: match value["target"].as_str().expect("route.target") {
+                    "masterGain" => ModTarget::MasterGain,
+                    "stereoWidth" => ModTarget::StereoWidth,
+                    other => panic!("unsupported route target {other}"),
+                },
+                amount: number(value, "amount"),
+                offset: value.get("offset").and_then(Value::as_f64).unwrap_or(0.0),
+            })
+            .collect::<Vec<_>>();
+        let lfo = &meta.params["lfo"];
+        let envelope = &meta.params["envelope"];
+        let mut inner = ModulationMatrixStage::new(f64::from(meta.sample_rate)).unwrap();
+        inner.set_routes(routes);
+        inner.set_lfo_params(LfoParams {
+            shape: LfoShape::parse(lfo["shape"].as_str().unwrap_or("sine")),
+            rate_hz: number(lfo, "rateHz"),
+            depth: number(lfo, "depth"),
+        });
+        inner.set_envelope_params(EnvelopeParams {
+            attack_ms: number(envelope, "attackMs"),
+            release_ms: number(envelope, "releaseMs"),
+            amount: number(envelope, "amount"),
+        });
+        Self {
+            inner,
+            left: Vec::new(),
+            right: Vec::new(),
+        }
+    }
+}
+
+impl PcmProcessor for VectorModulationMatrix {
+    fn name(&self) -> &'static str {
+        "modulation-matrix"
+    }
+
+    fn prepare(
+        &mut self,
+        format: PcmFormat,
+        max_block_frames: usize,
+    ) -> hyperplayer_engine::Result<()> {
+        if format.channels != 2 {
+            return Err(hyperplayer_engine::EngineError::Unsupported(
+                "modulation vectors require stereo".into(),
+            ));
+        }
+        self.left.resize(max_block_frames, 0.0);
+        self.right.resize(max_block_frames, 0.0);
+        Ok(())
+    }
+
+    fn process(&mut self, block: PcmBlock<'_>) -> hyperplayer_engine::Result<()> {
+        let frames = block.interleaved.len() / 2;
+        for (index, frame) in block.interleaved.as_chunks::<2>().0.iter().enumerate() {
+            self.left[index] = frame[0];
+            self.right[index] = frame[1];
+        }
+        let targets = self
+            .inner
+            .process_block(&self.left[..frames], &self.right[..frames]);
+        let gain = targets.master_gain;
+        if gain != 1.0 {
+            for i in 0..frames {
+                self.left[i] = (f64::from(self.left[i]) * gain) as f32;
+                self.right[i] = (f64::from(self.right[i]) * gain) as f32;
+            }
+        }
+        for (index, frame) in block
+            .interleaved
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
+            frame[0] = self.left[index];
+            frame[1] = self.right[index];
+        }
+        Ok(())
+    }
+
+    fn reset(&mut self, _reason: ResetReason) {
+        self.inner.reset();
+    }
+
+    fn latency_frames(&self) -> u32 {
+        0
+    }
+
+    fn tail_frames(&self) -> u32 {
+        0
+    }
+}
+
 fn processor(meta: &VectorMeta) -> Box<dyn PcmProcessor> {
     match meta.module.as_str() {
         "biquad" => {
@@ -531,6 +661,152 @@ fn processor(meta: &VectorMeta) -> Box<dyn PcmProcessor> {
                 .unwrap(),
             )
         }
+        "loudness-comp" => {
+            // 冻结向量按模块恒处理语义回放；enabled 属引擎门控（同 dsp_loudness_comp.rs）。
+            let mode = match meta.params["mode"].as_str().unwrap_or("auto") {
+                "preset" => LoudnessCompMode::Preset,
+                "custom" => LoudnessCompMode::Custom,
+                _ => LoudnessCompMode::Auto,
+            };
+            let bands = meta.params["bands"]
+                .as_array()
+                .map(|bands| {
+                    bands
+                        .iter()
+                        .map(|band| LoudnessBandParam {
+                            frequency: number(band, "frequency"),
+                            gain: number(band, "gain"),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Box::new(
+                LoudnessCompProcessor::new(
+                    meta.sample_rate,
+                    LoudnessCompSettings {
+                        enabled: true,
+                        mode,
+                        volume_percent: number(&meta.params, "volumePercent"),
+                        max_boost_db: number(&meta.params, "maxBoostDb"),
+                        preset: meta.params["preset"].as_str().unwrap_or("flat").to_string(),
+                        smoothing_seconds: number(&meta.params, "smoothingSeconds"),
+                        bands,
+                    },
+                )
+                .unwrap(),
+            )
+        }
+        "dynamic-eq" => {
+            // 输出依赖驱动分块：harness 本就按向量顶层 blockSize 回放（规格 §4.5）。
+            let bands = meta.params["bands"]
+                .as_array()
+                .expect("bands must be an array")
+                .iter()
+                .map(
+                    |band| hyperplayer_engine::dsp_algorithms::dynamic_eq::DynamicEqBandSettings {
+                        enabled: boolean(band, "enabled"),
+                        frequency: number(band, "frequency"),
+                        target_gain_db: number(band, "targetGainDb"),
+                    },
+                )
+                .collect::<Vec<_>>();
+            Box::new(
+                DynamicEqProcessor::new(
+                    meta.sample_rate,
+                    DynamicEqSettings {
+                        enabled: boolean(&meta.params, "enabled"),
+                        strength: number(&meta.params, "strength"),
+                        threshold_db: number(&meta.params, "thresholdDb"),
+                        ratio: number(&meta.params, "ratio"),
+                        knee_db: number(&meta.params, "kneeDb"),
+                        attack_ms: number(&meta.params, "attackMs"),
+                        release_ms: number(&meta.params, "releaseMs"),
+                        block_size: number(&meta.params, "blockSize"),
+                        bands: bands.try_into().expect("fixed 5-band array"),
+                    },
+                )
+                .unwrap(),
+            )
+        }
+        "reverb-simple" | "fdn-reverb" | "convolver" => {
+            // 冻结向量携带核心侧会被钳制的越界值（如 preDelayMs=1200→1000、
+            // wet=4.5→4、clamp01(roomSize/damping)）；适配器按 HyperPlayer 边界
+            // fail-closed 拒绝越界，这里先按核心 clamp 语义收进适配器范围，
+            // 与向量导出时的核心行为逐值一致。convolver 向量不含算法段字段，
+            // 缺失时回落默认值（卷积引擎不消费这些字段）。
+            let optional_number = |field: &str, fallback: f64| {
+                meta.params
+                    .get(field)
+                    .and_then(Value::as_f64)
+                    .unwrap_or(fallback)
+            };
+            let shared = ReverbSettings {
+                enabled: true,
+                room_size: optional_number("roomSize", 0.5).clamp(0.0, 1.0),
+                damping: optional_number("damping", 0.5).clamp(0.0, 1.0),
+                wet: optional_number("wet", 0.3).clamp(0.0, 4.0),
+                dry: optional_number("dry", 0.7).clamp(0.0, 4.0),
+                pre_delay_ms: optional_number("preDelayMs", 0.0).clamp(0.0, 1_000.0),
+                width: optional_number("width", 1.0).clamp(0.0, 2.0),
+                reverb_type: match meta.params["type"].as_str().unwrap_or("hall") {
+                    "room" => ReverbType::Room,
+                    "plate" => ReverbType::Plate,
+                    "spring" => ReverbType::Spring,
+                    "stage" => ReverbType::Stage,
+                    _ => ReverbType::Hall,
+                },
+                ..ReverbSettings::default()
+            };
+            let settings = match meta.module.as_str() {
+                "reverb-simple" => ReverbSettings {
+                    mode: ReverbMode::Algorithmic,
+                    ..shared
+                },
+                "fdn-reverb" => ReverbSettings {
+                    mode: ReverbMode::Fdn,
+                    fdn_lines: number(&meta.params, "lines") as u32,
+                    ..shared
+                },
+                _ => ReverbSettings {
+                    mode: ReverbMode::Convolution,
+                    mix: number(&meta.params, "mix"),
+                    pre_delay_ms: shared.pre_delay_ms,
+                    partition_size: number(&meta.params, "partitionSize"),
+                    long_partition_size: number(&meta.params, "longPartitionSize"),
+                    short_region_ms: number(&meta.params, "shortRegionMs"),
+                    de_periodize: meta.params["dePeriodize"].as_bool().unwrap_or(true),
+                    ir_recipe: Some(match meta.params["ir"]["kind"].as_str().expect("ir.kind") {
+                        "delta" => IrRecipe::Delta {
+                            delay: number(&meta.params["ir"], "delay"),
+                        },
+                        "expNoise" => IrRecipe::ExpNoise {
+                            length: number(&meta.params["ir"], "length"),
+                            seed: meta.params["ir"]["seed"].as_u64().expect("ir.seed") as u32,
+                            decay: number(&meta.params["ir"], "decay"),
+                            amp: number(&meta.params["ir"], "amp"),
+                        },
+                        other => panic!("unsupported ir recipe kind {other}"),
+                    }),
+                    ..shared
+                },
+            };
+            Box::new(ReverbProcessor::new(f64::from(meta.sample_rate), settings).unwrap())
+        }
+        "limiter" => Box::new(
+            LimiterProcessor::new(
+                f64::from(meta.sample_rate),
+                LimiterSettings {
+                    enabled: boolean(&meta.params, "enabled"),
+                    threshold_db: number(&meta.params, "thresholdDb"),
+                    lookahead_ms: number(&meta.params, "lookaheadMs"),
+                    attack_ms: number(&meta.params, "attackMs"),
+                    release_ms: number(&meta.params, "releaseMs"),
+                    true_peak: boolean(&meta.params, "truePeak"),
+                },
+            )
+            .unwrap(),
+        ),
+        "modulation-matrix" => Box::new(VectorModulationMatrix::new(meta)),
         module => panic!("unsupported DSP parity module {module}"),
     }
 }
@@ -592,9 +868,83 @@ fn hse_group_one_matches_shared_frozen_vectors() {
     json_paths.sort();
     assert_eq!(
         json_paths.len(),
-        53,
-        "migrated DSP stages and Biquad foundation must have 53 vectors"
+        80,
+        "migrated DSP stages and Biquad foundation must have 80 vectors"
     );
+    for (prefix, expected) in [
+        (
+            "reverb-simple.",
+            &[
+                "reverb-simple.case1",
+                "reverb-simple.case2",
+                "reverb-simple.case3",
+            ][..],
+        ),
+        (
+            "fdn-reverb.",
+            &[
+                "fdn-reverb.case1",
+                "fdn-reverb.case2",
+                "fdn-reverb.case3",
+                "fdn-reverb.case4",
+            ][..],
+        ),
+        (
+            "convolver.",
+            &[
+                "convolver.case1",
+                "convolver.case2",
+                "convolver.case3",
+                "convolver.case4",
+            ][..],
+        ),
+        (
+            "loudness-comp.",
+            &[
+                "loudness-comp.case1",
+                "loudness-comp.case2",
+                "loudness-comp.case3",
+                "loudness-comp.case4",
+            ][..],
+        ),
+        (
+            "dynamic-eq.",
+            &[
+                "dynamic-eq.case1",
+                "dynamic-eq.case2",
+                "dynamic-eq.case3",
+                "dynamic-eq.case4",
+            ][..],
+        ),
+        (
+            "limiter.",
+            &[
+                "limiter.case1",
+                "limiter.case2",
+                "limiter.case3",
+                "limiter.case4",
+            ][..],
+        ),
+        (
+            "modulation-matrix.",
+            &[
+                "modulation-matrix.case1",
+                "modulation-matrix.case2",
+                "modulation-matrix.case3",
+                "modulation-matrix.case4",
+            ][..],
+        ),
+    ] {
+        assert_eq!(
+            json_paths
+                .iter()
+                .filter_map(|path| path.file_stem().and_then(|value| value.to_str()))
+                .filter(|label| label.starts_with(prefix))
+                .collect::<Vec<_>>(),
+            expected,
+            "{prefix} 向量清单必须完整"
+        );
+    }
     assert_eq!(
         json_paths
             .iter()

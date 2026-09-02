@@ -36,9 +36,13 @@
 //! 零系统调用；`prepare` 无需预分配。
 
 use crate::Stage;
+use std::fmt;
 
 /// 固定频带数（5 带：low / low-mid / mid / high-mid / high）。
-const BAND_COUNT: usize = 5;
+///
+/// 引擎适配层（HyperPlayer）通过 `hse_core::dynamic_eq::BAND_COUNT` 引用同一
+/// 常量，避免两侧频带数组长度漂移。
+pub const BAND_COUNT: usize = 5;
 /// 默认交叉频率（4 个：带 i 与带 i+1 的分界；末带 frequency 被完全忽略）。
 const DEFAULT_CROSSOVER_HZ: [f64; 4] = [200.0, 800.0, 2500.0, 8000.0];
 /// 每带增益钳制范围（线性，防任意参数组合下输出无界；规格 GWT-DY-11）。
@@ -200,6 +204,10 @@ pub struct DynamicEqStage {
     levels_db: [f64; BAND_COUNT],
     target_gains: [f64; BAND_COUNT],
     gains: [f64; BAND_COUNT],
+    /// 最近一次控制更新记录的每带压缩衰减 dB（≥ 0 的衰减幅度，实际应用为
+    /// `static_db - reduction`；非 TS 行为、仅供 UI/telemetry 读数，不参与任何
+    /// 运算，故不影响与黄金参考的逐位对拍）。
+    reduction_db: [f64; BAND_COUNT],
     /// 交叉树：每通道 LP1,HP1,LP2,HP2,LP3,HP3,LP4,HP4（共 8 个单元）。
     tree_l: [TreeCell; 8],
     tree_r: [TreeCell; 8],
@@ -231,6 +239,7 @@ impl DynamicEqStage {
             levels_db: [0.0; BAND_COUNT],
             target_gains: [1.0; BAND_COUNT],
             gains: [1.0; BAND_COUNT],
+            reduction_db: [0.0; BAND_COUNT],
             tree_l: [TreeCell::identity(); 8],
             tree_r: [TreeCell::identity(); 8],
         };
@@ -420,6 +429,7 @@ impl DynamicEqStage {
                     (inv_ratio * x * x) / two_knee
                 };
                 let target_db = self.static_db[b] - reduction;
+                self.reduction_db[b] = reduction;
                 let target_lin = 10.0_f64.powf(target_db / 20.0);
                 let mixed = 1.0 + strength * (target_lin - 1.0);
                 self.target_gains[b] = if self.band_enabled[b] {
@@ -441,7 +451,118 @@ impl DynamicEqStage {
     pub fn get_band_levels_db(&self) -> [f64; BAND_COUNT] {
         self.levels_db
     }
+
+    /// 最近一次控制更新记录的每带压缩衰减 dB（5 项，≥ 0 的衰减幅度；UI/telemetry
+    /// 读数，非 TS 行为；禁用或 strength ≤ 0 期间不更新、保持禁用前的值或 0）。
+    pub fn get_band_reduction_db(&self) -> [f64; BAND_COUNT] {
+        self.reduction_db
+    }
+
+    /// 返回仅含交叉树 TDF2 状态、分析能量/电平与增益平滑状态的定长运行态快照。
+    ///
+    /// 快照不含任何参数（enabled/strength/阈值比/attack-release/块长/带配置/
+    /// 交叉频率/系数）——参数态由构造与 [`Self::set_params`] 决定；采样率以位型
+    /// 记入快照，作为 checkpoint 代际检查的依据。
+    pub fn snapshot_runtime_state(&self) -> DynamicEqRuntimeState {
+        let cell_state = |cells: &[TreeCell; 8]| -> [[f64; 2]; 8] {
+            std::array::from_fn(|i| [cells[i].s1, cells[i].s2])
+        };
+        DynamicEqRuntimeState {
+            sample_rate_bits: self.fs.to_bits(),
+            tree_l: cell_state(&self.tree_l),
+            tree_r: cell_state(&self.tree_r),
+            sumsq: self.sumsq,
+            levels_db: self.levels_db,
+            target_gains: self.target_gains,
+            gains: self.gains,
+            reduction_db: self.reduction_db,
+        }
+    }
+
+    /// 将当前运行态写入已有快照；采样率不符时不修改快照（原子性）。
+    pub fn save_runtime_state(
+        &self,
+        state: &mut DynamicEqRuntimeState,
+    ) -> Result<(), DynamicEqRuntimeStateMismatch> {
+        if state.sample_rate_bits != self.fs.to_bits() {
+            return Err(DynamicEqRuntimeStateMismatch);
+        }
+        *state = self.snapshot_runtime_state();
+        Ok(())
+    }
+
+    /// 恢复交叉树/分析/增益平滑状态，保留全部参数、系数与交叉频率配置。
+    ///
+    /// 注意：树状态是纯滤波器记忆，与交叉频率配置解耦——恢复方与快照方的
+    /// 带配置可以不同（行为对齐 compressor 的「恢复运行态、保留目标参数」）。
+    pub fn restore_runtime_state(
+        &mut self,
+        state: &DynamicEqRuntimeState,
+    ) -> Result<(), DynamicEqRuntimeStateMismatch> {
+        if state.sample_rate_bits != self.fs.to_bits() {
+            return Err(DynamicEqRuntimeStateMismatch);
+        }
+        let restore_cells = |cells: &mut [TreeCell; 8], slots: &[[f64; 2]; 8]| {
+            for (cell, slot) in cells.iter_mut().zip(slots) {
+                cell.s1 = slot[0];
+                cell.s2 = slot[1];
+            }
+        };
+        restore_cells(&mut self.tree_l, &state.tree_l);
+        restore_cells(&mut self.tree_r, &state.tree_r);
+        self.sumsq = state.sumsq;
+        self.levels_db = state.levels_db;
+        self.target_gains = state.target_gains;
+        self.gains = state.gains;
+        self.reduction_db = state.reduction_db;
+        Ok(())
+    }
+
+    /// 从另一实例复制连续处理状态，保留目标参数与带配置。
+    pub fn copy_runtime_state_from(
+        &mut self,
+        source: &Self,
+    ) -> Result<(), DynamicEqRuntimeStateMismatch> {
+        if self.fs.to_bits() != source.fs.to_bits() {
+            return Err(DynamicEqRuntimeStateMismatch);
+        }
+        let snapshot = source.snapshot_runtime_state();
+        self.restore_runtime_state(&snapshot)
+    }
 }
+
+/// 动态均衡连续处理状态快照（运行态）。字段保持私有，不含参数、系数或带配置。
+///
+/// 运行态/参数态边界：交叉树 TDF2 记忆、每分析块能量（sumsq）、最近电平
+/// （levels_db）、静态目标增益（target_gains）、逐样本平滑增益（gains）与衰减
+/// 读数（reduction_db，≥ 0 的衰减幅度）属于运行态；enabled/strength/threshold/
+/// ratio/knee、attack/release 系数、分析块长、带启停、静态曲线、交叉频率与交叉
+/// 树系数属于参数态（由 [`DynamicEqStage::from_params`] /
+/// [`DynamicEqStage::set_params`] 决定）。
+#[derive(Clone, Copy, Debug)]
+pub struct DynamicEqRuntimeState {
+    sample_rate_bits: u64,
+    /// 交叉树 TDF2 状态：每通道 8 个单元的 (s1, s2)。
+    tree_l: [[f64; 2]; 8],
+    tree_r: [[f64; 2]; 8],
+    sumsq: [f64; BAND_COUNT],
+    levels_db: [f64; BAND_COUNT],
+    target_gains: [f64; BAND_COUNT],
+    gains: [f64; BAND_COUNT],
+    reduction_db: [f64; BAND_COUNT],
+}
+
+/// 运行时状态的采样率与目标动态均衡不一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DynamicEqRuntimeStateMismatch;
+
+impl fmt::Display for DynamicEqRuntimeStateMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("dynamic eq runtime state sample rate mismatch")
+    }
+}
+
+impl std::error::Error for DynamicEqRuntimeStateMismatch {}
 
 impl Stage for DynamicEqStage {
     /// 交叉树与全部带状态为构造期定容数组，无需按块长预分配（保留形参以符合
@@ -472,6 +593,7 @@ impl Stage for DynamicEqStage {
         self.levels_db = [0.0; BAND_COUNT];
         self.target_gains = [1.0; BAND_COUNT];
         self.gains = [1.0; BAND_COUNT];
+        self.reduction_db = [0.0; BAND_COUNT];
     }
 }
 
@@ -1184,5 +1306,142 @@ mod tests {
                 "应对齐 TS 错误信息：{err}"
             );
         }
+    }
+
+    #[test]
+    fn 运行时状态往返保存复制与失配保持原子性() {
+        let prefix_l = lcg_noise(257, 201, 0.8);
+        let prefix_r = sine(257, 900.0, 48000.0, 0.5, 0.4);
+        let continuation_l = lcg_noise(193, 203, 0.7);
+        let continuation_r = sine(193, 1500.0, 48000.0, 0.4, 0.0);
+
+        let mut source = DynamicEqStage::from_params(48000.0, case_a_params()).expect("合法参数");
+        source.prepare(73);
+        let _ = drive_in_chunks(&mut source, &prefix_l, &prefix_r, 73);
+        let checkpoint = source.snapshot_runtime_state();
+        source.prepare(61);
+        let (expected_l, expected_r) =
+            drive_in_chunks(&mut source, &continuation_l, &continuation_r, 61);
+
+        // restore：新实例按 checkpoint 续跑，必须与原实例逐位一致。
+        let mut replay = DynamicEqStage::from_params(48000.0, case_a_params()).expect("合法参数");
+        replay.restore_runtime_state(&checkpoint).unwrap();
+        replay.prepare(61);
+        let (actual_l, actual_r) =
+            drive_in_chunks(&mut replay, &continuation_l, &continuation_r, 61);
+        assert_eq!((actual_l, actual_r), (expected_l, expected_r));
+
+        // copy：目标实例保留自身参数（阈值/交叉频率/带配置），仅吸收运行态。
+        let mut target_params = case_a_params();
+        target_params.threshold_db = Some(-6.0);
+        target_params.attack_ms = Some(5.0);
+        if let Some(bands) = &mut target_params.bands {
+            bands[0].frequency = 150.0;
+        }
+        let mut target = DynamicEqStage::from_params(48000.0, target_params).expect("合法参数");
+        let params_before = (target.threshold_db, target.attack_coef, target.cross_freqs);
+        target.copy_runtime_state_from(&replay).unwrap();
+        assert_eq!(
+            (target.threshold_db, target.attack_coef, target.cross_freqs),
+            params_before,
+            "copy 只迁移运行态，不得改写参数与系数"
+        );
+
+        // save：可复用快照槽位按当前状态覆写。
+        let mut reusable = checkpoint;
+        replay.save_runtime_state(&mut reusable).unwrap();
+        let reusable_before = (reusable.gains, reusable.levels_db);
+
+        // 采样率失配：save/restore/copy 全部报错且双方状态保持不变（原子性）。
+        let mut mismatch = DynamicEqStage::from_params(44100.0, case_a_params()).expect("合法参数");
+        let mismatch_before = (
+            mismatch.sumsq,
+            mismatch.levels_db,
+            mismatch.target_gains,
+            mismatch.gains,
+        );
+        assert_eq!(
+            mismatch.restore_runtime_state(&reusable),
+            Err(DynamicEqRuntimeStateMismatch)
+        );
+        assert_eq!(
+            mismatch.save_runtime_state(&mut reusable),
+            Err(DynamicEqRuntimeStateMismatch)
+        );
+        assert_eq!(
+            mismatch.copy_runtime_state_from(&replay),
+            Err(DynamicEqRuntimeStateMismatch)
+        );
+        assert_eq!(
+            (
+                mismatch.sumsq,
+                mismatch.levels_db,
+                mismatch.target_gains,
+                mismatch.gains
+            ),
+            mismatch_before,
+            "失配路径不得改动任何一侧运行态"
+        );
+        assert_eq!((reusable.gains, reusable.levels_db), reusable_before);
+
+        // reset 后快照与全新实例逐位一致。
+        replay.reset();
+        let reset_state = replay.snapshot_runtime_state();
+        let fresh = DynamicEqStage::from_params(48000.0, case_a_params()).expect("合法参数");
+        let bits = |values: &[f64]| values.iter().map(|&v| v.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&reset_state.gains), bits(&fresh.gains));
+        assert_eq!(bits(&reset_state.sumsq), bits(&fresh.sumsq));
+        assert_eq!(bits(&reset_state.levels_db), bits(&fresh.levels_db));
+        assert_eq!(bits(&reset_state.reduction_db), bits(&fresh.reduction_db));
+        for cell in 0..8 {
+            assert_eq!(reset_state.tree_l[cell], [0.0, 0.0]);
+            assert_eq!(reset_state.tree_r[cell], [0.0, 0.0]);
+        }
+    }
+
+    #[test]
+    fn reduction_读数随压缩推进_禁用路径保持不推进() {
+        // 低阈值 + 高比率下强激励产生显著衰减；禁用（硬直通）期间读数冻结。
+        let fs = 48000.0;
+        let mut params = case_a_params();
+        params.threshold_db = Some(-40.0);
+        params.ratio = Some(8.0);
+        params.strength = Some(1.0);
+        if let Some(bands) = &mut params.bands {
+            for band in bands.iter_mut() {
+                band.target_gain_db = Some(0.0);
+            }
+        }
+        let mut stage = DynamicEqStage::from_params(fs, params).expect("合法参数");
+        stage.prepare(128);
+        let loud_l = lcg_noise(512, 71, 0.9);
+        let loud_r = lcg_noise(512, 72, 0.9);
+        let _ = drive_in_chunks(&mut stage, &loud_l, &loud_r, 128);
+        let active = stage.get_band_reduction_db();
+        assert!(
+            active.iter().any(|&r| r > 1.0),
+            "强激励下至少一带应有显著压缩衰减：{active:?}"
+        );
+        assert!(active.iter().all(|&r| r >= 0.0), "衰减幅度读数必须 ≥ 0");
+
+        // 电平读数与衰减读数同时有限。
+        assert!(stage.get_band_levels_db().iter().all(|&l| l.is_finite()));
+
+        // 禁用后硬直通：读数保持禁用前的值、不被推进也不被清零。
+        let mut disabled_params = case_a_params();
+        disabled_params.enabled = Some(false);
+        stage.set_params(disabled_params);
+        let quiet_l = lcg_noise(256, 73, 0.01);
+        let quiet_r = lcg_noise(256, 74, 0.01);
+        let _ = drive_in_chunks(&mut stage, &quiet_l, &quiet_r, 128);
+        assert_eq!(
+            stage.get_band_reduction_db(),
+            active,
+            "禁用期间衰减读数必须冻结"
+        );
+
+        // reset 归零。
+        stage.reset();
+        assert_eq!(stage.get_band_reduction_db(), [0.0; BAND_COUNT]);
     }
 }
