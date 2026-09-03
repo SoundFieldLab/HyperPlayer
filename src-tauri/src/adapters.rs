@@ -3901,11 +3901,16 @@ impl NeteasePort for NeteaseAdapter {
             .collect())
     }
 
-    async fn scrobble(&self, song_id: u64, position_ms: u64) -> AppResult<NeteaseScrobbleDto> {
+    async fn scrobble(
+        &self,
+        song_id: u64,
+        source_id: u64,
+        played_seconds: u64,
+    ) -> AppResult<NeteaseScrobbleDto> {
         validate_positive_id(song_id, "songId")?;
         let result = self
             .require_service()?
-            .scrobble(song_id, position_ms)
+            .scrobble(song_id, source_id, played_seconds)
             .await?;
         Ok(NeteaseScrobbleDto {
             reported: result.reported,
@@ -4070,7 +4075,8 @@ impl PlaybackMediaBackend for NeteaseAdapter {
                 song_id,
                 QualityPreference::Auto,
                 is_vip,
-                Duration::from_secs(12),
+                // oracle getSongUrl 总预算默认 16s（音质阶梯整体预算）。
+                Duration::from_secs(16),
             )
             .await?;
         let url = authorized_official_url(&play_info, is_vip)?;

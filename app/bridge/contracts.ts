@@ -423,6 +423,7 @@ export interface NeteaseRecentPlayDto { playedAtMs: number; resourceType: string
 export interface NeteaseRecentPlaysDto { items: NeteaseRecentPlayDto[]; }
 export interface NeteaseQualityOptionDto { key: string; label: string; bitrate: number; sizeBytes: number; sampleRate: number | null; }
 export interface NeteaseScrobbleDto { reported: boolean; }
+export interface NeteaseScrobbleRequestDto { songId: number; sourceId?: number | null; playedSeconds: number; }
 export interface NeteaseDjCategoriesDto { categories: NeteasePlaylistCategoryDto[]; }
 export interface NeteaseSongWikiDto { data: unknown; }
 export interface NeteaseSongRelatedBlogsDto { data: unknown; }
@@ -734,7 +735,7 @@ export interface BridgeContract {
   neteaseRecentPlays(kind: string, userId: number, limit?: number): Promise<NeteaseRecentPlaysDto>;
   neteaseSimilarSongs(id: number): Promise<NeteaseTracksDto>;
   neteaseSongQualityLevels(id: number): Promise<NeteaseQualityOptionDto[]>;
-  neteaseScrobble(id: number, positionMs: number): Promise<NeteaseScrobbleDto>;
+  neteaseScrobble(request: NeteaseScrobbleRequestDto): Promise<NeteaseScrobbleDto>;
   neteaseDjCategories(): Promise<NeteaseDjCategoriesDto>;
   neteaseDjRecommend(limit?: number): Promise<NeteaseDjPageDto>;
   neteaseDjProgramToplist(cursor?: string | null): Promise<NeteaseDjPageDto>;

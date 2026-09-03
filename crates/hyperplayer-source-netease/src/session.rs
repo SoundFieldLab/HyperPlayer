@@ -158,6 +158,13 @@ impl Session {
         }
         serialize_cookie(&out)
     }
+    /// clientlog 打点通道画像（oracle：scrobble 把请求 Cookie 的 os 覆写为 osx，
+    /// 与 eapi 信封的 os=osx 保持一致；其余设备画像沿用 pc 基础）。
+    pub(crate) fn clientlog_cookies(&self) -> BTreeMap<String, String> {
+        let mut out = self.request_cookies();
+        out.insert("os".into(), "osx".into());
+        out
+    }
 }
 fn now_ms() -> u64 {
     std::time::SystemTime::now()

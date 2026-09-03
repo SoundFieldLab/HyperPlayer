@@ -17,12 +17,12 @@ use crate::{
         NeteasePlaylistCategoryDto, NeteasePlaylistDetailDto, NeteasePlaylistPageDto,
         NeteasePrepareMutationRequestDto, NeteaseQualityOptionDto, NeteaseRecentPlaysDto,
         NeteaseRecentPlaysRequestDto, NeteaseResourceRequestDto, NeteaseScrobbleDto,
-        NeteaseSearchPageDto, NeteaseSearchRequestDto, NeteaseSearchSuggestionsDto,
-        NeteaseSimilarArtistsDto, NeteaseSongRelatedBlogsDto, NeteaseSongWikiDto, NeteaseStatusDto,
-        NeteaseStylePreferenceDto, NeteaseSublistAlbumsDto, NeteaseSublistArtistsDto,
-        NeteaseSublistMvsDto, NeteaseTracksDto, NeteaseUpdatePlaylistCoverRequestDto,
-        NeteaseUserEventsRequestDto, NeteaseUserLevelDto, NeteaseUserPageDto,
-        NeteaseUserSubcountDto, PageRequestDto,
+        NeteaseScrobbleRequestDto, NeteaseSearchPageDto, NeteaseSearchRequestDto,
+        NeteaseSearchSuggestionsDto, NeteaseSimilarArtistsDto, NeteaseSongRelatedBlogsDto,
+        NeteaseSongWikiDto, NeteaseStatusDto, NeteaseStylePreferenceDto, NeteaseSublistAlbumsDto,
+        NeteaseSublistArtistsDto, NeteaseSublistMvsDto, NeteaseTracksDto,
+        NeteaseUpdatePlaylistCoverRequestDto, NeteaseUserEventsRequestDto, NeteaseUserLevelDto,
+        NeteaseUserPageDto, NeteaseUserSubcountDto, PageRequestDto,
     },
     error::CommandResult,
     events,
@@ -655,14 +655,17 @@ pub async fn netease_song_quality_levels(
 #[tauri::command]
 pub async fn netease_scrobble(
     state: State<'_, AppState>,
-    request: NeteaseResourceRequestDto,
-    position_ms: u64,
+    request: NeteaseScrobbleRequestDto,
 ) -> CommandResult<NeteaseScrobbleDto> {
     super::command(
         state
             .services
             .netease
-            .scrobble(request.id, position_ms)
+            .scrobble(
+                request.song_id,
+                request.source_id.unwrap_or(request.song_id),
+                request.played_seconds,
+            )
             .await,
     )
 }

@@ -280,7 +280,13 @@ pub trait NeteasePort: Send + Sync {
     ) -> AppResult<NeteaseRecentPlaysDto>;
     async fn similar_songs(&self, id: u64, limit: usize) -> AppResult<NeteaseTracksDto>;
     async fn song_quality_levels(&self, id: u64) -> AppResult<Vec<NeteaseQualityOptionDto>>;
-    async fn scrobble(&self, song_id: u64, position_ms: u64) -> AppResult<NeteaseScrobbleDto>;
+    /// 听歌打卡（oracle scrobble(id, sourceId, playedSeconds)：startplay+play 两次 weblog）。
+    async fn scrobble(
+        &self,
+        song_id: u64,
+        source_id: u64,
+        played_seconds: u64,
+    ) -> AppResult<NeteaseScrobbleDto>;
     // ---- Stage 16 第二批：长尾路由 ----
     async fn dj_categories(&self) -> AppResult<NeteaseDjCategoriesDto>;
     async fn dj_recommend(&self, limit: usize) -> AppResult<NeteaseDjPageDto>;

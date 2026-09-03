@@ -537,4 +537,105 @@ describe("app store", () => {
     expect(useAppStore.getState().playback?.volume).toBe(0.8);
     expect(useAppStore.getState().settings?.theme).toBe("system");
   });
+
+  it("scrobbles a netease track after 30s of playback when the track ends", async () => {
+    let handlers: BridgeEventHandlers = {};
+    const neteaseScrobble = vi.fn(async () => ({ reported: true }));
+    const testBridge = mockBridge({
+      subscribe: vi.fn(async (nextHandlers) => { handlers = nextHandlers; return () => undefined; }),
+      neteaseScrobble,
+    });
+    const { setBridgeForTests, useAppStore } = await import("./store");
+    setBridgeForTests(testBridge);
+    await useAppStore.getState().init();
+
+    const neteaseTrack = {
+      ...playback,
+      status: "playing" as const,
+      current: {
+        id: "42",
+        title: "Netease song",
+        artists: [],
+        album: "",
+        durationMs: 200_000,
+        source: "netease" as const,
+        entitlement: "free" as const,
+        quality: "标准" as const,
+        cache: "none" as const,
+        coverSeed: "42",
+      },
+    };
+    const clock = vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      handlers.playbackChanged?.(neteaseTrack);
+      // 播放 35s 后曲目自然结束（状态离开 playing）。
+      vi.advanceTimersByTime(35_000);
+      handlers.playbackChanged?.({ ...neteaseTrack, status: "paused", positionMs: 35_000 });
+      await vi.waitFor(() => expect(neteaseScrobble).toHaveBeenCalledOnce());
+      expect(neteaseScrobble).toHaveBeenCalledWith({ songId: 42, sourceId: 42, playedSeconds: 35 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not scrobble tracks shorter than 30s or non-netease tracks", async () => {
+    let handlers: BridgeEventHandlers = {};
+    const neteaseScrobble = vi.fn(async () => ({ reported: true }));
+    const testBridge = mockBridge({
+      subscribe: vi.fn(async (nextHandlers) => { handlers = nextHandlers; return () => undefined; }),
+      neteaseScrobble,
+    });
+    const { setBridgeForTests, useAppStore } = await import("./store");
+    setBridgeForTests(testBridge);
+    await useAppStore.getState().init();
+
+    const clock = vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      const neteaseTrack = {
+        ...playback,
+        status: "playing" as const,
+        current: {
+          id: "7",
+          title: "Short song",
+          artists: [],
+          album: "",
+          durationMs: 20_000,
+          source: "netease" as const,
+          entitlement: "free" as const,
+          quality: "标准" as const,
+          cache: "none" as const,
+          coverSeed: "7",
+        },
+      };
+      handlers.playbackChanged?.(neteaseTrack);
+      vi.advanceTimersByTime(10_000);
+      handlers.playbackChanged?.({ ...neteaseTrack, status: "paused" });
+      // 不足 30s：不打卡。
+      expect(neteaseScrobble).not.toHaveBeenCalled();
+
+      // 本地域曲目：即使超过 30s 也不打卡。
+      const localTrack = {
+        ...playback,
+        status: "playing" as const,
+        current: {
+          id: "local-1",
+          title: "Local song",
+          artists: [],
+          album: "",
+          durationMs: 300_000,
+          source: "local" as const,
+          entitlement: "free" as const,
+          quality: "标准" as const,
+          cache: "none" as const,
+          coverSeed: "local-1",
+        },
+      };
+      handlers.playbackChanged?.(localTrack);
+      vi.advanceTimersByTime(60_000);
+      handlers.playbackChanged?.({ ...localTrack, status: "paused" });
+      expect(neteaseScrobble).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

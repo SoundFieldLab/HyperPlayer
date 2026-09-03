@@ -430,10 +430,14 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         Ok(parse_related_playlists(&html))
     }
 
-    /// 批量专辑封面（oracle：逐张 album_detail 聚合）。
+    /// 批量专辑封面（oracle：逐张 album_detail 聚合；searchSongs 封面补齐按
+    /// 批 3 并发 + 100/200ms 间隔限流，本串行实现以 300ms 等效节流防风控）。
     pub async fn album_covers_batch(&self, ids: &[u64]) -> Result<Vec<AlbumCover>> {
         let mut out = Vec::new();
-        for id in ids {
+        for (index, id) in ids.iter().enumerate() {
+            if index > 0 {
+                self.sleep(Duration::from_millis(300)).await;
+            }
             if let Ok(album) = self.album_detail(*id).await {
                 out.push(AlbumCover {
                     id: *id,
@@ -910,7 +914,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         Ok(success())
     }
 
-    /// 检查歌曲是否已喜欢（oracle：eapi `/api/song/like/check`）。
+    /// 检查歌曲是否已喜欢（oracle：eapi `/api/song/like/check`，参数键 trackIds）。
     pub async fn check_songs_liked(&self, ids: &[u64]) -> Result<Vec<LikedState>> {
         if ids.is_empty() {
             return Ok(vec![]);
@@ -919,7 +923,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         let body = self
             .eapi(
                 "/api/song/like/check",
-                json!({"ids": format!("[{ids_json}]")}),
+                json!({"trackIds": format!("[{ids_json}]")}),
                 Duration::from_secs(12),
             )
             .await?;
@@ -1141,19 +1145,56 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         Ok(values(&body, "songs").map(map_track).collect())
     }
 
-    /// 听歌打卡（oracle：clientlog eapi `/api/feedback/weblog`，startplay+play 两次）。
-    pub async fn scrobble(&self, song_id: u64, position_ms: u64) -> Result<ScrobbleResult> {
+    /// 听歌打卡（oracle：clientlog eapi `/api/feedback/weblog`，startplay+play 两次，
+    /// logs = JSON.stringify([{action, json:{type:'song', mainsite:'1', mainsiteWeb:'1', ...}}])。
+    pub async fn scrobble(
+        &self,
+        song_id: u64,
+        source_id: u64,
+        played_seconds: u64,
+    ) -> Result<ScrobbleResult> {
         positive_id(song_id)?;
-        for kind in ["startplay", "play"] {
-            // clientlog 通道（os=osx）：任一失败不阻塞播放，降级为未上报。
-            let _ = self
-                .clientlog_eapi(
-                    "/api/feedback/weblog",
-                    json!({"log": format!("{kind}|{song_id}|{position_ms}")}),
-                )
-                .await;
-        }
-        Ok(ScrobbleResult { reported: true })
+        let played_seconds = played_seconds.max(1);
+        let build_log = |action: &str, extra: serde_json::Map<String, Value>| {
+            let mut json = serde_json::Map::new();
+            json.insert("type".into(), "song".into());
+            json.insert("mainsite".into(), "1".into());
+            json.insert("mainsiteWeb".into(), "1".into());
+            json.extend(extra);
+            json!([{ "action": action, "json": Value::Object(json) }]).to_string()
+        };
+        let startplay = build_log(
+            "startplay",
+            serde_json::Map::from_iter([
+                ("id".into(), json!(song_id)),
+                ("content".into(), json!(format!("id={source_id}"))),
+            ]),
+        );
+        let play = build_log(
+            "play",
+            serde_json::Map::from_iter([
+                ("download".into(), json!(0)),
+                ("end".into(), json!("playend")),
+                ("id".into(), json!(song_id)),
+                ("sourceId".into(), json!(source_id)),
+                ("time".into(), json!(played_seconds)),
+                ("wifi".into(), json!(0)),
+                ("source".into(), json!("list")),
+                ("content".into(), json!(format!("id={source_id}"))),
+            ]),
+        );
+        // clientlog 通道（os=osx）：任一失败不阻塞播放，降级为未上报。
+        let startplay_ok = self
+            .clientlog_eapi("/api/feedback/weblog", json!({ "logs": startplay }))
+            .await
+            .unwrap_or(false);
+        let play_ok = self
+            .clientlog_eapi("/api/feedback/weblog", json!({ "logs": play }))
+            .await
+            .unwrap_or(false);
+        Ok(ScrobbleResult {
+            reported: startplay_ok && play_ok,
+        })
     }
 
     /// 最近播放分类列表（oracle：weapi `/api/play-record/{kind}/list`，≤100）。
@@ -2211,13 +2252,19 @@ pub(crate) fn parse_related_playlists(html: &str) -> Vec<PlaylistSummary> {
     out
 }
 
+/// 分区降级：Err 或空结果都视为该分区不可用（oracle：聚合接口失败时该分区
+/// 隐藏并上报 unavailable，空列表与失败对用户不可区分，统一走降级）。
 fn degrade_section<T>(
     result: Result<Vec<T>>,
     section: PublicExploreSection,
     unavailable_sections: &mut Vec<PublicExploreSection>,
 ) -> Vec<T> {
     match result {
-        Ok(items) => items,
+        Ok(items) if !items.is_empty() => items,
+        Ok(_) => {
+            unavailable_sections.push(section);
+            Vec::new()
+        }
         Err(_) => {
             unavailable_sections.push(section);
             Vec::new()

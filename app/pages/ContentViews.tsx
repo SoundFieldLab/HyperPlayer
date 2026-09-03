@@ -340,7 +340,53 @@ function DetailView({ type }: { type: "album" | "artist" | "playlist" }): React.
     [type, detailId],
     () => false,
   );
-  const { playTrack, enqueueTrack, navigate } = useAppStore();
+  // 相似艺人（oracle /api/discovery/simiArtist）：艺术家详情页的发现延伸。
+  const [similarArtists] = useRemote(
+    () => type === "artist" && typeof detailId === "number" ? bridge.neteaseSimilarArtists(detailId) : Promise.resolve({ artists: [], nextCursor: null }),
+    [type, detailId],
+    (value) => value.artists.length === 0,
+  );
+  // 心动模式（oracle /api/playmode/intelligence/list）：歌单曲目 + 当前歌单 id 生成心动队列。
+  const [heartMode, setHeartMode] = useState<RemoteState<{ tracks: TrackDto[] }>>({ status: "idle" });
+  async function startHeartMode(): Promise<void> {
+    if (type !== "playlist" || typeof detailId !== "number" || !item0?.tracks.length) return;
+    setHeartMode({ status: "loading" });
+    try {
+      const seed = item0.tracks[0];
+      const value = await bridge.neteasePlaymodeIntelligenceList(Number(seed.id), detailId);
+      const tracks = value.tracks.map(adaptTrack);
+      if (!tracks.length) { setHeartMode(remoteSuccess({ tracks }, true)); return; }
+      setHeartMode(remoteSuccess({ tracks }));
+      await playTrack(tracks[0], { kind: "playlist", id: String(detailId) });
+      tracks.slice(1).forEach((track) => void enqueueTrack(track));
+    } catch (error) { setHeartMode(remoteFailure(error)); }
+  }
+  const item0 = detail.status === "ready" ? detail.data : null;
+  const { playTrack, enqueueTrack, navigate, notifyError } = useAppStore();
+  const [coverBusy, setCoverBusy] = useState(false);
+  // 更新歌单封面（oracle：NOS token alloc → 裸传 → cover/update）。选本地图片文件上传。
+  async function updatePlaylistCover(): Promise<void> {
+    if (type !== "playlist" || typeof detailId !== "number" || coverBusy) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp";
+    const picked = await new Promise<File | null>((resolve) => {
+      input.onchange = () => resolve(input.files?.[0] ?? null);
+      input.oncancel = () => resolve(null);
+      input.click();
+    });
+    if (!picked) return;
+    setCoverBusy(true);
+    try {
+      const bytes = new Uint8Array(await picked.arrayBuffer());
+      let binary = "";
+      bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+      const imageBase64 = window.btoa(binary);
+      await bridge.neteaseUpdatePlaylistCover(detailId, imageBase64, picked.type || null);
+      await reload();
+    } catch (error) { notifyError(error, "无法更新歌单封面"); }
+    finally { setCoverBusy(false); }
+  }
   if (detail.status !== "ready") return <Page title={{ album: "专辑详情", artist: "艺术家详情", playlist: "歌单详情" }[type]} subtitle="读取网易云详情"><RemoteNotice state={detail} empty="详情中暂无曲目" retry={reload}/></Page>;
   const item = detail.data;
   const cover = item.cover || fallbackCover(String(detailId));
@@ -349,7 +395,7 @@ function DetailView({ type }: { type: "album" | "artist" | "playlist" }): React.
     : type === "playlist"
       ? { kind: "playlist", id: String(detailId) }
       : { kind: "manual", id: null };
-  return <div className="page detail-page"><section className="detail-hero"><Cover src={cover} alt={item.title} className={type === "artist" ? "artist-cover" : ""}/><div><span className="eyebrow">{type === "artist" ? "艺术家" : type === "playlist" ? "歌单" : "专辑"}</span><h1>{item.title}</h1><p>{item.subtitle}</p>{item.description && <p className="detail-copy">{item.description}</p>}<div className="detail-actions"><button className="button primary" disabled={!item.tracks.length} onClick={() => item.tracks[0] && void playTrack(item.tracks[0], playbackContext)}><Play weight="fill"/>播放</button><button className="button secondary" disabled={!item.tracks.length} onClick={() => item.tracks.forEach((track) => void enqueueTrack(track))}><Queue/>加入队列</button></div></div></section><SectionTitle>{type === "artist" ? "热门歌曲" : "曲目"}</SectionTitle><AppTrackTable tracks={item.tracks} playbackContext={playbackContext}/>{type === "playlist" && related.status === "ready" && related.data.playlists.length > 0 && <><SectionTitle>相关歌单</SectionTitle><div className="cover-grid">{related.data.playlists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("playlist", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/></div><b>{item.name}</b><small>{item.trackCount} 首</small></button>)}</div></>}{type !== "artist" && typeof detailId === "number" && <CommentSection resource={type} resourceId={detailId}/>}</div>;
+  return <div className="page detail-page"><section className="detail-hero"><Cover src={cover} alt={item.title} className={type === "artist" ? "artist-cover" : ""}/><div><span className="eyebrow">{type === "artist" ? "艺术家" : type === "playlist" ? "歌单" : "专辑"}</span><h1>{item.title}</h1><p>{item.subtitle}</p>{item.description && <p className="detail-copy">{item.description}</p>}<div className="detail-actions"><button className="button primary" disabled={!item.tracks.length} onClick={() => item.tracks[0] && void playTrack(item.tracks[0], playbackContext)}><Play weight="fill"/>播放</button>{type === "playlist" && <button className="button secondary" disabled={!item.tracks.length || heartMode.status === "loading"} onClick={() => void startHeartMode()}>{heartMode.status === "loading" ? "生成心动模式…" : "心动模式"}</button>}<button className="button secondary" disabled={!item.tracks.length} onClick={() => item.tracks.forEach((track) => void enqueueTrack(track))}><Queue/>加入队列</button>{type === "playlist" && <button className="button secondary" disabled={coverBusy} onClick={() => void updatePlaylistCover()}>{coverBusy ? "上传中…" : "更换封面"}</button>}</div></div></section><SectionTitle>{type === "artist" ? "热门歌曲" : "曲目"}</SectionTitle><AppTrackTable tracks={item.tracks} playbackContext={playbackContext}/>{heartMode.status === "error" && <RemoteNotice state={heartMode} retry={() => void startHeartMode()}/>}{heartMode.status === "empty" && <p className="detail-copy">心动模式暂无推荐（需登录且歌单可生成）。</p>}{type === "artist" && similarArtists.status === "ready" && similarArtists.data.artists.length > 0 && <><SectionTitle>相似艺人</SectionTitle><div className="cover-grid">{similarArtists.data.artists.map((artist) => <button className="cover-card" key={artist.id} onClick={() => navigate("artist", artist.id)}><div className="cover-wrap"><Cover src={artist.imageUrl || fallbackCover(String(artist.id))} alt="" className="artist-cover"/><span className="hover-play"><Play weight="fill"/></span></div><b>{artist.name}</b><small>{artist.aliases.length ? artist.aliases.join(" / ") : "相似艺人"}</small></button>)}</div></>}{type === "playlist" && related.status === "ready" && related.data.playlists.length > 0 && <><SectionTitle>相关歌单</SectionTitle><div className="cover-grid">{related.data.playlists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("playlist", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/></div><b>{item.name}</b><small>{item.trackCount} 首</small></button>)}</div></>}{type !== "artist" && typeof detailId === "number" && <CommentSection resource={type} resourceId={detailId}/>}</div>;
 }
 
 function AccountView(): React.JSX.Element {

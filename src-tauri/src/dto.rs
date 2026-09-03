@@ -1739,6 +1739,18 @@ pub struct NeteaseScrobbleDto {
     pub reported: bool,
 }
 
+/// 听歌打卡请求（oracle scrobble(id, sourceId, playedSeconds)）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseScrobbleRequestDto {
+    pub song_id: u64,
+    /// 打卡归属来源（歌单/专辑上下文的 id；单曲播放时与 song_id 相同）。
+    #[serde(default)]
+    pub source_id: Option<u64>,
+    /// 本曲已播放秒数（服务端取 ≥1）。
+    pub played_seconds: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct NeteaseRecentPlaysRequestDto {

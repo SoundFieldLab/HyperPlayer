@@ -113,6 +113,11 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         self.session.lock().unwrap()
     }
 
+    /// 统一的异步节流入口（tokio time 让出执行线程；domains 层限流复用）。
+    pub(crate) async fn sleep(&self, duration: Duration) {
+        self.sleeper.sleep(duration).await
+    }
+
     pub fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Release)
     }
@@ -255,6 +260,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
     /// clientlog 通道（听歌打卡等打点）：固定 clientlog 域 + os=osx 设备 cookie，
     /// 失败不抛错（打点不阻塞播放），返回是否成功。
     /// 公开无加密 GET（相关歌单网页等）：域名 music.163.com，仅读，无 Cookie 注入。
+    /// UA/Referer 与 oracle 公开通道一致（无 UA 会被网页 WAF 拦截）。
     pub async fn public_get(&self, path: &str) -> Result<Value> {
         self.ensure_enabled()?;
         let response = self
@@ -262,7 +268,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             .execute(HttpRequest {
                 method: Method::Get,
                 url: format!("{}{}", base_url(Channel::Public).unwrap(), path),
-                headers: BTreeMap::new(),
+                headers: public_headers(),
                 body: Vec::new(),
                 timeout: Duration::from_secs(12),
             })
@@ -302,7 +308,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             .execute(HttpRequest {
                 method: Method::Get,
                 url: format!("{}{}", base_url(Channel::Public).unwrap(), path),
-                headers: BTreeMap::new(),
+                headers: public_headers(),
                 body: Vec::new(),
                 timeout: Duration::from_secs(12),
             })
@@ -323,16 +329,11 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             .collect::<Vec<_>>()
             .join("&")
             .into_bytes();
-        let mut headers = BTreeMap::new();
+        let mut headers = public_headers();
         headers.insert(
             "Content-Type".into(),
             "application/x-www-form-urlencoded".into(),
         );
-        headers.insert(
-            "User-Agent".into(),
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".into(),
-        );
-        headers.insert("Referer".into(), "https://music.163.com/".into());
         let response = self
             .transport
             .execute(HttpRequest {
@@ -348,6 +349,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
 
     pub async fn clientlog_eapi(&self, path: &str, payload: Value) -> Result<bool> {
         // 打点接口无产品语义返回值；网络失败/非 2xx 一律降级为 false（不阻塞播放）。
+        // Cookie 头与信封同为 os=osx 画像（oracle：scrobble 覆写请求 Cookie 的 os）。
         match self
             .eapi_on(
                 path,
@@ -356,6 +358,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
                 "https://clientlog.music.163.com",
                 None,
                 "osx",
+                Some("osx"),
             )
             .await
         {
@@ -383,9 +386,11 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             "https://interfacepc.music.163.com",
             None,
             "pc",
+            None,
         )
         .await
     }
+    #[allow(clippy::too_many_arguments)]
     async fn eapi_on(
         &self,
         path: &str,
@@ -394,10 +399,15 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         domain: &str,
         anti_cheat_token: Option<&str>,
         os: &str,
+        cookie_os: Option<&str>,
     ) -> Result<Value> {
         let (cookies, device) = {
             let s = self.session();
-            (s.request_cookies(), s.device_id().to_owned())
+            let cookies = match cookie_os {
+                Some("osx") => s.clientlog_cookies(),
+                _ => s.request_cookies(),
+            };
+            (cookies, s.device_id().to_owned())
         };
         let header = json!({"osver":"Microsoft-Windows-10-Professional-build-19045-64bit","deviceId":device,"os":os,"appver":"3.1.17.204416","versioncode":"140","mobilename":"","resolution":"1920x1080","channel":"netease","MUSIC_U":cookies.get("MUSIC_U").cloned().unwrap_or_default(),"MUSIC_A":cookies.get("MUSIC_A").cloned().unwrap_or_default()});
         payload
@@ -739,6 +749,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             "https://interfacepc.music.163.com",
             token.as_deref(),
             "pc",
+            None,
         )
         .await
         .and_then(assert_api_ok)
@@ -1007,9 +1018,12 @@ fn anonymous_token_from_cookie(cookie: &str) -> Option<String> {
 fn assert_api_ok(value: Value) -> Result<Value> {
     let code = value
         .get("code")
-        .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))
-        .ok_or_else(|| Error::InvalidResponse("响应缺少 code".into()))?;
-    if code == 200 {
+        .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()));
+    // oracle 语义：code 缺失（或为 0）按成功放行（clientlog 等无语义码端点）。
+    let Some(code) = code.filter(|code| *code != 0) else {
+        return Ok(value);
+    };
+    if code == 200 || is_special_ok_code(code) {
         Ok(value)
     } else {
         Err(Error::Api {
@@ -1021,6 +1035,22 @@ fn assert_api_ok(value: Value) -> Result<Value> {
                 .into(),
         })
     }
+}
+
+/// oracle `SPECIAL_OK_CODES`：登录轮询（800-803）与部分写操作的语义码按成功透传。
+fn is_special_ok_code(code: i64) -> bool {
+    matches!(code, 201 | 302 | 400 | 502 | 800 | 801 | 802 | 803)
+}
+
+/// 公开无加密通道的固定请求头（oracle：UA + Referer，防网页 WAF）。
+fn public_headers() -> BTreeMap<String, String> {
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "User-Agent".into(),
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".into(),
+    );
+    headers.insert("Referer".into(), "https://music.163.com/".into());
+    headers
 }
 fn percent_encode(s: &str) -> String {
     s.bytes()
@@ -1230,23 +1260,35 @@ mod tests {
         );
     }
     #[test]
-    fn ordinary_api_rejects_400_and_502_but_qr_handles_local_codes() {
+    fn ordinary_api_rejects_unlisted_codes_but_special_codes_pass_through() {
+        // oracle SPECIAL_OK_CODES（201/302/400/502/800-803）按成功透传：
+        // 响应体缺少 result.songs 字段 → 解析为空列表，不抛 Api 错误。
         for code in [400, 502] {
             let svc = service(vec![response(json!({"code":code,"message":"failed"}))]);
-            assert_eq!(
-                block_on(svc.search_songs(
-                    "x",
-                    PageRequest {
-                        limit: 1,
-                        offset: 0
-                    }
-                )),
-                Err(Error::Api {
-                    code,
-                    message: "failed".into()
-                })
-            );
+            let result = block_on(svc.search_songs(
+                "x",
+                PageRequest {
+                    limit: 1,
+                    offset: 0,
+                },
+            ));
+            assert_eq!(result, Ok(vec![]), "code={code} 应透传并解析为空");
         }
+        // 未列入白名单的语义码仍按 Api 错误拒绝。
+        let svc = service(vec![response(json!({"code":403,"message":"denied"}))]);
+        assert_eq!(
+            block_on(svc.search_songs(
+                "x",
+                PageRequest {
+                    limit: 1,
+                    offset: 0
+                }
+            )),
+            Err(Error::Api {
+                code: 403,
+                message: "denied".into()
+            })
+        );
         let svc = service(vec![response(json!({"code":802}))]);
         assert_eq!(
             block_on(svc.check_login_qr_state("key")).unwrap(),
@@ -1736,6 +1778,7 @@ mod tests {
             response(
                 json!({"code":200,"data":[{"id":2,"name":"New song","ar":[],"al":{"id":0,"name":""}}]}),
             ),
+            // 502 属 oracle SPECIAL_OK_CODES：透传后因缺歌单字段解析为空 → 该分区降级。
             response(json!({"code":502,"message":"chart unavailable"})),
             response(json!({"code":200,"artists":[{"id":4,"name":"Popular artist"}]})),
         ]);
@@ -2001,8 +2044,36 @@ mod tests {
             Err(crate::Error::Transport("clientlog down".into())),
             Err(crate::Error::Transport("clientlog down".into())),
         ]);
-        let result = block_on(svc.scrobble(42, 1234)).unwrap();
+        let result = block_on(svc.scrobble(42, 42, 95)).unwrap();
+        assert!(!result.reported);
+    }
+
+    #[test]
+    fn scrobble_payload_matches_oracle_weblog_logs() {
+        // oracle 载荷：logs = JSON.stringify([{action, json:{type:'song', mainsite...}}])，
+        // startplay 与 play 两次调用；成功时 reported=true。校验载荷与 Cookie os=osx。
+        let svc = service(vec![
+            response(json!({"code": 200})),
+            response(json!({"code": 200})),
+        ]);
+        let result = block_on(svc.scrobble(42, 1234, 95)).unwrap();
         assert!(result.reported);
+        let requests = svc.transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        for (index, request) in requests.iter().enumerate() {
+            let url = request.url.clone();
+            let body = String::from_utf8(request.body.clone()).unwrap();
+            assert!(
+                url.starts_with("https://clientlog.music.163.com/eapi/feedback/weblog"),
+                "第 {index} 次打点 URL 错误: {url}"
+            );
+            let cookie = request
+                .headers
+                .get("Cookie")
+                .expect("clientlog 必须带 Cookie 头");
+            assert!(cookie.contains("os=osx"), "Cookie os 必须为 osx: {cookie}");
+            assert!(body.contains("params="), "eapi 加密体字段缺失: {body}");
+        }
     }
 
     #[test]

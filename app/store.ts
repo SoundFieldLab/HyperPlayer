@@ -100,6 +100,62 @@ interface AppState {
 let activeBridge: BridgeContract = bridge;
 export function setBridgeForTests(next: BridgeContract | null) { activeBridge = next ?? bridge; }
 
+/** 网易云听歌打卡（oracle scrobble）的模块级跟踪状态。 */
+interface ScrobbleTracker {
+  /** 当前正在计时的网易云曲目（trackRef.id 数值）；null 表示无网易云曲目在播。 */
+  songId: number | null;
+  /** 打卡归属来源（播放上下文 id：歌单/专辑）；无上下文时与 songId 相同。 */
+  sourceId: number;
+  /** 开始播放的时间戳（Date.now），用于换曲/停止时计算已播秒数。 */
+  startedAtMs: number;
+  /** 换曲去重：上次已上报的曲目 id，防止同一曲目 40s 内重复打卡。 */
+  lastReportedSongId: number | null;
+  lastReportedAtMs: number;
+}
+const scrobbleTracker: ScrobbleTracker = {
+  songId: null,
+  sourceId: 0,
+  startedAtMs: 0,
+  lastReportedSongId: null,
+  lastReportedAtMs: 0,
+};
+const SCROBBLE_MIN_SECONDS = 30;
+
+/**
+ * 播放状态变化时的打卡钩子：网易云曲目从播放切换/结束（current 变化或离开 playing）
+ * 且累计已播 ≥ 30s 时上报 scrobble。打卡失败静默（打点不阻塞播放，与 crate 降级语义一致）。
+ */
+function trackScrobbleOnPlaybackChanged(playback: PlaybackSnapshotDto): void {
+  const current = playback.current;
+  const neteaseSongId = current && current.source === "netease" ? Number(current.id) : null;
+  if (neteaseSongId !== null && neteaseSongId > 0 && playback.status === "playing") {
+    if (scrobbleTracker.songId !== neteaseSongId) {
+      reportScrobbleIfNeeded();
+      scrobbleTracker.songId = neteaseSongId;
+      scrobbleTracker.startedAtMs = Date.now();
+    }
+    return;
+  }
+  // 曲目结束/暂停/切换到本地域：若在计时且时长足够则上报，然后停止计时。
+  reportScrobbleIfNeeded();
+  scrobbleTracker.songId = null;
+}
+
+function reportScrobbleIfNeeded(): void {
+  const songId = scrobbleTracker.songId;
+  if (songId === null) return;
+  const playedSeconds = Math.floor((Date.now() - scrobbleTracker.startedAtMs) / 1000);
+  if (playedSeconds < SCROBBLE_MIN_SECONDS) return;
+  const now = Date.now();
+  if (scrobbleTracker.lastReportedSongId === songId && now - scrobbleTracker.lastReportedAtMs < 40_000) {
+    return;
+  }
+  scrobbleTracker.lastReportedSongId = songId;
+  scrobbleTracker.lastReportedAtMs = now;
+  void activeBridge.neteaseScrobble({ songId, sourceId: scrobbleTracker.sourceId || songId, playedSeconds })
+    .catch(() => undefined);
+}
+
 function upsertScanTask(tasks: BackgroundTaskDto[], progress: { taskId: string; completed: number; total: number | null; phase: string }) {
   const next: BackgroundTaskDto = {
     id: progress.taskId,
@@ -219,6 +275,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingUnlisten = await activeBridge.subscribe({
         playbackChanged: (playback) => {
           eventPlayback = playback;
+          trackScrobbleOnPlaybackChanged(playback);
           set((state) => {
             const pending = state.dspPendingConfiguration;
             const appliedPending = pending && BigInt(pending.revision) === playback.dspExecution.revision;
@@ -447,6 +504,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   async playTrack(track, context) {
     const generation = ++transportGeneration;
     const previous = get().playback;
+    // 记录打卡归属来源（歌单/专辑上下文 id；单曲与搜索上下文回落为曲目自身）。
+    if (track.source === "netease") {
+      const contextId = context && (context.kind === "playlist" || context.kind === "album") && context.id ? Number(context.id) : NaN;
+      const songId = Number(track.id);
+      scrobbleTracker.sourceId = Number.isFinite(contextId) && contextId > 0 ? contextId : Number.isFinite(songId) && songId > 0 ? songId : 0;
+    }
     try {
       const playback = await activeBridge.play(trackRefOf(track), context);
       if (generation === transportGeneration) {
