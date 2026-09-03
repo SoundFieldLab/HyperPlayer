@@ -565,3 +565,30 @@ pub struct JourneyOverview {
 pub struct ScrobbleResult {
     pub reported: bool,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrichedSong {
+    pub track: Track,
+    pub quality_levels: Vec<QualityOption>,
+    pub album_extra: Option<AlbumExtra>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlbumExtra {
+    pub company: String,
+    pub publish_time_ms: Option<u64>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlbumCover {
+    pub id: u64,
+    pub cover_url: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExploreNextResult {
+    pub songs: Vec<Track>,
+    pub batch: usize,
+    pub has_more: bool,
+}

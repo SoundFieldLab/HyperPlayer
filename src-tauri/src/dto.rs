@@ -1747,3 +1747,89 @@ pub struct NeteaseRecentPlaysRequestDto {
     pub user_id: u64,
     pub limit: Option<u64>,
 }
+
+// ---------------- Stage 16 第二批：长尾路由 DTO ----------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseDjCategoriesDto {
+    pub categories: Vec<NeteasePlaylistCategoryDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseSongWikiDto {
+    pub data: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseSongRelatedBlogsDto {
+    pub data: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseAlbumExtraDto {
+    pub company: String,
+    pub publish_time_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseEnrichedSongDto {
+    pub track: TrackDto,
+    pub quality_levels: Vec<NeteaseQualityOptionDto>,
+    pub album_extra: Option<NeteaseAlbumExtraDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseAlbumCoverDto {
+    pub id: u64,
+    pub cover_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseAlbumCoversDto {
+    pub covers: Vec<NeteaseAlbumCoverDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseExploreNextDto {
+    pub songs: Vec<TrackDto>,
+    pub batch: usize,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseDjRecommendRequestDto {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseExploreNextRequestDto {
+    pub count: Option<usize>,
+    pub batch: Option<usize>,
+    pub exclude: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseSimilarArtistsDto {
+    pub artists: Vec<NeteaseArtistSummaryDto>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseUpdatePlaylistCoverRequestDto {
+    pub playlist_id: u64,
+    /// base64 编码的图片字节（前端无二进制通道）。
+    pub image_base64: String,
+    pub mime_type: Option<String>,
+}

@@ -17,6 +17,7 @@ futures = "0.3.31"
 hmac = "0.12.1"
 md-5 = "0.10.6"
 num-bigint = "0.5.1"
+regex = "1.13"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 rand = "0.8.5"
 reqwest = { version = "0.12.23", default-features = false, features = ["rustls-tls-native-roots"] }

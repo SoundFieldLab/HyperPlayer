@@ -1,5 +1,8 @@
 use serde_json::{json, Value};
-use std::{collections::HashSet, time::Duration};
+use std::{
+    collections::{BTreeMap, HashSet},
+    time::Duration,
+};
 
 use crate::{
     dto::*,
@@ -266,6 +269,324 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             )
             .await?;
         Ok(values(&body, "recommend").map(map_playlist).collect())
+    }
+
+    /// 电台分类（oracle：weapi `/api/djradio/category/get`）。
+    pub async fn dj_categories(&self) -> Result<Vec<PlaylistCategory>> {
+        let body = self
+            .eapi(
+                "/api/djradio/category/get",
+                json!({}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "categories")
+            .map(|item| PlaylistCategory {
+                name: string(item, "name"),
+                id: string(item, "id"),
+            })
+            .collect())
+    }
+
+    /// 电台推荐（oracle：weapi `/api/djradio/personalize/rcmd`）。
+    pub async fn dj_recommend(&self, limit: usize) -> Result<Vec<DjRadio>> {
+        let body = self
+            .eapi(
+                "/api/djradio/personalize/rcmd",
+                json!({"limit": limit.min(100)}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "djRadios").map(map_dj_radio).collect())
+    }
+
+    /// 电台节目榜（oracle：weapi `/api/program/toplist/v1`）。
+    pub async fn dj_program_toplist(&self, page: PageRequest) -> Result<Vec<DjProgram>> {
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                "/api/program/toplist/v1",
+                json!({"limit": page.limit, "offset": page.offset}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "toplist")
+            .chain(values(&body, "programs"))
+            .map(map_dj_program)
+            .collect())
+    }
+
+    /// 我订阅的电台（oracle：weapi `/api/djradio/get/subed`）。
+    pub async fn dj_sublist(&self, page: PageRequest) -> Result<Vec<DjRadio>> {
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                "/api/djradio/get/subed",
+                json!({"limit": page.limit, "offset": page.offset, "total": true}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "djRadios").map(map_dj_radio).collect())
+    }
+
+    /// 个性化电台（oracle：weapi `/api/personalized/djprogram`）。
+    pub async fn personalized_dj_radios(&self, limit: usize) -> Result<Vec<DjRadio>> {
+        let body = self
+            .eapi(
+                "/api/personalized/djprogram",
+                json!({"limit": limit.min(100)}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "result").map(map_dj_radio).collect())
+    }
+
+    /// 歌曲百科（oracle：eapi `/api/song/play/about/block/page`）。
+    pub async fn song_wiki(&self, id: u64) -> Result<Value> {
+        positive_id(id)?;
+        self.eapi(
+            "/api/song/play/about/block/page",
+            json!({"songId": id}),
+            Duration::from_secs(12),
+        )
+        .await
+    }
+
+    /// 歌曲相关播客（oracle：公开 POST `/api/album/blog`，无加密）。
+    pub async fn song_related_blogs(&self, album_id: u64, page: u64, count: u64) -> Result<Value> {
+        positive_id(album_id)?;
+        self.public_post_form(
+            "/api/album/blog",
+            &[
+                ("albumId", album_id.to_string()),
+                ("page", page.max(1).to_string()),
+                ("count", count.clamp(1, 50).to_string()),
+                ("csrf_token", String::new()),
+            ],
+        )
+        .await
+    }
+
+    /// 歌曲详情聚合：详情 + 音质档位 + 专辑扩展（oracle `getSongDetailEnriched` 语义）。
+    pub async fn song_detail_enriched(&self, id: u64) -> Result<EnrichedSong> {
+        positive_id(id)?;
+        let detail = self
+            .song_detail(&[id])
+            .await?
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| Error::InvalidResponse("歌曲不存在".into()))?;
+        let quality_levels = self.song_quality_levels(id).await.unwrap_or_default();
+        let album_extra = if detail.album.id > 0 {
+            self.album_detail(detail.album.id)
+                .await
+                .ok()
+                .map(|album| AlbumExtra {
+                    company: album.description.unwrap_or_default(),
+                    publish_time_ms: album.publish_time_ms,
+                })
+        } else {
+            None
+        };
+        Ok(EnrichedSong {
+            track: detail,
+            quality_levels,
+            album_extra,
+        })
+    }
+
+    /// 智能播放列表（oracle：eapi `/api/playmode/intelligence/list`）。
+    pub async fn playmode_intelligence_list(
+        &self,
+        song_id: u64,
+        playlist_id: u64,
+        count: usize,
+    ) -> Result<Vec<Track>> {
+        positive_id(song_id)?;
+        positive_id(playlist_id)?;
+        let body = self
+            .eapi(
+                "/api/playmode/intelligence/list",
+                json!({
+                    "songId": song_id,
+                    "type": "fromPlayOne",
+                    "playlistId": playlist_id,
+                    "startMusicId": song_id,
+                    "count": count.clamp(1, 100)
+                }),
+                Duration::from_secs(12),
+            )
+            .await?;
+        // oracle 返回原始 body；`data` 为歌曲对象数组（智能播放列表语义）。
+        Ok(values(&body, "data").map(map_track).collect())
+    }
+
+    /// 相关歌单（oracle：公开网页解析 `/playlist?id=` HTML）。
+    pub async fn related_playlists(&self, playlist_id: u64) -> Result<Vec<PlaylistSummary>> {
+        positive_id(playlist_id)?;
+        let html = self
+            .public_get_text(&format!("/playlist?id={playlist_id}"))
+            .await?;
+        Ok(parse_related_playlists(&html))
+    }
+
+    /// 批量专辑封面（oracle：逐张 album_detail 聚合）。
+    pub async fn album_covers_batch(&self, ids: &[u64]) -> Result<Vec<AlbumCover>> {
+        let mut out = Vec::new();
+        for id in ids {
+            if let Ok(album) = self.album_detail(*id).await {
+                out.push(AlbumCover {
+                    id: *id,
+                    cover_url: album.album.pic_url,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// 相似艺人（oracle：weapi `/api/discovery/simiArtist`）。
+    pub async fn similar_artists(&self, id: u64) -> Result<Vec<ArtistSummary>> {
+        positive_id(id)?;
+        let body = self
+            .eapi(
+                "/api/discovery/simiArtist",
+                json!({"artistid": id}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "artists").map(map_artist_summary).collect())
+    }
+
+    /// 更新歌单封面（oracle：NOS 上传 `/api/nos/token/alloc` → 裸传 → cover/update）。
+    pub async fn update_playlist_cover(
+        &self,
+        playlist_id: u64,
+        image_bytes: &[u8],
+        mime_type: &str,
+    ) -> Result<MutationResult> {
+        positive_id(playlist_id)?;
+        if image_bytes.is_empty() || image_bytes.len() > 10 * 1024 * 1024 {
+            return Err(Error::Validation("封面图片无效或体积过大".into()));
+        }
+        let body = self
+            .protected_write(
+                "/api/nos/token/alloc",
+                json!({
+                    "bucket": "yyimgs",
+                    "ext": "jpg",
+                    "filename": format!("playlist-{playlist_id}.jpg"),
+                    "local": false,
+                    "nos_product": 0,
+                    "return_body": "{\"code\":200,\"size\":\"$(ObjectSize)\"}",
+                    "type": "other",
+                }),
+                false,
+            )
+            .await?;
+        let result = body.get("result").unwrap_or(&Value::Null);
+        let object_key = string(result, "objectKey");
+        let token = string(result, "token");
+        let doc_id = string(result, "docId");
+        if object_key.is_empty() || token.is_empty() || doc_id.is_empty() {
+            return Err(Error::InvalidResponse("封面上传凭证获取失败".into()));
+        }
+        let mut headers = BTreeMap::new();
+        headers.insert("x-nos-token".into(), token);
+        headers.insert("Content-Type".into(), mime_type.into());
+        let upload_url = format!(
+            "https://nosup-hz1.127.net/yyimgs/{object_key}?offset=0&complete=true&version=1.0"
+        );
+        self.raw_post_bytes(&upload_url, &headers, image_bytes.to_vec())
+            .await
+            .map_err(|_| Error::Transport("封面上传失败".into()))?;
+        self.protected_write(
+            "/api/playlist/cover/update",
+            json!({"id": playlist_id, "coverImgId": doc_id}),
+            false,
+        )
+        .await?;
+        Ok(success())
+    }
+
+    /// 无限推荐下一批（oracle `getExploreNext` 语义：批次轮换地区 + 去重补池）。
+    pub async fn explore_next(
+        &self,
+        count: usize,
+        batch: usize,
+        exclude: &[u64],
+    ) -> Result<ExploreNextResult> {
+        let count = count.clamp(10, 60);
+        let area_ids = [0_u16, 7, 96, 8, 16];
+        let area = area_ids[(batch.saturating_sub(1)) % area_ids.len()];
+        let logged_in = self.session().is_logged_in();
+
+        let mut candidates: Vec<Track> = Vec::new();
+        if logged_in {
+            if let Ok(tracks) = self.personal_fm_batched(count, 6).await {
+                candidates.extend(tracks);
+            }
+            if let Ok(tracks) = self.recommend_songs().await {
+                candidates.extend(tracks);
+            }
+        }
+        if let Ok(tracks) = self.personalized_new_songs(100).await {
+            candidates.extend(tracks);
+        }
+        if let Ok(tracks) = self.new_songs(area).await {
+            candidates.extend(tracks);
+        }
+        if let Ok(playlists) = self
+            .personalized_playlists(PageRequest {
+                limit: 30,
+                offset: 0,
+            })
+            .await
+        {
+            let rotated = if playlists.is_empty() {
+                Vec::new()
+            } else {
+                let start = (batch * 3) % playlists.len();
+                playlists
+                    .iter()
+                    .cycle()
+                    .skip(start)
+                    .take(4)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            for playlist in rotated {
+                if let Ok(tracks) = self
+                    .playlist_tracks(
+                        playlist.id,
+                        PageRequest {
+                            limit: 80,
+                            offset: 0,
+                        },
+                    )
+                    .await
+                {
+                    candidates.extend(tracks);
+                }
+            }
+        }
+
+        let mut seen: HashSet<u64> = exclude.iter().copied().collect();
+        let mut songs = Vec::new();
+        for track in candidates {
+            if track.id == 0 || seen.contains(&track.id) {
+                continue;
+            }
+            seen.insert(track.id);
+            songs.push(track);
+            if songs.len() >= count {
+                break;
+            }
+        }
+        Ok(ExploreNextResult {
+            songs,
+            batch,
+            has_more: true,
+        })
     }
 
     /// 聚合未登录即可访问的发现内容。单个上游失败只标记对应分区；全部失败时返回错误。
@@ -1850,6 +2171,44 @@ fn map_recent_play(value: &Value) -> RecentPlay {
         played_at_ms,
         resource,
     }
+}
+
+/// 从网易云歌单网页 HTML 中提取相关歌单（oracle 同款正则语义：
+/// `<a href="/playlist?id=N">名字</a>` 后 400 字符内的 `<img src="封面">`）。
+pub(crate) fn parse_related_playlists(html: &str) -> Vec<PlaylistSummary> {
+    let pattern = regex::Regex::new(
+        r#"<a href="(/playlist\?id=(\d+))"[^>]*>([^<]+)</a>[\s\S]{0,400}?<img src="([^"]+)""#,
+    )
+    .expect("related playlist regex is static");
+    let mut out = Vec::new();
+    for captures in pattern.captures_iter(html) {
+        let name = captures.get(3).map(|m| m.as_str().trim()).unwrap_or("");
+        let id = captures
+            .get(2)
+            .and_then(|m| m.as_str().parse::<u64>().ok())
+            .unwrap_or(0);
+        if id == 0 || name.is_empty() {
+            continue;
+        }
+        let cover_url = captures
+            .get(4)
+            .map(|m| m.as_str().split("?param=").next().unwrap_or("").to_owned())
+            .filter(|url| !url.is_empty());
+        out.push(PlaylistSummary {
+            id,
+            name: name.to_owned(),
+            cover_url,
+            track_count: 0,
+            play_count: None,
+            owner_id: 0,
+            owner_name: None,
+            description: None,
+        });
+        if out.len() >= 30 {
+            break;
+        }
+    }
+    out
 }
 
 fn degrade_section<T>(

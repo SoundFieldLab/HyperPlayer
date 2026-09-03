@@ -1,24 +1,27 @@
 use crate::{
     dto::{
-        NeteaseAccountDto, NeteaseAlbumDetailDto, NeteaseArtistAlbumsDto, NeteaseArtistMvsDto,
-        NeteaseBannerDto, NeteaseCloudPageDto, NeteaseCommentFloorDto, NeteaseCommentPageDto,
-        NeteaseCommentsRequestDto, NeteaseCommitMutationRequestDto, NeteaseCursorRequestDto,
-        NeteaseDjPageDto, NeteaseDjProgramsRequestDto, NeteaseEventPageDto, NeteaseFavoritesDto,
-        NeteaseFmDto, NeteaseFollowsRequestDto, NeteaseHomeDto, NeteaseHotCommentsDto,
-        NeteaseHotWordDto, NeteaseImageDto, NeteaseImageRequestDto, NeteaseJourneyOverviewDto,
-        NeteaseLikedStateDto, NeteaseListenDataTodayDto, NeteaseListenReportDto,
-        NeteaseListenReportRequestDto, NeteaseListenStatsDto, NeteaseLoginPollRequestDto,
-        NeteaseLoginStartDto, NeteaseLoginStateDto, NeteaseLoginStatusDto,
-        NeteaseMutationConfirmationDto, NeteaseMutationResultDto, NeteaseMvDetailDto,
-        NeteaseMvListRequestDto, NeteaseMvPageDto, NeteaseNewSongsRequestDto, NeteaseNoticePageDto,
-        NeteasePlaylistCategoryDto, NeteasePlaylistDetailDto, NeteasePlaylistPageDto,
-        NeteasePrepareMutationRequestDto, NeteaseQualityOptionDto, NeteaseRecentPlaysDto,
-        NeteaseRecentPlaysRequestDto, NeteaseResourceRequestDto, NeteaseScrobbleDto,
-        NeteaseSearchPageDto, NeteaseSearchRequestDto, NeteaseSearchSuggestionsDto,
-        NeteaseStatusDto, NeteaseStylePreferenceDto, NeteaseSublistAlbumsDto,
+        NeteaseAccountDto, NeteaseAlbumCoversDto, NeteaseAlbumDetailDto, NeteaseArtistAlbumsDto,
+        NeteaseArtistMvsDto, NeteaseBannerDto, NeteaseCloudPageDto, NeteaseCommentFloorDto,
+        NeteaseCommentPageDto, NeteaseCommentsRequestDto, NeteaseCommitMutationRequestDto,
+        NeteaseCursorRequestDto, NeteaseDjCategoriesDto, NeteaseDjPageDto,
+        NeteaseDjProgramsRequestDto, NeteaseDjRecommendRequestDto, NeteaseEnrichedSongDto,
+        NeteaseEventPageDto, NeteaseExploreNextDto, NeteaseExploreNextRequestDto,
+        NeteaseFavoritesDto, NeteaseFmDto, NeteaseFollowsRequestDto, NeteaseHomeDto,
+        NeteaseHotCommentsDto, NeteaseHotWordDto, NeteaseImageDto, NeteaseImageRequestDto,
+        NeteaseJourneyOverviewDto, NeteaseLikedStateDto, NeteaseListenDataTodayDto,
+        NeteaseListenReportDto, NeteaseListenReportRequestDto, NeteaseListenStatsDto,
+        NeteaseLoginPollRequestDto, NeteaseLoginStartDto, NeteaseLoginStateDto,
+        NeteaseLoginStatusDto, NeteaseMutationConfirmationDto, NeteaseMutationResultDto,
+        NeteaseMvDetailDto, NeteaseMvListRequestDto, NeteaseMvPageDto, NeteaseNewSongsRequestDto,
+        NeteaseNoticePageDto, NeteasePlaylistCategoryDto, NeteasePlaylistDetailDto,
+        NeteasePlaylistPageDto, NeteasePrepareMutationRequestDto, NeteaseQualityOptionDto,
+        NeteaseRecentPlaysDto, NeteaseRecentPlaysRequestDto, NeteaseResourceRequestDto,
+        NeteaseScrobbleDto, NeteaseSearchPageDto, NeteaseSearchRequestDto,
+        NeteaseSearchSuggestionsDto, NeteaseSimilarArtistsDto, NeteaseSongRelatedBlogsDto,
+        NeteaseSongWikiDto, NeteaseStatusDto, NeteaseStylePreferenceDto, NeteaseSublistAlbumsDto,
         NeteaseSublistArtistsDto, NeteaseSublistMvsDto, NeteaseTracksDto,
-        NeteaseUserEventsRequestDto, NeteaseUserLevelDto, NeteaseUserPageDto,
-        NeteaseUserSubcountDto, PageRequestDto,
+        NeteaseUpdatePlaylistCoverRequestDto, NeteaseUserEventsRequestDto, NeteaseUserLevelDto,
+        NeteaseUserPageDto, NeteaseUserSubcountDto, PageRequestDto,
     },
     error::CommandResult,
     events,
@@ -94,6 +97,20 @@ pub const NETEASE_COMMAND_NAMES: &[&str] = &[
     "netease_recent_plays",
     "netease_similar_songs",
     "netease_song_quality_levels",
+    "netease_dj_categories",
+    "netease_dj_recommend",
+    "netease_dj_program_toplist",
+    "netease_dj_sublist",
+    "netease_personalized_dj_radios",
+    "netease_song_wiki",
+    "netease_song_related_blogs",
+    "netease_song_detail_enriched",
+    "netease_playmode_intelligence_list",
+    "netease_related_playlists",
+    "netease_album_covers_batch",
+    "netease_similar_artists",
+    "netease_explore_next",
+    "netease_update_playlist_cover",
     "netease_scrobble",
     "netease_logout",
 ];
@@ -646,4 +663,147 @@ pub async fn netease_scrobble(
             .scrobble(request.id, position_ms)
             .await,
     )
+}
+
+// ---- Stage 16 第二批：长尾路由 ----
+#[tauri::command]
+pub async fn netease_dj_categories(
+    state: State<'_, AppState>,
+) -> CommandResult<NeteaseDjCategoriesDto> {
+    super::command(state.services.netease.dj_categories().await)
+}
+
+#[tauri::command]
+pub async fn netease_dj_recommend(
+    state: State<'_, AppState>,
+    request: NeteaseDjRecommendRequestDto,
+) -> CommandResult<NeteaseDjPageDto> {
+    super::command(
+        state
+            .services
+            .netease
+            .dj_recommend(request.limit.unwrap_or(6))
+            .await,
+    )
+}
+
+#[tauri::command]
+pub async fn netease_dj_program_toplist(
+    state: State<'_, AppState>,
+    page: PageRequestDto,
+) -> CommandResult<NeteaseDjPageDto> {
+    super::command(state.services.netease.dj_program_toplist(page).await)
+}
+
+#[tauri::command]
+pub async fn netease_dj_sublist(
+    state: State<'_, AppState>,
+    page: PageRequestDto,
+) -> CommandResult<NeteaseDjPageDto> {
+    super::command(state.services.netease.dj_sublist(page).await)
+}
+
+#[tauri::command]
+pub async fn netease_personalized_dj_radios(
+    state: State<'_, AppState>,
+    request: NeteaseDjRecommendRequestDto,
+) -> CommandResult<NeteaseDjPageDto> {
+    super::command(
+        state
+            .services
+            .netease
+            .personalized_dj_radios(request.limit.unwrap_or(30))
+            .await,
+    )
+}
+
+#[tauri::command]
+pub async fn netease_song_wiki(
+    state: State<'_, AppState>,
+    request: NeteaseResourceRequestDto,
+) -> CommandResult<NeteaseSongWikiDto> {
+    super::command(state.services.netease.song_wiki(request.id).await)
+}
+
+#[tauri::command]
+pub async fn netease_song_related_blogs(
+    state: State<'_, AppState>,
+    request: NeteaseResourceRequestDto,
+) -> CommandResult<NeteaseSongRelatedBlogsDto> {
+    super::command(
+        state
+            .services
+            .netease
+            .song_related_blogs(request.id, 1, 5)
+            .await,
+    )
+}
+
+#[tauri::command]
+pub async fn netease_song_detail_enriched(
+    state: State<'_, AppState>,
+    request: NeteaseResourceRequestDto,
+) -> CommandResult<NeteaseEnrichedSongDto> {
+    super::command(
+        state
+            .services
+            .netease
+            .song_detail_enriched(request.id)
+            .await,
+    )
+}
+
+#[tauri::command]
+pub async fn netease_playmode_intelligence_list(
+    state: State<'_, AppState>,
+    request: NeteaseResourceRequestDto,
+    playlist_id: u64,
+) -> CommandResult<NeteaseTracksDto> {
+    super::command(
+        state
+            .services
+            .netease
+            .playmode_intelligence_list(request.id, playlist_id, 30)
+            .await,
+    )
+}
+
+#[tauri::command]
+pub async fn netease_related_playlists(
+    state: State<'_, AppState>,
+    request: NeteaseResourceRequestDto,
+) -> CommandResult<NeteasePlaylistPageDto> {
+    super::command(state.services.netease.related_playlists(request.id).await)
+}
+
+#[tauri::command]
+pub async fn netease_album_covers_batch(
+    state: State<'_, AppState>,
+    ids: Vec<u64>,
+) -> CommandResult<NeteaseAlbumCoversDto> {
+    super::command(state.services.netease.album_covers_batch(ids).await)
+}
+
+#[tauri::command]
+pub async fn netease_similar_artists(
+    state: State<'_, AppState>,
+    request: NeteaseResourceRequestDto,
+) -> CommandResult<NeteaseSimilarArtistsDto> {
+    super::command(state.services.netease.similar_artists(request.id).await)
+}
+
+#[tauri::command]
+pub async fn netease_explore_next(
+    state: State<'_, AppState>,
+    request: NeteaseExploreNextRequestDto,
+) -> CommandResult<NeteaseExploreNextDto> {
+    super::command(state.services.netease.explore_next(request).await)
+}
+
+#[tauri::command]
+pub async fn netease_update_playlist_cover(
+    state: State<'_, AppState>,
+    request: NeteaseUpdatePlaylistCoverRequestDto,
+) -> CommandResult<NeteaseMutationResultDto> {
+    super::command(state.services.netease.update_playlist_cover(request).await)
 }

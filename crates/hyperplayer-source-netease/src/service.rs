@@ -109,7 +109,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             anti_cheat_token: Mutex::new(None),
         }
     }
-    fn session(&self) -> MutexGuard<'_, Session> {
+    pub(crate) fn session(&self) -> MutexGuard<'_, Session> {
         self.session.lock().unwrap()
     }
 
@@ -254,6 +254,98 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
     }
     /// clientlog 通道（听歌打卡等打点）：固定 clientlog 域 + os=osx 设备 cookie，
     /// 失败不抛错（打点不阻塞播放），返回是否成功。
+    /// 公开无加密 GET（相关歌单网页等）：域名 music.163.com，仅读，无 Cookie 注入。
+    pub async fn public_get(&self, path: &str) -> Result<Value> {
+        self.ensure_enabled()?;
+        let response = self
+            .transport
+            .execute(HttpRequest {
+                method: Method::Get,
+                url: format!("{}{}", base_url(Channel::Public).unwrap(), path),
+                headers: BTreeMap::new(),
+                body: Vec::new(),
+                timeout: Duration::from_secs(12),
+            })
+            .await?;
+        self.decode_json_raw(response.status, &response.body)
+    }
+
+    /// 公开无加密 GET 原文（相关歌单 HTML 网页解析用）。
+    /// 裸二进制 POST（NOS 对象存储上传）：自定义域名 + 请求头，无加密。
+    pub async fn raw_post_bytes(
+        &self,
+        url: &str,
+        headers: &BTreeMap<String, String>,
+        body: Vec<u8>,
+    ) -> Result<()> {
+        self.ensure_enabled()?;
+        let response = self
+            .transport
+            .execute(HttpRequest {
+                method: Method::Post,
+                url: url.into(),
+                headers: headers.clone(),
+                body,
+                timeout: Duration::from_secs(30),
+            })
+            .await?;
+        if !(200..300).contains(&response.status) {
+            return Err(Error::Transport(format!("HTTP {}", response.status)));
+        }
+        Ok(())
+    }
+
+    pub async fn public_get_text(&self, path: &str) -> Result<String> {
+        self.ensure_enabled()?;
+        let response = self
+            .transport
+            .execute(HttpRequest {
+                method: Method::Get,
+                url: format!("{}{}", base_url(Channel::Public).unwrap(), path),
+                headers: BTreeMap::new(),
+                body: Vec::new(),
+                timeout: Duration::from_secs(12),
+            })
+            .await?;
+        if !(200..300).contains(&response.status) {
+            return Err(Error::Transport(format!("HTTP {}", response.status)));
+        }
+        String::from_utf8(response.body)
+            .map_err(|e| Error::InvalidResponse(format!("非 UTF-8 响应: {e}")))
+    }
+
+    /// 公开无加密 POST（专辑播客等）：表单编码，无 Cookie 注入。
+    pub async fn public_post_form(&self, path: &str, fields: &[(&str, String)]) -> Result<Value> {
+        self.ensure_enabled()?;
+        let body = fields
+            .iter()
+            .map(|(key, value)| format!("{}={}", percent_encode(key), percent_encode(value)))
+            .collect::<Vec<_>>()
+            .join("&")
+            .into_bytes();
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            "Content-Type".into(),
+            "application/x-www-form-urlencoded".into(),
+        );
+        headers.insert(
+            "User-Agent".into(),
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".into(),
+        );
+        headers.insert("Referer".into(), "https://music.163.com/".into());
+        let response = self
+            .transport
+            .execute(HttpRequest {
+                method: Method::Post,
+                url: format!("{}{}", base_url(Channel::Public).unwrap(), path),
+                headers,
+                body,
+                timeout: Duration::from_secs(15),
+            })
+            .await?;
+        self.decode_json_raw(response.status, &response.body)
+    }
+
     pub async fn clientlog_eapi(&self, path: &str, payload: Value) -> Result<bool> {
         // 打点接口无产品语义返回值；网络失败/非 2xx 一律降级为 false（不阻塞播放）。
         match self
@@ -1911,5 +2003,99 @@ mod tests {
         ]);
         let result = block_on(svc.scrobble(42, 1234)).unwrap();
         assert!(result.reported);
+    }
+
+    #[test]
+    fn dj_categories_and_recommend_and_sublist_map_radios() {
+        let svc = service(vec![
+            response(json!({"code":200,"categories":[{"name":"流行","id":"1"}]})),
+            response(json!({"code":200,"djRadios":[{"id":1,"name":"电台A"}]})),
+            response(json!({"code":200,"djRadios":[{"id":2,"name":"电台B"}]})),
+            response(
+                json!({"code":200,"toplist":[{"id":3,"name":"节目","mainSong":{"id":9,"name":"主歌"}}]}),
+            ),
+        ]);
+        let cats = block_on(svc.dj_categories()).unwrap();
+        assert_eq!(cats[0].name, "流行");
+        let recommend = block_on(svc.dj_recommend(6)).unwrap();
+        assert_eq!(recommend[0].name, "电台A");
+        let sublist = block_on(svc.dj_sublist(PageRequest {
+            limit: 30,
+            offset: 0,
+        }))
+        .unwrap();
+        assert_eq!(sublist[0].id, 2);
+        let toplist = block_on(svc.dj_program_toplist(PageRequest {
+            limit: 30,
+            offset: 0,
+        }))
+        .unwrap();
+        assert_eq!(toplist[0].name, "节目");
+    }
+
+    #[test]
+    fn song_wiki_and_related_blogs_hit_expected_channels() {
+        let svc = service(vec![
+            response(json!({"code":200,"data":{"type":"SONG"}})),
+            response(json!({"code":200,"data":{"total":0}})),
+        ]);
+        let wiki = block_on(svc.song_wiki(7)).unwrap();
+        assert_eq!(wiki["data"]["type"], "SONG");
+        let blogs = block_on(svc.song_related_blogs(7, 1, 5)).unwrap();
+        assert_eq!(blogs["data"]["total"], 0);
+    }
+
+    #[test]
+    fn playmode_intelligence_and_similar_artists_map_lists() {
+        let svc = service(vec![
+            response(json!({"code":200,"data":[{"id":1,"name":"s"}]})),
+            response(json!({"code":200,"artists":[{"id":2,"name":"a"}]})),
+        ]);
+        let list = block_on(svc.playmode_intelligence_list(1, 2, 30)).unwrap();
+        assert_eq!(list[0].name, "s");
+        let artists = block_on(svc.similar_artists(2)).unwrap();
+        assert_eq!(artists[0].name, "a");
+    }
+
+    #[test]
+    fn enriched_song_combines_detail_quality_and_album() {
+        let svc = service(vec![
+            response(
+                json!({"code":200,"songs":[{"id":1,"name":"s","ar":[{"id":2,"name":"a"}],"al":{"id":3,"name":"al"},"dt":1000}]}),
+            ),
+            response(json!({"code":200,"data":{"lossless":{"br":900,"size":100,"sr":44100}}})),
+            response(json!({"code":200,"album":{"id":3,"name":"al"},"songs":[]})),
+        ]);
+        let enriched = block_on(svc.song_detail_enriched(1)).unwrap();
+        assert_eq!(enriched.track.name, "s");
+        assert_eq!(enriched.quality_levels[0].key, "lossless");
+        assert!(enriched.album_extra.is_some());
+    }
+
+    #[test]
+    fn album_covers_batch_skips_failures() {
+        let svc = service(vec![
+            response(json!({"code":200,"album":{"id":1,"name":"a","picUrl":"cover"},"songs":[]})),
+            Err(crate::Error::Transport("album down".into())),
+        ]);
+        let covers = block_on(svc.album_covers_batch(&[1, 2])).unwrap();
+        assert_eq!(covers.len(), 1);
+        assert_eq!(covers[0].id, 1);
+        assert_eq!(covers[0].cover_url.as_deref(), Some("cover"));
+    }
+
+    #[test]
+    fn related_playlists_parses_html_links() {
+        // 真实网易云歌单页结构：`<a href="/playlist?id=N">名字</a>` 后 400 字符内 `<img src>`。
+        let html = r#"<li><a href="/playlist?id=123" class="msk">抖音热歌</a><div class="cver"><img src="//p1.music.126.net/a.jpg?param=140y140"/></div></li><li><a href="/playlist?id=456" class="msk">欧美金曲</a><div class="cver"><img src="//p1.music.126.net/b.jpg?param=140y140"/></div></li>"#;
+        let parsed = crate::domains::parse_related_playlists(html);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].id, 123);
+        assert_eq!(parsed[0].name, "抖音热歌");
+        assert_eq!(
+            parsed[0].cover_url.as_deref(),
+            Some("//p1.music.126.net/a.jpg")
+        );
+        assert_eq!(parsed[1].id, 456);
     }
 }

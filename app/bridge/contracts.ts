@@ -423,6 +423,16 @@ export interface NeteaseRecentPlayDto { playedAtMs: number; resourceType: string
 export interface NeteaseRecentPlaysDto { items: NeteaseRecentPlayDto[]; }
 export interface NeteaseQualityOptionDto { key: string; label: string; bitrate: number; sizeBytes: number; sampleRate: number | null; }
 export interface NeteaseScrobbleDto { reported: boolean; }
+export interface NeteaseDjCategoriesDto { categories: NeteasePlaylistCategoryDto[]; }
+export interface NeteaseSongWikiDto { data: unknown; }
+export interface NeteaseSongRelatedBlogsDto { data: unknown; }
+export interface NeteaseAlbumExtraDto { company: string; publishTimeMs: number | null; }
+export interface NeteaseEnrichedSongDto { track: BackendTrackDto; qualityLevels: NeteaseQualityOptionDto[]; albumExtra: NeteaseAlbumExtraDto | null; }
+export interface NeteaseAlbumCoverDto { id: number; coverUrl: string | null; }
+export interface NeteaseAlbumCoversDto { covers: NeteaseAlbumCoverDto[]; }
+export interface NeteaseExploreNextDto { songs: BackendTrackDto[]; batch: number; hasMore: boolean; }
+export interface NeteaseSimilarArtistsDto { artists: NeteaseArtistSummaryDto[]; nextCursor: string | null; }
+export interface NeteaseUpdatePlaylistCoverRequestDto { playlistId: number; imageBase64: string; mimeType: string | null; }
 
 export interface NeteaseImageDto {
   mimeType: string;
@@ -724,6 +734,20 @@ export interface BridgeContract {
   neteaseSimilarSongs(id: number): Promise<NeteaseTracksDto>;
   neteaseSongQualityLevels(id: number): Promise<NeteaseQualityOptionDto[]>;
   neteaseScrobble(id: number, positionMs: number): Promise<NeteaseScrobbleDto>;
+  neteaseDjCategories(): Promise<NeteaseDjCategoriesDto>;
+  neteaseDjRecommend(limit?: number): Promise<NeteaseDjPageDto>;
+  neteaseDjProgramToplist(cursor?: string | null): Promise<NeteaseDjPageDto>;
+  neteaseDjSublist(cursor?: string | null): Promise<NeteaseDjPageDto>;
+  neteasePersonalizedDjRadios(limit?: number): Promise<NeteaseDjPageDto>;
+  neteaseSongWiki(id: number): Promise<NeteaseSongWikiDto>;
+  neteaseSongRelatedBlogs(albumId: number): Promise<NeteaseSongRelatedBlogsDto>;
+  neteaseSongDetailEnriched(id: number): Promise<NeteaseEnrichedSongDto>;
+  neteasePlaymodeIntelligenceList(songId: number, playlistId: number): Promise<NeteaseTracksDto>;
+  neteaseRelatedPlaylists(playlistId: number): Promise<NeteasePlaylistPageDto>;
+  neteaseAlbumCoversBatch(ids: number[]): Promise<NeteaseAlbumCoversDto>;
+  neteaseSimilarArtists(artistId: number): Promise<NeteaseSimilarArtistsDto>;
+  neteaseExploreNext(count?: number, batch?: number, exclude?: number[]): Promise<NeteaseExploreNextDto>;
+  neteaseUpdatePlaylistCover(playlistId: number, imageBase64: string, mimeType?: string): Promise<NeteaseMutationResultDto>;
   cacheStats(): Promise<CacheStatsDto>;
   cacheStatus(track: BackendTrackRefDto): Promise<BackendCacheStatusDto>;
   cacheTrack(track: BackendTrackRefDto, quality: string): Promise<TaskAcceptedDto>;

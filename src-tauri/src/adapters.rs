@@ -1,16 +1,17 @@
 use crate::{
     adapter_mapping::{
-        netease_album_detail_dto, netease_album_dto, netease_artist_detail_dto,
-        netease_artist_summary_dto, netease_banner_dto, netease_chart_dto, netease_cloud_page_dto,
-        netease_comment_dto, netease_comment_page_dto, netease_dj_program_dto,
-        netease_dj_radio_dto, netease_event_page_dto, netease_hot_word_dto,
-        netease_journey_overview_dto, netease_liked_state_dto, netease_listen_data_today_dto,
-        netease_listen_report_dto, netease_listen_stats_dto, netease_login_status_dto,
-        netease_mv_detail_dto, netease_mv_dto, netease_notice_page_dto,
-        netease_playlist_category_dto, netease_playlist_detail_dto, netease_playlist_dto,
-        netease_quality_option_dto, netease_recent_play_dto, netease_search_suggestions_dto,
-        netease_style_preference_dto, netease_track_dto, netease_user_dto, netease_user_level_dto,
-        netease_user_subcount_dto, netease_vip_dto, track_dto,
+        netease_album_cover_dto, netease_album_detail_dto, netease_album_dto,
+        netease_artist_detail_dto, netease_artist_summary_dto, netease_banner_dto,
+        netease_chart_dto, netease_cloud_page_dto, netease_comment_dto, netease_comment_page_dto,
+        netease_dj_program_dto, netease_dj_radio_dto, netease_enriched_song_dto,
+        netease_event_page_dto, netease_hot_word_dto, netease_journey_overview_dto,
+        netease_liked_state_dto, netease_listen_data_today_dto, netease_listen_report_dto,
+        netease_listen_stats_dto, netease_login_status_dto, netease_mv_detail_dto, netease_mv_dto,
+        netease_notice_page_dto, netease_playlist_category_dto, netease_playlist_detail_dto,
+        netease_playlist_dto, netease_quality_option_dto, netease_recent_play_dto,
+        netease_search_suggestions_dto, netease_style_preference_dto, netease_track_dto,
+        netease_user_dto, netease_user_level_dto, netease_user_subcount_dto, netease_vip_dto,
+        track_dto,
     },
     credential_vault::CredentialVault,
     dto::*,
@@ -3438,6 +3439,159 @@ impl NeteasePort for NeteaseAdapter {
         self.status()
     }
 
+    // ---- Stage 16 第二批：长尾路由 ----
+    async fn dj_categories(&self) -> AppResult<NeteaseDjCategoriesDto> {
+        let categories = self.require_service()?.dj_categories().await?;
+        Ok(NeteaseDjCategoriesDto {
+            categories: categories
+                .into_iter()
+                .map(netease_playlist_category_dto)
+                .collect(),
+        })
+    }
+
+    async fn dj_recommend(&self, limit: usize) -> AppResult<NeteaseDjPageDto> {
+        let radios = self.require_service()?.dj_recommend(limit).await?;
+        Ok(NeteaseDjPageDto {
+            radios: radios.into_iter().map(netease_dj_radio_dto).collect(),
+            programs: vec![],
+            next_cursor: None,
+        })
+    }
+
+    async fn dj_program_toplist(&self, page: PageRequestDto) -> AppResult<NeteaseDjPageDto> {
+        let page = netease_page(&page)?;
+        let offset = page.offset;
+        let limit = page.limit;
+        let programs = self.require_service()?.dj_program_toplist(page).await?;
+        let count = programs.len();
+        Ok(NeteaseDjPageDto {
+            radios: vec![],
+            programs: programs.into_iter().map(netease_dj_program_dto).collect(),
+            next_cursor: (count == limit).then(|| (offset + count).to_string()),
+        })
+    }
+
+    async fn dj_sublist(&self, page: PageRequestDto) -> AppResult<NeteaseDjPageDto> {
+        let page = netease_page(&page)?;
+        let offset = page.offset;
+        let limit = page.limit;
+        let radios = self.require_service()?.dj_sublist(page).await?;
+        let count = radios.len();
+        Ok(NeteaseDjPageDto {
+            radios: radios.into_iter().map(netease_dj_radio_dto).collect(),
+            programs: vec![],
+            next_cursor: (count == limit).then(|| (offset + count).to_string()),
+        })
+    }
+
+    async fn personalized_dj_radios(&self, limit: usize) -> AppResult<NeteaseDjPageDto> {
+        let radios = self
+            .require_service()?
+            .personalized_dj_radios(limit)
+            .await?;
+        Ok(NeteaseDjPageDto {
+            radios: radios.into_iter().map(netease_dj_radio_dto).collect(),
+            programs: vec![],
+            next_cursor: None,
+        })
+    }
+
+    async fn song_wiki(&self, id: u64) -> AppResult<NeteaseSongWikiDto> {
+        validate_positive_id(id, "songId")?;
+        Ok(NeteaseSongWikiDto {
+            data: self.require_service()?.song_wiki(id).await?,
+        })
+    }
+
+    async fn song_related_blogs(
+        &self,
+        album_id: u64,
+        page: u64,
+        count: u64,
+    ) -> AppResult<NeteaseSongRelatedBlogsDto> {
+        validate_positive_id(album_id, "albumId")?;
+        Ok(NeteaseSongRelatedBlogsDto {
+            data: self
+                .require_service()?
+                .song_related_blogs(album_id, page, count)
+                .await?,
+        })
+    }
+
+    async fn song_detail_enriched(&self, id: u64) -> AppResult<NeteaseEnrichedSongDto> {
+        validate_positive_id(id, "songId")?;
+        let enriched = self.require_service()?.song_detail_enriched(id).await?;
+        Ok(netease_enriched_song_dto(enriched))
+    }
+
+    async fn playmode_intelligence_list(
+        &self,
+        song_id: u64,
+        playlist_id: u64,
+        count: usize,
+    ) -> AppResult<NeteaseTracksDto> {
+        validate_positive_id(song_id, "songId")?;
+        validate_positive_id(playlist_id, "playlistId")?;
+        let tracks = self
+            .require_service()?
+            .playmode_intelligence_list(song_id, playlist_id, count)
+            .await?;
+        Ok(NeteaseTracksDto {
+            tracks: tracks.into_iter().map(netease_track_dto).collect(),
+        })
+    }
+
+    async fn related_playlists(&self, playlist_id: u64) -> AppResult<NeteasePlaylistPageDto> {
+        validate_positive_id(playlist_id, "playlistId")?;
+        let playlists = self
+            .require_service()?
+            .related_playlists(playlist_id)
+            .await?;
+        Ok(NeteasePlaylistPageDto {
+            playlists: playlists.into_iter().map(netease_playlist_dto).collect(),
+            next_cursor: None,
+        })
+    }
+
+    async fn album_covers_batch(&self, ids: Vec<u64>) -> AppResult<NeteaseAlbumCoversDto> {
+        let covers = self.require_service()?.album_covers_batch(&ids).await?;
+        Ok(NeteaseAlbumCoversDto {
+            covers: covers.into_iter().map(netease_album_cover_dto).collect(),
+        })
+    }
+
+    async fn similar_artists(&self, id: u64) -> AppResult<NeteaseSimilarArtistsDto> {
+        validate_positive_id(id, "artistId")?;
+        let artists = self.require_service()?.similar_artists(id).await?;
+        Ok(NeteaseSimilarArtistsDto {
+            artists: artists
+                .into_iter()
+                .map(netease_artist_summary_dto)
+                .collect(),
+            next_cursor: None,
+        })
+    }
+
+    async fn explore_next(
+        &self,
+        request: NeteaseExploreNextRequestDto,
+    ) -> AppResult<NeteaseExploreNextDto> {
+        let result = self
+            .require_service()?
+            .explore_next(
+                request.count.unwrap_or(30),
+                request.batch.unwrap_or(1),
+                &request.exclude,
+            )
+            .await?;
+        Ok(NeteaseExploreNextDto {
+            songs: result.songs.into_iter().map(netease_track_dto).collect(),
+            batch: result.batch,
+            has_more: result.has_more,
+        })
+    }
+
     // ---- Stage 16：发现/社交/用户能力 ----
     async fn search_hot(&self) -> AppResult<Vec<NeteaseHotWordDto>> {
         let words = self.require_service()?.search_hot().await?;
@@ -3755,6 +3909,26 @@ impl NeteasePort for NeteaseAdapter {
             .await?;
         Ok(NeteaseScrobbleDto {
             reported: result.reported,
+        })
+    }
+
+    async fn update_playlist_cover(
+        &self,
+        request: NeteaseUpdatePlaylistCoverRequestDto,
+    ) -> AppResult<NeteaseMutationResultDto> {
+        validate_positive_id(request.playlist_id, "playlistId")?;
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&request.image_base64)
+            .map_err(|_| AppError::InvalidArgument("封面图片 base64 无效".into()))?;
+        let mime = request.mime_type.as_deref().unwrap_or("image/jpeg");
+        self.require_service()?
+            .update_playlist_cover(request.playlist_id, &bytes, mime)
+            .await?;
+        Ok(NeteaseMutationResultDto {
+            succeeded: true,
+            created_playlist: None,
+            comment: None,
         })
     }
 

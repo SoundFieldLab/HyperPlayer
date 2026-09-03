@@ -281,6 +281,37 @@ pub trait NeteasePort: Send + Sync {
     async fn similar_songs(&self, id: u64, limit: usize) -> AppResult<NeteaseTracksDto>;
     async fn song_quality_levels(&self, id: u64) -> AppResult<Vec<NeteaseQualityOptionDto>>;
     async fn scrobble(&self, song_id: u64, position_ms: u64) -> AppResult<NeteaseScrobbleDto>;
+    // ---- Stage 16 第二批：长尾路由 ----
+    async fn dj_categories(&self) -> AppResult<NeteaseDjCategoriesDto>;
+    async fn dj_recommend(&self, limit: usize) -> AppResult<NeteaseDjPageDto>;
+    async fn dj_program_toplist(&self, page: PageRequestDto) -> AppResult<NeteaseDjPageDto>;
+    async fn dj_sublist(&self, page: PageRequestDto) -> AppResult<NeteaseDjPageDto>;
+    async fn personalized_dj_radios(&self, limit: usize) -> AppResult<NeteaseDjPageDto>;
+    async fn song_wiki(&self, id: u64) -> AppResult<NeteaseSongWikiDto>;
+    async fn song_related_blogs(
+        &self,
+        album_id: u64,
+        page: u64,
+        count: u64,
+    ) -> AppResult<NeteaseSongRelatedBlogsDto>;
+    async fn song_detail_enriched(&self, id: u64) -> AppResult<NeteaseEnrichedSongDto>;
+    async fn playmode_intelligence_list(
+        &self,
+        song_id: u64,
+        playlist_id: u64,
+        count: usize,
+    ) -> AppResult<NeteaseTracksDto>;
+    async fn related_playlists(&self, playlist_id: u64) -> AppResult<NeteasePlaylistPageDto>;
+    async fn album_covers_batch(&self, ids: Vec<u64>) -> AppResult<NeteaseAlbumCoversDto>;
+    async fn similar_artists(&self, id: u64) -> AppResult<NeteaseSimilarArtistsDto>;
+    async fn explore_next(
+        &self,
+        request: NeteaseExploreNextRequestDto,
+    ) -> AppResult<NeteaseExploreNextDto>;
+    async fn update_playlist_cover(
+        &self,
+        request: NeteaseUpdatePlaylistCoverRequestDto,
+    ) -> AppResult<NeteaseMutationResultDto>;
 }
 
 #[async_trait::async_trait]

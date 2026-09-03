@@ -175,7 +175,7 @@ describe("bridge contract adapters", () => {
   });
 
   it("declares every newly connected command", () => {
-    expect(Object.values(TAURI_COMMANDS)).toHaveLength(125);
+    expect(Object.values(TAURI_COMMANDS)).toHaveLength(139);
     expect(Object.values(TAURI_COMMANDS)).toEqual(expect.arrayContaining([
       "playback_stop", "playback_next", "playback_previous", "playback_set_repeat_mode",
       "library_overview", "library_query_tracks", "library_register_location", "library_start_scan", "library_cancel_scan",
@@ -189,6 +189,9 @@ describe("bridge contract adapters", () => {
       "netease_dislike_recommend_song", "netease_check_songs_liked", "netease_hot_comments", "netease_comment_floor", "netease_msg_comments", "netease_user_followeds",
       "netease_user_level", "netease_user_subcount", "netease_style_preference", "netease_login_status", "netease_listen_data_today", "netease_journey_overview",
       "netease_recent_plays", "netease_similar_songs", "netease_song_quality_levels", "netease_scrobble",
+      "netease_dj_categories", "netease_dj_recommend", "netease_dj_program_toplist", "netease_dj_sublist", "netease_personalized_dj_radios",
+      "netease_song_wiki", "netease_song_related_blogs", "netease_song_detail_enriched", "netease_playmode_intelligence_list",
+      "netease_related_playlists", "netease_album_covers_batch", "netease_similar_artists", "netease_explore_next", "netease_update_playlist_cover",
       "cache_stats", "cache_status", "cache_track", "cache_remove", "cache_clear", "lyrics_get",
       "window_show", "window_hide", "window_close", "window_set_always_on_top", "desktop_lyrics_set_click_through",
       "updater_status", "updater_check", "updater_update", "shenzhen_weather",

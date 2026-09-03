@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppSettingsDto, BridgeContract, BridgeEventHandlers, DspApplyResultDto, DspConfigurationDto, PlaybackSnapshotDto, Unlisten } from "./bridge/contracts";
+import type { AppSettingsDto, BridgeContract, BridgeEventHandlers, DspApplyResultDto, DspConfigurationDto, NeteaseEnrichedSongDto, PlaybackSnapshotDto, Unlisten } from "./bridge/contracts";
 import type { TelemetryTransport } from "./visualization/telemetry";
 
 const memoryStorage = (() => {
@@ -185,6 +185,20 @@ function mockBridge(overrides: Partial<BridgeContract> = {}): BridgeContract {
     neteaseSimilarSongs: vi.fn(async () => ({ tracks: [] })),
     neteaseSongQualityLevels: vi.fn(async () => []),
     neteaseScrobble: vi.fn(async () => ({ reported: true })),
+    neteaseDjCategories: vi.fn(async () => ({ categories: [] })),
+    neteaseDjRecommend: vi.fn(async () => ({ radios: [], programs: [], nextCursor: null })),
+    neteaseDjProgramToplist: vi.fn(async () => ({ radios: [], programs: [], nextCursor: null })),
+    neteaseDjSublist: vi.fn(async () => ({ radios: [], programs: [], nextCursor: null })),
+    neteasePersonalizedDjRadios: vi.fn(async () => ({ radios: [], programs: [], nextCursor: null })),
+    neteaseSongWiki: vi.fn(async () => ({ data: {} })),
+    neteaseSongRelatedBlogs: vi.fn(async () => ({ data: {} })),
+    neteaseSongDetailEnriched: vi.fn(async () => ({ track: { trackRef: { id: "1", source: "netease" }, title: "", artists: [], album: null, durationMs: null, qualityLabel: null, playable: true }, qualityLevels: [], albumExtra: null }) as unknown as NeteaseEnrichedSongDto),
+    neteasePlaymodeIntelligenceList: vi.fn(async () => ({ tracks: [] })),
+    neteaseRelatedPlaylists: vi.fn(async () => ({ playlists: [], nextCursor: null })),
+    neteaseAlbumCoversBatch: vi.fn(async () => ({ covers: [] })),
+    neteaseSimilarArtists: vi.fn(async () => ({ artists: [], nextCursor: null })),
+    neteaseExploreNext: vi.fn(async () => ({ songs: [], batch: 1, hasMore: true })),
+    neteaseUpdatePlaylistCover: vi.fn(async () => ({ succeeded: true, createdPlaylist: null, comment: null })),
     cacheStats: vi.fn(async () => ({ entryCount: 0, bytesUsed: 0, activeTasks: 0, lockedEntries: 0 })),
     cacheStatus: vi.fn(async (track) => ({ track, quality: null, cachedVersions: 0, status: "missing" as const, accessClass: "public" as const, ownerUserId: null, lastValidatedAt: null })),
     cacheTrack: vi.fn(async () => ({ taskId: "cache", accepted: true })),

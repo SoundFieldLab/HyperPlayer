@@ -502,3 +502,29 @@ pub(crate) fn netease_quality_option_dto(option: QualityOption) -> NeteaseQualit
         sample_rate: option.sample_rate,
     }
 }
+
+pub(crate) fn netease_enriched_song_dto(
+    enriched: hyperplayer_source_netease::EnrichedSong,
+) -> NeteaseEnrichedSongDto {
+    NeteaseEnrichedSongDto {
+        track: netease_track_dto(enriched.track),
+        quality_levels: enriched
+            .quality_levels
+            .into_iter()
+            .map(netease_quality_option_dto)
+            .collect(),
+        album_extra: enriched.album_extra.map(|extra| NeteaseAlbumExtraDto {
+            company: extra.company,
+            publish_time_ms: extra.publish_time_ms,
+        }),
+    }
+}
+
+pub(crate) fn netease_album_cover_dto(
+    cover: hyperplayer_source_netease::AlbumCover,
+) -> NeteaseAlbumCoverDto {
+    NeteaseAlbumCoverDto {
+        id: cover.id,
+        cover_url: cover.cover_url,
+    }
+}
