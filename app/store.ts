@@ -140,8 +140,10 @@ function acceptedPlaybackState(snapshot: PlaybackSnapshotDto, current: DspProces
   };
 }
 
-function nextDspRevision(configuration: DspConfigurationDto | null): string {
-  return (BigInt(configuration?.revision ?? "0") + 1n).toString();
+function nextDspRevision(configuration: DspConfigurationDto | null, pending: DspConfigurationDto | null = null): string {
+  const appliedRevision = BigInt(configuration?.revision ?? "0");
+  const pendingRevision = BigInt(pending?.revision ?? "0");
+  return (appliedRevision > pendingRevision ? appliedRevision : pendingRevision) + 1n + "";
 }
 
 function acceptedDspResult(result: DspApplyResultDto, currentPlaybackRevision: bigint | null) {
@@ -149,13 +151,12 @@ function acceptedDspResult(result: DspApplyResultDto, currentPlaybackRevision: b
     || BigInt(result.engine.dspExecution.revision) === BigInt(result.revision)
     || currentPlaybackRevision === BigInt(result.revision);
   return {
-    ...(applied
-      ? { dspConfiguration: result.configuration, dspPendingConfiguration: null }
-      : { dspPendingConfiguration: result.configuration }),
+    dspConfiguration: result.configuration,
+    dspPendingConfiguration: applied ? null : result.configuration,
     dspPartial: result.partial,
     dspUnsupportedStages: result.unsupportedStages,
     dspRejection: null,
-    dspBusy: !applied,
+    dspBusy: false,
   };
 }
 
@@ -534,7 +535,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   async configureDsp(configuration) {
-    const request = { ...configuration, revision: nextDspRevision(get().dspConfiguration) };
+    const request = { ...configuration, revision: nextDspRevision(get().dspConfiguration, get().dspPendingConfiguration) };
     set({ dspBusy: true, dspRejection: null });
     try {
       const result = await activeBridge.dspConfigure(request);
@@ -547,7 +548,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   async applyDspPreset(presetId) {
     set({ dspBusy: true, dspRejection: null });
     try {
-      const result = await activeBridge.dspApplyPreset(presetId, nextDspRevision(get().dspConfiguration));
+      const result = await activeBridge.dspApplyPreset(presetId, nextDspRevision(get().dspConfiguration, get().dspPendingConfiguration));
       set((state) => acceptedDspResult(result, state.playback?.dspExecution.revision ?? null));
     } catch (error) {
       set({ dspBusy: false, dspRejection: errorMessage(error) });
@@ -557,7 +558,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   async importDspHse2(code) {
     set({ dspBusy: true, dspRejection: null });
     try {
-      const result = await activeBridge.dspImportHse2(code, nextDspRevision(get().dspConfiguration));
+      const result = await activeBridge.dspImportHse2(code, nextDspRevision(get().dspConfiguration, get().dspPendingConfiguration));
       set((state) => acceptedDspResult(result, state.playback?.dspExecution.revision ?? null));
     } catch (error) {
       set({ dspBusy: false, dspRejection: errorMessage(error) });

@@ -175,7 +175,7 @@ describe("bridge contract adapters", () => {
   });
 
   it("declares every newly connected command", () => {
-    expect(Object.values(TAURI_COMMANDS)).toHaveLength(90);
+    expect(Object.values(TAURI_COMMANDS)).toHaveLength(125);
     expect(Object.values(TAURI_COMMANDS)).toEqual(expect.arrayContaining([
       "playback_stop", "playback_next", "playback_previous", "playback_set_repeat_mode",
       "library_overview", "library_query_tracks", "library_register_location", "library_start_scan", "library_cancel_scan",
@@ -183,6 +183,12 @@ describe("bridge contract adapters", () => {
       "netease_status", "netease_search", "netease_home", "netease_album_detail", "netease_playlist_detail", "netease_artist_detail", "netease_personal_fm",
       "netease_mvs", "netease_mv_detail", "netease_dj_radios", "netease_dj_programs", "netease_charts", "netease_new_songs",
       "netease_account", "netease_favorites", "netease_comments", "netease_follows", "netease_cloud", "netease_image", "netease_start_qr_login", "netease_poll_qr_login", "netease_logout",
+      "netease_notices", "netease_followed_events", "netease_listen_total", "netease_listen_report", "netease_listen_song_rank", "netease_prepare_mutation", "netease_commit_mutation",
+      "netease_search_hot", "netease_search_suggest", "netease_banner", "netease_playlist_categories", "netease_high_quality_playlists", "netease_similar_playlists",
+      "netease_artist_albums", "netease_artist_mvs", "netease_artist_sublist", "netease_album_sublist", "netease_mv_sublist", "netease_personalized_new_songs",
+      "netease_dislike_recommend_song", "netease_check_songs_liked", "netease_hot_comments", "netease_comment_floor", "netease_msg_comments", "netease_user_followeds",
+      "netease_user_level", "netease_user_subcount", "netease_style_preference", "netease_login_status", "netease_listen_data_today", "netease_journey_overview",
+      "netease_recent_plays", "netease_similar_songs", "netease_song_quality_levels", "netease_scrobble",
       "cache_stats", "cache_status", "cache_track", "cache_remove", "cache_clear", "lyrics_get",
       "window_show", "window_hide", "window_close", "window_set_always_on_top", "desktop_lyrics_set_click_through",
       "updater_status", "updater_check", "updater_update", "shenzhen_weather",

@@ -283,6 +283,9 @@ export type NeteaseSearchKind = "track" | "album" | "artist" | "playlist";
 
 export interface NeteaseSearchPageDto {
   tracks: BackendTrackDto[];
+  albums: NeteaseAlbumDto[];
+  artists: NeteaseArtistSummaryDto[];
+  playlists: NeteasePlaylistDto[];
   nextCursor: string | null;
 }
 
@@ -315,6 +318,73 @@ export interface NeteaseUserPageDto { users: NeteaseUserDto[]; nextCursor: strin
 export interface NeteaseCloudSongDto { cloudId: number; track: BackendTrackDto; fileName: string | null; fileSize: number | null; }
 export interface NeteaseCloudPageDto { songs: NeteaseCloudSongDto[]; totalCount: number; hasMore: boolean; nextCursor: string | null; }
 
+export interface NeteaseNoticeDto {
+  id: number;
+  occurredAtMs: number | null;
+  title: string | null;
+  text: string;
+  user: NeteaseUserDto | null;
+}
+export interface NeteaseNoticePageDto {
+  items: NeteaseNoticeDto[];
+  hasMore: boolean;
+  nextCursor: number | null;
+}
+export interface NeteaseSocialEventDto {
+  id: number;
+  eventType: string | null;
+  occurredAtMs: number | null;
+  user: NeteaseUserDto | null;
+  text: string | null;
+  track: BackendTrackDto | null;
+}
+export interface NeteaseEventPageDto {
+  items: NeteaseSocialEventDto[];
+  hasMore: boolean;
+  nextCursor: number | null;
+}
+export type NeteaseListenPeriod = "week" | "month" | "year";
+export interface NeteaseListenStatsDto {
+  totalMinutes: number;
+  totalPlays: number;
+  songs: BackendTrackDto[];
+}
+export interface NeteaseListenReportDto {
+  period: string;
+  endTime: string | null;
+  stats: NeteaseListenStatsDto;
+}
+
+export type NeteaseMutationDto =
+  | { kind: "setAlbumFavorite"; albumId: number; favorite: boolean }
+  | { kind: "createPlaylist"; name: string; private: boolean }
+  | { kind: "deletePlaylist"; playlistId: number }
+  | { kind: "updatePlaylist"; playlistId: number; name: string | null; description: string; tags: string[] }
+  | { kind: "setPlaylistFavorite"; playlistId: number; favorite: boolean }
+  | { kind: "addPlaylistTracks"; playlistId: number; trackIds: number[] }
+  | { kind: "removePlaylistTracks"; playlistId: number; trackIds: number[] }
+  | { kind: "setArtistFavorite"; artistId: number; favorite: boolean }
+  | { kind: "setMvFavorite"; mvId: number; favorite: boolean }
+  | { kind: "setDjRadioFavorite"; radioId: number; favorite: boolean }
+  | { kind: "trashFmTrack"; trackId: number }
+  | { kind: "setTrackFavorite"; trackId: number; favorite: boolean }
+  | { kind: "addComment"; resource: NeteaseCommentResource; resourceId: number; content: string }
+  | { kind: "replyComment"; resource: NeteaseCommentResource; resourceId: number; commentId: number; content: string }
+  | { kind: "setCommentFavorite"; resource: NeteaseCommentResource; resourceId: number; commentId: number; favorite: boolean }
+  | { kind: "deleteComment"; resource: NeteaseCommentResource; resourceId: number; commentId: number }
+  | { kind: "setUserFollowed"; userId: number; followed: boolean }
+  | { kind: "deleteCloudSong"; cloudId: number };
+export interface NeteaseMutationConfirmationDto {
+  confirmationToken: string;
+  summary: string;
+  expiresAtMs: number;
+}
+export interface NeteaseMutationResultDto {
+  succeeded: boolean;
+  createdPlaylist: NeteasePlaylistDto | null;
+  comment: NeteaseCommentDto | null;
+}
+
 export interface NeteaseMvDto {
   id: number;
   name: string;
@@ -330,6 +400,29 @@ export interface NeteaseDjProgramDto { id: number; name: string; radio: NeteaseD
 export interface NeteaseDjPageDto { radios: NeteaseDjRadioDto[]; programs: NeteaseDjProgramDto[]; nextCursor: string | null; }
 export interface NeteaseChartDto { id: number; name: string; coverUrl: string | null; updateFrequency: string | null; description: string | null; previewTracks: BackendTrackDto[]; }
 export interface NeteaseTracksDto { tracks: BackendTrackDto[]; }
+export interface NeteaseHotWordDto { word: string; score: number; }
+export interface NeteaseSearchSuggestionsDto { songs: BackendTrackDto[]; artists: NeteaseArtistSummaryDto[]; albums: NeteaseAlbumDto[]; playlists: NeteasePlaylistDto[]; }
+export interface NeteaseBannerDto { id: number; title: string; imageUrl: string; targetUrl: string; targetType: number; }
+export interface NeteasePlaylistCategoryDto { name: string; id: string; }
+export interface NeteasePlaylistPageDto { playlists: NeteasePlaylistDto[]; nextCursor: string | null; }
+export interface NeteaseArtistAlbumsDto { albums: NeteaseAlbumDto[]; nextCursor: string | null; }
+export interface NeteaseArtistMvsDto { mvs: NeteaseMvDto[]; nextCursor: string | null; }
+export interface NeteaseSublistAlbumsDto { albums: NeteaseAlbumDto[]; nextCursor: string | null; }
+export interface NeteaseSublistArtistsDto { artists: NeteaseArtistSummaryDto[]; nextCursor: string | null; }
+export interface NeteaseSublistMvsDto { mvs: NeteaseMvDto[]; nextCursor: string | null; }
+export interface NeteaseLikedStateDto { songId: number; liked: boolean; }
+export interface NeteaseHotCommentsDto { comments: NeteaseCommentDto[]; total: number; }
+export interface NeteaseCommentFloorDto { floor: number; comments: NeteaseCommentDto[]; }
+export interface NeteaseUserLevelDto { level: number; nextLevelExperience: number | null; }
+export interface NeteaseUserSubcountDto { playlists: number; albums: number; artists: number; mvs: number; djRadios: number; }
+export interface NeteaseStylePreferenceDto { tagIds: number[]; tagNames: string[]; }
+export interface NeteaseLoginStatusDto { loggedIn: boolean; userId: number | null; nickname: string | null; }
+export interface NeteaseListenDataTodayDto { listenedMs: number; playCount: number; }
+export interface NeteaseJourneyOverviewDto { totalListenMs: number; totalPlayCount: number; todayListenMs: number; }
+export interface NeteaseRecentPlayDto { playedAtMs: number; resourceType: string; id: number; name: string; subtitle: string | null; coverUrl: string | null; }
+export interface NeteaseRecentPlaysDto { items: NeteaseRecentPlayDto[]; }
+export interface NeteaseQualityOptionDto { key: string; label: string; bitrate: number; sizeBytes: number; sampleRate: number | null; }
+export interface NeteaseScrobbleDto { reported: boolean; }
 
 export interface NeteaseImageDto {
   mimeType: string;
@@ -591,11 +684,46 @@ export interface BridgeContract {
   neteaseFavorites(): Promise<NeteaseFavoritesDto>;
   neteaseComments(resource: NeteaseCommentResource, resourceId: number, cursor?: string | null): Promise<NeteaseCommentPageDto>;
   neteaseFollows(userId: number, cursor?: string | null): Promise<NeteaseUserPageDto>;
+  neteaseNotices(cursor?: number | null, limit?: number): Promise<NeteaseNoticePageDto>;
+  neteaseFollowedEvents(cursor?: number | null, limit?: number): Promise<NeteaseEventPageDto>;
+  neteaseListenTotal(): Promise<NeteaseListenStatsDto>;
+  neteaseListenReport(period: NeteaseListenPeriod, endTime?: string | null): Promise<NeteaseListenReportDto>;
+  neteaseListenSongRank(period: NeteaseListenPeriod, endTime?: string | null): Promise<NeteaseTracksDto>;
+  neteasePrepareMutation(mutation: NeteaseMutationDto): Promise<NeteaseMutationConfirmationDto>;
+  neteaseCommitMutation(confirmationToken: string, confirmed: boolean): Promise<NeteaseMutationResultDto>;
   neteaseCloud(cursor?: string | null): Promise<NeteaseCloudPageDto>;
   neteaseImage(url: string): Promise<NeteaseImageDto>;
   neteaseStartQrLogin(): Promise<NeteaseLoginStartDto>;
   neteasePollQrLogin(loginId: string): Promise<NeteaseLoginStateDto>;
   neteaseLogout(): Promise<BackendNeteaseStatusDto>;
+  neteaseSearchHot(): Promise<NeteaseHotWordDto[]>;
+  neteaseSearchSuggest(query: string): Promise<NeteaseSearchSuggestionsDto>;
+  neteaseBanner(): Promise<NeteaseBannerDto[]>;
+  neteasePlaylistCategories(): Promise<NeteasePlaylistCategoryDto[]>;
+  neteaseHighQualityPlaylists(cat: string, cursor?: string | null): Promise<NeteasePlaylistPageDto>;
+  neteaseSimilarPlaylists(id: number): Promise<NeteasePlaylistPageDto>;
+  neteaseArtistAlbums(artistId: number, cursor?: string | null): Promise<NeteaseArtistAlbumsDto>;
+  neteaseArtistMvs(artistId: number, cursor?: string | null): Promise<NeteaseArtistMvsDto>;
+  neteaseArtistSublist(cursor?: string | null): Promise<NeteaseSublistArtistsDto>;
+  neteaseAlbumSublist(cursor?: string | null): Promise<NeteaseSublistAlbumsDto>;
+  neteaseMvSublist(cursor?: string | null): Promise<NeteaseSublistMvsDto>;
+  neteasePersonalizedNewSongs(): Promise<NeteaseTracksDto>;
+  neteaseDislikeRecommendSong(id: number): Promise<NeteaseMutationResultDto>;
+  neteaseCheckSongsLiked(ids: number[]): Promise<NeteaseLikedStateDto[]>;
+  neteaseHotComments(id: number, cursor?: string | null): Promise<NeteaseHotCommentsDto>;
+  neteaseCommentFloor(id: number, parentCommentId: number, cursor?: string | null): Promise<NeteaseCommentFloorDto>;
+  neteaseMsgComments(userId: number, cursor?: string | null): Promise<NeteaseCommentPageDto>;
+  neteaseUserFolloweds(userId: number, cursor?: string | null): Promise<NeteaseUserPageDto>;
+  neteaseUserLevel(): Promise<NeteaseUserLevelDto>;
+  neteaseUserSubcount(): Promise<NeteaseUserSubcountDto>;
+  neteaseStylePreference(): Promise<NeteaseStylePreferenceDto>;
+  neteaseLoginStatus(): Promise<NeteaseLoginStatusDto>;
+  neteaseListenDataToday(): Promise<NeteaseListenDataTodayDto>;
+  neteaseJourneyOverview(): Promise<NeteaseJourneyOverviewDto>;
+  neteaseRecentPlays(kind: string, userId: number, limit?: number): Promise<NeteaseRecentPlaysDto>;
+  neteaseSimilarSongs(id: number): Promise<NeteaseTracksDto>;
+  neteaseSongQualityLevels(id: number): Promise<NeteaseQualityOptionDto[]>;
+  neteaseScrobble(id: number, positionMs: number): Promise<NeteaseScrobbleDto>;
   cacheStats(): Promise<CacheStatsDto>;
   cacheStatus(track: BackendTrackRefDto): Promise<BackendCacheStatusDto>;
   cacheTrack(track: BackendTrackRefDto, quality: string): Promise<TaskAcceptedDto>;

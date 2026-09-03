@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BackendTrackDto, DspConfigurationDto, PlaybackSnapshotDto } from "../bridge/contracts";
+import type { BackendTrackDto, PlaybackSnapshotDto } from "../bridge/contracts";
 
 vi.hoisted(() => {
   const values = new Map<string, string>();
@@ -33,6 +33,22 @@ const bridgeMocks = vi.hoisted(() => ({
   neteaseMvDetail: vi.fn(),
   neteaseDjRadios: vi.fn(),
   neteaseDjPrograms: vi.fn(),
+  neteaseStatus: vi.fn(),
+  neteaseSearch: vi.fn(),
+  neteaseNotices: vi.fn(),
+  neteaseFollowedEvents: vi.fn(),
+  neteaseAccount: vi.fn(),
+  neteaseFavorites: vi.fn(),
+  neteaseFollows: vi.fn(),
+  neteaseCloud: vi.fn(),
+  neteaseAlbumDetail: vi.fn(),
+  neteasePlaylistDetail: vi.fn(),
+  neteaseComments: vi.fn(),
+  neteaseListenTotal: vi.fn(),
+  neteaseListenReport: vi.fn(),
+  neteaseListenSongRank: vi.fn(),
+  neteasePrepareMutation: vi.fn(),
+  neteaseCommitMutation: vi.fn(),
   updaterStatus: vi.fn(),
   updaterCheck: vi.fn(),
   updaterUpdate: vi.fn(),
@@ -47,8 +63,6 @@ vi.mock("../bridge", async (importOriginal) => {
 
 import { CurrentView } from "./ContentViews";
 import { useAppStore } from "../store";
-import { makeTelemetryFrame } from "../visualization/telemetry/test-fixtures";
-import { TELEMETRY_VALID_RMS, TELEMETRY_VALID_SAMPLE_PEAK, TELEMETRY_VALID_SPECTRUM, TELEMETRY_VALID_WAVEFORM } from "../visualization/telemetry";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -62,41 +76,16 @@ const backendTrack = (id: string, title: string, source: "local" | "netease" = "
   playable: true,
 });
 
-const dspConfiguration: DspConfigurationDto = {
-  revision: "2",
-  loudnessNormalization: { enabled: true, targetLufs: -14, maxGainDb: 9, minGainDb: -9, useRealtimeMeter: true, externalGainDb: 0 },
-  surround3d: { enabled: true, distance: 0.5, speed: 1, angle: 0, direction: 1 },
-  midSide: { enabled: true, stereoWidth: 1, voiceBalance: 0 },
-  preEq: { enabled: true, bandCount: 1, qCompensation: true, stereoMode: "independent", bands: [{ frequency: 1000, gain: 0, q: 1 }] },
-  deesser: { enabled: true, centerHz: 6000, q: 1, thresholdDb: -24, ratio: 4, attackMs: 5, releaseMs: 100, splitBand: true, mix: 1 },
-  compressor: { enabled: true, thresholdDb: -18, ratio: 4, kneeDb: 6, attackMs: 10, releaseMs: 200, makeupDb: 0, outputGain: 1 },
-  nightMode: { enabled: false, amount: 0.5 },
-  delay: { enabled: false, delayMs: 250, feedback: 0.25, mix: 0.2 },
-  chorus: { enabled: false, rateHz: 1, depthMs: 5, mix: 0.2 },
-  flanger: { enabled: false, rateHz: 1, depthMs: 2, feedback: 0.2, mix: 0.2 },
-  phaser: { enabled: true, rateHz: 1, depth: 0.5, feedback: 0.2, mix: 0.5, stages: 4 },
-  tremolo: { enabled: false, rateHz: 4, depth: 0.5, mix: 0.5 },
-  reverb: { enabled: false, mode: "algorithmic", reverbType: "hall", roomSize: 0.5, damping: 0.5, wet: 0.3, dry: 0.7, preDelayMs: 0, width: 1, fdnLines: 8, mix: 0.3, partitionSize: 512, shortRegionMs: 100 },
-  bassEnhancer: { enabled: false, cutoffHz: 120, q: 1, harmonicType: "soft", harmonicGain: 0.5, mix: 0.5, levelDb: 0, lowBoostDb: null },
-  loudnessComp: { enabled: false, mode: "auto", preset: "flat", volumePercent: 100, maxBoostDb: 12, smoothingSeconds: 0.2, bands: [] },
-  dynamicEq: { enabled: false, strength: 1, thresholdDb: -20, ratio: 2, kneeDb: 6, attackMs: 20, releaseMs: 200, blockSize: 128, bands: [
-    { enabled: true, frequency: 200, targetGainDb: 0 },
-    { enabled: true, frequency: 800, targetGainDb: 0 },
-    { enabled: true, frequency: 2500, targetGainDb: 0 },
-    { enabled: true, frequency: 8000, targetGainDb: 0 },
-    { enabled: true, frequency: 0, targetGainDb: 0 },
-  ] },
-  limiter: { enabled: false, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true },
-  ieq: { enabled: false, strength: 0.5, targetCurve: "flat", timeConstantSec: 3 },
-  modulation: { enabled: false, lfoShape: "sine", lfoRateHz: 1, lfoDepth: 0.5, envelopeAttackMs: 10, envelopeReleaseMs: 200, envelopeAmount: 0.5, routes: [] },
-  lufsMetering: { mode: "hseV151" },
-  spatial: { mode: "off", masterGain: 0.9, instantAmount: 0.7, instantSpreadDeg: 60, instantRoom: "studio", instantRoomAmount: 0.15, distanceModel: "inverse", refDistance: 1, maxDistance: 50, convolution: "partitioned", hrtfInterp: "nearest", stagePreset: "stage", seat: "middle", stageRoomSize: 1, stageReverbAmount: 0.35, worldOcclusion: 0, ambienceEnabled: false, ambienceAmount: 0.3 },
-};
-
 function button(container: HTMLElement, label: string): HTMLButtonElement {
   const match = [...container.querySelectorAll("button")].find((item) => item.textContent?.includes(label));
   if (!match) throw new Error(`找不到按钮：${label}`);
   return match;
+}
+
+function typeInto(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(element.constructor.prototype, "value")!.set!;
+  setter.call(element, value);
+  element.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 async function settle(): Promise<void> {
@@ -154,6 +143,20 @@ describe("CurrentView 页面能力边界", () => {
     bridgeMocks.neteaseMvDetail.mockResolvedValue({ mv: { id: 1, name: "MV", coverUrl: null, durationMs: null, artists: [], playCount: null }, description: null, publishTime: null, favoriteCount: null, commentCount: null });
     bridgeMocks.neteaseDjRadios.mockResolvedValue({ radios: [], programs: [], nextCursor: null });
     bridgeMocks.neteaseDjPrograms.mockResolvedValue({ radios: [], programs: [], nextCursor: null });
+    bridgeMocks.neteaseStatus.mockResolvedValue({ enabled: true, authenticated: false, userId: null, displayName: null });
+    bridgeMocks.neteaseSearch.mockResolvedValue({ tracks: [], albums: [], artists: [], playlists: [], nextCursor: null });
+    bridgeMocks.neteaseNotices.mockResolvedValue({ items: [], hasMore: false, nextCursor: null });
+    bridgeMocks.neteaseFollowedEvents.mockResolvedValue({ items: [], hasMore: false, nextCursor: null });
+    bridgeMocks.neteaseAccount.mockResolvedValue({ user: { userId: 1, nickname: "测试用户", avatarUrl: null }, vip: { active: false, expiresAtMs: null, level: null, verifiedAtMs: 0 } });
+    bridgeMocks.neteaseFavorites.mockResolvedValue({ likedTrackIds: [], playlists: [] });
+    bridgeMocks.neteaseFollows.mockResolvedValue({ users: [], nextCursor: null });
+    bridgeMocks.neteaseCloud.mockResolvedValue({ songs: [], totalCount: 0, hasMore: false, nextCursor: null });
+    bridgeMocks.neteaseAlbumDetail.mockResolvedValue({ album: { id: 1, name: "测试专辑", coverUrl: null }, description: null, publishTimeMs: null, artist: null, tracks: [] });
+    bridgeMocks.neteasePlaylistDetail.mockResolvedValue({ playlist: { id: 1, name: "测试歌单", coverUrl: null, trackCount: 0, playCount: null, ownerId: 0, ownerName: null, description: null }, tracks: [] });
+    bridgeMocks.neteaseComments.mockResolvedValue({ comments: [], totalCount: 0, hasMore: false, nextCursor: null });
+    bridgeMocks.neteaseListenTotal.mockResolvedValue({ totalMinutes: 0, totalPlays: 0, songs: [] });
+    bridgeMocks.neteaseListenReport.mockResolvedValue({ period: "week", endTime: null, stats: { totalMinutes: 0, totalPlays: 0, songs: [] } });
+    bridgeMocks.neteaseListenSongRank.mockResolvedValue({ tracks: [] });
     bridgeMocks.updaterStatus.mockResolvedValue({ enabled: true, reason: null });
     bridgeMocks.updaterCheck.mockResolvedValue({ available: false, version: null, currentVersion: "0.1.0", notes: null });
     bridgeMocks.updaterUpdate.mockResolvedValue(false);
@@ -369,7 +372,9 @@ describe("CurrentView 页面能力边界", () => {
     await settle();
     expect(container.textContent).toContain("现场录制");
     expect(container.textContent).toContain("尚未提供 MV 播放地址");
-    expect([...container.querySelectorAll("button")].some((item) => item.textContent?.includes("播放 MV"))).toBe(false);
+    const mvPlay = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("播放 MV"));
+    expect(mvPlay).not.toBeUndefined();
+    expect(mvPlay!.disabled).toBe(true);
   });
 
   it("paginates MV, radio, and selected radio programs independently", async () => {
@@ -425,194 +430,188 @@ describe("CurrentView 页面能力边界", () => {
     expect(enqueueTrack).toHaveBeenCalledWith(expect.objectContaining({ id: "dj-track", source: "netease" }), "playNext");
   });
 
-  it("renders the unavailable messages state and the implemented DSP overview", async () => {
+  it("renders notices and followed events as read-only message lists", async () => {
+    bridgeMocks.neteaseStatus.mockResolvedValue({ enabled: true, authenticated: true, userId: "1", displayName: "测试用户" });
+    bridgeMocks.neteaseNotices.mockResolvedValue({ items: [{ id: 11, occurredAtMs: 1780000000000, title: "系统通知", text: "你的歌单被收藏了", user: { userId: 1, nickname: "网易云", avatarUrl: null } }], hasMore: false, nextCursor: null });
+    bridgeMocks.neteaseFollowedEvents.mockResolvedValue({ items: [{ id: 12, eventType: "share", occurredAtMs: 1780000000000, user: { userId: 2, nickname: "关注的歌手", avatarUrl: null }, text: "分享了新歌", track: backendTrack("ev-track", "新歌事件", "netease") }], hasMore: false, nextCursor: null });
     await act(async () => { useAppStore.setState({ view: "messages" }); });
     await act(async () => root.render(<CurrentView />));
-    expect(container.textContent).toContain("此功能当前不可用");
-    expect(container.textContent).toContain("正式模式不会显示虚构未读消息。");
-
-    await act(async () => { useAppStore.setState({ view: "dsp" }); });
-    await act(async () => root.render(<CurrentView />));
-    expect(container.textContent).toContain("音效工作台");
-    expect(container.textContent).toContain("Rust 配置编译中");
-    expect(container.textContent).toContain("22 个处理器");
-    expect(container.textContent).toContain("vendored HSE Rust");
-    expect(container.textContent).toContain("BYPASS");
-    expect(container.textContent).not.toContain("LIVE");
-    expect(container.textContent).toContain("DSP 配置不可用");
-    expect(container.textContent).toContain("HSE2 分享码");
-    expect(button(container, "应用参数").disabled).toBe(true);
+    await settle();
+    expect(container.textContent).toContain("你的歌单被收藏了");
+    expect(container.textContent).toContain("关注的歌手");
+    expect(container.textContent).toContain("新歌事件");
+    expect(bridgeMocks.neteaseNotices).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.neteaseFollowedEvents).toHaveBeenCalledTimes(1);
+    expect(container.textContent).not.toContain("此功能当前不可用");
   });
 
-  it("renders constrained DSP controls and keeps LUFS separate from RMS and peak telemetry", async () => {
-    bridgeMocks.dspGetConfiguration.mockResolvedValue(dspConfiguration);
-    bridgeMocks.dspListPresets.mockResolvedValue([{ id: "studio", name: "录音室", description: "测试", partial: false, unsupportedStages: [] }]);
-    useAppStore.setState({ view: "dsp" });
-
+  it("keeps messages read-only and explains the login requirement", async () => {
+    await act(async () => { useAppStore.setState({ view: "messages" }); });
     await act(async () => root.render(<CurrentView />));
     await settle();
-
-    expect(container.textContent).toContain("LUFS tap 已接；等待实时读数（需播放中）。");
-    expect(container.querySelector('[aria-label="实时 RMS 和峰值遥测"]')).not.toBeNull();
-    const direction = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("方向"))?.querySelector("select");
-    expect([...direction?.options ?? []].map((option) => option.value)).toEqual(["-1", "1"]);
-    const stages = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("级数"))?.querySelector("input");
-    expect(stages).toMatchObject({ min: "2", max: "8", step: "1" });
-    const eqBand = container.querySelector(".dsp-eq-bands fieldset");
-    expect(eqBand?.querySelectorAll('input[type="number"]')).toHaveLength(3);
-    expect([...eqBand?.querySelectorAll("label > span") ?? []].map((item) => item.textContent)).toEqual(["频率 Hz", "增益 dB", "Q"]);
-    const frequency = eqBand?.querySelector<HTMLInputElement>('input[type="number"]');
-    expect(frequency).toMatchObject({ min: "20", max: "20000", step: "1" });
-    const surroundDistance = [...container.querySelectorAll(".dsp-module")].find((module) => module.textContent?.includes("环绕运动"))?.querySelector<HTMLInputElement>('input[type="number"]');
-    expect(surroundDistance).toMatchObject({ min: "0", max: "10" });
-    const nightAmount = [...container.querySelectorAll(".dsp-module")].find((module) => module.textContent?.includes("夜间模式"))?.querySelector<HTMLInputElement>('input[type="number"]');
-    expect(nightAmount).toMatchObject({ min: "0", max: "10" });
-    const bassInputs = [...container.querySelectorAll(".dsp-module")].find((module) => module.textContent?.includes("低频增强"))?.querySelectorAll<HTMLInputElement>('input[type="number"]');
-    expect([...bassInputs ?? []].map((input) => [input.min, input.max])).toEqual([["20", "500"], ["0.1", "10"], ["0", "1"], ["0", "1"], ["-6", "6"], ["-6", "12"]]);
-    expect(container.querySelector(".dsp-toolbar")).not.toBeNull();
-    expect(container.querySelector(".dsp-share-actions")).not.toBeNull();
-    expect(container.querySelector(".eq-reference")).not.toBeNull();
+    expect(container.textContent).toContain("登录后查看消息");
+    expect(container.textContent).toContain("保持只读");
   });
 
-  it("keeps pre-EQ bandCount and bands synchronized at both boundaries", async () => {
-    bridgeMocks.dspGetConfiguration.mockResolvedValue(dspConfiguration);
-    bridgeMocks.dspListPresets.mockResolvedValue([]);
-    useAppStore.setState({ view: "dsp" });
+  it("switches search sub-tabs and opens album/artist/playlist result cards", async () => {
+    vi.useFakeTimers();
+    bridgeMocks.neteaseSearch.mockImplementation(async (query, kind) => ({
+      tracks: kind === "track" ? [{ ...backendTrack("song-1", "搜索结果歌曲", "netease"), album: "专辑A" }] : [],
+      albums: kind === "album" ? [{ id: 201, name: "结果专辑", coverUrl: null }] : [],
+      artists: kind === "artist" ? [{ id: 301, name: "结果艺人", imageUrl: null, aliases: [], briefDescription: null }] : [],
+      playlists: kind === "playlist" ? [{ id: 401, name: "结果歌单", coverUrl: null, trackCount: 8, playCount: 100, ownerId: 1, ownerName: "歌单作者", description: null }] : [],
+      nextCursor: null,
+    }));
+    useAppStore.setState({ domain: "netease", view: "search" });
+    await act(async () => root.render(<CurrentView />));
+    typeInto(container.querySelector<HTMLInputElement>(".search-page-input input")!, "测试");
+    await act(async () => { vi.advanceTimersByTime(400); });
+    await settle();
+    expect(bridgeMocks.neteaseSearch).toHaveBeenCalledWith("测试", "track");
+    expect(container.textContent).toContain("搜索结果歌曲");
+
+    await act(async () => button(container, "专辑").click());
+    await act(async () => { vi.advanceTimersByTime(400); });
+    await settle();
+    expect(bridgeMocks.neteaseSearch).toHaveBeenCalledWith("测试", "album");
+    expect(container.textContent).toContain("结果专辑");
+
+    await act(async () => button(container, "结果专辑").click());
+    expect(useAppStore.getState()).toMatchObject({ view: "album", detailId: 201 });
+
+    await act(async () => { useAppStore.setState({ view: "search", detailId: null }); });
+    await act(async () => { root.render(<CurrentView />); });
+    typeInto(container.querySelector<HTMLInputElement>(".search-page-input input")!, "测试");
+    await act(async () => { vi.advanceTimersByTime(400); });
+    await settle();
+    await act(async () => button(container, "艺术家").click());
+    await act(async () => { vi.advanceTimersByTime(400); });
+    await settle();
+    expect(bridgeMocks.neteaseSearch).toHaveBeenCalledWith("测试", "artist");
+    expect(container.textContent).toContain("结果艺人");
+    expect(container.textContent).toContain("网易云艺术家");
+
+    await act(async () => button(container, "歌单").click());
+    await act(async () => { vi.advanceTimersByTime(400); });
+    await settle();
+    expect(bridgeMocks.neteaseSearch).toHaveBeenCalledWith("测试", "playlist");
+    expect(container.textContent).toContain("结果歌单");
+    expect(container.textContent).toContain("歌单作者");
+    await act(async () => button(container, "结果歌单").click());
+    expect(useAppStore.getState()).toMatchObject({ view: "playlist", detailId: 401 });
+    vi.useRealTimers();
+  });
+
+  it("publishes and likes comments through the confirmation write flow", async () => {
+    bridgeMocks.neteaseStatus.mockResolvedValue({ enabled: true, authenticated: true, userId: "1", displayName: "测试用户" });
+    bridgeMocks.neteaseAlbumDetail.mockResolvedValue({ album: { id: 5, name: "评论专辑", coverUrl: null }, description: null, publishTimeMs: null, artist: null, tracks: [backendTrack("detail-5", "评论专辑曲目", "netease")] });
+    bridgeMocks.neteaseComments.mockResolvedValue({ comments: [{ id: 71, content: "这条评论很好", timeText: "刚刚", likedCount: 3, liked: false, user: { userId: 2, nickname: "路人甲", avatarUrl: null } }], totalCount: 1, hasMore: false, nextCursor: null });
+    bridgeMocks.neteasePrepareMutation.mockImplementation(async (mutation) => ({ confirmationToken: "token-abc", summary: mutation.kind === "setCommentFavorite" ? "like comment" : "publish comment", expiresAtMs: Date.now() + 60_000 }));
+    bridgeMocks.neteaseCommitMutation.mockResolvedValue({ succeeded: true, createdPlaylist: null, comment: null });
+    useAppStore.setState({ domain: "netease", view: "album", detailId: 5 });
     await act(async () => root.render(<CurrentView />));
     await settle();
-
-    const bandCount = container.querySelector<HTMLInputElement>('input[aria-label="频段数"]') ?? [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("频段数"))?.querySelector<HTMLInputElement>("input");
-    expect(bandCount).toMatchObject({ min: "1", max: "20", step: "1" });
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(bandCount, "3");
-      bandCount?.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const preEqModule = [...container.querySelectorAll(".dsp-module")].find((module) => module.textContent?.includes("参数均衡"));
-    if (!preEqModule) throw new Error("找不到参数均衡模块");
-    expect(preEqModule.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(3);
-    expect([...preEqModule.querySelectorAll<HTMLInputElement>(".dsp-eq-bands fieldset input")].every((input) => Number.isFinite(Number(input.value)))).toBe(true);
-
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(bandCount, "1");
-      bandCount?.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    expect(preEqModule.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(1);
-
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(bandCount, "25");
-      bandCount?.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    expect(preEqModule.querySelectorAll(".dsp-eq-bands fieldset")).toHaveLength(20);
-  });
-
-  it("blocks invalid DSP drafts and exposes accessible validation errors", async () => {
-    const configure = vi.spyOn(useAppStore.getState(), "configureDsp");
-    bridgeMocks.dspGetConfiguration.mockResolvedValue({ ...dspConfiguration, bassEnhancer: { ...dspConfiguration.bassEnhancer, harmonicGain: 2 } });
-    bridgeMocks.dspListPresets.mockResolvedValue([]);
-    useAppStore.setState({ view: "dsp" });
-    await act(async () => root.render(<CurrentView />));
     await settle();
 
-    const apply = button(container, "应用参数");
-    expect(apply.disabled).toBe(true);
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("谐波增益必须在 0 到 1 之间");
-    await act(async () => apply.click());
-    expect(configure).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("这条评论很好");
+    const likeButton = container.querySelector<HTMLButtonElement>('[aria-label="点赞 路人甲 的评论"]');
+    expect(likeButton).not.toBeNull();
+    await act(async () => likeButton!.click());
+    await settle();
+    expect(bridgeMocks.neteasePrepareMutation).toHaveBeenCalledWith({ kind: "setCommentFavorite", resource: "album", resourceId: 5, commentId: 71, favorite: true });
+    expect(container.textContent).toContain("确认点赞评论");
+    expect(container.textContent).toContain("like comment");
+    await act(async () => button(container, "确认执行").click());
+    await settle();
+    expect(bridgeMocks.neteaseCommitMutation).toHaveBeenCalledWith("token-abc", true);
+    expect(bridgeMocks.neteaseComments).toHaveBeenCalledTimes(2);
+
+    typeInto(container.querySelector<HTMLTextAreaElement>(".comment-composer-field textarea")!, "新发布的内容");
+    await act(async () => button(container, "发布评论").click());
+    await settle();
+    expect(bridgeMocks.neteasePrepareMutation).toHaveBeenLastCalledWith({ kind: "addComment", resource: "album", resourceId: 5, content: "新发布的内容" });
+    expect(container.textContent).toContain("确认发布评论");
+    await act(async () => button(container, "确认执行").click());
+    await settle();
+    expect(bridgeMocks.neteaseCommitMutation).toHaveBeenLastCalledWith("token-abc", true);
   });
 
-  it("shows an active Rust chain as live and faults as safe bypass", async () => {
-    const base = {
-      revision: 2,
-      current: null,
-      currentQueueItemId: null,
-      status: "paused" as const,
-      positionMs: 0,
-      volume: 0.5,
-      queue: [],
-      nextUp: [],
-      repeat: "sequence" as const,
-      dsp: { available: true, bypassed: false, label: "Rust DSP runtime 已内建" },
-      dspExecution: { revision: 2n, safeBypassActive: false, fault: null },
-    };
-    useAppStore.setState({ view: "dsp", playback: base });
-    await act(async () => root.render(<CurrentView />));
-    expect(container.textContent).toContain("Rust 处理链在线");
-    expect(container.textContent).toContain("LIVE");
-
-    await act(async () => {
-      useAppStore.setState({
-        playback: {
-          ...base,
-          dsp: { ...base.dsp, bypassed: true },
-          dspExecution: { revision: 2n, safeBypassActive: true, fault: null },
-        },
-      });
-    });
-    expect(container.textContent).toContain("Rust 安全旁路");
-    expect(container.textContent).toContain("BYPASS");
-  });
-
-  it("uses real telemetry with fallback renderers while keeping DSP controls honest", async () => {
-    vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    useAppStore.setState({ view: "dsp", playback: null });
-
+  it("disables comment writes and explains login when unauthenticated", async () => {
+    bridgeMocks.neteaseAlbumDetail.mockResolvedValue({ album: { id: 6, name: "只读专辑", coverUrl: null }, description: null, publishTimeMs: null, artist: null, tracks: [backendTrack("detail-6", "只读专辑曲目", "netease")] });
+    bridgeMocks.neteaseComments.mockResolvedValue({ comments: [{ id: 81, content: "只读评论", timeText: "昨天", likedCount: 1, liked: false, user: { userId: 2, nickname: "路人乙", avatarUrl: null } }], totalCount: 1, hasMore: false, nextCursor: null });
+    useAppStore.setState({ domain: "netease", view: "album", detailId: 6 });
     await act(async () => root.render(<CurrentView />));
     await settle();
+    await settle();
 
-    expect(bridgeMocks.createTelemetryTransport).toHaveBeenCalledOnce();
-    expect(telemetryTransport.open).toHaveBeenCalledWith(30, expect.any(Function));
-    expect(container.querySelector('[aria-label="频谱暂无数据"]')).not.toBeNull();
-    expect(container.querySelector('canvas[aria-label="实时音频频谱"]')).toBeNull();
-    expect(container.querySelector('[role="group"][aria-label="RMS 和峰值仪表"]')).not.toBeNull();
-    expect(container.querySelector('svg[aria-label="固定 0 dB 参考响应"]')).not.toBeNull();
-
-    await act(async () => telemetryFrame?.(makeTelemetryFrame({
-      validityFlags: TELEMETRY_VALID_WAVEFORM | TELEMETRY_VALID_SAMPLE_PEAK | TELEMETRY_VALID_RMS | TELEMETRY_VALID_SPECTRUM,
-      meters: { rmsLeft: 0.5, rmsRight: 0.25 },
-    })));
-    expect(container.querySelector('canvas[aria-label="实时音频频谱"]')).not.toBeNull();
-    expect(Number(container.querySelector('[role="meter"][aria-label="左声道 RMS"]')?.getAttribute("aria-valuenow"))).toBeCloseTo(-6.02, 1);
-    expect(container.textContent).not.toContain("真峰值");
-    expect(container.textContent).not.toContain("限幅衰减");
-    expect(telemetryTransport.acknowledge).toHaveBeenCalledWith(4n, 9n, 12n);
-    expect(container.textContent).toContain("固定平直参考，不代表当前 DSP 配置");
-    expect(button(container, "应用参数").disabled).toBe(true);
-    expect(container.textContent).not.toContain("当前均衡响应");
+    expect(container.textContent).toContain("登录后可以发表评论");
+    expect(container.querySelector<HTMLTextAreaElement>(".comment-composer-field textarea")).toBeNull();
+    const likeButton = container.querySelector<HTMLButtonElement>('[aria-label="点赞 路人乙 的评论"]');
+    expect(likeButton).not.toBeNull();
+    expect(likeButton!.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>(".comment-reply-btn")!.disabled).toBe(true);
+    expect(bridgeMocks.neteasePrepareMutation).not.toHaveBeenCalled();
   });
 
-  it("scales telemetry for visibility, focus, and reduced motion, then closes on unmount", async () => {
-    let motionListener: ((event: MediaQueryListEvent) => void) | undefined;
-    vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    vi.stubGlobal("matchMedia", vi.fn(() => ({
-      matches: false,
-      media: "(prefers-reduced-motion: reduce)",
-      onchange: null,
-      addEventListener: vi.fn((_type, listener) => { motionListener = listener; }),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })));
-    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-    useAppStore.setState({ view: "dsp" });
-
+  it("deletes own comments only after confirmation", async () => {
+    bridgeMocks.neteaseStatus.mockResolvedValue({ enabled: true, authenticated: true, userId: "1", displayName: "测试用户" });
+    bridgeMocks.neteaseAlbumDetail.mockResolvedValue({ album: { id: 7, name: "自评专辑", coverUrl: null }, description: null, publishTimeMs: null, artist: null, tracks: [backendTrack("detail-7", "自评专辑曲目", "netease")] });
+    bridgeMocks.neteaseComments.mockResolvedValue({ comments: [{ id: 91, content: "自己发的评论", timeText: "今天", likedCount: 0, liked: false, user: { userId: 1, nickname: "测试用户", avatarUrl: null } }], totalCount: 1, hasMore: false, nextCursor: null });
+    bridgeMocks.neteasePrepareMutation.mockResolvedValue({ confirmationToken: "token-del", summary: "delete comment", expiresAtMs: Date.now() + 60_000 });
+    bridgeMocks.neteaseCommitMutation.mockResolvedValue({ succeeded: true, createdPlaylist: null, comment: null });
+    useAppStore.setState({ domain: "netease", view: "album", detailId: 7 });
     await act(async () => root.render(<CurrentView />));
     await settle();
-    await act(async () => window.dispatchEvent(new Event("blur")));
-    expect(telemetryTransport.setRate).toHaveBeenLastCalledWith(15);
+    await settle();
 
-    await act(async () => motionListener?.({ matches: true } as MediaQueryListEvent));
-    expect(telemetryTransport.setRate).toHaveBeenLastCalledWith(2);
-
-    visibility.mockReturnValue("hidden");
-    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
-    expect(telemetryTransport.setRate).toHaveBeenLastCalledWith(0);
-
-    await act(async () => root.unmount());
-    expect(telemetryTransport.close).toHaveBeenCalledOnce();
-    container.remove();
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
+    const deleteButton = container.querySelector<HTMLButtonElement>('[aria-label="删除自己的评论"]');
+    expect(deleteButton).not.toBeNull();
+    await act(async () => deleteButton!.click());
+    await settle();
+    expect(bridgeMocks.neteasePrepareMutation).toHaveBeenCalledWith({ kind: "deleteComment", resource: "album", resourceId: 7, commentId: 91 });
+    expect(container.textContent).toContain("确认删除评论");
+    await act(async () => button(container, "取消").click());
+    expect(bridgeMocks.neteaseCommitMutation).not.toHaveBeenCalled();
   });
+
+  it("surfaces failed mutation preparse as an inline error", async () => {
+    bridgeMocks.neteaseStatus.mockResolvedValue({ enabled: true, authenticated: true, userId: "1", displayName: "测试用户" });
+    bridgeMocks.neteaseAlbumDetail.mockResolvedValue({ album: { id: 8, name: "错误专辑", coverUrl: null }, description: null, publishTimeMs: null, artist: null, tracks: [backendTrack("detail-8", "错误专辑曲目", "netease")] });
+    bridgeMocks.neteaseComments.mockResolvedValue({ comments: [{ id: 95, content: "评论", timeText: null, likedCount: 0, liked: false, user: { userId: 2, nickname: "路人丙", avatarUrl: null } }], totalCount: 1, hasMore: false, nextCursor: null });
+    bridgeMocks.neteasePrepareMutation.mockRejectedValue({ code: "unauthorized", message: "会话已失效" });
+    useAppStore.setState({ domain: "netease", view: "album", detailId: 8 });
+    await act(async () => root.render(<CurrentView />));
+    await settle();
+    await settle();
+
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="点赞 路人丙 的评论"]')!.click());
+    await settle();
+    expect(container.textContent).toContain("会话已失效");
+    expect(container.querySelector<HTMLElement>(".comment-error")).not.toBeNull();
+  });
+
+  it("renders the listen summary under the netease library and switches periods", async () => {
+    bridgeMocks.neteaseAccount.mockResolvedValue({ user: { userId: 1, nickname: "测试用户", avatarUrl: null }, vip: { active: false, expiresAtMs: null, level: null, verifiedAtMs: 0 } });
+    bridgeMocks.neteaseListenTotal.mockResolvedValue({ totalMinutes: 120, totalPlays: 45, songs: [] });
+    bridgeMocks.neteaseListenReport.mockResolvedValue({ period: "week", endTime: null, stats: { totalMinutes: 30, totalPlays: 10, songs: [] } });
+    bridgeMocks.neteaseListenSongRank.mockResolvedValue({ tracks: [{ ...backendTrack("listen-1", "常听歌曲", "netease"), album: "专辑B" }] });
+    useAppStore.setState({ domain: "netease", view: "library" });
+    await act(async () => root.render(<CurrentView />));
+    await settle();
+    await settle();
+
+    expect(container.textContent).toContain("2 小时");
+    expect(container.textContent).toContain("累计收听时长");
+    expect(container.textContent).toContain("本周播放");
+    expect(container.textContent).toContain("常听歌曲");
+    expect(container.textContent).toContain("常听歌曲".length > 0 ? "常听歌曲" : "");
+
+    await act(async () => button(container, "最近一月").click());
+    await settle();
+    await settle();
+    expect(bridgeMocks.neteaseListenReport).toHaveBeenCalledWith("month");
+    expect(bridgeMocks.neteaseListenSongRank).toHaveBeenCalledWith("month");
+    expect(container.textContent).toContain("本月播放");
+  });
+
 });

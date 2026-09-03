@@ -328,7 +328,7 @@
 .dsp-console p,
 .dsp-console footer small,
 .engine-indicator,
-.dsp-chain article small,
+.dsp-card-text small,
 .eq-axis,
 .eq-bands div {
   color: var(--muted);
@@ -352,44 +352,323 @@
   background: var(--orange);
 }
 
-.dsp-chain {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0;
-  border-block: 1px solid var(--line);
-}
-
-.dsp-chain .dsp-module {
-  min-width: 0;
-  min-height: 104px;
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: start;
-  padding: 18px 16px;
+.dsp-scenes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+  padding-block: 14px;
   border-bottom: 1px solid var(--line);
 }
 
-.dsp-chain .dsp-module:last-child {
-  border-bottom: 0;
-}
-
-.dsp-chain .dsp-module > span {
-  color: var(--orange);
-  font: 11px "Cascadia Mono", monospace;
-}
-
-.dsp-module-body {
-  min-width: 0;
+.dsp-scene-chip {
+  min-width: 120px;
   display: grid;
+  gap: 2px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dsp-scene-chip:hover,
+.dsp-scene-chip:focus-visible {
+  border-color: var(--blue);
+  background: var(--selection-soft);
+}
+
+.dsp-scene-chip b {
+  font-size: 12px;
+}
+
+.dsp-scene-chip small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.dsp-groups {
+  display: grid;
+  gap: 8px;
+  padding-block: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dsp-group {
+  display: grid;
+  gap: 8px;
+}
+
+.dsp-group-hint {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dsp-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 10px;
 }
 
-.dsp-lufs dl {
+.dsp-card {
+  min-width: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dsp-card:hover,
+.dsp-card:focus-visible {
+  border-color: var(--blue);
+  box-shadow: var(--shadow);
+}
+
+.dsp-card.enabled {
+  border-color: var(--blue);
+  background: var(--selection-soft);
+}
+
+.dsp-card.enabled .dsp-card-state {
+  color: var(--blue);
+}
+
+.dsp-card.readonly {
+  cursor: default;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: start;
+}
+
+.dsp-card-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--blue);
+  font-size: 18px;
+}
+
+.dsp-card-text {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.dsp-card-text b {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.dsp-card-text b i {
+  color: var(--muted);
+  font: 10px "Cascadia Mono", monospace;
+  font-style: normal;
+}
+
+.dsp-card-text small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsp-card-state {
+  color: var(--muted);
+  font: 10px "Cascadia Mono", monospace;
+}
+
+.dsp-applybar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-block: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--shell-raised);
+  box-shadow: var(--shadow);
+}
+
+.dsp-applybar > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dsp-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--text) 42%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.dsp-modal {
+  width: min(640px, 100%);
+  max-height: min(720px, calc(100vh - 64px));
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--shell-raised);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.dsp-modal > header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.dsp-modal > header > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.dsp-modal > header b {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 15px;
+}
+
+.dsp-modal > header b i {
+  color: var(--muted);
+  font: 10px "Cascadia Mono", monospace;
+  font-style: normal;
+}
+
+.dsp-modal > header small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dsp-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.dsp-modal-enable {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dsp-params {
+  display: grid;
+  gap: 12px;
+}
+
+.dsp-param {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dsp-param select,
+.dsp-param input[type="number"] {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.dsp-param-bool {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dsp-param-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dsp-param-head output {
+  color: var(--text);
+  font: 12px "Cascadia Mono", monospace;
+}
+
+.dsp-param-slider {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  align-items: center;
+  gap: 10px;
+}
+
+.dsp-param-slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--blue);
+}
+
+.dsp-param-slider input[type="number"] {
+  width: 100%;
+}
+
+.dsp-routes {
+  display: grid;
+  gap: 6px;
+}
+
+.dsp-routes-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.spatial-field {
+  flex: none;
+  color: var(--text);
+}
+
+.dsp-lufs {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 8px;
   margin: 0;
+}
+
+.dsp-lufs div {
+  display: grid;
+  gap: 2px;
 }
 
 .dsp-lufs dt {
@@ -405,63 +684,20 @@
   color: var(--foreground);
 }
 
-.dsp-fields,
 .dsp-eq-bands {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 8px;
-}
-
-.dsp-fields label,
-.dsp-eq-bands label {
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.dsp-fields input[type="number"],
-.dsp-fields select,
-.dsp-eq-bands input,
-.dsp-toolbar select,
-.dsp-share textarea {
-  width: 100%;
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
-}
-
-.dsp-fields input[type="number"],
-.dsp-fields select,
-.dsp-eq-bands input,
-.dsp-toolbar select {
-  height: 34px;
-  padding: 0 8px;
-}
-
-.dsp-toggle-field {
-  display: flex !important;
-  grid-template-columns: none;
-  align-items: center;
-  gap: 8px;
-}
-
-.dsp-eq-bands {
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
 }
 
 .dsp-eq-bands fieldset {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: 10px;
   margin: 0;
-  padding: 9px;
+  padding: 10px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 .dsp-eq-bands legend {
@@ -470,10 +706,10 @@
   font-size: 10px;
 }
 
-.dsp-readonly em {
-  color: var(--muted);
-  font: 10px "Cascadia Mono", monospace;
+.dsp-eq-bands .dsp-param {
+  font-size: 11px;
 }
+
 
 .dsp-validation-errors > span,
 .dsp-validation-errors small {
@@ -486,27 +722,6 @@
 
 .dsp-validation-errors small {
   margin-top: 3px;
-}
-
-.dsp-band-count {
-  width: min(220px, 100%);
-}
-
-.dsp-band-count label {
-  display: grid;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.dsp-band-count input {
-  width: 100%;
-  height: 34px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
 }
 
 .dsp-toolbar,
@@ -603,12 +818,8 @@
 }
 
 @media (min-width: 1500px) {
-  .dsp-chain {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .dsp-chain .dsp-module:nth-child(odd) {
-    border-right: 1px solid var(--line);
+  .dsp-cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
