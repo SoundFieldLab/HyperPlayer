@@ -877,6 +877,9 @@ pub struct NeteaseLoginStateDto {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NeteaseResourceRequestDto {
     pub id: u64,
+    /// 资源类型（热评/楼中楼等按资源前缀的接口使用）；详情类命令忽略该字段。
+    #[serde(default)]
+    pub resource: NeteaseCommentResourceDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -989,9 +992,10 @@ pub struct NeteaseFavoritesDto {
     pub playlists: Vec<NeteasePlaylistDto>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum NeteaseCommentResourceDto {
+    #[default]
     Song,
     Mv,
     Playlist,
@@ -1555,4 +1559,191 @@ pub struct FrontendSettingsPatchDto {
     pub restore_queue: Option<bool>,
     pub auto_play_on_launch: Option<bool>,
     pub netease_enabled: Option<bool>,
+}
+
+// ---------------- Stage 16 新增：网易云发现/社交/用户能力 ----------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseHotWordDto {
+    pub word: String,
+    pub score: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseSearchSuggestionsDto {
+    pub songs: Vec<TrackDto>,
+    pub artists: Vec<NeteaseArtistSummaryDto>,
+    pub albums: Vec<NeteaseAlbumDto>,
+    pub playlists: Vec<NeteasePlaylistDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseBannerDto {
+    pub id: u64,
+    pub title: String,
+    pub image_url: String,
+    pub target_url: String,
+    pub target_type: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteasePlaylistCategoryDto {
+    pub name: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteasePlaylistPageDto {
+    pub playlists: Vec<NeteasePlaylistDto>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseArtistAlbumsDto {
+    pub albums: Vec<NeteaseAlbumDto>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseArtistMvsDto {
+    pub mvs: Vec<NeteaseMvDto>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseSublistAlbumsDto {
+    pub albums: Vec<NeteaseAlbumDto>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseSublistArtistsDto {
+    pub artists: Vec<NeteaseArtistSummaryDto>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseSublistMvsDto {
+    pub mvs: Vec<NeteaseMvDto>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseLikedStateDto {
+    pub song_id: u64,
+    pub liked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseHotCommentsDto {
+    pub comments: Vec<NeteaseCommentDto>,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseCommentFloorDto {
+    pub floor: u64,
+    pub comments: Vec<NeteaseCommentDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseUserLevelDto {
+    pub level: u64,
+    pub next_level_experience: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseUserSubcountDto {
+    pub playlists: u64,
+    pub albums: u64,
+    pub artists: u64,
+    pub mvs: u64,
+    pub dj_radios: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseStylePreferenceDto {
+    pub tag_ids: Vec<u64>,
+    pub tag_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseLoginStatusDto {
+    pub logged_in: bool,
+    pub user_id: Option<u64>,
+    pub nickname: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseListenDataTodayDto {
+    pub listened_ms: u64,
+    pub play_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseJourneyOverviewDto {
+    pub total_listen_ms: u64,
+    pub total_play_count: u64,
+    pub today_listen_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseRecentPlayDto {
+    pub played_at_ms: u64,
+    pub resource_type: String,
+    pub id: u64,
+    pub name: String,
+    pub subtitle: Option<String>,
+    pub cover_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseRecentPlaysDto {
+    pub items: Vec<NeteaseRecentPlayDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseQualityOptionDto {
+    pub key: String,
+    pub label: String,
+    pub bitrate: u64,
+    pub size_bytes: u64,
+    pub sample_rate: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseScrobbleDto {
+    pub reported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseRecentPlaysRequestDto {
+    /// 播放记录类型：song/playlist/album/djradio/voice/newvideo。
+    pub kind: String,
+    pub user_id: u64,
+    pub limit: Option<u64>,
 }

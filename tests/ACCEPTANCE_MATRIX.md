@@ -25,7 +25,7 @@
 | D25 缓存策略 | D30 已定调，待实现 | 默认 10 GiB、最近 100 个不同远程曲目保护、Public 7 天离线证明、AccountEntitled 离线拒绝、整专补齐受 AC/非计费网络/磁盘保留条件约束 |
 | VIP 缓存权益 | D23 硬门禁 | 离线测试必须覆盖未登录、非 VIP、过期、切号、服务端校验失败均拒绝；仅同一 `AccountEntitled(userId)` 且实时权益有效时放行 |
 | 专辑缓存晋升 | D24 硬门禁 | 离线测试覆盖专辑上下文、完整一首或累计 5 分钟、每日最多计一次、5 次晋升、空闲低优先级补齐及权益门禁 |
-| 网易云 Rust 迁移 | 最小在线闭环已接通，扩展能力持续补齐 | XEAPI 首次调用会执行并发安全、失败可重试的网络初始化；扫码登录返回本地 SVG data URL；官方图片通过主窗口专用 command 按域名、DNS、公网地址、MIME、体积和重定向校验。每个迁移端点仍须以行为规范和 TS oracle 的固定输入/输出 fixture 验证成功、错误码、退避、音质降级、付费内容拦截与歌词等价 |
+| 网易云 Rust 迁移 | Stage 16 接线完成：crate 30 条新路由 + 行为差异修复（设备 Cookie 画像/xeapi 头/weapi 备用 golden/clientlog scrobble）+ Tauri 28 command + bridge 125 契约 + 230 前端测试；剩 7 条长尾路由与真实账号矩阵 | XEAPI 首次调用会执行并发安全、失败可重试的网络初始化；扫码登录返回本地 SVG data URL；官方图片通过主窗口专用 command 按域名、DNS、公网地址、MIME、体积和重定向校验。每个迁移端点仍须以行为规范和 TS oracle 的固定输入/输出 fixture 验证成功、错误码、退避、音质降级、付费内容拦截与歌词等价 |
 | 本地解码/gapless（Stage 14） | 工程侧全部完成（增量解码、codec trim、preparation worker、真实编码器专辑、长时稳定性）；仅剩 Windows 实机录回/听感验收 | FLAC/MP3 增量 decoder（symphonia，raw 时间轴契约）+ codec trim（MP3 Xing/LAME、FLAC Vorbis Comment）+ 采样级 seek（帧内 skip）+ 流末 seek 边界；runtime 全链路 trim 证据（play_to_end 帧数精确 = raw − delay − padding）与 standby 预填证据（prime_standby 走 seek(delay)、trim 入 Primed、未 primed fail-closed）；欠载/慢 IO/EOF/seek 复位 fake backend 矩阵。第二波补齐：PreparationWorker 将 open/probe 移出 actor 控制路径（慢 open 300ms 期间 Snapshot <150ms 返回、失败回退同步切歌并保持 restore 语义均有测试）；flacenc（Apache-2.0）真实编码三轨连续专辑跨曲 promote 逐点等于权威参考，8 轮长时稳定性输出总量精确零漂移；symphonia-bundle-flac/common MPL-2.0 已记入 deny 例外。关闭切片仅须：Windows 实机录回/权威 PCM 对比与用户听感确认 |
 | Tauri DTO/capabilities | 已落地，契约覆盖持续补齐 | command/event/channel DTO 需序列化契约测试；capabilities 需最小权限检查，禁止通用网络代理、任意 URL、任意文件系统或 Cookie 读写接口 |
 

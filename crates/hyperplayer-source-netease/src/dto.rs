@@ -449,3 +449,119 @@ impl CommentResource {
         }
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotWord {
+    pub word: String,
+    pub score: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchSuggestions {
+    pub songs: Vec<SuggestSong>,
+    pub artists: Vec<Artist>,
+    pub albums: Vec<Album>,
+    pub playlists: Vec<PlaylistSummary>,
+    pub order: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestSong {
+    pub id: u64,
+    pub name: String,
+    pub artists: Vec<Artist>,
+    pub album: Album,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BannerItem {
+    pub id: u64,
+    pub title: String,
+    pub image_url: String,
+    pub target_url: String,
+    pub target_type: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistCategory {
+    pub name: String,
+    pub id: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LikedState {
+    pub song_id: u64,
+    pub liked: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotCommentPage {
+    pub comments: Vec<Comment>,
+    pub total: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentFloor {
+    pub floor: u64,
+    pub comments: Vec<Comment>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserLevel {
+    pub level: u64,
+    pub next_level_experience: Option<u64>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSubcount {
+    pub playlists: u64,
+    pub albums: u64,
+    pub artists: u64,
+    pub mvs: u64,
+    pub dj_radios: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StylePreference {
+    pub tag_ids: Vec<u64>,
+    pub tag_names: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginStatus {
+    pub logged_in: bool,
+    pub user_id: Option<u64>,
+    pub nickname: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentPlay {
+    pub played_at_ms: u64,
+    pub resource: RecentPlayResource,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RecentPlayResource {
+    Song(Track),
+    Playlist(PlaylistSummary),
+    Album(Album),
+    DjRadio(DjRadio),
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenDataToday {
+    pub listened_ms: u64,
+    pub play_count: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JourneyOverview {
+    pub total_listen_ms: u64,
+    pub total_play_count: u64,
+    pub today_listen_ms: u64,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScrobbleResult {
+    pub reported: bool,
+}

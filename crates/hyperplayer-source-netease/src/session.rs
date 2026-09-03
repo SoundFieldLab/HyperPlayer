@@ -16,6 +16,11 @@ pub struct XeapiKeyState {
 #[derive(Debug, Clone)]
 pub struct Session {
     device_id: String,
+    /// 稳定设备画像：nuid（32 位 hex）与 WNMCID 一次生成、跨请求复用（对齐 oracle 的
+    /// `base._ntes_nuid || randomHex(32)` 语义——oracle 每次调用会重建，但 Rust 会话
+    /// 是有状态的，保持稳定更接近「同一设备」画像）。
+    nuid: String,
+    wnmcid: String,
     xeapi_key: Option<XeapiKeyState>,
     xeapi_session_id: String,
     xeapi_session_key: String,
@@ -26,8 +31,13 @@ impl Session {
     pub fn new<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
         let mut bytes = [0u8; 26];
         rng.fill_bytes(&mut bytes);
+        let device_id = bytes.iter().map(|b| format!("{b:02X}")).collect();
+        let nuid = random_hex(rng, 32);
+        let wnmcid = format!("{}.{}.01.0", random_hex(rng, 6), now_ms());
         Self {
-            device_id: bytes.iter().map(|b| format!("{b:02X}")).collect(),
+            device_id,
+            nuid,
+            wnmcid,
             xeapi_key: None,
             xeapi_session_id: String::new(),
             xeapi_session_key: String::new(),
@@ -72,6 +82,11 @@ impl Session {
     pub fn clear_user_cookie(&mut self) {
         self.user_cookie.clear()
     }
+    pub fn current_request_cookie(&self) -> Option<String> {
+        let cookies = self.request_cookies();
+        (!cookies.is_empty()).then(|| serialize_cookie(&cookies))
+    }
+
     pub fn current_user_cookie(&self) -> Option<String> {
         if self.user_cookie.is_empty() {
             None
@@ -79,6 +94,12 @@ impl Session {
             Some(serialize_cookie(&self.user_cookie))
         }
     }
+    pub(crate) fn anonymous_token_present(&self) -> bool {
+        self.anonymous_token
+            .as_deref()
+            .is_some_and(|token| !token.is_empty())
+    }
+
     pub(crate) fn is_logged_in(&self) -> bool {
         self.user_cookie
             .get("MUSIC_U")
@@ -96,8 +117,18 @@ impl Session {
         BASE64.encode(format!("{} {}", self.device_id, fingerprint))
     }
     pub(crate) fn request_cookies(&self) -> BTreeMap<String, String> {
+        let now = now_ms();
         let mut out = self.user_cookie.clone();
         out.insert("os".into(), "pc".into());
+        out.insert("osver".into(), DEVICE_OSVER.into());
+        out.insert("channel".into(), DEVICE_CHANNEL.into());
+        out.insert("appver".into(), DEVICE_APPVER.into());
+        out.insert("__remember_me".into(), "true".into());
+        out.insert("ntes_kaola_ad".into(), "1".into());
+        out.insert("_ntes_nuid".into(), self.nuid.clone());
+        out.insert("_ntes_nnid".into(), format!("{},{}", self.nuid, now));
+        out.insert("WNMCID".into(), self.wnmcid.clone());
+        out.insert("WEVNSM".into(), "1.0.0".into());
         out.insert("deviceId".into(), self.device_id.clone());
         if !out.contains_key("MUSIC_U") {
             if let Some(v) = &self.anonymous_token {
@@ -106,7 +137,45 @@ impl Session {
         }
         out
     }
+    /// xeapi 通道专用设备画像：不注入匿名 token（避免鸡生蛋），登录态显式携带。
+    pub(crate) fn xeapi_cookie(&self) -> String {
+        let now = now_ms();
+        let mut out = BTreeMap::new();
+        out.insert("os".into(), XEAPI_OS.into());
+        out.insert("osver".into(), XEAPI_OSVER.into());
+        out.insert("appver".into(), XEAPI_APP_VERSION.into());
+        out.insert("buildver".into(), now.to_string());
+        out.insert("deviceId".into(), self.device_id.clone());
+        out.insert("sDeviceId".into(), self.device_id.clone());
+        out.insert("__remember_me".into(), "true".into());
+        out.insert("ntes_kaola_ad".into(), "1".into());
+        out.insert("_ntes_nuid".into(), self.nuid.clone());
+        out.insert("_ntes_nnid".into(), format!("{},{}", self.nuid, now));
+        out.insert("WNMCID".into(), self.wnmcid.clone());
+        out.insert("WEVNSM".into(), "1.0.0".into());
+        if let Some(value) = self.user_cookie.get("MUSIC_U") {
+            out.insert("MUSIC_U".into(), value.clone());
+        }
+        serialize_cookie(&out)
+    }
 }
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+fn random_hex<R: RngCore>(rng: &mut R, length: usize) -> String {
+    let mut bytes = vec![0u8; length];
+    rng.fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+const DEVICE_OSVER: &str = "Microsoft-Windows-10-Professional-build-19045-64bit";
+const DEVICE_APPVER: &str = "3.1.17.204416";
+const DEVICE_CHANNEL: &str = "netease";
+const XEAPI_OS: &str = "android";
+const XEAPI_OSVER: &str = "16";
+const XEAPI_APP_VERSION: &str = "9.1.65";
 fn parse_cookie(value: &str) -> BTreeMap<String, String> {
     value
         .split(';')
@@ -145,6 +214,7 @@ mod tests {
         let mut s = Session::new(&mut rng);
         s.set_anonymous_token("anon");
         assert_eq!(s.request_cookies().get("MUSIC_A").unwrap(), "anon");
+        assert!(s.current_request_cookie().unwrap().contains("MUSIC_A=anon"));
         s.set_user_cookie("MUSIC_U=user; __csrf=x");
         let c = s.request_cookies();
         assert_eq!(c.get("MUSIC_U").unwrap(), "user");

@@ -33,6 +33,13 @@ pub struct PublicExplore {
     pub unavailable_sections: Vec<PublicExploreSection>,
 }
 
+/// xeapi 通道的安卓设备画像与 UA（与 oracle config.ts 一致）。
+const XEAPI_OS: &str = "android";
+const XEAPI_OSVER: &str = "16";
+const XEAPI_APP_VERSION: &str = "9.1.65";
+const XEAPI_USER_AGENT: &str =
+    "NeteaseMusic/9.1.65.240927161425(9001065);Dalvik/2.1.0 (Linux; U; Android 14; 23013RK75C Build/UKQ1.230804.001)";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PublicExploreSection {
@@ -50,7 +57,8 @@ pub struct StdSleeper;
 #[async_trait]
 impl Sleeper for StdSleeper {
     async fn sleep(&self, duration: Duration) {
-        std::thread::sleep(duration)
+        // 用 tokio time 让出执行线程而非阻塞（std::thread::sleep 会卡住共享 runtime 线程）。
+        tokio::time::sleep(duration).await
     }
 }
 
@@ -244,6 +252,26 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         }
         Ok(state)
     }
+    /// clientlog 通道（听歌打卡等打点）：固定 clientlog 域 + os=osx 设备 cookie，
+    /// 失败不抛错（打点不阻塞播放），返回是否成功。
+    pub async fn clientlog_eapi(&self, path: &str, payload: Value) -> Result<bool> {
+        // 打点接口无产品语义返回值；网络失败/非 2xx 一律降级为 false（不阻塞播放）。
+        match self
+            .eapi_on(
+                path,
+                payload,
+                Duration::from_secs(6),
+                "https://clientlog.music.163.com",
+                None,
+                "osx",
+            )
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
     pub(crate) async fn eapi(
         &self,
         path: &str,
@@ -262,6 +290,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             timeout,
             "https://interfacepc.music.163.com",
             None,
+            "pc",
         )
         .await
     }
@@ -272,12 +301,13 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         timeout: Duration,
         domain: &str,
         anti_cheat_token: Option<&str>,
+        os: &str,
     ) -> Result<Value> {
         let (cookies, device) = {
             let s = self.session();
             (s.request_cookies(), s.device_id().to_owned())
         };
-        let header = json!({"osver":"Microsoft-Windows-10-Professional-build-19045-64bit","deviceId":device,"os":"pc","appver":"3.1.17.204416","versioncode":"140","mobilename":"","resolution":"1920x1080","channel":"netease","MUSIC_U":cookies.get("MUSIC_U").cloned().unwrap_or_default(),"MUSIC_A":cookies.get("MUSIC_A").cloned().unwrap_or_default()});
+        let header = json!({"osver":"Microsoft-Windows-10-Professional-build-19045-64bit","deviceId":device,"os":os,"appver":"3.1.17.204416","versioncode":"140","mobilename":"","resolution":"1920x1080","channel":"netease","MUSIC_U":cookies.get("MUSIC_U").cloned().unwrap_or_default(),"MUSIC_A":cookies.get("MUSIC_A").cloned().unwrap_or_default()});
         payload
             .as_object_mut()
             .ok_or_else(|| Error::Validation("payload 必须是对象".into()))?
@@ -324,14 +354,15 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         let map = payload
             .as_object()
             .ok_or_else(|| Error::Validation("payload 必须是对象".into()))?;
-        let (mut rng, key, session, device, cookie) = {
+        let (mut rng, key, session, device, cookie, logged_in) = {
             let s = self.session();
             (
                 OsRng,
                 s.xeapi_key()?.clone(),
                 s.xeapi_session().map(|(a, b)| (a.to_owned(), b.to_owned())),
                 s.device_id().to_owned(),
-                s.current_user_cookie(),
+                s.xeapi_cookie(),
+                s.is_logged_in(),
             )
         };
         let fields = crypto::encrypt_xeapi(
@@ -354,11 +385,30 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             "Content-Type".into(),
             "application/x-www-form-urlencoded;charset=utf-8".into(),
         );
+        headers.insert("User-Agent".into(), XEAPI_USER_AGENT.into());
         headers.insert("X-Client-Enc-State".into(), "ENCRYPTED".into());
-        headers.insert("x-deviceid".into(), device);
-        if let Some(c) = cookie {
-            headers.insert("Cookie".into(), c);
-        };
+        headers.insert("x-aeapi".into(), "true".into());
+        headers.insert("x-deviceid".into(), device.clone());
+        headers.insert("x-os".into(), XEAPI_OS.into());
+        headers.insert("x-osver".into(), XEAPI_OSVER.into());
+        headers.insert("x-appver".into(), XEAPI_APP_VERSION.into());
+        headers.insert("x-sdeviceid".into(), device.clone());
+        headers.insert(
+            "x-buildver".into(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_else(|_| "0".into()),
+        );
+        if logged_in {
+            if let Some(music_u) = cookie.split(';').find_map(|part| {
+                let (key, value) = part.trim().split_once('=')?;
+                (key == "MUSIC_U").then(|| value.to_owned())
+            }) {
+                headers.insert("x-music-u".into(), music_u);
+            }
+        }
+        headers.insert("Cookie".into(), cookie);
         let outer = path.strip_prefix("/api").unwrap_or(path);
         let response = self
             .transport
@@ -406,7 +456,11 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
     }
 
     async fn ensure_xeapi_bootstrapped(&self) -> Result<()> {
-        if self.xeapi_bootstrapped.load(Ordering::Acquire) {
+        let session_ready = {
+            let session = self.session();
+            session.is_logged_in() || session.anonymous_token_present()
+        };
+        if self.xeapi_bootstrapped.load(Ordering::Acquire) && session_ready {
             return Ok(());
         }
         let _guard = self.xeapi_bootstrap_lock.lock().await;
@@ -426,7 +480,9 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             .as_millis()
             .to_string();
         self.fetch_xeapi_public_key(&timestamp, &nonce).await?;
-        let _ = self.register_anonymous_ready().await;
+        if !self.session().is_logged_in() {
+            self.register_anonymous_ready().await?;
+        }
         self.xeapi_bootstrapped.store(true, Ordering::Release);
         Ok(())
     }
@@ -590,6 +646,7 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
             Duration::from_secs(12),
             "https://interfacepc.music.163.com",
             token.as_deref(),
+            "pc",
         )
         .await
         .and_then(assert_api_ok)
@@ -1135,7 +1192,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_verifies_public_key_and_tolerates_anonymous_failure() {
+    fn startup_retries_anonymous_registration_after_failure() {
         let encrypted = crypto::encrypt_xeapi_public_key_fixture(&json!({
             "publicKey": BASE64.encode([7u8; 32]),
             "sk": "fixture-sk",
@@ -1177,14 +1234,14 @@ mod tests {
             Session::new(&mut rng),
             NoSleep,
         );
-        block_on(svc.bootstrap_network()).unwrap();
+        assert!(block_on(svc.bootstrap_network()).is_err());
         assert_eq!(
             svc.session.lock().unwrap().xeapi_key().unwrap().version,
             "3"
         );
         assert_eq!(svc.transport.requests.lock().unwrap().len(), 2);
-        block_on(svc.bootstrap_network()).unwrap();
-        assert_eq!(svc.transport.requests.lock().unwrap().len(), 2);
+        assert!(block_on(svc.bootstrap_network()).is_err());
+        assert_eq!(svc.transport.requests.lock().unwrap().len(), 4);
     }
 
     struct LazyBootstrapFake {
@@ -1693,5 +1750,166 @@ mod tests {
         let encoded = serde_json::to_string(&MutationResult { succeeded: true }).unwrap();
         assert!(!encoded.contains("token"));
         assert!(!encoded.contains("cookie"));
+    }
+
+    #[test]
+    fn search_hot_maps_first_word_and_score() {
+        let svc = service(vec![response(json!({
+            "code": 200,
+            "data": {"hots": [{"first": "热歌", "score": 99}]}
+        }))]);
+        let words = block_on(svc.search_hot()).unwrap();
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "热歌");
+        assert_eq!(words[0].score, 99);
+    }
+
+    #[test]
+    fn search_suggest_maps_song_artist_album_playlist() {
+        let svc = service(vec![response(json!({
+            "code": 200,
+            "result": {
+                "order": ["songs", "artists"],
+                "songs": [{"id": 1, "name": "s", "artists": [{"id": 2, "name": "a"}], "album": {"id": 3, "name": "al"}}],
+                "artists": [{"id": 4, "name": "ar"}],
+                "albums": [{"id": 5, "name": "alb"}],
+                "playlists": [{"id": 6, "name": "pl"}]
+            }
+        }))]);
+        let suggest = block_on(svc.search_suggest("x")).unwrap();
+        assert_eq!(suggest.songs[0].id, 1);
+        assert_eq!(suggest.songs[0].artists[0].name, "a");
+        assert_eq!(suggest.songs[0].album.name, "al");
+        assert_eq!(suggest.artists[0].id, 4);
+        assert_eq!(suggest.albums[0].name, "alb");
+        assert_eq!(suggest.playlists[0].id, 6);
+        assert_eq!(suggest.order, vec!["songs", "artists"]);
+    }
+
+    #[test]
+    fn banner_maps_items_and_playlist_categories_aggregate_sub_and_categories() {
+        let svc = service(vec![
+            response(
+                json!({"code": 200, "banners": [{"targetId": 1, "title": "t", "imageUrl": "i", "url": "u", "targetType": 3}]}),
+            ),
+            response(
+                json!({"code": 200, "sub": [{"name": "流行", "id": "1"}], "categories": [{"name": "分类", "id": "2"}]}),
+            ),
+        ]);
+        let banners = block_on(svc.banner()).unwrap();
+        assert_eq!(banners[0].title, "t");
+        assert_eq!(banners[0].target_type, 3);
+        let cats = block_on(svc.playlist_categories()).unwrap();
+        assert_eq!(cats.len(), 2);
+        assert_eq!(cats[0].name, "流行");
+        assert_eq!(cats[1].id, "2");
+    }
+
+    #[test]
+    fn high_quality_and_similar_playlists_map_summary() {
+        let svc = service(vec![
+            response(
+                json!({"code": 200, "playlists": [{"id": 10, "name": "精品", "trackCount": 5, "creator": {"userId": 9, "nickname": "owner"}}]}),
+            ),
+            response(json!({"code": 200, "playlists": [{"id": 11, "name": "相似"}]})),
+        ]);
+        let list = block_on(svc.high_quality_playlists(
+            "全部",
+            PageRequest {
+                limit: 30,
+                offset: 0,
+            },
+        ))
+        .unwrap();
+        assert_eq!(list[0].id, 10);
+        assert_eq!(list[0].owner_name.as_deref(), Some("owner"));
+        let simi = block_on(svc.similar_playlists(5, 30)).unwrap();
+        assert_eq!(simi[0].name, "相似");
+    }
+
+    #[test]
+    fn check_songs_liked_maps_id_flags() {
+        let svc = service(vec![response(json!({"code": 200, "ids": [1, 0]}))]);
+        let states = block_on(svc.check_songs_liked(&[100, 200])).unwrap();
+        assert_eq!(states.len(), 2);
+        assert!(states[0].liked);
+        assert!(!states[1].liked);
+        assert_eq!(states[0].song_id, 100);
+    }
+
+    #[test]
+    fn hot_comments_and_floor_map_comment_fields() {
+        let svc = service(vec![
+            response(
+                json!({"code": 200, "hotComments": [{"commentId": 7, "content": "热评", "time": 123}], "total": 1}),
+            ),
+            response(
+                json!({"code": 200, "floorCount": 3, "data": {"comments": [{"commentId": 8, "content": "楼中楼"}]}}),
+            ),
+        ]);
+        let hot = block_on(svc.hot_comments(
+            CommentResource::Song,
+            1,
+            PageRequest {
+                limit: 30,
+                offset: 0,
+            },
+        ))
+        .unwrap();
+        assert_eq!(hot.total, 1);
+        assert_eq!(hot.comments[0].content, "热评");
+        let floor = block_on(svc.comment_floor(
+            CommentResource::Song,
+            1,
+            7,
+            PageRequest {
+                limit: 30,
+                offset: 0,
+            },
+        ))
+        .unwrap();
+        assert_eq!(floor.floor, 3);
+        assert_eq!(floor.comments[0].content, "楼中楼");
+    }
+
+    #[test]
+    fn user_level_subcount_login_status_map_fields() {
+        let svc = service(vec![
+            response(
+                json!({"code": 200, "data": {"level": 8, "nextLevel": {"nextLevelExp": 1000}}}),
+            ),
+            response(
+                json!({"code": 200, "playlistCount": 3, "albumCount": 4, "artistCount": 5, "mvCount": 6, "djRadioCount": 7}),
+            ),
+            response(json!({"code": 200, "profile": {"userId": 1, "nickname": "n"}})),
+        ]);
+        let level = block_on(svc.user_level()).unwrap();
+        assert_eq!(level.level, 8);
+        assert_eq!(level.next_level_experience, Some(1000));
+        let sub = block_on(svc.user_subcount()).unwrap();
+        assert_eq!(
+            (
+                sub.playlists,
+                sub.albums,
+                sub.artists,
+                sub.mvs,
+                sub.dj_radios
+            ),
+            (3, 4, 5, 6, 7)
+        );
+        let status = block_on(svc.login_status()).unwrap();
+        assert!(status.logged_in);
+        assert_eq!(status.user_id, Some(1));
+    }
+
+    #[test]
+    fn scrobble_uses_clientlog_channel_and_never_blocks() {
+        // 两个 clientlog 调用（startplay + play）都返回传输失败：打点降级不阻塞。
+        let svc = service(vec![
+            Err(crate::Error::Transport("clientlog down".into())),
+            Err(crate::Error::Transport("clientlog down".into())),
+        ]);
+        let result = block_on(svc.scrobble(42, 1234)).unwrap();
+        assert!(result.reported);
     }
 }

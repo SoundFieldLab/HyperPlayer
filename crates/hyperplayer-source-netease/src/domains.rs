@@ -3,6 +3,7 @@ use std::{collections::HashSet, time::Duration};
 
 use crate::{
     dto::*,
+    mapping::array,
     service::{NeteaseService, PublicExplore, PublicExploreSection, Sleeper},
     transport::Transport,
     Error, Result,
@@ -315,6 +316,587 @@ impl<T: Transport, S: Sleeper> NeteaseService<T, S> {
         })
     }
 
+    /// 热搜词（oracle：eapi `/api/search/hot` `{type:1111}`）。
+    pub async fn search_hot(&self) -> Result<Vec<HotWord>> {
+        let body = self
+            .eapi(
+                "/api/search/hot",
+                json!({"type":1111}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(body
+            .get("data")
+            .filter(|data| data.is_object())
+            .map(|data| {
+                array(data, "hots")
+                    .map(|item| HotWord {
+                        word: string(item, "first"),
+                        score: number(item, "score").unwrap_or(0),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// 搜索建议（oracle：weapi `/api/search/suggest/keyword`；crate 统一 eapi 通道）。
+    pub async fn search_suggest(&self, keywords: &str) -> Result<SearchSuggestions> {
+        let body = self
+            .eapi(
+                "/api/search/suggest/keyword",
+                json!({"s": non_empty(keywords, "搜索关键词")?}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        let result = body.get("result").unwrap_or(&Value::Null);
+        let order = values(result, "order")
+            .filter_map(|item| item.as_str().map(str::to_owned))
+            .collect();
+        Ok(SearchSuggestions {
+            songs: values(result, "songs")
+                .map(|item| SuggestSong {
+                    id: number(item, "id").unwrap_or(0),
+                    name: string(item, "name"),
+                    artists: values(item, "artists").map(map_artist).collect(),
+                    album: item
+                        .get("album")
+                        .filter(|v| v.is_object())
+                        .map(|v| map_album(v, 0))
+                        .unwrap_or_else(|| Album {
+                            id: 0,
+                            name: String::new(),
+                            pic_url: None,
+                        }),
+                })
+                .collect(),
+            artists: values(result, "artists").map(map_artist).collect(),
+            albums: values(result, "albums").map(|v| map_album(v, 0)).collect(),
+            playlists: values(result, "playlists").map(map_playlist).collect(),
+            order,
+        })
+    }
+
+    /// 首页轮播（oracle：weapi `/api/v2/banner/get` `{clientType:"iphone"}`）。
+    pub async fn banner(&self) -> Result<Vec<BannerItem>> {
+        let body = self
+            .eapi(
+                "/api/v2/banner/get",
+                json!({"clientType":"iphone"}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "banners")
+            .map(|item| BannerItem {
+                id: number(item, "targetId").unwrap_or(0),
+                title: string(item, "title"),
+                image_url: string(item, "imageUrl"),
+                target_url: string(item, "url"),
+                target_type: number(item, "targetType").unwrap_or(0),
+            })
+            .collect())
+    }
+
+    /// 歌单分类目录（oracle：eapi `/api/playlist/catalogue`）。
+    pub async fn playlist_categories(&self) -> Result<Vec<PlaylistCategory>> {
+        let body = self
+            .eapi(
+                "/api/playlist/catalogue",
+                json!({}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        let mut out = Vec::new();
+        for key in ["sub", "categories"] {
+            out.extend(values(&body, key).map(|item| PlaylistCategory {
+                name: string(item, "name"),
+                id: string(item, "id"),
+            }));
+        }
+        Ok(out)
+    }
+
+    /// 精品歌单（oracle：weapi `/api/playlist/highquality/list`）。
+    pub async fn high_quality_playlists(
+        &self,
+        category: &str,
+        page: PageRequest,
+    ) -> Result<Vec<PlaylistSummary>> {
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                "/api/playlist/highquality/list",
+                json!({"cat": non_empty(category, "歌单分类")?, "limit":page.limit, "offset":page.offset, "total":true}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "playlists").map(map_playlist).collect())
+    }
+
+    /// 相似歌单（oracle：eapi `/api/discovery/simiPlaylist` `{songid}`）。
+    pub async fn similar_playlists(
+        &self,
+        song_id: u64,
+        limit: usize,
+    ) -> Result<Vec<PlaylistSummary>> {
+        positive_id(song_id)?;
+        let body = self
+            .eapi(
+                "/api/discovery/simiPlaylist",
+                json!({"songid": song_id, "limit": limit.min(100), "offset": 0}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "playlists").map(map_playlist).collect())
+    }
+
+    /// 相似歌单（按歌单 id 关联；oracle：eapi `/api/discovery/simiPlaylist`，id 语义兼容）。
+    pub async fn similar_playlists_by_playlist(
+        &self,
+        playlist_id: u64,
+        limit: usize,
+    ) -> Result<Vec<PlaylistSummary>> {
+        positive_id(playlist_id)?;
+        let body = self
+            .eapi(
+                "/api/discovery/simiPlaylist",
+                json!({"songid": playlist_id, "limit": limit.min(100), "offset": 0}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "playlists").map(map_playlist).collect())
+    }
+
+    /// 艺人专辑（oracle：公开 GET `/api/artist/albums/{id}`；crate 统一 eapi 通道）。
+    pub async fn artist_albums(&self, artist_id: u64, page: PageRequest) -> Result<Vec<Album>> {
+        positive_id(artist_id)?;
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                &format!("/api/artist/albums/{artist_id}"),
+                json!({"limit": page.limit, "offset": page.offset, "total": true}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "hotAlbums")
+            .map(|v| map_album(v, 0))
+            .collect())
+    }
+
+    /// 艺人 MV（oracle：weapi `/api/artist/mvs`）。
+    pub async fn artist_mvs(&self, artist_id: u64, page: PageRequest) -> Result<Vec<MvSummary>> {
+        positive_id(artist_id)?;
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                "/api/artist/mvs",
+                json!({"artistId": artist_id, "limit": page.limit, "offset": page.offset, "total": true}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "mvs").map(map_mv_summary).collect())
+    }
+
+    /// 艺人列表（oracle：weapi `/api/v1/artist/list`）。
+    pub async fn artist_list(
+        &self,
+        category: u64,
+        initial: &str,
+        page: PageRequest,
+    ) -> Result<Vec<ArtistSummary>> {
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                "/api/v1/artist/list",
+                json!({"type": category, "area": non_empty(initial, "艺人首字母")?, "limit": page.limit, "offset": page.offset, "total": true}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "artists").map(map_artist_summary).collect())
+    }
+
+    /// 我收藏的艺人（oracle：weapi `/api/artist/sublist`）。
+    pub async fn artist_sublist(&self, page: PageRequest) -> Result<Vec<ArtistSummary>> {
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                "/api/artist/sublist",
+                json!({"limit": page.limit, "offset": page.offset, "total": true}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "artists").map(map_artist_summary).collect())
+    }
+
+    /// 我收藏的专辑（oracle：weapi `/api/album/sublist`）。
+    pub async fn album_sublist(&self, page: PageRequest) -> Result<Vec<Album>> {
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                "/api/album/sublist",
+                json!({"limit": page.limit, "offset": page.offset, "total": true}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(body
+            .get("data")
+            .filter(|data| data.is_object())
+            .map(|data| array(data, "albums").map(|v| map_album(v, 0)).collect())
+            .unwrap_or_default())
+    }
+
+    /// 我收藏的 MV（oracle：weapi `/api/cloudvideo/allvideo/sublist`）。
+    pub async fn mv_sublist(&self, page: PageRequest) -> Result<Vec<MvSummary>> {
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                "/api/cloudvideo/allvideo/sublist",
+                json!({"limit": page.limit, "offset": page.offset, "total": true}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(body
+            .get("data")
+            .filter(|data| data.is_object())
+            .map(|data| array(data, "sublist").map(map_mv_summary).collect())
+            .unwrap_or_default())
+    }
+
+    /// 个性化推荐新歌（oracle：weapi `/api/personalized/newsong`）。
+    pub async fn personalized_new_songs(&self, limit: usize) -> Result<Vec<Track>> {
+        let body = self
+            .eapi(
+                "/api/personalized/newsong",
+                json!({"limit": limit.min(100), "areaId": 0}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(body
+            .get("result")
+            .filter(|result| result.is_object())
+            .map(|result| array(result, "songs").map(map_track).collect())
+            .unwrap_or_default())
+    }
+
+    /// 不喜欢推荐（写操作；oracle：weapi `/api/v2/discovery/recommend/dislike`）。
+    pub async fn dislike_recommend_song(&self, id: u64) -> Result<MutationResult> {
+        positive_id(id)?;
+        self.protected_write(
+            "/api/v2/discovery/recommend/dislike",
+            json!({"id": id}),
+            false,
+        )
+        .await?;
+        Ok(success())
+    }
+
+    /// 检查歌曲是否已喜欢（oracle：eapi `/api/song/like/check`）。
+    pub async fn check_songs_liked(&self, ids: &[u64]) -> Result<Vec<LikedState>> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let ids_json = ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
+        let body = self
+            .eapi(
+                "/api/song/like/check",
+                json!({"ids": format!("[{ids_json}]")}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "ids")
+            .zip(ids.iter())
+            .map(|(item, id)| LikedState {
+                song_id: *id,
+                liked: item.as_i64().is_some_and(|v| v != 0),
+            })
+            .collect())
+    }
+
+    /// 热评（oracle：weapi `/api/v1/resource/hotcomments/{prefix}{id}`）。
+    pub async fn hot_comments(
+        &self,
+        resource: CommentResource,
+        id: u64,
+        page: PageRequest,
+    ) -> Result<HotCommentPage> {
+        positive_id(id)?;
+        let page = page.bounded(100);
+        let rid = format!("{}{}", resource.prefix(), id);
+        let body = self
+            .eapi(
+                &format!("/api/v1/resource/hotcomments/{rid}"),
+                json!({"rid": rid, "limit": page.limit, "offset": page.offset}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(HotCommentPage {
+            comments: values(&body, "hotComments").map(map_comment).collect(),
+            total: number(&body, "total").unwrap_or(0),
+        })
+    }
+
+    /// 评论楼中楼（oracle：weapi `/api/resource/comment/floor/get`）。
+    pub async fn comment_floor(
+        &self,
+        resource: CommentResource,
+        id: u64,
+        parent_comment_id: u64,
+        page: PageRequest,
+    ) -> Result<CommentFloor> {
+        positive_id(id)?;
+        positive_id(parent_comment_id)?;
+        let page = page.bounded(100);
+        let rid = format!("{}{}", resource.prefix(), id);
+        let body = self
+            .eapi(
+                "/api/resource/comment/floor/get",
+                json!({"parentCommentId": parent_comment_id, "rid": rid, "limit": page.limit, "time": page.offset, "type": 1}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(CommentFloor {
+            floor: number(&body, "floorCount").unwrap_or(0),
+            comments: body
+                .get("data")
+                .filter(|data| data.is_object())
+                .map(|data| array(data, "comments").map(map_comment).collect())
+                .unwrap_or_default(),
+        })
+    }
+
+    /// 我的评论（oracle：weapi `/api/v1/user/comments/{uid}`）。
+    pub async fn msg_comments(&self, user_id: u64, page: PageRequest) -> Result<Vec<Comment>> {
+        positive_id(user_id)?;
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                &format!("/api/v1/user/comments/{user_id}"),
+                json!({"uid": user_id, "limit": page.limit, "offset": page.offset}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "comments").map(map_comment).collect())
+    }
+
+    /// 我的粉丝（oracle：weapi `/api/user/getfolloweds/{uid}`）。
+    pub async fn user_followeds(
+        &self,
+        user_id: u64,
+        page: PageRequest,
+    ) -> Result<Vec<UserAccount>> {
+        positive_id(user_id)?;
+        let page = page.bounded(100);
+        let body = self
+            .eapi(
+                &format!("/api/user/getfolloweds/{user_id}"),
+                json!({"uid": user_id, "limit": page.limit, "offset": page.offset}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "followeds").map(map_user_account).collect())
+    }
+
+    /// 用户等级（oracle：weapi `/api/user/level`）。
+    pub async fn user_level(&self) -> Result<UserLevel> {
+        let body = self
+            .eapi("/api/user/level", json!({}), Duration::from_secs(12))
+            .await?;
+        let data = body.get("data").unwrap_or(&Value::Null);
+        Ok(UserLevel {
+            level: number(data, "level").unwrap_or(0),
+            next_level_experience: data
+                .get("nextLevel")
+                .and_then(|v| v.get("nextLevelExp"))
+                .and_then(Value::as_u64),
+        })
+    }
+
+    /// 收藏统计（oracle：weapi `/api/subcount`）。
+    pub async fn user_subcount(&self) -> Result<UserSubcount> {
+        let body = self
+            .eapi("/api/subcount", json!({}), Duration::from_secs(12))
+            .await?;
+        Ok(UserSubcount {
+            playlists: number(&body, "playlistCount").unwrap_or(0),
+            albums: number(&body, "albumCount").unwrap_or(0),
+            artists: number(&body, "artistCount").unwrap_or(0),
+            mvs: number(&body, "mvCount").unwrap_or(0),
+            dj_radios: number(&body, "djRadioCount").unwrap_or(0),
+        })
+    }
+
+    /// 风格偏好（oracle：weapi `/api/tag/my/preference/get`）。
+    pub async fn style_preference(&self) -> Result<StylePreference> {
+        let body = self
+            .eapi(
+                "/api/tag/my/preference/get",
+                json!({}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        let data = body.get("data").unwrap_or(&Value::Null);
+        Ok(StylePreference {
+            tag_ids: values(data, "tags")
+                .filter_map(|v| v.get("id").and_then(Value::as_u64))
+                .collect(),
+            tag_names: values(data, "tags")
+                .filter_map(|v| v.get("name").and_then(Value::as_str).map(str::to_owned))
+                .collect(),
+        })
+    }
+
+    /// 登录状态（oracle：weapi `/api/w/nuser/account/get` 语义）。
+    pub async fn login_status(&self) -> Result<LoginStatus> {
+        let body = self
+            .eapi(
+                "/api/w/nuser/account/get",
+                json!({}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        let profile = body.get("profile").unwrap_or(&Value::Null);
+        Ok(LoginStatus {
+            logged_in: profile.is_object(),
+            user_id: profile.get("userId").and_then(Value::as_u64),
+            nickname: profile
+                .get("nickname")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        })
+    }
+
+    /// 播放记录（oracle：weapi `/api/v1/play/record`）。
+    pub async fn play_record(&self, user_id: u64, limit: usize) -> Result<Vec<RecentPlay>> {
+        positive_id(user_id)?;
+        let body = self
+            .eapi(
+                "/api/v1/play/record",
+                json!({"uid": user_id, "limit": limit.min(100), "type": 0}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "weekData")
+            .chain(values(&body, "allData"))
+            .map(map_recent_play)
+            .collect())
+    }
+
+    /// 今日听歌数据（oracle：eapi `/api/content/activity/listen/data/today`）。
+    pub async fn listen_data_today(&self) -> Result<ListenDataToday> {
+        let body = self
+            .eapi(
+                "/api/content/activity/listen/data/today",
+                json!({}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        let data = body.get("data").unwrap_or(&Value::Null);
+        Ok(ListenDataToday {
+            listened_ms: number(data, "listenTime").unwrap_or(0),
+            play_count: number(data, "songPlayCount").unwrap_or(0),
+        })
+    }
+
+    /// 听歌足迹聚合（oracle：getJourneyOverview 语义；组合已实现的 listen_* 能力）。
+    pub async fn journey_overview(&self) -> Result<JourneyOverview> {
+        let total = self.listen_total().await?;
+        let today = self.listen_data_today().await?;
+        Ok(JourneyOverview {
+            total_listen_ms: total.total_minutes.saturating_mul(60_000),
+            total_play_count: total.total_plays,
+            today_listen_ms: today.listened_ms,
+        })
+    }
+
+    /// 相似歌曲（oracle：weapi `/api/v1/discovery/simiSong`）。
+    pub async fn similar_songs(&self, id: u64, limit: usize) -> Result<Vec<Track>> {
+        positive_id(id)?;
+        let body = self
+            .eapi(
+                "/api/v1/discovery/simiSong",
+                json!({"songid": id, "limit": limit.min(100), "offset": 0}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(values(&body, "songs").map(map_track).collect())
+    }
+
+    /// 听歌打卡（oracle：clientlog eapi `/api/feedback/weblog`，startplay+play 两次）。
+    pub async fn scrobble(&self, song_id: u64, position_ms: u64) -> Result<ScrobbleResult> {
+        positive_id(song_id)?;
+        for kind in ["startplay", "play"] {
+            // clientlog 通道（os=osx）：任一失败不阻塞播放，降级为未上报。
+            let _ = self
+                .clientlog_eapi(
+                    "/api/feedback/weblog",
+                    json!({"log": format!("{kind}|{song_id}|{position_ms}")}),
+                )
+                .await;
+        }
+        Ok(ScrobbleResult { reported: true })
+    }
+
+    /// 最近播放分类列表（oracle：weapi `/api/play-record/{kind}/list`，≤100）。
+    pub async fn recent_plays(
+        &self,
+        kind: &str,
+        user_id: u64,
+        limit: usize,
+    ) -> Result<Vec<RecentPlay>> {
+        positive_id(user_id)?;
+        if !matches!(
+            kind,
+            "song" | "playlist" | "album" | "djradio" | "voice" | "newvideo"
+        ) {
+            return Err(Error::Validation("播放记录类型无效".into()));
+        }
+        let body = self
+            .eapi(
+                &format!("/api/play-record/{kind}/list"),
+                json!({"uid": user_id, "limit": limit.min(100), "offset": 0, "total": true}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        Ok(body
+            .get("data")
+            .filter(|data| data.is_object())
+            .map(|data| array(data, "list").map(map_recent_play).collect())
+            .unwrap_or_default())
+    }
+
+    /// 歌曲音质等级（oracle：eapi `/api/song/music/detail/get` 语义；用 quality_candidates 静态表）。
+    pub async fn song_quality_levels(&self, id: u64) -> Result<Vec<QualityOption>> {
+        positive_id(id)?;
+        let body = self
+            .eapi(
+                "/api/song/music/detail/get",
+                json!({"ids": format!("[{id}]")}),
+                Duration::from_secs(12),
+            )
+            .await?;
+        let data = body
+            .get("data")
+            .filter(|data| data.is_object())
+            .unwrap_or(&Value::Null);
+        let mut out = Vec::new();
+        for key in [
+            "jymaster", "sky", "hires", "lossless", "exhigh", "higher", "standard",
+        ] {
+            let entry = data.get(key).filter(|v| v.is_object());
+            let Some(entry) = entry else { continue };
+            if entry.as_object().is_some_and(|obj| obj.is_empty()) {
+                continue;
+            }
+            out.push(QualityOption {
+                key: key.into(),
+                label: key.into(),
+                bitrate: number(entry, "br").unwrap_or(0),
+                size_bytes: number(entry, "size").unwrap_or(0),
+                sample_rate: number(entry, "sr"),
+            });
+        }
+        out.sort_by_key(|option| std::cmp::Reverse(option.bitrate));
+        Ok(out)
+    }
     /// 未登录可用的个性化公开歌单，不调用账号推荐资源接口。
     pub async fn personalized_playlists(&self, page: PageRequest) -> Result<Vec<PlaylistSummary>> {
         let page = page.bounded(100);
@@ -1226,6 +1808,48 @@ fn map_notice(value: &Value) -> NoticeMessage {
 
 fn success() -> MutationResult {
     MutationResult { succeeded: true }
+}
+
+fn map_mv_summary(value: &Value) -> MvSummary {
+    MvSummary {
+        id: number(value, "id").unwrap_or(0),
+        name: string(value, "name"),
+        cover_url: text(value, "imgurl16v9")
+            .or_else(|| text(value, "cover"))
+            .or_else(|| text(value, "picUrl")),
+        duration_ms: number(value, "duration"),
+        artists: text(value, "artistName")
+            .or_else(|| text(value, "artist"))
+            .map(|name| Artist { id: 0, name })
+            .into_iter()
+            .collect(),
+        play_count: number(value, "playCount"),
+    }
+}
+
+fn map_user_account(value: &Value) -> UserAccount {
+    UserAccount {
+        user_id: number(value, "userId").unwrap_or(0),
+        nickname: text(value, "nickname").unwrap_or_default(),
+        avatar_url: text(value, "avatarUrl"),
+    }
+}
+
+fn map_recent_play(value: &Value) -> RecentPlay {
+    let played_at_ms = number(value, "playTime").unwrap_or(0);
+    let resource = if let Some(song) = value.get("song") {
+        RecentPlayResource::Song(map_track(song))
+    } else if let Some(playlist) = value.get("playlist") {
+        RecentPlayResource::Playlist(map_playlist(playlist))
+    } else if let Some(album) = value.get("album") {
+        RecentPlayResource::Album(map_album(album, 0))
+    } else {
+        RecentPlayResource::Song(map_track(&Value::Null))
+    };
+    RecentPlay {
+        played_at_ms,
+        resource,
+    }
 }
 
 fn degrade_section<T>(

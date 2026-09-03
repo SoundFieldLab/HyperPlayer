@@ -1,12 +1,16 @@
 use crate::{
     adapter_mapping::{
         netease_album_detail_dto, netease_album_dto, netease_artist_detail_dto,
-        netease_artist_summary_dto, netease_chart_dto, netease_cloud_page_dto, netease_comment_dto,
-        netease_comment_page_dto, netease_dj_program_dto, netease_dj_radio_dto,
-        netease_event_page_dto, netease_listen_report_dto, netease_listen_stats_dto,
+        netease_artist_summary_dto, netease_banner_dto, netease_chart_dto, netease_cloud_page_dto,
+        netease_comment_dto, netease_comment_page_dto, netease_dj_program_dto,
+        netease_dj_radio_dto, netease_event_page_dto, netease_hot_word_dto,
+        netease_journey_overview_dto, netease_liked_state_dto, netease_listen_data_today_dto,
+        netease_listen_report_dto, netease_listen_stats_dto, netease_login_status_dto,
         netease_mv_detail_dto, netease_mv_dto, netease_notice_page_dto,
-        netease_playlist_detail_dto, netease_playlist_dto, netease_track_dto, netease_user_dto,
-        netease_vip_dto, track_dto,
+        netease_playlist_category_dto, netease_playlist_detail_dto, netease_playlist_dto,
+        netease_quality_option_dto, netease_recent_play_dto, netease_search_suggestions_dto,
+        netease_style_preference_dto, netease_track_dto, netease_user_dto, netease_user_level_dto,
+        netease_user_subcount_dto, netease_vip_dto, track_dto,
     },
     credential_vault::CredentialVault,
     dto::*,
@@ -3432,6 +3436,326 @@ impl NeteasePort for NeteaseAdapter {
         self.pending_mutations.app_lock()?.clear();
         self.entitlement.clear()?;
         self.status()
+    }
+
+    // ---- Stage 16：发现/社交/用户能力 ----
+    async fn search_hot(&self) -> AppResult<Vec<NeteaseHotWordDto>> {
+        let words = self.require_service()?.search_hot().await?;
+        Ok(words.into_iter().map(netease_hot_word_dto).collect())
+    }
+
+    async fn search_suggest(&self, query: &str) -> AppResult<NeteaseSearchSuggestionsDto> {
+        let suggestions = self.require_service()?.search_suggest(query).await?;
+        Ok(netease_search_suggestions_dto(suggestions))
+    }
+
+    async fn banner(&self) -> AppResult<Vec<NeteaseBannerDto>> {
+        let banners = self.require_service()?.banner().await?;
+        Ok(banners.into_iter().map(netease_banner_dto).collect())
+    }
+
+    async fn playlist_categories(&self) -> AppResult<Vec<NeteasePlaylistCategoryDto>> {
+        let categories = self.require_service()?.playlist_categories().await?;
+        Ok(categories
+            .into_iter()
+            .map(netease_playlist_category_dto)
+            .collect())
+    }
+
+    async fn high_quality_playlists(
+        &self,
+        category: &str,
+        page: PageRequestDto,
+    ) -> AppResult<NeteasePlaylistPageDto> {
+        let page = netease_page(&page)?;
+        let offset = page.offset;
+        let limit = page.limit;
+        let playlists = self
+            .require_service()?
+            .high_quality_playlists(category, page)
+            .await?;
+        let count = playlists.len();
+        Ok(NeteasePlaylistPageDto {
+            playlists: playlists.into_iter().map(netease_playlist_dto).collect(),
+            next_cursor: (count == limit).then(|| (offset + count).to_string()),
+        })
+    }
+
+    async fn similar_playlists(
+        &self,
+        song_id: u64,
+        limit: usize,
+    ) -> AppResult<NeteasePlaylistPageDto> {
+        validate_positive_id(song_id, "songId")?;
+        let playlists = self
+            .require_service()?
+            .similar_playlists(song_id, limit)
+            .await?;
+        Ok(NeteasePlaylistPageDto {
+            playlists: playlists.into_iter().map(netease_playlist_dto).collect(),
+            next_cursor: None,
+        })
+    }
+
+    async fn artist_albums(
+        &self,
+        artist_id: u64,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseArtistAlbumsDto> {
+        validate_positive_id(artist_id, "artistId")?;
+        let page = netease_page(&page)?;
+        let offset = page.offset;
+        let limit = page.limit;
+        let albums = self
+            .require_service()?
+            .artist_albums(artist_id, page)
+            .await?;
+        let count = albums.len();
+        Ok(NeteaseArtistAlbumsDto {
+            albums: albums.into_iter().map(netease_album_dto).collect(),
+            next_cursor: (count == limit).then(|| (offset + count).to_string()),
+        })
+    }
+
+    async fn artist_mvs(
+        &self,
+        artist_id: u64,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseArtistMvsDto> {
+        validate_positive_id(artist_id, "artistId")?;
+        let page = netease_page(&page)?;
+        let offset = page.offset;
+        let limit = page.limit;
+        let mvs = self.require_service()?.artist_mvs(artist_id, page).await?;
+        let count = mvs.len();
+        Ok(NeteaseArtistMvsDto {
+            mvs: mvs.into_iter().map(netease_mv_dto).collect(),
+            next_cursor: (count == limit).then(|| (offset + count).to_string()),
+        })
+    }
+
+    async fn artist_sublist(&self, page: PageRequestDto) -> AppResult<NeteaseSublistArtistsDto> {
+        let page = netease_page(&page)?;
+        let offset = page.offset;
+        let limit = page.limit;
+        let artists = self.require_service()?.artist_sublist(page).await?;
+        let count = artists.len();
+        Ok(NeteaseSublistArtistsDto {
+            artists: artists
+                .into_iter()
+                .map(netease_artist_summary_dto)
+                .collect(),
+            next_cursor: (count == limit).then(|| (offset + count).to_string()),
+        })
+    }
+
+    async fn album_sublist(&self, page: PageRequestDto) -> AppResult<NeteaseSublistAlbumsDto> {
+        let page = netease_page(&page)?;
+        let offset = page.offset;
+        let limit = page.limit;
+        let albums = self.require_service()?.album_sublist(page).await?;
+        let count = albums.len();
+        Ok(NeteaseSublistAlbumsDto {
+            albums: albums.into_iter().map(netease_album_dto).collect(),
+            next_cursor: (count == limit).then(|| (offset + count).to_string()),
+        })
+    }
+
+    async fn mv_sublist(&self, page: PageRequestDto) -> AppResult<NeteaseSublistMvsDto> {
+        let page = netease_page(&page)?;
+        let offset = page.offset;
+        let limit = page.limit;
+        let mvs = self.require_service()?.mv_sublist(page).await?;
+        let count = mvs.len();
+        Ok(NeteaseSublistMvsDto {
+            mvs: mvs.into_iter().map(netease_mv_dto).collect(),
+            next_cursor: (count == limit).then(|| (offset + count).to_string()),
+        })
+    }
+
+    async fn personalized_new_songs(&self, limit: usize) -> AppResult<NeteaseTracksDto> {
+        let tracks = self
+            .require_service()?
+            .personalized_new_songs(limit)
+            .await?;
+        Ok(NeteaseTracksDto {
+            tracks: tracks.into_iter().map(netease_track_dto).collect(),
+        })
+    }
+
+    async fn dislike_recommend_song(&self, id: u64) -> AppResult<NeteaseMutationResultDto> {
+        validate_positive_id(id, "songId")?;
+        self.require_service()?.dislike_recommend_song(id).await?;
+        Ok(NeteaseMutationResultDto {
+            succeeded: true,
+            created_playlist: None,
+            comment: None,
+        })
+    }
+
+    async fn check_songs_liked(&self, ids: Vec<u64>) -> AppResult<Vec<NeteaseLikedStateDto>> {
+        let states = self.require_service()?.check_songs_liked(&ids).await?;
+        Ok(states.into_iter().map(netease_liked_state_dto).collect())
+    }
+
+    async fn hot_comments(
+        &self,
+        resource: NeteaseResourceRequestDto,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseHotCommentsDto> {
+        let page = netease_page(&page)?;
+        let hot = self
+            .require_service()?
+            .hot_comments(
+                netease_comment_resource(resource.resource),
+                resource.id,
+                page,
+            )
+            .await?;
+        Ok(NeteaseHotCommentsDto {
+            comments: hot.comments.into_iter().map(netease_comment_dto).collect(),
+            total: hot.total,
+        })
+    }
+
+    async fn comment_floor(
+        &self,
+        resource: NeteaseResourceRequestDto,
+        parent_comment_id: u64,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseCommentFloorDto> {
+        let page = netease_page(&page)?;
+        let floor = self
+            .require_service()?
+            .comment_floor(
+                netease_comment_resource(resource.resource),
+                resource.id,
+                parent_comment_id,
+                page,
+            )
+            .await?;
+        Ok(NeteaseCommentFloorDto {
+            floor: floor.floor,
+            comments: floor
+                .comments
+                .into_iter()
+                .map(netease_comment_dto)
+                .collect(),
+        })
+    }
+
+    async fn msg_comments(
+        &self,
+        user_id: u64,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseCommentPageDto> {
+        let page = netease_page(&page)?;
+        let offset = page.offset;
+        let limit = page.limit;
+        let comments = self.require_service()?.msg_comments(user_id, page).await?;
+        let count = comments.len();
+        Ok(NeteaseCommentPageDto {
+            comments: comments.into_iter().map(netease_comment_dto).collect(),
+            total_count: 0,
+            has_more: count == limit,
+            next_cursor: (count == limit).then(|| (offset + count).to_string()),
+        })
+    }
+
+    async fn user_followeds(
+        &self,
+        user_id: u64,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseUserPageDto> {
+        let page = netease_page(&page)?;
+        let offset = page.offset;
+        let limit = page.limit;
+        let users = self
+            .require_service()?
+            .user_followeds(user_id, page)
+            .await?;
+        let count = users.len();
+        Ok(NeteaseUserPageDto {
+            users: users.into_iter().map(netease_user_dto).collect(),
+            next_cursor: (count == limit).then(|| (offset + count).to_string()),
+        })
+    }
+
+    async fn user_level(&self) -> AppResult<NeteaseUserLevelDto> {
+        Ok(netease_user_level_dto(
+            self.require_service()?.user_level().await?,
+        ))
+    }
+
+    async fn user_subcount(&self) -> AppResult<NeteaseUserSubcountDto> {
+        Ok(netease_user_subcount_dto(
+            self.require_service()?.user_subcount().await?,
+        ))
+    }
+
+    async fn style_preference(&self) -> AppResult<NeteaseStylePreferenceDto> {
+        Ok(netease_style_preference_dto(
+            self.require_service()?.style_preference().await?,
+        ))
+    }
+
+    async fn login_status(&self) -> AppResult<NeteaseLoginStatusDto> {
+        Ok(netease_login_status_dto(
+            self.require_service()?.login_status().await?,
+        ))
+    }
+
+    async fn listen_data_today(&self) -> AppResult<NeteaseListenDataTodayDto> {
+        Ok(netease_listen_data_today_dto(
+            self.require_service()?.listen_data_today().await?,
+        ))
+    }
+
+    async fn journey_overview(&self) -> AppResult<NeteaseJourneyOverviewDto> {
+        Ok(netease_journey_overview_dto(
+            self.require_service()?.journey_overview().await?,
+        ))
+    }
+
+    async fn recent_plays(
+        &self,
+        kind: &str,
+        user_id: u64,
+        limit: usize,
+    ) -> AppResult<NeteaseRecentPlaysDto> {
+        let items = self
+            .require_service()?
+            .recent_plays(kind, user_id, limit)
+            .await?;
+        Ok(NeteaseRecentPlaysDto {
+            items: items.into_iter().map(netease_recent_play_dto).collect(),
+        })
+    }
+
+    async fn similar_songs(&self, id: u64, limit: usize) -> AppResult<NeteaseTracksDto> {
+        let tracks = self.require_service()?.similar_songs(id, limit).await?;
+        Ok(NeteaseTracksDto {
+            tracks: tracks.into_iter().map(netease_track_dto).collect(),
+        })
+    }
+
+    async fn song_quality_levels(&self, id: u64) -> AppResult<Vec<NeteaseQualityOptionDto>> {
+        let options = self.require_service()?.song_quality_levels(id).await?;
+        Ok(options
+            .into_iter()
+            .map(netease_quality_option_dto)
+            .collect())
+    }
+
+    async fn scrobble(&self, song_id: u64, position_ms: u64) -> AppResult<NeteaseScrobbleDto> {
+        validate_positive_id(song_id, "songId")?;
+        let result = self
+            .require_service()?
+            .scrobble(song_id, position_ms)
+            .await?;
+        Ok(NeteaseScrobbleDto {
+            reported: result.reported,
+        })
     }
 
     async fn resolve_track(&self, track: &TrackRefDto) -> AppResult<Track> {

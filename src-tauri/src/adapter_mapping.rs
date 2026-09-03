@@ -1,8 +1,11 @@
 use hyperplayer_engine::model::{MediaSource, Track};
 use hyperplayer_source_netease::{
-    Album, AlbumDetail, Artist, ArtistOverview, ChartSummary, CloudPage, Comment, CommentPage,
-    CursorPage, DjProgram, DjRadio, ListenReport, ListenStats, MvDetail, MvSummary, NoticeMessage,
-    PlaylistDetail, PlaylistSummary, SocialEvent, UserAccount, VipInfo,
+    Album, AlbumDetail, Artist, ArtistOverview, BannerItem, ChartSummary, CloudPage, Comment,
+    CommentPage, CursorPage, DjProgram, DjRadio, HotWord, JourneyOverview, LikedState,
+    ListenDataToday, ListenReport, ListenStats, LoginStatus, MvDetail, MvSummary, NoticeMessage,
+    PlaylistCategory, PlaylistDetail, PlaylistSummary, QualityOption, RecentPlay,
+    RecentPlayResource, SearchSuggestions, SocialEvent, StylePreference, UserAccount, UserLevel,
+    UserSubcount, VipInfo,
 };
 
 use crate::dto::*;
@@ -311,5 +314,191 @@ fn netease_artist_dto(artist: Artist) -> NeteaseArtistDto {
     NeteaseArtistDto {
         id: artist.id,
         name: artist.name,
+    }
+}
+
+// ---------------- Stage 16 新增映射 ----------------
+
+pub(crate) fn netease_hot_word_dto(word: HotWord) -> NeteaseHotWordDto {
+    NeteaseHotWordDto {
+        word: word.word,
+        score: word.score,
+    }
+}
+
+pub(crate) fn netease_search_suggestions_dto(
+    suggestions: SearchSuggestions,
+) -> NeteaseSearchSuggestionsDto {
+    let suggest_to_track =
+        |song: hyperplayer_source_netease::SuggestSong| hyperplayer_source_netease::Track {
+            id: song.id,
+            name: song.name,
+            artists: song.artists,
+            album: song.album,
+            duration_ms: 0,
+            fee: 0,
+            mv_id: None,
+            is_vip: false,
+            no_copyright: false,
+        };
+    let artist_to_summary = |artist: Artist| hyperplayer_source_netease::ArtistSummary {
+        id: artist.id,
+        name: artist.name,
+        pic_url: None,
+        aliases: Vec::new(),
+        brief_description: None,
+    };
+    NeteaseSearchSuggestionsDto {
+        songs: suggestions
+            .songs
+            .into_iter()
+            .map(suggest_to_track)
+            .map(netease_track_dto)
+            .collect(),
+        artists: suggestions
+            .artists
+            .into_iter()
+            .map(artist_to_summary)
+            .map(netease_artist_summary_dto)
+            .collect(),
+        albums: suggestions
+            .albums
+            .into_iter()
+            .map(netease_album_dto)
+            .collect(),
+        playlists: suggestions
+            .playlists
+            .into_iter()
+            .map(netease_playlist_dto)
+            .collect(),
+    }
+}
+
+pub(crate) fn netease_banner_dto(banner: BannerItem) -> NeteaseBannerDto {
+    NeteaseBannerDto {
+        id: banner.id,
+        title: banner.title,
+        image_url: banner.image_url,
+        target_url: banner.target_url,
+        target_type: banner.target_type,
+    }
+}
+
+pub(crate) fn netease_playlist_category_dto(
+    category: PlaylistCategory,
+) -> NeteasePlaylistCategoryDto {
+    NeteasePlaylistCategoryDto {
+        name: category.name,
+        id: category.id,
+    }
+}
+
+pub(crate) fn netease_liked_state_dto(state: LikedState) -> NeteaseLikedStateDto {
+    NeteaseLikedStateDto {
+        song_id: state.song_id,
+        liked: state.liked,
+    }
+}
+
+pub(crate) fn netease_user_level_dto(level: UserLevel) -> NeteaseUserLevelDto {
+    NeteaseUserLevelDto {
+        level: level.level,
+        next_level_experience: level.next_level_experience,
+    }
+}
+
+pub(crate) fn netease_user_subcount_dto(subcount: UserSubcount) -> NeteaseUserSubcountDto {
+    NeteaseUserSubcountDto {
+        playlists: subcount.playlists,
+        albums: subcount.albums,
+        artists: subcount.artists,
+        mvs: subcount.mvs,
+        dj_radios: subcount.dj_radios,
+    }
+}
+
+pub(crate) fn netease_style_preference_dto(
+    preference: StylePreference,
+) -> NeteaseStylePreferenceDto {
+    NeteaseStylePreferenceDto {
+        tag_ids: preference.tag_ids,
+        tag_names: preference.tag_names,
+    }
+}
+
+pub(crate) fn netease_login_status_dto(status: LoginStatus) -> NeteaseLoginStatusDto {
+    NeteaseLoginStatusDto {
+        logged_in: status.logged_in,
+        user_id: status.user_id,
+        nickname: status.nickname,
+    }
+}
+
+pub(crate) fn netease_listen_data_today_dto(data: ListenDataToday) -> NeteaseListenDataTodayDto {
+    NeteaseListenDataTodayDto {
+        listened_ms: data.listened_ms,
+        play_count: data.play_count,
+    }
+}
+
+pub(crate) fn netease_journey_overview_dto(overview: JourneyOverview) -> NeteaseJourneyOverviewDto {
+    NeteaseJourneyOverviewDto {
+        total_listen_ms: overview.total_listen_ms,
+        total_play_count: overview.total_play_count,
+        today_listen_ms: overview.today_listen_ms,
+    }
+}
+
+pub(crate) fn netease_recent_play_dto(play: RecentPlay) -> NeteaseRecentPlayDto {
+    let (resource_type, id, name, subtitle, cover_url) = match play.resource {
+        RecentPlayResource::Song(track) => (
+            "song".into(),
+            track.id,
+            track.name,
+            Some(
+                track
+                    .artists
+                    .iter()
+                    .map(|artist| artist.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(" / "),
+            ),
+            track.album.pic_url,
+        ),
+        RecentPlayResource::Playlist(playlist) => (
+            "playlist".into(),
+            playlist.id,
+            playlist.name,
+            None,
+            playlist.cover_url,
+        ),
+        RecentPlayResource::Album(album) => {
+            ("album".into(), album.id, album.name, None, album.pic_url)
+        }
+        RecentPlayResource::DjRadio(radio) => (
+            "djradio".into(),
+            radio.id,
+            radio.name,
+            None,
+            radio.cover_url,
+        ),
+    };
+    NeteaseRecentPlayDto {
+        played_at_ms: play.played_at_ms,
+        resource_type,
+        id,
+        name,
+        subtitle,
+        cover_url,
+    }
+}
+
+pub(crate) fn netease_quality_option_dto(option: QualityOption) -> NeteaseQualityOptionDto {
+    NeteaseQualityOptionDto {
+        key: option.key,
+        label: option.label,
+        bitrate: option.bitrate,
+        size_bytes: option.size_bytes,
+        sample_rate: option.sample_rate,
     }
 }

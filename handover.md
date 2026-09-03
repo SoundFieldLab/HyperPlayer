@@ -615,7 +615,8 @@ Build / UI：
 
 ### 网易云
 
-- 剩余 domain/workflow/bridge/UI。
+- Stage 16（2026-09-03）已完成：crate 30 条新路由 handler（搜索热词/联想、banner、歌单发现、艺人专辑/MV/收藏、热评/楼中楼、用户等级/收藏/足迹、scrobble clientlog 等）+ 行为差异修复（设备 Cookie 画像、xeapi 请求头、weapi 备用算法 Node golden 验证、StdSleeper tokio、clientlog 通道 os=osx）；Tauri 28 新 command + bridge 125 契约 + 230 前端测试。敏感信息审计通过（crate 零日志、DTO 无 cookie 字段）。
+- 剩余：7 条长尾路由（含 updatePlaylistCover NOS 上传）、真实账号矩阵（普通/VIP/过期/风控）本机凭据验收。
 - MV player。
 - 受控账号/VIP/write acceptance。
 

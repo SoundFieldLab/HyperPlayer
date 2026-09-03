@@ -3,6 +3,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use cipher::KeyInit;
 use hmac::{Hmac, Mac};
 use md5::{Digest as _, Md5};
+use num_bigint::BigUint;
 use rand::{CryptoRng, RngCore};
 use sha2::Sha256;
 use std::io::Read;
@@ -13,6 +14,12 @@ use crate::{Error, Result};
 type HmacSha256 = Hmac<Sha256>;
 
 pub const EAPI_KEY: &[u8; 16] = b"e82ckenh8dichen8";
+/// weapi 备用算法（规范：「weapi ⛔ 已绕行 eapi，算法保留备用」）。
+const WEAPI_PRESET_KEY: &[u8; 16] = b"0CoJUm6Qyw8W8jud";
+const WEAPI_IV: &[u8; 16] = b"0102030405060708";
+const WEAPI_SECRET_POOL: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+/// oracle `RSA_WEAPI_PUBLIC_KEY_PEM` 的 base64 主体（SubjectPublicKeyInfo DER）。
+const WEAPI_PUBLIC_KEY_DER_B64: &str = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7clFSs6sXqHauqKWqdtLkF2KexO40H1YTX8z2lSgBBOAxLsvaklV8k4cBFK9snQXE9/DDaFt6Rr7iVZMldczhC0JNgTz+SHXT6CBHuX3e9SdB1Ua44oncaTWz7OBGLbCiK45wIDAQAB";
 pub const XEAPI_STATIC_KEY: [u8; 32] = [
     0xab, 0x1d, 0x5a, 0x43, 0x0f, 0x6b, 0xb0, 0x4a, 0x3f, 0x01, 0xe8, 0x1d, 0xdd, 0x72, 0xbd, 0x91,
     0x6d, 0x5c, 0xe5, 0x91, 0x24, 0x8a, 0xc1, 0x28, 0x71, 0x48, 0x06, 0xd7, 0xf8, 0xfb, 0x1b, 0x84,
@@ -71,6 +78,70 @@ pub fn encrypt_eapi(path: &str, payload_json: &str) -> Result<String> {
     );
     let plain = format!("{path}-36cd479b6b5-{payload_json}-36cd479b6b5-{digest}");
     Ok(hex_upper(&aes128_ecb_encrypt(EAPI_KEY, plain.as_bytes())?))
+}
+
+/// weapi 备用算法（规范：「weapi ⛔ 已绕行 eapi，算法保留备用」；oracle `encryptWeapi`
+/// 语义）：随机 16 字符 secret → 双层 AES-128-CBC（固定预设密钥 + 随机 secret）→
+/// reversed secret 做 raw RSA（无填充，指数 65537）→ hex 大写。仅备用，不进主链路。
+pub fn encrypt_weapi<R: RngCore + CryptoRng>(
+    payload_json: &str,
+    rng: &mut R,
+) -> Result<(String, String)> {
+    let mut secret = [0u8; 16];
+    for slot in &mut secret {
+        *slot = WEAPI_SECRET_POOL[(rng.next_u32() as usize) % WEAPI_SECRET_POOL.len()];
+    }
+    // oracle `encryptWeapi` 语义：第一层输出经 base64 字符串作为第二层明文（oracle
+    // 的 aesCbcBase64 返回字符串再作为入参），最终结果再 base64。
+    let inner = aes128_cbc_encrypt(WEAPI_PRESET_KEY, WEAPI_IV, payload_json.as_bytes())?;
+    let inner_b64 = BASE64.encode(inner);
+    let params = aes128_cbc_encrypt(&secret, WEAPI_IV, inner_b64.as_bytes())?;
+    let enc_sec_key = rsa_no_pad_weapi(&secret)?;
+    Ok((BASE64.encode(params), enc_sec_key))
+}
+
+/// AES-128-CBC（PKCS#7 填充）：前一块密文作为下一块 IV（首块用显式 IV）。
+fn aes128_cbc_encrypt(key: &[u8; 16], iv: &[u8; 16], plaintext: &[u8]) -> Result<Vec<u8>> {
+    use cipher::BlockEncrypt;
+    let cipher = Aes128::new_from_slice(key).map_err(|e| Error::Crypto(e.to_string()))?;
+    let pad = 16 - (plaintext.len() % 16);
+    let mut buf = plaintext.to_vec();
+    buf.extend(std::iter::repeat_n(pad as u8, pad));
+    let mut previous = *iv;
+    for chunk in buf.as_chunks_mut::<16>().0 {
+        for (byte, prev) in chunk.iter_mut().zip(previous.iter()) {
+            *byte ^= prev;
+        }
+        cipher.encrypt_block(chunk.into());
+        previous.copy_from_slice(chunk);
+    }
+    Ok(buf)
+}
+
+/// raw RSA（无填充）：secret（原序）右对齐到 128 字节（高位补零 = 大端整数），
+/// `m^65537 mod n`，输出 128 字节 hex 大写。与 oracle `rsaNoPad` 逐字节语义一致
+/// （oracle 调用方反转 + rsaNoPad 内部再反转，净效果为原序右对齐）。
+fn rsa_no_pad_weapi(secret: &[u8; 16]) -> Result<String> {
+    let der = BASE64
+        .decode(WEAPI_PUBLIC_KEY_DER_B64)
+        .map_err(|e| Error::Crypto(e.to_string()))?;
+    // SubjectPublicKeyInfo（162B，1024 位密钥）：SEQUENCE(3) + OID(15) + BIT STRING 头(4)
+    // + SEQUENCE(3) + INTEGER 头(4，含前导 0x00) = 偏移 29，其后 128 字节即模数。
+    let modulus = der
+        .get(29..29 + 128)
+        .ok_or_else(|| Error::Crypto("weapi 公钥长度无效".into()))?;
+    let n = BigUint::from_bytes_be(modulus);
+    let mut block = [0u8; 128];
+    block[128 - secret.len()..].copy_from_slice(secret);
+    let m = BigUint::from_bytes_be(&block);
+    let c = m.modpow(&BigUint::from(65_537_u32), &n);
+    let mut bytes = c.to_bytes_be();
+    if bytes.len() < 128 {
+        let mut padded = vec![0u8; 128 - bytes.len()];
+        padded.append(&mut bytes);
+        bytes = padded;
+    }
+    Ok(hex_upper(&bytes))
 }
 
 pub fn xeapi_sign(timestamp: &str, nonce: &str) -> String {
@@ -258,11 +329,46 @@ pub fn decrypt_xeapi_response(body: &[u8]) -> Result<serde_json::Value> {
     serde_json::from_slice(&bytes).map_err(|e| Error::InvalidResponse(e.to_string()))
 }
 pub fn decrypt_xeapi_public_key(encoded: &str) -> Result<serde_json::Value> {
-    let bytes = BASE64
-        .decode(encoded)
-        .map_err(|e| Error::Crypto(e.to_string()))?;
-    let plain = aes256_ecb_decrypt(&XEAPI_STATIC_KEY, &bytes)?;
-    serde_json::from_slice(&plain).map_err(|e| Error::InvalidResponse(e.to_string()))
+    let value = encoded.trim();
+    if value.is_empty() {
+        return Err(Error::Crypto("xeapi 公钥密文为空".into()));
+    }
+    let mut candidates = Vec::new();
+    if value.len().is_multiple_of(2) && value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        candidates.push(
+            (0..value.len())
+                .step_by(2)
+                .map(|i| {
+                    u8::from_str_radix(&value[i..i + 2], 16)
+                        .map_err(|e| Error::Crypto(e.to_string()))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        );
+    }
+    if let Ok(decoded) = BASE64.decode(value) {
+        if decoded.len().is_multiple_of(2) && decoded.iter().all(|b| b.is_ascii_hexdigit()) {
+            candidates.push(
+                (0..decoded.len())
+                    .step_by(2)
+                    .map(|i| {
+                        u8::from_str_radix(std::str::from_utf8(&decoded[i..i + 2]).unwrap(), 16)
+                            .map_err(|e| Error::Crypto(e.to_string()))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            );
+        }
+        candidates.push(decoded);
+    }
+    let mut last_error = None;
+    for bytes in candidates {
+        match aes256_ecb_decrypt(&XEAPI_STATIC_KEY, &bytes).and_then(|plain| {
+            serde_json::from_slice(&plain).map_err(|e| Error::InvalidResponse(e.to_string()))
+        }) {
+            Ok(value) => return Ok(value),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| Error::Crypto("xeapi 公钥密文编码无效".into())))
 }
 #[cfg(test)]
 pub(crate) fn encrypt_xeapi_public_key_fixture(value: &serde_json::Value) -> String {
@@ -292,9 +398,67 @@ fn hex_upper(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{rngs::StdRng, SeedableRng};
+    use serde_json::json;
+    #[test]
+    fn weapi_golden_enc_sec_key_matches_node_rsa_no_padding() {
+        // Node crypto RSA_NO_PADDING 权威向量（secret 原序右对齐 128B，指数 65537）。
+        let enc = rsa_no_pad_weapi(b"0123456789abcdef").unwrap();
+        assert_eq!(
+            enc,
+            "AC744CAAB466F1FD5A75228365D15DF7ADD288E8982A2C8F80DA5F8F22D54834B5E1EAB04DDE9DAC7341851A98DE37463D8BA01D9E9C4D2C546C0F948E3163C667785A1B9C4F160305B0FB1EC3B698DE0C704719B2FBC469582654B9C2595317DC40C3ECEE32BAA6D9753970B66667C01BDE9AD34048FA8B2B0F628E56A5BF49"
+        );
+    }
+
+    #[test]
+    fn weapi_golden_params_matches_node_aes_cbc_chain() {
+        // Node createCipheriv aes-128-cbc 权威向量：第一层预设密钥、第二层固定 secret。
+        let payload = r#"{"type":1111}"#;
+        let preset = aes128_cbc_encrypt(WEAPI_PRESET_KEY, WEAPI_IV, payload.as_bytes()).unwrap();
+        assert_eq!(BASE64.encode(&preset), "lX/DZ30PR36d7gwhVQM3sg==");
+        // oracle 语义：第二层明文是第一层结果的 base64 字符串。
+        let params = aes128_cbc_encrypt(
+            b"0123456789abcdef",
+            WEAPI_IV,
+            BASE64.encode(&preset).as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            BASE64.encode(&params),
+            "r2Yt5tGUKF2WXM5ONk7ybjWZxa0Vygl0TM3s3UXfIPI="
+        );
+    }
+
+    #[test]
+    fn weapi_round_trip_with_fixed_secret_is_deterministic() {
+        // 随机性只来自 secret：固定 secret 时两次调用产物一致（raw RSA 无随机填充）。
+        let payload = r#"{"a":1}"#;
+        let (p1, k1) = encrypt_weapi(payload, &mut StdRng::seed_from_u64(3)).unwrap();
+        let (p2, k2) = encrypt_weapi(payload, &mut StdRng::seed_from_u64(3)).unwrap();
+        assert_eq!(p1, p2);
+        assert_eq!(k1, k2);
+        assert_eq!(k1.len(), 256);
+        assert_eq!(p1.len(), 44);
+    }
+
     #[test]
     fn eapi_golden() {
         assert_eq!(encrypt_eapi("/api/search/hot",r#"{"type":1111}"#).unwrap(),"886AF8D09CBF98AE6DEE4A18C0124D90E49B69771D767F86360407771BFDD3C55346E7287388955BC8B0B309407E1FFDFE54C6A08056D241E25CAD7CC52D860B4A0E502BFDED864A32608E0C40FDFAA4FA97FA5C1B98A742926FD24BECCD6D53")
+    }
+    #[test]
+    fn public_key_decoder_accepts_hex_ciphertext() {
+        let value =
+            json!({ "publicKey": BASE64.encode([7u8; 32]), "sk": "fixture-sk", "version": "3" });
+        let ciphertext =
+            aes256_ecb_encrypt(&XEAPI_STATIC_KEY, value.to_string().as_bytes()).unwrap();
+        let decoded = decrypt_xeapi_public_key(&hex_upper(&ciphertext)).unwrap();
+        assert_eq!(decoded["version"], "3");
+    }
+
+    #[test]
+    fn public_key_decoder_rejects_empty_and_odd_hex() {
+        assert!(decrypt_xeapi_public_key("").is_err());
+        assert!(decrypt_xeapi_public_key("ABC").is_err());
     }
     #[test]
     fn sign_golden() {

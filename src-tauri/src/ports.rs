@@ -214,6 +214,73 @@ pub trait NeteasePort: Send + Sync {
     async fn poll_qr_login(&self, login_id: &str) -> AppResult<NeteaseLoginStateDto>;
     async fn logout(&self) -> AppResult<NeteaseStatusDto>;
     async fn resolve_track(&self, track: &TrackRefDto) -> AppResult<hyperplayer_engine::Track>;
+    // ---- Stage 16：发现/社交/用户能力 ----
+    async fn search_hot(&self) -> AppResult<Vec<NeteaseHotWordDto>>;
+    async fn search_suggest(&self, query: &str) -> AppResult<NeteaseSearchSuggestionsDto>;
+    async fn banner(&self) -> AppResult<Vec<NeteaseBannerDto>>;
+    async fn playlist_categories(&self) -> AppResult<Vec<NeteasePlaylistCategoryDto>>;
+    async fn high_quality_playlists(
+        &self,
+        category: &str,
+        page: PageRequestDto,
+    ) -> AppResult<NeteasePlaylistPageDto>;
+    async fn similar_playlists(
+        &self,
+        song_id: u64,
+        limit: usize,
+    ) -> AppResult<NeteasePlaylistPageDto>;
+    async fn artist_albums(
+        &self,
+        artist_id: u64,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseArtistAlbumsDto>;
+    async fn artist_mvs(
+        &self,
+        artist_id: u64,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseArtistMvsDto>;
+    async fn artist_sublist(&self, page: PageRequestDto) -> AppResult<NeteaseSublistArtistsDto>;
+    async fn album_sublist(&self, page: PageRequestDto) -> AppResult<NeteaseSublistAlbumsDto>;
+    async fn mv_sublist(&self, page: PageRequestDto) -> AppResult<NeteaseSublistMvsDto>;
+    async fn personalized_new_songs(&self, limit: usize) -> AppResult<NeteaseTracksDto>;
+    async fn dislike_recommend_song(&self, id: u64) -> AppResult<NeteaseMutationResultDto>;
+    async fn check_songs_liked(&self, ids: Vec<u64>) -> AppResult<Vec<NeteaseLikedStateDto>>;
+    async fn hot_comments(
+        &self,
+        resource: NeteaseResourceRequestDto,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseHotCommentsDto>;
+    async fn comment_floor(
+        &self,
+        resource: NeteaseResourceRequestDto,
+        parent_comment_id: u64,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseCommentFloorDto>;
+    async fn msg_comments(
+        &self,
+        user_id: u64,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseCommentPageDto>;
+    async fn user_followeds(
+        &self,
+        user_id: u64,
+        page: PageRequestDto,
+    ) -> AppResult<NeteaseUserPageDto>;
+    async fn user_level(&self) -> AppResult<NeteaseUserLevelDto>;
+    async fn user_subcount(&self) -> AppResult<NeteaseUserSubcountDto>;
+    async fn style_preference(&self) -> AppResult<NeteaseStylePreferenceDto>;
+    async fn login_status(&self) -> AppResult<NeteaseLoginStatusDto>;
+    async fn listen_data_today(&self) -> AppResult<NeteaseListenDataTodayDto>;
+    async fn journey_overview(&self) -> AppResult<NeteaseJourneyOverviewDto>;
+    async fn recent_plays(
+        &self,
+        kind: &str,
+        user_id: u64,
+        limit: usize,
+    ) -> AppResult<NeteaseRecentPlaysDto>;
+    async fn similar_songs(&self, id: u64, limit: usize) -> AppResult<NeteaseTracksDto>;
+    async fn song_quality_levels(&self, id: u64) -> AppResult<Vec<NeteaseQualityOptionDto>>;
+    async fn scrobble(&self, song_id: u64, position_ms: u64) -> AppResult<NeteaseScrobbleDto>;
 }
 
 #[async_trait::async_trait]
