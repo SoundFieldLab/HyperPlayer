@@ -1,6 +1,6 @@
 # Stage 14：增量解码与真正 gapless
 
-状态：进行中（增量解码与 codec trim 已完成并全绿；preparation worker 与实机验收未完成）
+状态：进行中（工程侧全部完成；仅剩 Windows 实机录回/听感验收）
 
 更新时间：2026-09-03
 
@@ -47,12 +47,33 @@ Rust engine 是唯一播放权威；实时 callback 只做有界无锁读取/增
   - **standby 证据**：`prime_standby` 对 Xing MP3 预拉必须先 `seek(delay)`（走 demuxer 精确 seek + 帧内 skip 路径），trim 进入 `StandbyState::Primed`，PCM 缓冲后 `is_gapless_ready`；未 primed 时 `take_standby_at_sample_boundary` fail-closed；standby 头样本 == 前一曲尾之后的紧邻采样（正弦相位连续判据）。
 - 门禁：crates workspace fmt / strict clippy（-D warnings）/ 25 个测试目标全绿；Tauri workspace 同门禁 165 测试全绿；前端 223 测试全绿（无 engine API 面变化，DTO 未动）。
 
-## 未完成（不得宣称切片关闭）
+## 已完成（第二波，2026-09-03，提交于 worker/真实编码器收尾）
 
-1. **preparation worker（任务 2）**：`actor.rs` 的 `initialize_runtime`（`factory.open`）与 `prepare_target`（`runtime.load`）仍在 actor 控制路径上同步执行；open/probe/preparation 尚未移到独立工作线程。大文件/慢盘下 `load` 仍可能阻塞 actor 消息循环。
-2. **standby 失败/慢 IO 的 actor 级回退语义**（任务 5）：runtime/decoder 级已有测试（见上），但 actor 在 standby 失败、慢 IO 下的完整回退路径（退回同步 load、事件上报）未专项补齐。
-3. **连续专辑/长时播放真实音频测试**（任务 5 验收）：当前用合成 fixture（正弦/斜坡/最小 FLAC/MP3/Xing 头）；真实编码器产出的专辑连续曲目、长时播放稳定性未测。
-4. **Windows 实机验收**：真实 WASAPI 输出下录回对比（或等价权威 PCM 对比）验证 gapless 未做；当前全部证据来自 fake output / 录音式 `FakeAudioOutput`。
+### 7. preparation worker（任务 2 完成）
+
+- `actor.rs` 新增 `PreparationWorker`（照 `DspCompiler` 模式：Mutex+Condvar+单元素 `ArrayQueue`，独立 `hyperplayer-preparation` 线程）：decoder **open/probe（含无头 MP3/FLAC 的整曲扫描）移出 actor 控制路径**。
+- `DecoderFactory` trait 新增 `clone_factory()`：worker 与 runtime 各持一份工厂（`LocalDecoderFactory`/`WavDecoderFactory` 为 Copy；测试 mock 各自实现）。
+- `runtime.rs` 新增 `prime_standby_with_opened`：接收已打开 decoder 完成格式统一/裁剪/PCM 预拉（与 `prime_standby` 语义一致）。
+- actor 侧调度：`prime_next` 同步路径保留为**无 worker 时的退化路径**（全部现有测试语义不变）；worker 模式下 `prime_next_async` 投递（新请求覆盖旧请求），tick 里 `service_preparation` 收结果并校验「queue_id 仍是当前 next」后预填 standby；transition/EOF 的 `prepare_target` 保持同步 promote/load 兜底（正确性优先，standby 未就绪不允许断播）。
+- worker 起不来时降级为同步 prime（不阻止 actor 启动）。
+
+### 8. actor 级回退语义测试（任务 5 完成剩余部分）
+
+- `preparation_worker_primes_standby_asynchronously`：LoadContext + Enqueue 后 standby 经 worker 异步预取，Next 通过 promote 命中（2s 上限轮询）。
+- `slow_decoder_open_does_not_block_the_actor_control_path`：factory open 人为延迟 300ms，期间 Snapshot 命令 <150ms 返回（actor 事件循环不被 preparation 阻塞）。
+- `preparation_worker_failure_falls_back_to_synchronous_transition`：损坏文件让 worker 反复失败，actor 保持响应、当前曲可播；手动 Next 走同步 load 失败 → restore 语义保持当前曲。
+
+### 9. 真实编码器连续专辑 fixture + 长时播放（任务 5 验收完成）
+
+- `tests/gapless_real_encoder.rs`：**flacenc 0.5.1**（Apache-2.0，dev-dependency，完整 FLAC 编码链：LPC/QLPC、Rice 熵编码、CRC）把同一连续正弦切成三轨独立编码（44.1 kHz 立体声 16-bit、block_size 4096）：
+  - `real_encoder_album_full_chain_output_matches_reference`：跨三轨 load → prime → pump → promote 全链路输出与权威参考逐点一致（±6.1e-5 量化容差、总样本数精确 3×8192×2）；
+  - `real_encoder_output_opens_with_the_production_decoder`：真实编码输出被生产增量解码器正确打开（格式/总帧数/增量读）；
+  - `long_playback_across_many_track_transitions_stays_stable`：8 轮 × 三轨（≈24 次 promote 切换、~40 万帧、repeat-all 回绕），输出总量精确、相位零漂移 —— 覆盖「长时播放」验收项。
+- 许可证门禁：`symphonia-bundle-flac` / `symphonia-common`（MPL-2.0）加入 deny.toml exceptions（与既有 symphonia 族同口径，AGENTS.md 弱 copyleft 记录原则）；`cargo deny` advisories/bans/licenses/sources 四项 ok。
+
+## 剩余（关闭切片的唯一阻断项）
+
+- **Windows 实机验收**：真实 WASAPI 输出下录回对比（或等价权威 PCM 对比）+ 用户听感确认曲间无咔哒/空隙。当前全部自动证据来自 fake output（无设备 CI 可跑）+ 真实编码器 fixture；按切片定义此项不能用模拟结果替代，需要真实硬件在环与用户本人确认。
 
 ## 预计修改与任务（剩余）
 

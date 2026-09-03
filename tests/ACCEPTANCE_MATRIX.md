@@ -2,7 +2,7 @@
 
 更新时间：2026-08-31
 
-> 最近一次本地验证（2026-09-03，Stage 14 增量解码）：前端 223 项、crates workspace 25 个测试目标（engine lib 309 + gapless_backend 7 + gapless_continuity 15 + DSP 集成等）、网易云 Rust 与 Tauri 165 项测试通过，crates/Tauri fmt、strict clippy（-D warnings）与锁文件均无漂移。此前基线（2026-08-31）：前端 53 项、engine 69 项、网易云 Rust 49 项、Tauri 85 项测试通过；IPC 清单 79 个 command / 12 个 event 匹配；三个 Rust manifest 的 Rust 1.98 fmt/clippy/test 与 `cargo deny --offline` advisories/licenses 均通过；网易云 TypeScript oracle、JavaScript 许可证和前端生产构建通过。最新完整 Tauri 构建已成功生成 x64 NSIS 与 MSI。真实 Tauri/WebView2 已确认播放器主窗口、匿名公共首页、播放列表空态、设置和 updater fail-closed；Discover、恢复队列连续水合、双域历史和缓存多质量聚合已有自动化覆盖，仍需继续做完整页面/硬件/账号外部验收。
+> 最近一次本地验证（2026-09-03，Stage 14 第二波收尾）：前端 223 项、crates workspace 26 个测试目标（engine lib 312 + gapless_backend 7 + gapless_continuity 15 + gapless_real_encoder 3 + DSP 集成等）、网易云 Rust 与 Tauri 165 项测试通过，crates/Tauri fmt、strict clippy（-D warnings）与锁文件均无漂移。此前基线（2026-08-31）：前端 53 项、engine 69 项、网易云 Rust 49 项、Tauri 85 项测试通过；IPC 清单 79 个 command / 12 个 event 匹配；三个 Rust manifest 的 Rust 1.98 fmt/clippy/test 与 `cargo deny --offline` advisories/licenses 均通过；网易云 TypeScript oracle、JavaScript 许可证和前端生产构建通过。最新完整 Tauri 构建已成功生成 x64 NSIS 与 MSI。真实 Tauri/WebView2 已确认播放器主窗口、匿名公共首页、播放列表空态、设置和 updater fail-closed；Discover、恢复队列连续水合、双域历史和缓存多质量聚合已有自动化覆盖，仍需继续做完整页面/硬件/账号外部验收。
 
 ## 自动化门禁
 
@@ -26,7 +26,7 @@
 | VIP 缓存权益 | D23 硬门禁 | 离线测试必须覆盖未登录、非 VIP、过期、切号、服务端校验失败均拒绝；仅同一 `AccountEntitled(userId)` 且实时权益有效时放行 |
 | 专辑缓存晋升 | D24 硬门禁 | 离线测试覆盖专辑上下文、完整一首或累计 5 分钟、每日最多计一次、5 次晋升、空闲低优先级补齐及权益门禁 |
 | 网易云 Rust 迁移 | 最小在线闭环已接通，扩展能力持续补齐 | XEAPI 首次调用会执行并发安全、失败可重试的网络初始化；扫码登录返回本地 SVG data URL；官方图片通过主窗口专用 command 按域名、DNS、公网地址、MIME、体积和重定向校验。每个迁移端点仍须以行为规范和 TS oracle 的固定输入/输出 fixture 验证成功、错误码、退避、音质降级、付费内容拦截与歌词等价 |
-| 本地解码/gapless（Stage 14） | 增量解码与 codec trim 已全绿；preparation worker 与实机验收未完成 | FLAC/MP3 增量 decoder（symphonia，raw 时间轴契约）+ codec trim（MP3 Xing/LAME、FLAC Vorbis Comment）+ 采样级 seek（帧内 skip）+ 流末 seek 边界；runtime 全链路 trim 证据（play_to_end 帧数精确 = raw − delay − padding）与 standby 预填证据（prime_standby 走 seek(delay)、trim 入 Primed、未 primed fail-closed）；欠载/慢 IO/EOF/seek 复位 fake backend 矩阵。关闭切片还须：preparation worker 移出 actor 控制路径、actor 级回退语义、真实编码器专辑 fixture、Windows 实机录回/权威 PCM 对比 |
+| 本地解码/gapless（Stage 14） | 工程侧全部完成（增量解码、codec trim、preparation worker、真实编码器专辑、长时稳定性）；仅剩 Windows 实机录回/听感验收 | FLAC/MP3 增量 decoder（symphonia，raw 时间轴契约）+ codec trim（MP3 Xing/LAME、FLAC Vorbis Comment）+ 采样级 seek（帧内 skip）+ 流末 seek 边界；runtime 全链路 trim 证据（play_to_end 帧数精确 = raw − delay − padding）与 standby 预填证据（prime_standby 走 seek(delay)、trim 入 Primed、未 primed fail-closed）；欠载/慢 IO/EOF/seek 复位 fake backend 矩阵。第二波补齐：PreparationWorker 将 open/probe 移出 actor 控制路径（慢 open 300ms 期间 Snapshot <150ms 返回、失败回退同步切歌并保持 restore 语义均有测试）；flacenc（Apache-2.0）真实编码三轨连续专辑跨曲 promote 逐点等于权威参考，8 轮长时稳定性输出总量精确零漂移；symphonia-bundle-flac/common MPL-2.0 已记入 deny 例外。关闭切片仅须：Windows 实机录回/权威 PCM 对比与用户听感确认 |
 | Tauri DTO/capabilities | 已落地，契约覆盖持续补齐 | command/event/channel DTO 需序列化契约测试；capabilities 需最小权限检查，禁止通用网络代理、任意 URL、任意文件系统或 Cookie 读写接口 |
 
 ## 外部测试门槛

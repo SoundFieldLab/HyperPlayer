@@ -41,6 +41,9 @@ pub trait Decoder: Send {
 
 pub trait DecoderFactory: Send + Sync {
     fn open(&self, media: &TrustedResolvedMedia) -> Result<Box<dyn Decoder>>;
+    /// 复制一个独立工厂实例：preparation worker 与 runtime 各持一份打开 decoder 的
+    /// 能力（worker 在 actor 控制路径之外执行 open/probe）。
+    fn clone_factory(&self) -> Box<dyn DecoderFactory>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,6 +69,10 @@ impl DecoderFactory for LocalDecoderFactory {
                     .into(),
             )),
         }
+    }
+
+    fn clone_factory(&self) -> Box<dyn DecoderFactory> {
+        Box::new(*self)
     }
 }
 
@@ -326,6 +333,10 @@ impl DecoderFactory for WavDecoderFactory {
             )));
         }
         Ok(Box::new(WavDecoder::open(media)?))
+    }
+
+    fn clone_factory(&self) -> Box<dyn DecoderFactory> {
+        Box::new(*self)
     }
 }
 

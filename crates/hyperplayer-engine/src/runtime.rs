@@ -519,13 +519,24 @@ impl RuntimeCoordinator {
     }
 
     pub fn prime_standby(&mut self, media: &TrustedResolvedMedia, frames: usize) -> Result<usize> {
+        let decoder = self.decoder_factory.open(media)?;
+        self.prime_standby_with_opened(decoder, frames)
+    }
+
+    /// 用**已在外部（preparation worker）打开的 decoder** 预填 standby：open/probe 等阻塞
+    /// 操作已在 actor 控制路径之外完成，此处只做格式统一、裁剪定位与 PCM 预拉。
+    /// 语义与 `prime_standby` 完全一致（先失效旧 standby，再走相同的 priming 流程）。
+    pub fn prime_standby_with_opened(
+        &mut self,
+        decoder: Box<dyn Decoder>,
+        frames: usize,
+    ) -> Result<usize> {
         if frames == 0 {
             return Err(EngineError::InvalidInput(
                 "standby frame count must be greater than zero".into(),
             ));
         }
         self.invalidate_standby()?;
-        let decoder = self.decoder_factory.open(media)?;
         let descriptor = decoder.descriptor().clone();
         self.gapless.decoder_opened(descriptor);
         let target_format = self.output.format();
@@ -1449,6 +1460,14 @@ mod tests {
                 max_read: self.max_read,
             }))
         }
+
+        fn clone_factory(&self) -> Box<dyn DecoderFactory> {
+            Box::new(Self {
+                track: self.track.clone(),
+                samples: self.samples.clone(),
+                max_read: self.max_read,
+            })
+        }
     }
 
     struct ShortReadDecoder {
@@ -1574,6 +1593,10 @@ mod tests {
                 samples: (0..8).map(|value| value as f32).collect(),
                 frame: 0,
             }))
+        }
+
+        fn clone_factory(&self) -> Box<dyn DecoderFactory> {
+            Box::new(Self(self.0.clone()))
         }
     }
 

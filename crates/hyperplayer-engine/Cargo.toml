@@ -22,3 +22,6 @@ thiserror = "2.0"
 tempfile = "3.23"
 # 测试用：启用 hrtf-core 的合成 SOFA fixture 生成器（产品构建不启用）。
 hrtf-core = { package = "hyperplayer-hrtf-core", version = "=1.5.1", path = "../hyperplayer-hrtf-core", features = ["test-fixtures"] }
+# 测试用：真实 FLAC 编码器（Apache-2.0），为 Stage 14 生成真实编码器产出的连续专辑
+# fixture（非手工合成字节）；仅 dev-dependency，不进入产品构建。
+flacenc = { version = "0.5.1", default-features = false, features = ["log"] }

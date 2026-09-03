@@ -428,6 +428,8 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 - FLAC/MP3 真增量解码（2026-09-03，Stage 14）：symphonia（flac feature 新增、claxon 移除），open 只做 probe/建解码器/读头元数据，read_pcm 逐 packet 增量拉取到单帧缓冲，不整曲驻留内存。
 - codec trim raw 契约（Stage 14）：三 codec 统一「total_frames/read_pcm 为 raw 时间轴，trim 只上报」，runtime 以 total − delay − padding 统一裁剪；MP3 读 Xing/Info LAME enc_delay/enc_padding（显式 gapless(false) 规避 symphonia 包级双重裁剪），FLAC 读 Vorbis Comment ENCODER_DELAY/PADDING；seek 经 demuxer 精确定位 + 帧内逐样本 skip 补齐，流末 seek 短路 eof。
 - runtime 全链路 trim 与 standby 证据测试：Xing MP3 play_to_end 帧数精确 = raw − delay − padding；prime_standby 走 seek(delay) 且 trim 进入 Primed 状态；欠载/慢 IO/EOF/seek 复位 fake backend 矩阵（tests/gapless_backend.rs、tests/gapless_continuity.rs、tests/common）。
+- preparation worker（2026-09-03 第二波）：decoder open/probe 移出 actor 控制路径（PreparationWorker 独立线程，照 DspCompiler 模式）；DecoderFactory::clone_factory 让 worker/runtime 各持工厂；prime_next_async 投递 + service_preparation 在 tick 收结果（queue_id 必须仍是当前 next）；无 worker 时退回同步 prime（全部既有测试语义不变）；transition/EOF 保持同步 promote/load 兜底（正确性优先）。
+- 真实编码器专辑证据（tests/gapless_real_encoder.rs）：flacenc 0.5.1（Apache-2.0，dev-dep）真实 FLAC 编码三轨连续专辑（44.1k 立体声 16-bit），跨三轨 promote 全链路输出逐点等于权威参考；8 轮×三轨长时稳定性（输出总量精确、相位零漂移）。
 - mono→stereo F32 适配和 sample-rate conversion。
 - CPAL default device、stereo F32 format negotiation、lock-free frame queue。
 - 本地 scanner、SQLite、missing reconciliation、cancel safety、封面内容寻址。
@@ -437,10 +439,7 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 
 未完成/不可夸大：
 
-- decoder open/prepare 仍在 engine actor 控制路径上同步执行；缺独立 preparation worker（Stage 14 剩余）。
-- standby 失败/慢 IO 的 actor 级回退语义未专项测试（decoder/runtime 级已有）。
-- 无真实编码器产出的跨曲 gapless fixture（现有证据来自合成正弦/斜坡/最小 FLAC/Xing MP3 fixture）。
-- Windows 实机（真实 WASAPI 输出）录回/权威 PCM 对比验证 gapless 未做。
+- Windows 实机（真实 WASAPI 输出）录回/权威 PCM 对比验证 gapless 未做（工程侧证据链已闭合：preparation worker、actor 级慢 IO/失败回退语义、真实 flacenc 编码器三轨连续专辑与 8 轮长时稳定性测试全部通过）。
 - 无输出设备枚举、选择持久化、live switch、default-device recovery、exclusive WASAPI。
 - SMTC 主要是 transport input；metadata/artwork/timeline/state 同步不完整。
 - 文件关联未完成。
@@ -609,9 +608,9 @@ Build / UI：
 
 - ~~MP3/FLAC incremental decode~~（已完成，2026-09-03）。
 - ~~real codec trim~~（已完成，2026-09-03）。
-- decoder preparation worker（open/probe/prepare 移出 actor 控制路径）。
-- actor 级 standby 失败/慢 IO 回退语义。
-- 真实编码器产出的 cross-codec gapless fixture 与 Windows 实机录回验收。
+- ~~decoder preparation worker（open/probe/prepare 移出 actor 控制路径）~~（已完成，2026-09-03：PreparationWorker 独立线程 + clone_factory + prime_standby_with_opened；慢 IO 不阻塞 actor 与失败回退同步切歌均有测试）。
+- ~~actor 级 standby 失败/慢 IO 回退语义~~（已完成，2026-09-03）。
+- 真实编码器 fixture 已完成（flacenc 三轨连续专辑 + 8 轮长时稳定性）；剩 Windows 实机录回验收（需真实硬件与用户听感确认）。
 - device enum/switch/recovery/exclusive。
 
 ### 网易云

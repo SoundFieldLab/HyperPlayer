@@ -1,7 +1,7 @@
 # HyperPlayer 后续实施切片
 
 > 更新日期：2026-09-03  
-> 状态：01、02-07、09、10-13 已完成；08 进行中（生产接线完成，待实机验收）；14 进行中（增量解码/codec trim 已全绿，preparation worker 与实机验收未完成）；其余待选择  
+> 状态：01、02-07、09、10-13 已完成；08 进行中（生产接线完成，待实机验收）；14 进行中（工程侧全部完成：增量解码/codec trim/preparation worker/真实编码器专辑与长时测试；仅剩实机录回与听感验收）；其余待选择  
 > 性质：实施切片索引，不取代正式需求、ADR 或定调记录
 
 ## 使用规则
@@ -20,7 +20,7 @@ DSP 控制面已闭环（切片 09）：版本化持久配置 + fail-close 迁�
 
 Stage 22 spatial 已解除资产阻塞：MIT KEMAR HRTF（Apache 兼容的「引用即用」条款）已审计入库并接线生产链；切片状态「进行中」——剩正式 Tauri/WebView2 实机验收（多尺寸 UI、真实设备听感、安装资源复审）。
 
-D30 切片 `01、10-13` 已完成（schema v7、quota runtime、Windows 资源探针、album-fill worker、Settings UI）。Stage 14 已完成 FLAC/MP3 真增量解码（symphonia，移除 claxon）、统一 raw 契约 codec trim（MP3 Xing/LAME + FLAC Vorbis Comment，修复 symphonia 默认 gapless 双重裁剪）、采样级 seek（demuxer 精确 seek + 帧内 skip）、流末 seek 边界，并具备 runtime 全链路 trim 与 standby 预填证据测试（详情见切片 14）；剩余 preparation worker 移出 actor 控制路径、actor 级回退语义、真实专辑 fixture 与实机录回验收。剩余主线：`14`（收尾）→ `15` Windows 集成 → `16` 网易云 → `17` vGPU → `18` 发布。
+D30 切片 `01、10-13` 已完成（schema v7、quota runtime、Windows 资源探针、album-fill worker、Settings UI）。Stage 14 工程侧全部完成：FLAC/MP3 真增量解码（symphonia，移除 claxon）、统一 raw 契约 codec trim（MP3 Xing/LAME + FLAC Vorbis Comment）、采样级 seek、流末 seek 边界、preparation worker（open/probe 移出 actor 控制路径 + 慢 IO/失败回退语义）、真实编码器（flacenc）三轨连续专辑与 8 轮长时稳定性测试（详情见切片 14）；唯一剩余项为 Windows 实机录回/听感验收。剩余主线：`14`（实机验收）→ `15` Windows 集成 → `16` 网易云 → `17` vGPU → `18` 发布。
 
 ## 切片地图
 

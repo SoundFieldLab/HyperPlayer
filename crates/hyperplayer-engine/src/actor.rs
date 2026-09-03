@@ -1,4 +1,6 @@
-use crate::audio::{AudioOutput, CpalAudioOutput, DecoderFactory, LocalDecoderFactory};
+use crate::audio::{
+    AudioOutput, CpalAudioOutput, Decoder, DecoderFactory, LocalDecoderFactory, StandbyState,
+};
 use crate::dsp::{PcmFormat, PreparedProcessorChain};
 use crate::dsp_algorithms::{prepare_dsp_chain, validate_dsp_config, DspConfig};
 use crate::error::{EngineError, Result};
@@ -224,6 +226,116 @@ impl Drop for DspCompiler {
     }
 }
 
+/// 待预取的媒体（发往 preparation worker：`TrustedResolvedMedia` 为 `Clone + Send`，
+/// `MediaHandle` 内部是 `Arc`，worker 侧 `try_clone_file` 打开自己的句柄）。
+type PreparationRequest = (u64, TrustedResolvedMedia);
+/// worker 完成产物：queue_id + 已打开的 decoder（open/probe 等阻塞阶段已完成）。
+type PreparedResult = (u64, Result<Box<dyn Decoder>>);
+
+struct PreparationWorkerState {
+    pending: Option<PreparationRequest>,
+    shutdown: bool,
+}
+
+/// 将 decoder open/probe（以及无 Xing/STREAMINFO 时限长的整曲扫描）移出 actor 控制路径的
+/// 独立 worker（Stage 14 任务 2）。语义与 `DspCompiler` 一致：
+/// - `submit` 覆盖旧 pending（新请求取代旧请求）并丢弃过时的 ready 结果；
+/// - actor 每个 tick `try_recv`，**只有 queue_id 仍是当前 next 时才采纳**，否则丢弃；
+/// - worker 打开失败时结果带回错误码，actor 回退到同步 `load`（fail-safe，不阻塞
+///   gapless 正确性，只牺牲异步性）。
+struct PreparationWorker {
+    state: Arc<(Mutex<PreparationWorkerState>, Condvar)>,
+    ready: Arc<ArrayQueue<PreparedResult>>,
+    worker: Option<JoinHandle<()>>,
+    /// 每次 submit 递增；结果若与当前代不符即视为过时（submit 覆盖 pending 时旧结果作废）。
+    generation: u64,
+}
+
+impl PreparationWorker {
+    fn spawn(factory: Box<dyn DecoderFactory>) -> Result<Self> {
+        let state = Arc::new((
+            Mutex::new(PreparationWorkerState {
+                pending: None,
+                shutdown: false,
+            }),
+            Condvar::new(),
+        ));
+        let ready = Arc::new(ArrayQueue::new(1));
+        let worker_state = Arc::clone(&state);
+        let worker_ready = Arc::clone(&ready);
+        let worker = thread::Builder::new()
+            .name("hyperplayer-preparation".into())
+            .spawn(move || loop {
+                let request = {
+                    let (lock, wake) = &*worker_state;
+                    let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+                    while state.pending.is_none() && !state.shutdown {
+                        state = wake.wait(state).unwrap_or_else(|error| error.into_inner());
+                    }
+                    if state.shutdown {
+                        break;
+                    }
+                    state.pending.take().expect("pending request was checked")
+                };
+                let (queue_id, media) = request;
+                // 阻塞阶段全部在此线程：try_clone_file + probe + 头元数据解析（含无头
+                // MP3/FLAC 的整曲扫描）。
+                let result = factory.open(&media);
+                let (lock, _) = &*worker_state;
+                let state = lock.lock().unwrap_or_else(|error| error.into_inner());
+                if state.shutdown {
+                    break;
+                }
+                // submit 覆盖了 pending（新请求取代本请求）→ 本结果已过时，直接丢弃。
+                if state.pending.is_some() {
+                    continue;
+                }
+                let _older_ready = worker_ready.pop();
+                let _ = worker_ready.push((queue_id, result));
+            })?;
+        Ok(Self {
+            state,
+            ready,
+            worker: Some(worker),
+            generation: 0,
+        })
+    }
+
+    /// 提交一个待预取媒体。新请求**覆盖**尚未开始的旧请求，并作废旧 ready 结果。
+    fn submit(&mut self, queue_id: u64, media: TrustedResolvedMedia) {
+        self.generation += 1;
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+        state.pending = Some((queue_id, media));
+        let _superseded_ready = self.ready.pop();
+        wake.notify_one();
+    }
+
+    /// 取回已完成结果（非阻塞）；结果携带 submit 时的 generation 供 actor 校验新鲜度。
+    fn try_recv(&mut self) -> Option<PreparedResult> {
+        self.ready.pop()
+    }
+
+    /// 当前代（随 submit 递增）。actor 在 submit 前记录代数，结果到达时若代数已变，
+    /// 说明期间发生过新的 submit，结果可能指向不再是 next 的曲目 → 丢弃。
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
+impl Drop for PreparationWorker {
+    fn drop(&mut self) {
+        let (lock, wake) = &*self.state;
+        lock.lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .shutdown = true;
+        wake.notify_one();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 struct EngineRuntime {
     machine: PlaybackMachine,
     audio: Option<RuntimeCoordinator>,
@@ -236,6 +348,12 @@ struct EngineRuntime {
     desired_dsp: Option<(u64, DspConfig)>,
     pending_dsp: Option<(u64, DspConfig)>,
     dsp_compiler: Option<DspCompiler>,
+    /// Stage 14 任务 2：decoder open/probe 移出 actor 控制路径的 preparation worker。
+    /// `None` 时（部分单元测试直接构造 EngineRuntime）退回同步 prime，语义不变。
+    preparation: Option<PreparationWorker>,
+    /// 最近一次向 preparation worker 投递时的代数；结果到达时若不符则丢弃（期间发生过
+    /// 新 submit，结果可能已不是当前 next）。
+    preparation_generation: u64,
 }
 
 impl EngineRuntime {
@@ -410,6 +528,14 @@ fn run_actor(
     output_factory: OutputFactory,
     telemetry: TelemetryHub,
 ) {
+    // 克隆一份工厂给 preparation worker（open/probe 在 actor 控制路径之外执行）；
+    // 原件沿用既有所有权流（initialize_runtime 交给 RuntimeCoordinator）。
+    let preparation = PreparationWorker::spawn(decoder_factory.clone_factory())
+        .map_err(|error| {
+            // worker 起不来只降级为同步 prime（正确性不受影响），不阻止 actor 启动。
+            eprintln!("hyperplayer: preparation worker unavailable: {error}");
+        })
+        .ok();
     let mut engine = EngineRuntime {
         machine,
         audio: None,
@@ -422,6 +548,8 @@ fn run_actor(
         desired_dsp: None,
         pending_dsp: None,
         dsp_compiler: Some(DspCompiler::spawn().expect("DSP compiler thread must start")),
+        preparation,
+        preparation_generation: 0,
     };
     let mut next_tick = Instant::now() + ACTOR_TICK;
     loop {
@@ -450,6 +578,12 @@ fn run_actor(
 
 fn service_audio_tick(engine: &mut EngineRuntime) {
     accept_compiled_dsp(engine);
+    service_preparation(engine);
+    // worker 模式下每个 tick 也会尝试补投递（结果被丢/失败后重试）；无 worker 时
+    // 内部退回同步 prime_next。
+    if engine.preparation.is_some() {
+        prime_next_async(engine);
+    }
     if !matches!(engine.machine.state(), PlaybackState::Playing { .. }) {
         return;
     }
@@ -564,6 +698,11 @@ fn service_audio_tick(engine: &mut EngineRuntime) {
             );
         }
     }
+    // EOF 自动切歌 / 失败恢复后，为新的 next 预填 standby（worker 模式下异步投递）。
+    // 顶部的 prime_next_async 已覆盖非播放状态；这里覆盖切歌后的第一时间点。
+    if engine.machine.state().current().is_some() {
+        prime_next_async(engine);
+    }
 }
 
 fn accept_compiled_dsp(engine: &mut EngineRuntime) {
@@ -673,7 +812,7 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
                 machine.fail(error.to_string());
                 return Err(error);
             }
-            prime_next(machine, runtime.as_mut().unwrap(), &engine.media);
+            prime_next_async(engine);
             Ok(())
         }
         EngineCommand::Ready => {
@@ -794,8 +933,8 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
             }
             engine.media.insert(item.queue_id, media);
             machine.play_next(item);
-            if let Some(runtime) = runtime.as_mut() {
-                prime_next(machine, runtime, &engine.media);
+            if runtime.is_some() {
+                prime_next_async(engine);
             }
             Ok(())
         }
@@ -811,8 +950,8 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
             }
             engine.media.insert(item.queue_id, media);
             machine.enqueue(item, position);
-            if let Some(runtime) = runtime.as_mut() {
-                prime_next(machine, runtime, &engine.media);
+            if runtime.is_some() {
+                prime_next_async(engine);
             }
             Ok(())
         }
@@ -824,8 +963,8 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
                     runtime.stop()?;
                 }
             }
-            if let Some(runtime) = runtime.as_mut() {
-                prime_next(machine, runtime, &engine.media);
+            if runtime.is_some() {
+                prime_next_async(engine);
             }
             Ok(())
         }
@@ -851,16 +990,16 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
                     EngineError::InvalidInput(format!("queue item does not exist: {queue_id}"))
                 })?;
             machine.reorder(section, from, target_index)?;
-            if let Some(runtime) = runtime.as_mut() {
-                prime_next(machine, runtime, &engine.media);
+            if runtime.is_some() {
+                prime_next_async(engine);
             }
             Ok(())
         }
         EngineCommand::ClearPriority => {
             machine.clear_priority();
             retain_queued_media(machine, &mut engine.media);
-            if let Some(runtime) = runtime.as_mut() {
-                prime_next(machine, runtime, &engine.media);
+            if runtime.is_some() {
+                prime_next_async(engine);
             }
             Ok(())
         }
@@ -914,15 +1053,15 @@ fn apply(engine: &mut EngineRuntime, command: EngineCommand) -> Result<()> {
                         .clone();
                     (queue_id, TrustedResolvedMedia::new(track, resolved.handle))
                 }));
-            if let Some(runtime) = runtime.as_mut() {
-                prime_next(machine, runtime, &engine.media);
+            if runtime.is_some() {
+                prime_next_async(engine);
             }
             Ok(())
         }
         EngineCommand::SetMode(mode) => {
             machine.set_mode(mode);
-            if let Some(runtime) = runtime.as_mut() {
-                prime_next(machine, runtime, &engine.media);
+            if runtime.is_some() {
+                prime_next_async(engine);
             }
             Ok(())
         }
@@ -1012,7 +1151,7 @@ fn start_restored(engine: &mut EngineRuntime) -> Result<()> {
     engine.machine.seek(actual_position_ms)?;
     engine.machine.resume()?;
     engine.pending_restore = false;
-    prime_next(&engine.machine, runtime, &engine.media);
+    prime_next_async(engine);
     Ok(())
 }
 
@@ -1062,11 +1201,7 @@ fn transition_next(
     prepare_transition(engine, &target)?;
     engine.machine.next(automatic)?;
     engine.machine.ready()?;
-    prime_next(
-        &engine.machine,
-        runtime_mut(&mut engine.audio)?,
-        &engine.media,
-    );
+    prime_next_async(engine);
     Ok(())
 }
 
@@ -1075,11 +1210,7 @@ fn transition_previous(engine: &mut EngineRuntime, expected_queue_id: u64) -> Re
     prepare_transition(engine, &target)?;
     engine.machine.previous()?;
     engine.machine.ready()?;
-    prime_next(
-        &engine.machine,
-        runtime_mut(&mut engine.audio)?,
-        &engine.media,
-    );
+    prime_next_async(engine);
     Ok(())
 }
 
@@ -1124,7 +1255,6 @@ fn restore_current_runtime(
             let _ = machine.pause();
         }
         let _ = machine.seek(actual);
-        prime_next(machine, runtime, media);
     }
 }
 
@@ -1164,7 +1294,6 @@ fn advance_and_start(
     prepare_target(runtime, media, target)?;
     machine.next(automatic)?;
     machine.ready()?;
-    prime_next(machine, runtime, media);
     Ok(())
 }
 
@@ -1214,6 +1343,88 @@ fn prime_next(
         let _ = runtime.prime_standby(resolved, STANDBY_FRAMES);
     } else if runtime.standby().is_gapless_ready() {
         let _ = runtime.take_standby_at_sample_boundary();
+    }
+}
+
+/// 异步版的 prime 入口：worker 可用时把 open/probe 投递到 preparation worker（不阻塞
+/// actor 控制路径），完成结果由 `service_preparation` 在 tick 里收；worker 不可用时
+/// 退回同步 `prime_next`（语义与既有路径完全一致）。
+fn prime_next_async(engine: &mut EngineRuntime) {
+    if engine.audio.is_none() {
+        return;
+    }
+    let Some(worker) = engine.preparation.as_mut() else {
+        let runtime = runtime_mut(&mut engine.audio).expect("audio was checked above");
+        prime_next(&engine.machine, runtime, &engine.media);
+        return;
+    };
+    let runtime = engine.audio.as_ref().expect("audio was checked above");
+    // standby 已就绪且与 next 对齐时无需投递；失效/缺失/不匹配时才需要预取。
+    let next_id = engine
+        .machine
+        .queue()
+        .peek_next(true)
+        .map(|item| item.queue_id);
+    let needs_prime = match (runtime.standby(), next_id) {
+        (StandbyState::Primed { track, .. }, Some(next_id)) => engine
+            .media
+            .get(&next_id)
+            .is_none_or(|media| &media.track != track),
+        (StandbyState::Primed { .. }, None) => true,
+        _ => true,
+    };
+    if !needs_prime {
+        return;
+    }
+    let next = engine
+        .machine
+        .queue()
+        .peek_next(true)
+        .and_then(|next| engine.media.get(&next.queue_id).cloned());
+    let Some(next_media) = next else {
+        return;
+    };
+    let queue_id = engine
+        .machine
+        .queue()
+        .peek_next(true)
+        .map(|item| item.queue_id)
+        .expect("queue item was peeked above");
+    worker.submit(queue_id, next_media);
+    engine.preparation_generation = worker.generation();
+}
+
+/// tick 中收取 preparation worker 的完成结果：只有 queue_id 仍是**当前 next** 且代数
+/// 与投递时一致时才采纳（seek/skip/reorder 期间发生过新 submit 的结果一律丢弃）；
+/// worker 侧 open 失败也丢弃（transition 时同步 load 兜底）。成功后用已打开的
+/// decoder 预填 standby（格式统一/裁剪/PCM 预拉仍在 actor 内，但都是非阻塞小段操作）。
+fn service_preparation(engine: &mut EngineRuntime) {
+    if engine.preparation.is_none() {
+        return;
+    }
+    let Some((queue_id, result)) = engine
+        .preparation
+        .as_mut()
+        .and_then(|worker| worker.try_recv())
+    else {
+        return;
+    };
+    let still_next = engine
+        .machine
+        .queue()
+        .peek_next(true)
+        .is_some_and(|next| next.queue_id == queue_id);
+    if !still_next {
+        return;
+    }
+    let Ok(decoder) = result else {
+        return;
+    };
+    let Some(runtime) = engine.audio.as_mut() else {
+        return;
+    };
+    if let Ok(buffered) = runtime.prime_standby_with_opened(decoder, STANDBY_FRAMES) {
+        let _ = buffered;
     }
 }
 
@@ -1398,6 +1609,8 @@ mod tests {
             desired_dsp: None,
             pending_dsp: None,
             dsp_compiler: None,
+            preparation: None,
+            preparation_generation: 0,
         };
 
         apply(
@@ -1628,6 +1841,8 @@ mod tests {
             desired_dsp: None,
             pending_dsp: None,
             dsp_compiler: None,
+            preparation: None,
+            preparation_generation: 0,
         };
         let (event_sender, event_receiver) = mpsc::channel();
         engine.subscribers.push(event_sender);
@@ -1742,6 +1957,8 @@ mod tests {
             desired_dsp: None,
             pending_dsp: None,
             dsp_compiler: None,
+            preparation: None,
+            preparation_generation: 0,
         };
         let current = item(1, &path);
         let load = || EngineCommand::LoadContext {
@@ -1832,6 +2049,8 @@ mod tests {
             desired_dsp: None,
             pending_dsp: None,
             dsp_compiler: Some(DspCompiler::spawn().unwrap()),
+            preparation: None,
+            preparation_generation: 0,
         };
         let current = item(1, &path);
         apply(
@@ -1909,6 +2128,8 @@ mod tests {
             desired_dsp: None,
             pending_dsp: None,
             dsp_compiler: None,
+            preparation: None,
+            preparation_generation: 0,
         };
         let (event_sender, event_receiver) = mpsc::channel();
         engine.subscribers.push(event_sender);
@@ -2538,6 +2759,8 @@ mod tests {
             desired_dsp: None,
             pending_dsp: None,
             dsp_compiler: None,
+            preparation: None,
+            preparation_generation: 0,
         };
 
         apply(
@@ -2614,6 +2837,8 @@ mod tests {
             desired_dsp: None,
             pending_dsp: None,
             dsp_compiler: None,
+            preparation: None,
+            preparation_generation: 0,
         };
         apply(
             &mut engine,
@@ -2677,6 +2902,8 @@ mod tests {
             desired_dsp: None,
             pending_dsp: None,
             dsp_compiler: None,
+            preparation: None,
+            preparation_generation: 0,
         };
         apply(
             &mut engine,
@@ -2738,6 +2965,8 @@ mod tests {
             desired_dsp: None,
             pending_dsp: None,
             dsp_compiler: None,
+            preparation: None,
+            preparation_generation: 0,
         };
         apply(
             &mut engine,
@@ -2839,6 +3068,8 @@ mod tests {
             desired_dsp: None,
             pending_dsp: None,
             dsp_compiler: None,
+            preparation: None,
+            preparation_generation: 0,
         };
         apply(
             &mut engine,
@@ -2884,5 +3115,191 @@ mod tests {
     #[test]
     fn rejects_zero_capacity() {
         assert!(EngineHandle::spawn(0, 1).is_err());
+    }
+
+    /// Stage 14 任务 2：preparation worker 生效后，LoadContext + Enqueue 的 standby 预取
+    /// 走异步路径（open 在 worker 线程完成），最终 standby 仍与 next 对齐——行为与同步
+    /// 路径等价（对照 queue_changes_keep_standby_aligned_with_next）。
+    #[test]
+    fn preparation_worker_primes_standby_asynchronously() {
+        let dir = tempdir().unwrap();
+        let paths: Vec<_> = (1..=3)
+            .map(|id| {
+                let path = dir.path().join(format!("{id}.wav"));
+                fs::write(&path, wav(&[id as i16; 64])).unwrap();
+                path
+            })
+            .collect();
+        let items: Vec<_> = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| item(index as u64 + 1, path))
+            .collect();
+        let handle = EngineHandle::spawn_with_output(
+            8,
+            1,
+            Box::new(WavDecoderFactory),
+            Box::new(TestOutput {
+                format: format(),
+                state: Arc::new(Mutex::new(State::default())),
+                fail_start: false,
+            }),
+        )
+        .unwrap();
+        handle
+            .request(EngineCommand::LoadContext {
+                items: vec![items[0].clone()],
+                start_index: 0,
+                media: media(&items[0], &paths[0]),
+            })
+            .unwrap();
+        handle
+            .request(EngineCommand::Enqueue {
+                item: items[1].clone(),
+                position: QueueInsertPosition::ContextEnd,
+                media: media(&items[1], &paths[1]),
+            })
+            .unwrap();
+        // 轮询等待（上限 2s）：worker 异步完成 standby 预取后，Next 切歌通过
+        // promote_standby 命中并推进到 2；standby 未就绪时 Next 会失败（同步 load
+        // 路径之外的验证），稍后重试。
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            assert!(
+                Instant::now() <= deadline,
+                "standby was not primed by the preparation worker in time"
+            );
+            let result = handle.request(EngineCommand::Next {
+                automatic: false,
+                expected_queue_id: 2,
+            });
+            if let Ok(snapshot) = result {
+                assert!(
+                    snapshot
+                        .state
+                        .current()
+                        .is_some_and(|item| item.queue_id == 2),
+                    "next should advance to track 2"
+                );
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        handle.shutdown().unwrap();
+    }
+
+    /// 慢 open（模拟慢盘/慢 IO）不再阻塞 actor：factory 的 open 人为延迟 300ms，期间
+    /// Snapshot 命令必须在远小于延迟的时间内返回（actor 事件循环不被 preparation 卡住）。
+    #[test]
+    fn slow_decoder_open_does_not_block_the_actor_control_path() {
+        struct SlowOpenFactory;
+        impl DecoderFactory for SlowOpenFactory {
+            fn open(&self, media: &TrustedResolvedMedia) -> Result<Box<dyn Decoder>> {
+                thread::sleep(Duration::from_millis(300));
+                WavDecoderFactory.open(media)
+            }
+            fn clone_factory(&self) -> Box<dyn DecoderFactory> {
+                Box::new(SlowOpenFactory)
+            }
+        }
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("slow.wav");
+        fs::write(&path, wav(&[7; 32])).unwrap();
+        let handle = EngineHandle::spawn_with_output(
+            8,
+            1,
+            Box::new(SlowOpenFactory),
+            Box::new(TestOutput {
+                format: format(),
+                state: Arc::new(Mutex::new(State::default())),
+                fail_start: false,
+            }),
+        )
+        .unwrap();
+        let current = item(1, &path);
+        handle
+            .request(EngineCommand::LoadContext {
+                items: vec![current.clone()],
+                start_index: 0,
+                media: media(&current, &path),
+            })
+            .unwrap();
+        let started = Instant::now();
+        let snapshot = handle.snapshot().unwrap();
+        let elapsed = started.elapsed();
+        assert!(snapshot.state.current().is_some());
+        assert!(
+            elapsed < Duration::from_millis(150),
+            "snapshot must not wait behind a slow decoder open: {elapsed:?}"
+        );
+        handle.shutdown().unwrap();
+    }
+
+    /// worker 打开失败（损坏文件）不破坏播放：LoadContext 当前曲成功后，Enqueue 一个
+    /// 损坏的 next；worker 反复失败被丢弃，但 actor 不崩、当前曲仍可播；Next 切歌走
+    /// 同步 load fallback 并以错误回退到当前曲（既有 restore 语义）。
+    #[test]
+    fn preparation_worker_failure_falls_back_to_synchronous_transition() {
+        let dir = tempdir().unwrap();
+        let good = dir.path().join("good.wav");
+        fs::write(&good, wav(&[3; 64])).unwrap();
+        let corrupt = dir.path().join("corrupt.wav");
+        fs::write(&corrupt, b"RIFFxxxxWAVEjunk").unwrap();
+        let handle = EngineHandle::spawn_with_output(
+            8,
+            1,
+            Box::new(WavDecoderFactory),
+            Box::new(TestOutput {
+                format: format(),
+                state: Arc::new(Mutex::new(State::default())),
+                fail_start: false,
+            }),
+        )
+        .unwrap();
+        let first = item(1, &good);
+        handle
+            .request(EngineCommand::LoadContext {
+                items: vec![first.clone()],
+                start_index: 0,
+                media: media(&first, &good),
+            })
+            .unwrap();
+        handle.request(EngineCommand::Ready).unwrap();
+        let second = item(2, &corrupt);
+        handle
+            .request(EngineCommand::Enqueue {
+                item: second.clone(),
+                position: QueueInsertPosition::ContextEnd,
+                media: media(&second, &corrupt),
+            })
+            .unwrap();
+        // 等 worker 至少跑过一轮失败（轮询期间 actor 必须保持响应）。
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            let snapshot = handle.snapshot().unwrap();
+            assert!(
+                snapshot
+                    .state
+                    .current()
+                    .is_some_and(|item| item.queue_id == 1),
+                "current track must survive preparation worker failures"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        // 手动 Next：同步 load 失败 → 错误返回（restore 语义保持当前曲）。
+        let result = handle.request(EngineCommand::Next {
+            automatic: false,
+            expected_queue_id: 2,
+        });
+        assert!(result.is_err(), "next onto a corrupt file must fail");
+        let snapshot = handle.snapshot().unwrap();
+        assert!(
+            snapshot
+                .state
+                .current()
+                .is_some_and(|item| item.queue_id == 1),
+            "failed transition must restore the current track"
+        );
+        handle.shutdown().unwrap();
     }
 }
