@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Broadcast, CalendarBlank, ChartBar, Eye, Info, Play, Queue, VideoCamera } from "@phosphor-icons/react";
 import { fallbackCover } from "../artwork";
 import { adaptTrack, bridge } from "../bridge";
-import type { NeteaseDjProgramDto, NeteaseDjRadioDto, NeteaseMvDto } from "../bridge/contracts";
+import type { NeteaseDjProgramDto, NeteaseDjRadioDto, NeteaseMvDto, NeteaseMvPlaybackDto } from "../bridge/contracts";
 import { TrackTable } from "../components/TrackTable";
 import { Cover, Page, RemoteNotice, SectionTitle, formatTime } from "../components/ui";
 import { useRemote } from "../hooks/useRemote";
@@ -76,6 +76,11 @@ export function DiscoverView(): React.JSX.Element {
   const mvs = useCursorPage((cursor) => bridge.neteaseMvs(cursor).then((page) => ({ items: page.items, nextCursor: page.nextCursor })));
   const radios = useCursorPage((cursor) => bridge.neteaseDjRadios(cursor).then((page) => ({ items: page.radios, nextCursor: page.nextCursor })));
   const [selectedRadio, setSelectedRadio] = useState<NeteaseDjRadioDto | null>(null);
+  const [djTab, setDjTab] = useState<"radios" | "categories" | "recommend" | "toplist" | "sublist">("radios");
+  const djCategories = useRemote(() => bridge.neteaseDjCategories(), [], (value) => value.categories.length === 0);
+  const djRecommend = useRemote(() => bridge.neteaseDjRecommend(), [], (value) => value.radios.length === 0);
+  const djToplist = useRemote(() => bridge.neteaseDjProgramToplist(), [], (value) => value.programs.length === 0);
+  const djSublist = useRemote(() => bridge.neteaseDjSublist(), [], (value) => value.radios.length === 0);
   const programs = useCursorPage(
     (cursor) => selectedRadio
       ? bridge.neteaseDjPrograms(selectedRadio.id, cursor).then((page) => ({ items: page.programs, nextCursor: page.nextCursor }))
@@ -84,6 +89,7 @@ export function DiscoverView(): React.JSX.Element {
   );
   const [selectedMv, setSelectedMv] = useState<NeteaseMvDto | null>(null);
   const [mvDetail, setMvDetail] = useState<RemoteState<Awaited<ReturnType<typeof bridge.neteaseMvDetail>>>>({ status: "idle" });
+  const [mvPlayback, setMvPlayback] = useState<RemoteState<NeteaseMvPlaybackDto>>({ status: "idle" });
   const mvGeneration = useRef(0);
 
   useEffect(() => () => { mvGeneration.current += 1; }, []);
@@ -96,9 +102,18 @@ export function DiscoverView(): React.JSX.Element {
     const current = ++mvGeneration.current;
     setSelectedMv(mv);
     setMvDetail({ status: "loading" });
+    setMvPlayback({ status: "idle" });
     void bridge.neteaseMvDetail(mv.id)
       .then((detail) => { if (current === mvGeneration.current) setMvDetail(remoteSuccess(detail)); })
       .catch((error: unknown) => { if (current === mvGeneration.current) setMvDetail(remoteFailure(error)); });
+  }
+  function playMv(): void {
+    if (!selectedMv) return;
+    const current = ++mvGeneration.current;
+    setMvPlayback({ status: "loading" });
+    void bridge.neteaseMvPlayback(selectedMv.id)
+      .then((playback) => { if (current === mvGeneration.current) setMvPlayback(remoteSuccess(playback)); })
+      .catch((error: unknown) => { if (current === mvGeneration.current) setMvPlayback(remoteFailure(error)); });
   }
 
   const songTracks = newSongs.status === "ready" ? newSongs.data.tracks.map(adaptTrack) : [];
@@ -121,11 +136,22 @@ export function DiscoverView(): React.JSX.Element {
       <RemoteNotice state={mvs.state} empty="暂无 MV" retry={mvs.reload}/>
       {mvs.state.status === "ready" && <div className="discover-mv-grid">{mvs.state.data.items.map((mv) => <button key={mv.id} className="discover-mv" onClick={() => openMv(mv)}><div><Cover src={mv.coverUrl || fallbackCover(String(mv.id))} alt=""/><span><Eye/>{formatCount(mv.playCount)}</span>{mv.durationMs !== null && <time>{formatTime(mv.durationMs)}</time>}</div><b>{mv.name}</b><small>{mv.artists.map((artist) => artist.name).join(" / ") || "未知艺人"}</small></button>)}</div>}
       {mvs.state.status === "ready" && <LoadMore cursor={mvs.state.data.nextCursor} loading={mvs.loadingMore} error={mvs.moreError} onClick={() => void mvs.loadMore()}/>}
-      {selectedMv && <div className="discover-detail" role="region" aria-label={`${selectedMv.name} MV 详情`}><div><VideoCamera/><span><b>{selectedMv.name}</b><small>{selectedMv.artists.map((artist) => artist.name).join(" / ") || "未知艺人"}</small></span><button className="button secondary" onClick={() => { mvGeneration.current += 1; setSelectedMv(null); setMvDetail({ status: "idle" }); }}>关闭</button></div><RemoteNotice state={mvDetail} retry={() => openMv(selectedMv)}/>{mvDetail.status === "ready" && <dl><div><dt>分辨率</dt><dd>待播放地址下发</dd></div><div><dt>时长</dt><dd>{mvDetail.data.mv.durationMs !== null ? formatTime(mvDetail.data.mv.durationMs) : "未知"}</dd></div><div><dt>播放</dt><dd>{formatCount(mvDetail.data.mv.playCount)}</dd></div><div><dt>收录</dt><dd>{formatCount(mvDetail.data.favoriteCount)}</dd></div><div><dt>发布时间</dt><dd>{mvDetail.data.publishTime || "未知"}</dd></div><div><dt>评论</dt><dd>{formatCount(mvDetail.data.commentCount)}</dd></div>{mvDetail.data.description && <div className="wide"><dt>简介</dt><dd>{mvDetail.data.description}</dd></div>}</dl>}<div className="detail-actions"><button className="button primary" disabled title="播放地址接线中"><Play weight="fill"/>播放 MV（接线中）</button></div><p><Info/>当前后端尚未提供 MV 播放地址，此处仅展示真实元数据；播放地址待协调者接线 command 后启用。</p></div>}
+      {selectedMv && <div className="discover-detail" role="region" aria-label={`${selectedMv.name} MV 详情`}><div><VideoCamera/><span><b>{selectedMv.name}</b><small>{selectedMv.artists.map((artist) => artist.name).join(" / ") || "未知艺人"}</small></span><button className="button secondary" onClick={() => { mvGeneration.current += 1; setSelectedMv(null); setMvDetail({ status: "idle" }); }}>关闭</button></div><RemoteNotice state={mvDetail} retry={() => openMv(selectedMv)}/>{mvDetail.status === "ready" && <dl><div><dt>分辨率</dt><dd>待播放地址下发</dd></div><div><dt>时长</dt><dd>{mvDetail.data.mv.durationMs !== null ? formatTime(mvDetail.data.mv.durationMs) : "未知"}</dd></div><div><dt>播放</dt><dd>{formatCount(mvDetail.data.mv.playCount)}</dd></div><div><dt>收录</dt><dd>{formatCount(mvDetail.data.favoriteCount)}</dd></div><div><dt>发布时间</dt><dd>{mvDetail.data.publishTime || "未知"}</dd></div><div><dt>评论</dt><dd>{formatCount(mvDetail.data.commentCount)}</dd></div>{mvDetail.data.description && <div className="wide"><dt>简介</dt><dd>{mvDetail.data.description}</dd></div>}</dl>}<div className="detail-actions"><button className="button primary" onClick={() => playMv()} disabled={mvPlayback.status === "loading"}><Play weight="fill"/>播放 MV</button></div>{mvPlayback.status === "ready" && mvPlayback.data.url && <video className="mv-player" controls autoPlay src={mvPlayback.data.url}/>}<RemoteNotice state={mvPlayback} retry={() => playMv()}/></div>}
     </section>
 
     <section className="discover-section" aria-label="DJ / 电台">
       <SectionTitle>DJ / 电台</SectionTitle>
+      <div className="discover-dj-tabs" role="tablist" aria-label="电台内容类型">
+        <button role="tab" aria-selected={djTab === "radios"} className={djTab === "radios" ? "active" : ""} onClick={() => setDjTab("radios")}>热门电台</button>
+        <button role="tab" aria-selected={djTab === "categories"} className={djTab === "categories" ? "active" : ""} onClick={() => setDjTab("categories")}>电台分类</button>
+        <button role="tab" aria-selected={djTab === "recommend"} className={djTab === "recommend" ? "active" : ""} onClick={() => setDjTab("recommend")}>推荐电台</button>
+        <button role="tab" aria-selected={djTab === "toplist"} className={djTab === "toplist" ? "active" : ""} onClick={() => setDjTab("toplist")}>节目榜</button>
+        <button role="tab" aria-selected={djTab === "sublist"} className={djTab === "sublist" ? "active" : ""} onClick={() => setDjTab("sublist")}>我的订阅</button>
+      </div>
+      {djTab === "categories" && <div className="discover-dj-categories"><RemoteNotice state={djCategories[0]} empty="暂无电台分类" retry={djCategories[1]}/>{djCategories[0].status === "ready" && djCategories[0].data.categories.map((category) => <button key={category.id} className="dj-category-chip" onClick={() => setDjTab("radios")}>{category.name}</button>)}</div>}
+      {djTab === "recommend" && <div className="discover-radio-strip">{djRecommend[0].status === "ready" && djRecommend[0].data.radios.map((radio) => <button key={radio.id} className={selectedRadio?.id === radio.id ? "selected" : ""} aria-pressed={selectedRadio?.id === radio.id} onClick={() => setSelectedRadio(radio)}><Cover src={radio.coverUrl || fallbackCover(String(radio.id))} alt=""/><span><b>{radio.name}</b><small>{radio.category || "推荐电台"}</small></span></button>)}<RemoteNotice state={djRecommend[0]} empty="暂无推荐电台" retry={djRecommend[1]}/></div>}
+      {djTab === "toplist" && <div className="discover-programs"><RemoteNotice state={djToplist[0]} empty="暂无节目榜" retry={djToplist[1]}/>{djToplist[0].status === "ready" && djToplist[0].data.programs.map((program: NeteaseDjProgramDto) => { const track = program.mainTrack ? adaptTrack(program.mainTrack) : null; return <div className="discover-program" key={program.id}><CalendarBlank/><span><b>{program.name}</b><small>{program.radio?.name || "节目榜"} · {formatCount(program.listenerCount)} 次收听</small></span><button className="icon-button" title="播放节目主曲目" aria-label={`播放 ${program.name}`} disabled={!track} onClick={() => track && void playTrack(track, { kind: "manual", id: null })}><Play weight="fill"/></button></div>; })}</div>}
+      {djTab === "sublist" && <div className="discover-radio-strip"><RemoteNotice state={djSublist[0]} empty="登录后查看订阅的电台" retry={djSublist[1]}/>{djSublist[0].status === "ready" && djSublist[0].data.radios.map((radio) => <button key={radio.id} className={selectedRadio?.id === radio.id ? "selected" : ""} aria-pressed={selectedRadio?.id === radio.id} onClick={() => setSelectedRadio(radio)}><Cover src={radio.coverUrl || fallbackCover(String(radio.id))} alt=""/><span><b>{radio.name}</b><small>{radio.category || `${formatCount(radio.programCount)} 期节目`}</small></span></button>)}</div>}
       <RemoteNotice state={radios.state} empty="暂无电台" retry={radios.reload}/>
       {radios.state.status === "ready" && <div className="discover-radio-strip">{radios.state.data.items.map((radio) => <button key={radio.id} className={selectedRadio?.id === radio.id ? "selected" : ""} aria-pressed={selectedRadio?.id === radio.id} onClick={() => setSelectedRadio(radio)}><Cover src={radio.coverUrl || fallbackCover(String(radio.id))} alt=""/><span><b>{radio.name}</b><small>{radio.category || `${formatCount(radio.programCount)} 期节目`}</small></span></button>)}</div>}
       {radios.state.status === "ready" && <LoadMore cursor={radios.state.data.nextCursor} loading={radios.loadingMore} error={radios.moreError} onClick={() => void radios.loadMore()}/>}

@@ -1,6 +1,6 @@
 # Stage 16：网易云产品闭环
 
-状态：进行中（crate 全量路由 + 行为差异 + Tauri/bridge 接线已完成，62 crate 测试/165 Tauri 测试/230 前端测试/deny 全绿；剩余 7 条长尾路由与真实账号矩阵验收）
+状态：进行中（115 条 RouteSpec 全部实现并接线：crate 68 测试 / Tauri 165 测试 / 前端 230 测试 / deny 全绿；UI 已消费全部新能力；剩余真实账号矩阵验收）
 
 更新时间：2026-09-03
 
@@ -59,8 +59,29 @@ Rust contract/fixture、oracle parity、敏感信息日志审计、账号切换�
 ### 4. 门禁
 - crate：fmt / strict clippy / 62 测试全绿；Tauri：fmt / strict clippy / 165 测试全绿；前端 230 全绿 + tsc + build；oracle `tsc -p tests/oracle-tsconfig.json` 零错误；`cargo deny` advisories/bans/licenses/sources 全 ok（num-bigint MIT/Apache-2.0 合规）。
 
+## 已完成（第二批收尾，2026-09-03）
+
+### 5. 长尾路由全量实现（115/115）
+- 13+1 条补齐：DJ 分类/推荐/节目榜/订阅/个性化电台、歌曲百科/相关播客/详情聚合、
+  智能播放列表、相关歌单（公开 HTML regex 解析）、批量专辑封面、相似艺人、
+  explore-next 无限推荐（批次轮换地区+去重补池）、updatePlaylistCover（NOS 上传：
+  token alloc → 裸传 yyimgs → cover/update）。
+- 新增公开通道：public_get / public_post_form / public_get_text / raw_post_bytes；
+  regex 依赖（MIT/Apache-2.0）。
+- Tauri：14+1 新 command（IPC 契约 140），DTO/mapping/port 补齐；deny 全过。
+
+### 6. UI 全量消费（功能可用闭环）
+- HomeView：banner 轮播 + 探索发现无限流（explore-next 分批加载、去重、加载更多）。
+- SearchView：热搜词（点击填充）+ 搜索建议（songs 联想）。
+- DetailView（playlist）：相关歌单区块。
+- NeteaseLibraryView：收藏艺人/专辑/MV 子列表。
+- DiscoverView：DJ 分类 tab（热门/分类/推荐/节目榜/我的订阅）+ **MV 播放**（video 播放器，
+  分辨率 1080→720→480→240 降级，替代原「接线中」占位）。
+- 前端 230 测试全绿（含 MV 播放新断言）、tsc 零错、build 成功、IPC 140 契约验证通过。
+
 ## 剩余（关闭切片阻断项）
 
-1. **长尾路由 7 条**（crate 未实现，RouteSpec 已登记）：getSongWiki、getSongRelatedBlogs、getSongDetailEnriched、getPlaymodeIntelligenceList、getRelatedPlaylists（公开网页解析）、getAlbumCoversBatch、**updatePlaylistCover（NOS 上传，需新增 /api/nos/token/alloc 上传通道）**——行为规范覆盖度低，暂不阻塞产品闭环。
-2. **真实账号矩阵验收**（任务 6）：普通/VIP/过期/风控账号的关键路径实测（登录、VIP 音质、权益过期 fail-closed、风控）需用户本机凭据；按规范凭据不入库、不写日志，验收后更新账号验收记录。
-3. 匿名播放 Cookie/重试/密文解析问题已修复（工作区遗留半成品 crypto/session/service 已纳入并验证），联网对拍仍建议在真实账号验收时一并覆盖。
+1. **真实账号矩阵验收**（任务 6）：普通/VIP/过期/风控账号的关键路径实测（登录、VIP 音质、
+   权益过期 fail-closed、风控）需用户本机凭据；按规范凭据不入库、不写日志，验收后更新
+   账号验收记录。
+2. 联网对拍建议：设备 Cookie 画像/xeapi 头/公开网页解析在真实网络下与 oracle 对拍。

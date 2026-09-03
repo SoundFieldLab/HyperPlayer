@@ -31,6 +31,7 @@ const bridgeMocks = vi.hoisted(() => ({
   neteaseNewSongs: vi.fn(),
   neteaseMvs: vi.fn(),
   neteaseMvDetail: vi.fn(),
+  neteaseMvPlayback: vi.fn(),
   neteaseDjRadios: vi.fn(),
   neteaseDjPrograms: vi.fn(),
   neteaseStatus: vi.fn(),
@@ -371,10 +372,14 @@ describe("CurrentView 页面能力边界", () => {
     await act(async () => button(container, "现场 MV").click());
     await settle();
     expect(container.textContent).toContain("现场录制");
-    expect(container.textContent).toContain("尚未提供 MV 播放地址");
     const mvPlay = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("播放 MV"));
     expect(mvPlay).not.toBeUndefined();
-    expect(mvPlay!.disabled).toBe(true);
+    expect(mvPlay!.disabled).toBe(false);
+    bridgeMocks.neteaseMvPlayback.mockResolvedValue({ id: 10, url: "https://example.com/mv.mp4", resolution: 1080, sizeBytes: null, durationMs: 90_000 });
+    await act(async () => { mvPlay!.click(); await Promise.resolve(); });
+    await settle();
+    expect(bridgeMocks.neteaseMvPlayback).toHaveBeenCalledWith(10);
+    expect(container.querySelector("video")).not.toBeNull();
   });
 
   it("paginates MV, radio, and selected radio programs independently", async () => {

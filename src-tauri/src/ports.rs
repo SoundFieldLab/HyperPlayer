@@ -312,6 +312,10 @@ pub trait NeteasePort: Send + Sync {
         &self,
         request: NeteaseUpdatePlaylistCoverRequestDto,
     ) -> AppResult<NeteaseMutationResultDto>;
+    async fn mv_playback(
+        &self,
+        request: NeteaseMvPlaybackRequestDto,
+    ) -> AppResult<NeteaseMvPlaybackDto>;
 }
 
 #[async_trait::async_trait]

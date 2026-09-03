@@ -433,6 +433,7 @@ export interface NeteaseAlbumCoversDto { covers: NeteaseAlbumCoverDto[]; }
 export interface NeteaseExploreNextDto { songs: BackendTrackDto[]; batch: number; hasMore: boolean; }
 export interface NeteaseSimilarArtistsDto { artists: NeteaseArtistSummaryDto[]; nextCursor: string | null; }
 export interface NeteaseUpdatePlaylistCoverRequestDto { playlistId: number; imageBase64: string; mimeType: string | null; }
+export interface NeteaseMvPlaybackDto { id: number; url: string; resolution: number; sizeBytes: number | null; durationMs: number | null; }
 
 export interface NeteaseImageDto {
   mimeType: string;
@@ -748,6 +749,7 @@ export interface BridgeContract {
   neteaseSimilarArtists(artistId: number): Promise<NeteaseSimilarArtistsDto>;
   neteaseExploreNext(count?: number, batch?: number, exclude?: number[]): Promise<NeteaseExploreNextDto>;
   neteaseUpdatePlaylistCover(playlistId: number, imageBase64: string, mimeType?: string): Promise<NeteaseMutationResultDto>;
+  neteaseMvPlayback(mvId: number, resolution?: number): Promise<NeteaseMvPlaybackDto>;
   cacheStats(): Promise<CacheStatsDto>;
   cacheStatus(track: BackendTrackRefDto): Promise<BackendCacheStatusDto>;
   cacheTrack(track: BackendTrackRefDto, quality: string): Promise<TaskAcceptedDto>;

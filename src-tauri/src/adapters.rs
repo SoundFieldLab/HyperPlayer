@@ -3912,6 +3912,39 @@ impl NeteasePort for NeteaseAdapter {
         })
     }
 
+    async fn mv_playback(
+        &self,
+        request: NeteaseMvPlaybackRequestDto,
+    ) -> AppResult<NeteaseMvPlaybackDto> {
+        validate_positive_id(request.mv_id, "mvId")?;
+        let service = self.require_service()?;
+        // 首选分辨率失败时按 1080→720→480→240 降级；全部失败返回首个错误。
+        let mut order = vec![request.resolution.unwrap_or(1080)];
+        for resolution in [1080_u16, 720, 480, 240] {
+            if !order.contains(&resolution) {
+                order.push(resolution);
+            }
+        }
+        let mut last_error = None;
+        for resolution in order {
+            match service.mv_play_url(request.mv_id, resolution).await {
+                Ok(playback) => {
+                    return Ok(NeteaseMvPlaybackDto {
+                        id: playback.id,
+                        url: playback.url,
+                        resolution: playback.resolution,
+                        size_bytes: playback.size_bytes,
+                        duration_ms: playback.duration_ms,
+                    });
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(AppError::from(last_error.unwrap_or_else(|| {
+            hyperplayer_source_netease::Error::Transport("MV 播放地址获取失败".into())
+        })))
+    }
+
     async fn update_playlist_cover(
         &self,
         request: NeteaseUpdatePlaylistCoverRequestDto,

@@ -1833,3 +1833,21 @@ pub struct NeteaseUpdatePlaylistCoverRequestDto {
     pub image_base64: String,
     pub mime_type: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseMvPlaybackDto {
+    pub id: u64,
+    pub url: String,
+    pub resolution: u16,
+    pub size_bytes: Option<u64>,
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseMvPlaybackRequestDto {
+    pub mv_id: u64,
+    /// 首选分辨率（240/480/720/1080）；不可用时降级。
+    pub resolution: Option<u16>,
+}

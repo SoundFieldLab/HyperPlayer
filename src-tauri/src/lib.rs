@@ -173,6 +173,7 @@ pub fn run() {
             netease::netease_similar_artists,
             netease::netease_explore_next,
             netease::netease_update_playlist_cover,
+            netease::netease_mv_playback,
             lyrics::lyrics_get,
             window::window_show,
             window::window_close,

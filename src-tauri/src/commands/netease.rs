@@ -12,16 +12,17 @@ use crate::{
         NeteaseListenReportDto, NeteaseListenReportRequestDto, NeteaseListenStatsDto,
         NeteaseLoginPollRequestDto, NeteaseLoginStartDto, NeteaseLoginStateDto,
         NeteaseLoginStatusDto, NeteaseMutationConfirmationDto, NeteaseMutationResultDto,
-        NeteaseMvDetailDto, NeteaseMvListRequestDto, NeteaseMvPageDto, NeteaseNewSongsRequestDto,
-        NeteaseNoticePageDto, NeteasePlaylistCategoryDto, NeteasePlaylistDetailDto,
-        NeteasePlaylistPageDto, NeteasePrepareMutationRequestDto, NeteaseQualityOptionDto,
-        NeteaseRecentPlaysDto, NeteaseRecentPlaysRequestDto, NeteaseResourceRequestDto,
-        NeteaseScrobbleDto, NeteaseSearchPageDto, NeteaseSearchRequestDto,
-        NeteaseSearchSuggestionsDto, NeteaseSimilarArtistsDto, NeteaseSongRelatedBlogsDto,
-        NeteaseSongWikiDto, NeteaseStatusDto, NeteaseStylePreferenceDto, NeteaseSublistAlbumsDto,
-        NeteaseSublistArtistsDto, NeteaseSublistMvsDto, NeteaseTracksDto,
-        NeteaseUpdatePlaylistCoverRequestDto, NeteaseUserEventsRequestDto, NeteaseUserLevelDto,
-        NeteaseUserPageDto, NeteaseUserSubcountDto, PageRequestDto,
+        NeteaseMvDetailDto, NeteaseMvListRequestDto, NeteaseMvPageDto, NeteaseMvPlaybackDto,
+        NeteaseMvPlaybackRequestDto, NeteaseNewSongsRequestDto, NeteaseNoticePageDto,
+        NeteasePlaylistCategoryDto, NeteasePlaylistDetailDto, NeteasePlaylistPageDto,
+        NeteasePrepareMutationRequestDto, NeteaseQualityOptionDto, NeteaseRecentPlaysDto,
+        NeteaseRecentPlaysRequestDto, NeteaseResourceRequestDto, NeteaseScrobbleDto,
+        NeteaseSearchPageDto, NeteaseSearchRequestDto, NeteaseSearchSuggestionsDto,
+        NeteaseSimilarArtistsDto, NeteaseSongRelatedBlogsDto, NeteaseSongWikiDto, NeteaseStatusDto,
+        NeteaseStylePreferenceDto, NeteaseSublistAlbumsDto, NeteaseSublistArtistsDto,
+        NeteaseSublistMvsDto, NeteaseTracksDto, NeteaseUpdatePlaylistCoverRequestDto,
+        NeteaseUserEventsRequestDto, NeteaseUserLevelDto, NeteaseUserPageDto,
+        NeteaseUserSubcountDto, PageRequestDto,
     },
     error::CommandResult,
     events,
@@ -111,6 +112,7 @@ pub const NETEASE_COMMAND_NAMES: &[&str] = &[
     "netease_similar_artists",
     "netease_explore_next",
     "netease_update_playlist_cover",
+    "netease_mv_playback",
     "netease_scrobble",
     "netease_logout",
 ];
@@ -806,4 +808,12 @@ pub async fn netease_update_playlist_cover(
     request: NeteaseUpdatePlaylistCoverRequestDto,
 ) -> CommandResult<NeteaseMutationResultDto> {
     super::command(state.services.netease.update_playlist_cover(request).await)
+}
+
+#[tauri::command]
+pub async fn netease_mv_playback(
+    state: State<'_, AppState>,
+    request: NeteaseMvPlaybackRequestDto,
+) -> CommandResult<NeteaseMvPlaybackDto> {
+    super::command(state.services.netease.mv_playback(request).await)
 }

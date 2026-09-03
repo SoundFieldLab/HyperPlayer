@@ -199,6 +199,7 @@ function mockBridge(overrides: Partial<BridgeContract> = {}): BridgeContract {
     neteaseSimilarArtists: vi.fn(async () => ({ artists: [], nextCursor: null })),
     neteaseExploreNext: vi.fn(async () => ({ songs: [], batch: 1, hasMore: true })),
     neteaseUpdatePlaylistCover: vi.fn(async () => ({ succeeded: true, createdPlaylist: null, comment: null })),
+    neteaseMvPlayback: vi.fn(async () => ({ id: 1, url: "https://example.com/mv.mp4", resolution: 1080, sizeBytes: null, durationMs: null })),
     cacheStats: vi.fn(async () => ({ entryCount: 0, bytesUsed: 0, activeTasks: 0, lockedEntries: 0 })),
     cacheStatus: vi.fn(async (track) => ({ track, quality: null, cachedVersions: 0, status: "missing" as const, accessClass: "public" as const, ownerUserId: null, lastValidatedAt: null })),
     cacheTrack: vi.fn(async () => ({ taskId: "cache", accepted: true })),

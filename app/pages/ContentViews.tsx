@@ -5,7 +5,7 @@ import {
 } from "@phosphor-icons/react";
 import { fallbackCover } from "../artwork";
 import { adaptTrack, bridge } from "../bridge";
-import type { BackendCacheStatusDto, DspConfigurationDto, LibraryAlbumDto, LibraryArtistDto, LibraryFolderDto, LibraryPlaylistDto, LibraryRecentDto, NeteaseAlbumDto, NeteaseArtistSummaryDto, NeteaseCommentDto, NeteaseCommentResource, NeteaseListenPeriod, NeteaseLoginStartDto, NeteaseLoginStateDto, NeteaseMutationDto, NeteasePlaylistDto, NeteaseSearchKind, NeteaseSearchPageDto, PlaybackContextDto, TrackDto, UpdateCheckDto } from "../bridge/contracts";
+import type { BackendCacheStatusDto, BackendTrackDto, DspConfigurationDto, LibraryAlbumDto, LibraryArtistDto, LibraryFolderDto, LibraryPlaylistDto, LibraryRecentDto, NeteaseAlbumDto, NeteaseArtistSummaryDto, NeteaseCommentDto, NeteaseCommentResource, NeteaseListenPeriod, NeteaseLoginStartDto, NeteaseLoginStateDto, NeteaseMutationDto, NeteasePlaylistDto, NeteaseSearchKind, NeteaseSearchPageDto, NeteaseSearchSuggestionsDto, PlaybackContextDto, TrackDto, UpdateCheckDto } from "../bridge/contracts";
 import { Cover, Page, RemoteNotice, SectionTitle } from "../components/ui";
 import { TrackTable } from "../components/TrackTable";
 import { CommentSection } from "../components/CommentSection";
@@ -59,15 +59,33 @@ function HomeView(): React.JSX.Element {
     (items) => domain === "local" && items.length === 0,
   );
   const [home, reloadHome] = useRemote(() => domain === "netease" ? bridge.neteaseHome() : Promise.resolve({ recommendedTracks: [], recommendedPlaylists: [], anonymous: true, unavailableSections: [] }), [domain], (value) => domain === "netease" && value.recommendedTracks.length === 0 && value.recommendedPlaylists.length === 0);
+  const [banners] = useRemote(() => domain === "netease" ? bridge.neteaseBanner() : Promise.resolve([]), [domain], () => false);
+  const [exploreBatch, setExploreBatch] = useState(0);
+  const [exploreTracks, setExploreTracks] = useState<BackendTrackDto[]>([]);
+  const [exploreLoading, setExploreLoading] = useState(false);
+  async function loadExploreNext(): Promise<void> {
+    if (exploreLoading) return;
+    setExploreLoading(true);
+    try {
+      const exclude = exploreTracks.map((track) => Number(track.trackRef.id)).filter((id) => Number.isFinite(id));
+      const page = await bridge.neteaseExploreNext(30, exploreBatch + 1, exclude);
+      setExploreTracks((prev) => [...prev, ...page.songs]);
+      setExploreBatch(page.batch);
+    } catch { /* 探索失败不打断首页 */ }
+    finally { setExploreLoading(false); }
+  }
+  useEffect(() => { if (domain === "netease") void loadExploreNext(); }, [domain]); // eslint-disable-line react-hooks/exhaustive-deps
   const tracks = domain === "local"
     ? localTracks.status === "ready" ? localTracks.data : []
     : home.status === "ready" ? home.data.recommendedTracks.map(adaptTrack) : [];
   const state = domain === "local" ? localTracks : home;
   return <Page title="我的喜欢" subtitle={domain === "local" ? "本地曲库中的常听曲目" : "来自网易云的实时推荐"} actions={<><button className="button primary" disabled={!tracks.length} onClick={() => tracks[0] && void useAppStore.getState().playTrack(tracks[0], { kind: "manual", id: null })}><Play weight="fill"/>播放全部</button><button className="button secondary" onClick={() => navigate(domain === "local" ? "folders" : "library")}><FolderOpen/>管理音乐</button></>}>
+    {domain === "netease" && banners.status === "ready" && banners.data.length > 0 && <div className="banner-strip">{banners.data.map((banner) => <button className="banner-card" key={banner.id} onClick={() => banner.targetUrl && window.open(banner.targetUrl, "_blank")}><Cover src={banner.imageUrl} alt={banner.title}/><span>{banner.title}</span></button>)}</div>}
     <div className="collection-summary"><div className="collection-art" aria-hidden="true"><Heart weight="fill"/></div><div><span className="eyebrow">COLLECTION</span><h2>{tracks.length ? `${tracks.length} 首歌曲` : "你的音乐收藏"}</h2><p>{domain === "local" ? "从本地曲库整理出的私人播放空间。" : "登录后可查看收藏歌单；当前列表来自推荐服务。"}</p></div><button className="round-play" aria-label="播放全部" disabled={!tracks.length} onClick={() => tracks[0] && void useAppStore.getState().playTrack(tracks[0], { kind: "manual", id: null })}><Play weight="fill"/></button></div>
     <div className="collection-toolbar"><span>{domain === "local" ? "本地曲目" : "推荐曲目"}</span><button type="button" onClick={() => navigate("search")}><MagnifyingGlass/>筛选音乐</button></div>
     <RemoteNotice state={state} empty="这里还没有可播放的音乐" retry={domain === "local" ? reloadLocalTracks : reloadHome}/>
     {tracks.length > 0 && <AppTrackTable tracks={tracks} playbackContext={{ kind: "manual", id: null }} preserveOrder/>}
+    {domain === "netease" && (exploreTracks.length > 0 || exploreLoading) && <><SectionTitle>探索发现</SectionTitle><RemoteNotice state={exploreLoading && exploreTracks.length === 0 ? { status: "loading" } : { status: "ready", data: null }} empty=""/>{exploreTracks.length > 0 && <AppTrackTable tracks={exploreTracks.map(adaptTrack)} playbackContext={{ kind: "manual", id: null }} preserveOrder/>}<button className="button secondary" onClick={() => void loadExploreNext()} disabled={exploreLoading}>{exploreLoading ? "加载中…" : "加载更多"}</button></>}
   </Page>;
 }
 
@@ -85,9 +103,11 @@ function SearchView(): React.JSX.Element {
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<NeteaseSearchKind>("track");
   const [results, setResults] = useState<RemoteState<NeteaseSearchPageDto>>({ status: "idle" });
+  const [hotWords, reloadHotWords] = useRemote(() => domain === "netease" ? bridge.neteaseSearchHot() : Promise.resolve([]), [domain], () => false);
+  const [suggestions, setSuggestions] = useState<RemoteState<NeteaseSearchSuggestionsDto>>({ status: "idle" });
   useEffect(() => {
     const trimmed = query.trim();
-    if (!trimmed) { setResults({ status: "idle" }); return; }
+    if (!trimmed) { setResults({ status: "idle" }); setSuggestions({ status: "idle" }); return; }
     let active = true;
     const timer = window.setTimeout(() => {
       setResults({ status: "loading" });
@@ -97,12 +117,15 @@ function SearchView(): React.JSX.Element {
         const items = tab === "track" ? page.tracks : tab === "album" ? page.albums : tab === "artist" ? page.artists : page.playlists;
         setResults(remoteSuccess(page, items.length === 0));
       }).catch((error: unknown) => { if (active) setResults(remoteFailure(error)); });
+      if (domain === "netease" && tab === "track") {
+        void bridge.neteaseSearchSuggest(trimmed).then((value) => { if (active) setSuggestions(remoteSuccess(value, value.songs.length === 0)); }).catch((error: unknown) => { if (active) setSuggestions(remoteFailure(error)); });
+      }
     }, 250);
     return () => { active = false; window.clearTimeout(timer); };
   }, [domain, query, tab]);
   const trackResults = results.status === "ready" ? results.data.tracks.map(adaptTrack) : [];
   const tabLabel: Record<NeteaseSearchKind, string> = { track: "歌曲", album: "专辑", artist: "艺术家", playlist: "歌单" };
-  return <Page title="搜索" subtitle={`${domain === "netease" ? "网易云" : "本地曲库"}搜索结果`}><div className="search-page-input"><MagnifyingGlass/><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="歌曲、专辑或艺术家"/></div>{!query.trim() ? <div className="search-empty"><Command/><h2>搜索音乐</h2><p>输入关键词后从当前内容域查询。</p></div> : <>{domain === "netease" && <div className="filter-pills" role="tablist" aria-label="搜索结果类型">{SEARCH_TABS.map(([kind, label]) => <button key={kind} role="tab" aria-selected={tab === kind} className={tab === kind ? "active" : ""} onClick={() => setTab(kind)}>{label}</button>)}</div>}<SectionTitle>{tabLabel[tab]}</SectionTitle><RemoteNotice state={results} empty={`没有找到${tabLabel[tab]}`}/>{results.status === "ready" && (tab === "track" ? <AppTrackTable tracks={trackResults} playbackContext={{ kind: "search", id: null }}/> : <SearchResultGrid kind={tab} page={results.data} navigate={(view, id) => navigate(view, id)}/>)}</>}</Page>;
+  return <Page title="搜索" subtitle={`${domain === "netease" ? "网易云" : "本地曲库"}搜索结果`}><div className="search-page-input"><MagnifyingGlass/><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="歌曲、专辑或艺术家"/></div>{!query.trim() ? <div className="search-empty"><Command/><h2>搜索音乐</h2><p>输入关键词后从当前内容域查询。</p>{domain === "netease" && hotWords.status === "ready" && hotWords.data.length > 0 && <div className="hot-words"><span>热搜</span>{hotWords.data.slice(0, 12).map((word) => <button key={word.word} onClick={() => setQuery(word.word)}>{word.word}</button>)}</div>}</div> : <>{domain === "netease" && <div className="filter-pills" role="tablist" aria-label="搜索结果类型">{SEARCH_TABS.map(([kind, label]) => <button key={kind} role="tab" aria-selected={tab === kind} className={tab === kind ? "active" : ""} onClick={() => setTab(kind)}>{label}</button>)}</div>}<SectionTitle>{tabLabel[tab]}</SectionTitle><RemoteNotice state={results} empty={`没有找到${tabLabel[tab]}`}/>{results.status === "ready" && (tab === "track" ? <AppTrackTable tracks={trackResults} playbackContext={{ kind: "search", id: null }}/> : <SearchResultGrid kind={tab} page={results.data} navigate={(view, id) => navigate(view, id)}/>)}{domain === "netease" && tab === "track" && suggestions.status === "ready" && suggestions.data.songs.length > 0 && <div className="suggest-block"><SectionTitle>搜索建议</SectionTitle><div className="suggest-list">{suggestions.data.songs.map((song: BackendTrackDto) => <button key={song.trackRef.id} onClick={() => setQuery(song.title)}><b>{song.title}</b><small>{song.artists.join(" / ")}</small></button>)}</div></div>}</>}</Page>;
 }
 
 function LibraryView(): React.JSX.Element {
@@ -171,9 +194,15 @@ function NeteaseLibraryView(): React.JSX.Element {
   const [account, reloadAccount] = useRemote(() => bridge.neteaseAccount(), [], () => false);
   const [cloud, reloadCloud] = useRemote(() => bridge.neteaseCloud(), [], (value) => value.songs.length === 0);
   const follows = useRemote(() => account.status === "ready" ? bridge.neteaseFollows(account.data.user.userId) : Promise.resolve({ users: [], nextCursor: null }), [account.status === "ready" ? account.data.user.userId : null], (value) => value.users.length === 0);
+  const artistSublist = useRemote(() => bridge.neteaseArtistSublist(), [], (value) => value.artists.length === 0);
+  const albumSublist = useRemote(() => bridge.neteaseAlbumSublist(), [], (value) => value.albums.length === 0);
+  const mvSublist = useRemote(() => bridge.neteaseMvSublist(), [], (value) => value.mvs.length === 0);
   const navigate = useAppStore((state) => state.navigate);
   return <Page title="网易云音乐库" subtitle="收藏、关注、云盘与听歌数据来自当前登录账号">
     <SectionTitle>收藏歌单</SectionTitle><RemoteNotice state={favorites} empty="暂无收藏" retry={reloadFavorites}/>{favorites.status === "ready" && <div className="cover-grid">{favorites.data.playlists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("playlist", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/></div><b>{item.name}</b><small>{item.trackCount} 首</small></button>)}</div>}
+    <SectionTitle>收藏艺人</SectionTitle><RemoteNotice state={artistSublist[0]} empty="暂无收藏艺人" retry={artistSublist[1]}/>{artistSublist[0].status === "ready" && <div className="cover-grid">{artistSublist[0].data.artists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("artist", item.id)}><div className="cover-wrap"><Cover src={item.imageUrl || fallbackCover(String(item.id))} alt="" className="artist-cover"/></div><b>{item.name}</b><small>艺人</small></button>)}</div>}
+    <SectionTitle>收藏专辑</SectionTitle><RemoteNotice state={albumSublist[0]} empty="暂无收藏专辑" retry={albumSublist[1]}/>{albumSublist[0].status === "ready" && <div className="cover-grid">{albumSublist[0].data.albums.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("album", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/></div><b>{item.name}</b><small>专辑</small></button>)}</div>}
+    <SectionTitle>收藏 MV</SectionTitle><RemoteNotice state={mvSublist[0]} empty="暂无收藏 MV" retry={mvSublist[1]}/>{mvSublist[0].status === "ready" && <div className="cover-grid">{mvSublist[0].data.mvs.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("discover")}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/><span className="hover-play"><Play weight="fill"/></span></div><b>{item.name}</b><small>{item.artists.map((artist) => artist.name).join(" / ")}</small></button>)}</div>}
     <SectionTitle>关注</SectionTitle><RemoteNotice state={follows[0]} empty="暂无关注用户" retry={follows[1]}/>{follows[0].status === "ready" && <div className="user-strip">{follows[0].data.users.map((user) => <span key={user.userId}>{user.avatarUrl ? <Cover src={user.avatarUrl} alt="" className="avatar-image"/> : <User/>}<b>{user.nickname}</b></span>)}</div>}
     <SectionTitle>音乐云盘</SectionTitle><RemoteNotice state={cloud} empty="云盘暂无歌曲" retry={reloadCloud}/>{cloud.status === "ready" && <AppTrackTable tracks={cloud.data.songs.map((song) => adaptTrack(song.track))}/>} 
     <SectionTitle>我的听歌</SectionTitle><RemoteNotice state={account} retry={reloadAccount}/>{account.status === "ready" && <ListenSummary/>}
@@ -306,7 +335,12 @@ function DetailView({ type }: { type: "album" | "artist" | "playlist" }): React.
     const value = await bridge.neteasePlaylistDetail(detailId); return { title: value.playlist.name, subtitle: `${value.playlist.trackCount} 首 · ${value.playlist.ownerName || "网易云歌单"}`, description: value.playlist.description, cover: value.playlist.coverUrl, tracks: value.tracks.map(adaptTrack) };
   }
   const [detail, reload] = useRemote(load, [type, detailId], (value) => value.tracks.length === 0);
-  const { playTrack, enqueueTrack } = useAppStore();
+  const [related, reloadRelated] = useRemote(
+    () => type === "playlist" && typeof detailId === "number" ? bridge.neteaseRelatedPlaylists(detailId) : Promise.resolve({ playlists: [], nextCursor: null }),
+    [type, detailId],
+    () => false,
+  );
+  const { playTrack, enqueueTrack, navigate } = useAppStore();
   if (detail.status !== "ready") return <Page title={{ album: "专辑详情", artist: "艺术家详情", playlist: "歌单详情" }[type]} subtitle="读取网易云详情"><RemoteNotice state={detail} empty="详情中暂无曲目" retry={reload}/></Page>;
   const item = detail.data;
   const cover = item.cover || fallbackCover(String(detailId));
@@ -315,7 +349,7 @@ function DetailView({ type }: { type: "album" | "artist" | "playlist" }): React.
     : type === "playlist"
       ? { kind: "playlist", id: String(detailId) }
       : { kind: "manual", id: null };
-  return <div className="page detail-page"><section className="detail-hero"><Cover src={cover} alt={item.title} className={type === "artist" ? "artist-cover" : ""}/><div><span className="eyebrow">{type === "artist" ? "艺术家" : type === "playlist" ? "歌单" : "专辑"}</span><h1>{item.title}</h1><p>{item.subtitle}</p>{item.description && <p className="detail-copy">{item.description}</p>}<div className="detail-actions"><button className="button primary" disabled={!item.tracks.length} onClick={() => item.tracks[0] && void playTrack(item.tracks[0], playbackContext)}><Play weight="fill"/>播放</button><button className="button secondary" disabled={!item.tracks.length} onClick={() => item.tracks.forEach((track) => void enqueueTrack(track))}><Queue/>加入队列</button></div></div></section><SectionTitle>{type === "artist" ? "热门歌曲" : "曲目"}</SectionTitle><AppTrackTable tracks={item.tracks} playbackContext={playbackContext}/>{type !== "artist" && typeof detailId === "number" && <CommentSection resource={type} resourceId={detailId}/>}</div>;
+  return <div className="page detail-page"><section className="detail-hero"><Cover src={cover} alt={item.title} className={type === "artist" ? "artist-cover" : ""}/><div><span className="eyebrow">{type === "artist" ? "艺术家" : type === "playlist" ? "歌单" : "专辑"}</span><h1>{item.title}</h1><p>{item.subtitle}</p>{item.description && <p className="detail-copy">{item.description}</p>}<div className="detail-actions"><button className="button primary" disabled={!item.tracks.length} onClick={() => item.tracks[0] && void playTrack(item.tracks[0], playbackContext)}><Play weight="fill"/>播放</button><button className="button secondary" disabled={!item.tracks.length} onClick={() => item.tracks.forEach((track) => void enqueueTrack(track))}><Queue/>加入队列</button></div></div></section><SectionTitle>{type === "artist" ? "热门歌曲" : "曲目"}</SectionTitle><AppTrackTable tracks={item.tracks} playbackContext={playbackContext}/>{type === "playlist" && related.status === "ready" && related.data.playlists.length > 0 && <><SectionTitle>相关歌单</SectionTitle><div className="cover-grid">{related.data.playlists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("playlist", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/></div><b>{item.name}</b><small>{item.trackCount} 首</small></button>)}</div></>}{type !== "artist" && typeof detailId === "number" && <CommentSection resource={type} resourceId={detailId}/>}</div>;
 }
 
 function AccountView(): React.JSX.Element {
