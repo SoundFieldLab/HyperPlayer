@@ -8,6 +8,14 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use symphonia::core::codecs::audio::well_known::CODEC_ID_FLAC;
+use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::{MetadataOptions, RawValue};
+use symphonia::core::units::Timestamp;
 
 pub const PLAYABLE_LOCAL_EXTENSIONS: &[&str] = &["wav", "flac", "mp3"];
 
@@ -489,100 +497,373 @@ impl Decoder for WavDecoder {
     }
 }
 
-struct MemoryDecoder {
+/// 基于 symphonia 的**真增量** FLAC 解码器。
+///
+/// 与旧的 `MemoryDecoder` 一次性把整首 FLAC 解成 `Vec<f32>` 不同，本实现自持一个
+/// symphonia 解码头（`MediaSourceStream` + probe + `AudioDecoder`），`read_pcm` 只按需
+/// 逐 packet/block 增量拉取，永远不把整曲驻留内存。`seek` 通过 symphonia 的
+/// `FormatReader::seek` 重新定位到采样边界后继续增量拉取。
+///
+/// 语义约定（与 `runtime.rs` 现有 gapless 模型一致）：
+/// - `total_frames()` 返回**原始**可解码帧总数（含 encoder delay/padding）；
+///   `runtime.rs` 会以 `total_frames − delay − padding` 计算 playable 帧数。
+/// - `read_pcm` 返回**原始**交错 PCM；`runtime.rs` 根据 `CodecTrim` 在其 `seek(delay)`
+///   起点与 `playable_frames` 终点处裁剪 delay/padding。
+/// - `seek(frame)` 的 `frame` 是**原始**流帧序号（`runtime.rs` 传入 `delay + frame`）。
+///   trim 读数如实放进 `descriptor().trim`，由上层统一应用，避免在解码器内二次裁剪
+///   造成 playable 帧数与 seek 偏移双重扣除。
+struct FlacDecoder {
     descriptor: DecoderDescriptor,
-    samples: Vec<f32>,
-    position: usize,
+    format: Box<dyn FormatReader>,
+    decoder: Box<dyn AudioDecoder>,
+    track_id: u32,
+    channels: u16,
+    sample_rate: u32,
+    raw_total: u64,
+    raw_position: u64,
+    skip_frames: u64,
+    block: Vec<f32>,
+    block_offset: usize,
+    eof: bool,
 }
-
-impl Decoder for MemoryDecoder {
-    fn descriptor(&self) -> &DecoderDescriptor {
-        &self.descriptor
-    }
-
-    fn total_frames(&self) -> u64 {
-        self.samples.len() as u64 / u64::from(self.descriptor.format.channels)
-    }
-
-    fn read_pcm(&mut self, output: &mut [f32]) -> Result<usize> {
-        let count = output.len().min(self.samples.len() - self.position);
-        output[..count].copy_from_slice(&self.samples[self.position..self.position + count]);
-        self.position += count;
-        Ok(count)
-    }
-
-    fn seek(&mut self, frame: u64) -> Result<()> {
-        let position = frame
-            .checked_mul(u64::from(self.descriptor.format.channels))
-            .and_then(|sample| usize::try_from(sample).ok())
-            .ok_or_else(|| {
-                EngineError::InvalidInput("seek position overflows audio length".into())
-            })?;
-        if position > self.samples.len() {
-            return Err(EngineError::InvalidInput(
-                "seek frame is past the end of the audio file".into(),
-            ));
-        }
-        self.position = position;
-        Ok(())
-    }
-}
-
-struct FlacDecoder(MemoryDecoder);
 
 impl FlacDecoder {
     fn open(media: &TrustedResolvedMedia) -> Result<Self> {
+        // 与 MP3 一致：畸形输入在解开头不 panic，转为 Decode 错误。
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            FlacDecoder::open_inner(media)
+        }))
+        .map_err(|_| EngineError::Decode("FLAC decoder rejected malformed input".into()))?
+    }
+
+    fn open_inner(media: &TrustedResolvedMedia) -> Result<Self> {
         let mut file = media.handle.try_clone_file()?;
         file.seek(SeekFrom::Start(0))?;
-        let mut reader = claxon::FlacReader::new(file)
-            .map_err(|error| EngineError::Decode(format!("FLAC: {error}")))?;
-        let info = reader.streaminfo();
-        let channels = u16::try_from(info.channels)
-            .map_err(|_| EngineError::Unsupported("FLAC channel count exceeds u16".into()))?;
-        if channels == 0 || info.sample_rate == 0 || !(1..=32).contains(&info.bits_per_sample) {
-            return Err(EngineError::Decode("invalid FLAC stream info".into()));
-        }
-        let scale = 2_f32.powi(info.bits_per_sample as i32 - 1);
-        let samples = reader
-            .samples()
-            .map(|sample| {
-                sample
-                    .map(|value| value as f32 / scale)
-                    .map_err(|error| EngineError::Decode(format!("FLAC: {error}")))
+        let source = MediaSourceStream::new(Box::new(file), Default::default());
+        let mut hint = Hint::new();
+        hint.with_extension("flac");
+        let mut format = symphonia::default::get_probe()
+            .probe(
+                &hint,
+                source,
+                FormatOptions::default(),
+                MetadataOptions::default(),
+            )
+            .map_err(|error| EngineError::Decode(format!("FLAC probe: {error}")))?;
+        let track = format
+            .default_track(TrackType::Audio)
+            .and_then(|candidate| {
+                candidate
+                    .codec_params
+                    .as_ref()
+                    .and_then(|params| params.audio())
+                    .filter(|params| params.codec == CODEC_ID_FLAC)
+                    .map(|_| candidate)
             })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Self(MemoryDecoder {
+            .ok_or_else(|| EngineError::Decode("FLAC contains no audio track".into()))?;
+        let track_id = track.id;
+        let codec_params = track
+            .codec_params
+            .as_ref()
+            .and_then(|params| params.audio())
+            .cloned()
+            .ok_or_else(|| EngineError::Decode("FLAC codec parameters are missing".into()))?;
+        let sample_rate = codec_params
+            .sample_rate
+            .ok_or_else(|| EngineError::Decode("FLAC sample rate is unknown".into()))?;
+        let channels = u16::try_from(
+            codec_params
+                .channels
+                .as_ref()
+                .map(|channels| channels.count())
+                .ok_or_else(|| EngineError::Decode("FLAC channels are unknown".into()))?,
+        )
+        .map_err(|_| EngineError::Unsupported("FLAC channel count exceeds u16".into()))?;
+        if channels == 0 || sample_rate == 0 {
+            return Err(EngineError::Decode(
+                "FLAC stream info contains zero values".into(),
+            ));
+        }
+
+        // 读取 gapless trim。symphonia 0.6 的 FLAC 轨道头不携带 delay/padding（该字段仅
+        // 有 LAME gaugeless 的 MP3 会填充，FLAC 通常为 None），此时回退读取 Vorbis Comment
+        // 私有 tag `ENCODER_DELAY` / `ENCODER_PADDING`（若存在），否则保持默认 0。
+        let header_delay = track.delay.unwrap_or(0);
+        let header_padding = track.padding.unwrap_or(0);
+        let num_frames = track.num_frames;
+        let trim = FlacDecoder::read_flac_trim(format.as_mut(), header_delay, header_padding);
+
+        let mut decoder = symphonia::default::get_codecs()
+            .make_audio_decoder(&codec_params, &AudioDecoderOptions::default())
+            .map_err(|error| EngineError::Decode(format!("FLAC decoder: {error}")))?;
+
+        // 无声道/未知时长的文件：整流转一圈计数原始帧（不驻留内存），再回到起点，
+        // 使 `total_frames()` 仍能返回整曲可解码帧数（streaminfo 已知时跳过扫描）。
+        let raw_total = match num_frames {
+            Some(n) if n > 0 => n,
+            _ => {
+                let mut count = 0_u64;
+                loop {
+                    let packet = match format.next_packet() {
+                        Ok(Some(packet)) => packet,
+                        Ok(None) => break,
+                        Err(SymphoniaError::IoError(error))
+                            if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+                        {
+                            break;
+                        }
+                        Err(error) => {
+                            return Err(EngineError::Decode(format!("FLAC scan packet: {error}")))
+                        }
+                    };
+                    if packet.track_id != track_id {
+                        continue;
+                    }
+                    let decoded = decoder.decode(&packet).map_err(|error| {
+                        EngineError::Decode(format!("FLAC scan frame: {error}"))
+                    })?;
+                    count += decoded.frames() as u64;
+                }
+                decoder.reset();
+                format
+                    .seek(
+                        SeekMode::Accurate,
+                        SeekTo::Timestamp {
+                            ts: Timestamp::new(0),
+                            track_id,
+                        },
+                    )
+                    .map_err(|error| EngineError::Decode(format!("FLAC scan rewind: {error}")))?;
+                count
+            }
+        };
+
+        Ok(Self {
             descriptor: DecoderDescriptor {
                 track: media.track.clone(),
                 format: PcmFormat {
-                    sample_rate: info.sample_rate,
+                    sample_rate,
                     channels,
                     sample_format: crate::dsp::PcmSampleFormat::F32,
                 },
-                trim: CodecTrim::default(),
+                trim,
             },
-            samples,
-            position: 0,
-        }))
+            format,
+            decoder,
+            track_id,
+            channels,
+            sample_rate,
+            raw_total,
+            raw_position: 0,
+            skip_frames: 0,
+            block: Vec::new(),
+            block_offset: 0,
+            eof: false,
+        })
+    }
+
+    /// 从轨道头与 Vorbis Comment 私有 tag 读取 encoder delay/padding（读不到为 0）。
+    fn read_flac_trim(
+        format: &mut dyn FormatReader,
+        header_delay: u32,
+        header_padding: u32,
+    ) -> CodecTrim {
+        let mut delay = header_delay;
+        let mut padding = header_padding;
+        if delay == 0 || padding == 0 {
+            if let Some(revision) = format.metadata().current() {
+                for tag in &revision.media.tags {
+                    let key = tag.raw.key.to_ascii_lowercase();
+                    if delay == 0 && (key == "encoder_delay" || key == "encodedelay") {
+                        if let RawValue::String(value) = &tag.raw.value {
+                            delay = value.trim().parse().unwrap_or(0);
+                        }
+                    } else if padding == 0 && (key == "encoder_padding" || key == "encoderpadding")
+                    {
+                        if let RawValue::String(value) = &tag.raw.value {
+                            padding = value.trim().parse().unwrap_or(0);
+                        }
+                    }
+                }
+            }
+        }
+        CodecTrim {
+            delay_frames: delay,
+            padding_frames: padding,
+        }
+    }
+
+    /// 真实增量拉取：解出下一 packet/block 的样本到 `block`，返回是否有新样本。
+    fn pull(&mut self) -> Result<bool> {
+        loop {
+            let packet = match self.format.next_packet() {
+                Ok(Some(packet)) => packet,
+                Ok(None) => {
+                    self.eof = true;
+                    return Ok(false);
+                }
+                Err(SymphoniaError::IoError(error))
+                    if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    self.eof = true;
+                    return Ok(false);
+                }
+                Err(error) => return Err(EngineError::Decode(format!("FLAC packet: {error}"))),
+            };
+            if packet.track_id != self.track_id {
+                continue;
+            }
+            let decoded = self
+                .decoder
+                .decode(&packet)
+                .map_err(|error| EngineError::Decode(format!("FLAC frame: {error}")))?;
+            let spec = decoded.spec();
+            let current = (spec.rate(), spec.channels().count());
+            let expected = (self.sample_rate, usize::from(self.channels));
+            if current != expected {
+                return Err(EngineError::Unsupported(
+                    "FLAC streams that change sample rate or channels are unsupported".into(),
+                ));
+            }
+            let frames = decoded.frames();
+            if frames == 0 {
+                continue;
+            }
+            let channels = usize::from(self.channels);
+            // seek 后丢弃定位 packet 前导的 `skip_frames` 帧，达到采样级精确。
+            let skip_u64 = self.skip_frames.min(frames as u64);
+            let skip = skip_u64 as usize;
+            self.skip_frames -= skip_u64;
+            if skip >= frames {
+                continue;
+            }
+            // `copy_to_slice_interleaved` 会整块写入（不可写子块），故复制整包后仅偏移游标，
+            // 前导 `skip` 帧由 `block_offset` 跳过，尾随帧仍按原始语义交由 `read_pcm` 全量交付。
+            let all_samples = decoded.samples_interleaved();
+            if self.block.len() < all_samples {
+                self.block.resize(all_samples, 0.0);
+            } else {
+                self.block.truncate(all_samples);
+            }
+            decoded.copy_to_slice_interleaved::<f32, _>(&mut self.block[..all_samples]);
+            self.block_offset = skip * channels;
+            return Ok(true);
+        }
+    }
+
+    /// 增量 seek：重新定位解码器，使下一次 `read_pcm` 从 `frame`（原始流帧号）开始。
+    fn seek_inner(&mut self, frame: u64) -> Result<()> {
+        let frame = frame.min(self.raw_total);
+        if frame == self.raw_total {
+            // seek 到流末（runtime 在 padding=0 时会到达此处）：直接短路进入 eof 态，
+            // 避免 demuxer 对「恰好等于流末的 ts」报 OutOfRange。
+            self.decoder.reset();
+            self.raw_position = self.raw_total;
+            self.skip_frames = 0;
+            self.block.clear();
+            self.block_offset = 0;
+            self.eof = true;
+            return Ok(());
+        }
+        self.decoder.reset();
+        let seeked = self
+            .format
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Timestamp {
+                    ts: Timestamp::new(frame.min(u64::from(u32::MAX)) as i64),
+                    track_id: self.track_id,
+                },
+            )
+            .map_err(|error| EngineError::Decode(format!("FLAC seek: {error}")))?;
+        let actual = u64::try_from(seeked.actual_ts.get()).unwrap_or(0);
+        self.raw_position = frame;
+        self.skip_frames = frame.saturating_sub(actual);
+        self.block.clear();
+        self.block_offset = 0;
+        self.eof = false;
+        Ok(())
     }
 }
 
 impl Decoder for FlacDecoder {
     fn descriptor(&self) -> &DecoderDescriptor {
-        self.0.descriptor()
+        &self.descriptor
     }
+
     fn total_frames(&self) -> u64 {
-        self.0.total_frames()
+        self.raw_total
     }
+
     fn read_pcm(&mut self, output: &mut [f32]) -> Result<usize> {
-        self.0.read_pcm(output)
+        let channels = usize::from(self.channels);
+        // 只交付完整帧（runtime.rs 拒绝不完整的 PCM 帧）。
+        let max_samples = output.len() - output.len() % channels;
+        if max_samples == 0 {
+            return Ok(0);
+        }
+        let mut written = 0;
+        while written < max_samples {
+            if self.block_offset >= self.block.len() {
+                if self.eof {
+                    break;
+                }
+                if !self.pull()? {
+                    self.eof = true;
+                    break;
+                }
+            }
+            let available = &self.block[self.block_offset..];
+            let count = available.len().min(max_samples - written);
+            output[written..written + count].copy_from_slice(&available[..count]);
+            written += count;
+            self.block_offset += count;
+            self.raw_position += (count / channels) as u64;
+        }
+        Ok(written)
     }
+
     fn seek(&mut self, frame: u64) -> Result<()> {
-        self.0.seek(frame)
+        self.seek_inner(frame)
     }
 }
 
-struct Mp3Decoder(MemoryDecoder);
+/// 真增量 MP3 解码器（raw 时间轴契约）。
+///
+/// 与旧实现（`open` 时把整首 MP3 一次解成 `Vec<f32>` 常驻内存）不同，本解码器在 `open`
+/// 只做 probe、构建解码器、解析头部元数据（Xing/Info/LAME 的 encoder delay / padding 与
+/// 帧数），然后**立即返回**，不解音频主体。`read_pcm` 按需逐 packet 增量拉取，仅把当前
+/// 帧暂存到内部一帧缓冲；`seek` 经 demuxer 精确定位到包含目标帧的参考帧（demuxer 自带
+/// bit reservoir 预热回退），帧内偏差由解码侧逐采样 skip 补齐；`total_frames` 返回整曲
+/// raw 帧数。全程不整包常驻内存。
+///
+/// 语义约定（与 FLAC / WAV 及 `runtime.rs` 的统一 gapless 模型一致，均为 raw 时间轴）：
+/// - `total_frames()` 返回**原始**可解码帧总数（含 encoder delay/padding）；
+///   `runtime.rs` 以 `total − delay − padding` 计算 playable 帧数。
+/// - `read_pcm` 返回**原始**交错 PCM（首部 delay 段与尾部 padding 段原样交付，由
+///   `runtime.rs` 统一裁剪）；`seek(frame)` 的 `frame` 是**原始**流帧号。
+/// - Xing/Info/LAME 头解析出的 `enc_delay` / `enc_padding`（单位为每声道一个 sample）
+///   只如实上报到 `descriptor().trim`。为避免双重裁剪，解码器以 `gapless(false)` 打开，
+///   关闭 symphonia 的包级 trim（其默认开启）。
+/// - demuxer 时间轴从 `-delay` 开始（raw 帧 0 对应 ts = `-delay`），故 `seek(raw)` 映射为
+///   `ts = raw − delay`；MP3 seek 只能落到参考帧边界（`actual_ts ≤ required_ts`），帧内
+///   偏差由 `skip_frames` 在解码块内逐采样补齐。
+struct Mp3Decoder {
+    descriptor: DecoderDescriptor,
+    format: Box<dyn symphonia::core::formats::FormatReader>,
+    decoder: Box<dyn symphonia::core::codecs::audio::AudioDecoder>,
+    track_id: u32,
+    /// encoder delay（samples）：raw 帧号与 demuxer ts 的偏移（ts = raw − delay）。
+    delay_frames: u32,
+    /// raw 总帧数（含 delay/padding；`total − delay − padding` 才是可播放帧数）。
+    raw_total: u64,
+    /// seek 落点在帧内时的前导跳过帧数（采样级精确定位）。
+    skip_frames: u64,
+    frame_buf: Vec<f32>,
+    frame_samples: usize,
+    frame_pos: usize,
+    eof: bool,
+}
 
 impl Mp3Decoder {
     fn open(media: &TrustedResolvedMedia) -> Result<Self> {
@@ -591,14 +872,24 @@ impl Mp3Decoder {
     }
 }
 
+/// 从 symphonia format reader 拉取下一个音频包；把流尾的 `UnexpectedEof` 归一化为 `Ok(None)`。
+fn next_mp3_packet(
+    format: &mut Box<dyn symphonia::core::formats::FormatReader>,
+) -> Result<Option<symphonia::core::packet::Packet>> {
+    match format.next_packet() {
+        Ok(packet) => Ok(packet),
+        Err(SymphoniaError::IoError(error))
+            if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+        {
+            // MPEG 流没有确定的结尾，读到流尾视为正常结束。
+            Ok(None)
+        }
+        Err(error) => Err(EngineError::Decode(format!("MP3 packet: {error}"))),
+    }
+}
+
 fn decode_mp3(media: &TrustedResolvedMedia) -> Result<Mp3Decoder> {
-    use symphonia::core::audio::sample::Sample;
-    use symphonia::core::codecs::audio::{well_known::CODEC_ID_MP3, AudioDecoderOptions};
-    use symphonia::core::errors::Error as SymphoniaError;
-    use symphonia::core::formats::probe::Hint;
-    use symphonia::core::formats::{FormatOptions, TrackType};
-    use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::codecs::audio::well_known::CODEC_ID_MP3;
 
     let mut file = media.handle.try_clone_file()?;
     file.seek(SeekFrom::Start(0))?;
@@ -625,21 +916,45 @@ fn decode_mp3(media: &TrustedResolvedMedia) -> Result<Mp3Decoder> {
         })
         .ok_or_else(|| EngineError::Decode("MP3 contains no Layer III audio track".into()))?;
     let (track_id, codec_params) = track_info;
-    let mut decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(&codec_params, &AudioDecoderOptions::default())
-        .map_err(|error| EngineError::Decode(format!("MP3 decoder: {error}")))?;
-    let mut samples = Vec::new();
-    let mut stream_format = None;
 
-    while let Some(packet) = match format.next_packet() {
-        Ok(packet) => packet,
-        Err(SymphoniaError::IoError(error))
-            if error.kind() == std::io::ErrorKind::UnexpectedEof =>
-        {
-            None
-        }
-        Err(error) => return Err(EngineError::Decode(format!("MP3 packet: {error}"))),
-    } {
+    // 以 gapless(false) 打开：关闭 symphonia 的包级 trim（默认开启会逐样本裁掉首帧 delay
+    // 与尾帧 padding），使本解码器交付 raw PCM，delay/padding 只上报到 descriptor().trim，
+    // 由 runtime.rs 统一裁剪，避免双重扣除。
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(
+            &codec_params,
+            &AudioDecoderOptions::default().gapless(false),
+        )
+        .map_err(|error| EngineError::Decode(format!("MP3 decoder: {error}")))?;
+
+    // 读取 Xing/Info/LAME 头解析出的 delay / padding（samples）。注意 demuxer 对 Xing 文件
+    // 已把 `num_frames` 归一化为「已减 delay + padding」的可播放帧数（无 LAME 时 delay/padding
+    // 为 0，num_frames 即 raw），故 raw 总帧数 = num_frames + delay + padding。此处仅拷出标量，
+    // 避免 `track` 持有对 `format` 的借用而阻塞后续逐包扫描。
+    let (delay_frames, padding_frames, known_frames) = format
+        .tracks()
+        .iter()
+        .find(|track| track.id == track_id)
+        .map(|track| {
+            (
+                track.delay.unwrap_or(0),
+                track.padding.unwrap_or(0),
+                track.num_frames,
+            )
+        })
+        .ok_or_else(|| EngineError::Decode("MP3 audio track disappeared".into()))?;
+
+    // 增量解码第一个非空音频包以确定采样率 / 声道数，同时验证流确实可解码（拒绝完全无法解码
+    // 的畸形流，保持既有 malformed 测试语义）。该包样本暂存，供 `read_pcm` 从 raw 帧 0 继续
+    // 输出。注意：demuxer 已把 Xing/Info 头帧剔除，`next_packet` 返回的首帧就是第一个音频帧。
+    let mut stream_format = None;
+    let mut first_samples = 0;
+    let mut first_buf = Vec::new();
+    while stream_format.is_none() {
+        let packet = match next_mp3_packet(&mut format)? {
+            Some(packet) => packet,
+            None => break,
+        };
         if packet.track_id != track_id {
             continue;
         }
@@ -654,24 +969,59 @@ fn decode_mp3(media: &TrustedResolvedMedia) -> Result<Mp3Decoder> {
                 "MP3 stream format contains zero values".into(),
             ));
         }
-        let current_format = (spec.rate(), channels);
-        if let Some(expected) = stream_format {
-            if expected != current_format {
-                return Err(EngineError::Unsupported(
-                    "MP3 streams that change sample rate or channels are unsupported".into(),
-                ));
-            }
-        } else {
-            stream_format = Some(current_format);
+        if decoded.samples_interleaved() == 0 {
+            // 防御：完全空的首帧（gapless=false 下不应出现）——继续找下一个非空帧确定格式。
+            continue;
         }
-        let start = samples.len();
-        samples.resize(start + decoded.samples_interleaved(), f32::MID);
-        decoded.copy_to_slice_interleaved(&mut samples[start..]);
+        stream_format = Some((channels, spec.rate()));
+        first_samples = decoded.samples_interleaved();
+        first_buf.resize(first_samples, 0.0);
+        decoded.copy_to_slice_interleaved(&mut first_buf);
     }
-
-    let (sample_rate, channels) = stream_format
+    let (channels, sample_rate) = stream_format
         .ok_or_else(|| EngineError::Decode("MP3 contains no decodable audio frames".into()))?;
-    Ok(Mp3Decoder(MemoryDecoder {
+
+    // raw 总帧数：有 Xing/Info/VBRI/CBR 估计时由 num_frames + delay + padding 反推；完全拿不到
+    // （不可 seek 或无头）时做一轮「解码即弃」扫描统计 raw 帧（样本不驻留内存），再回退到
+    // 曲首（ts = -delay），使 `total_frames()` 对无头文件也有意义。
+    let raw_total = match known_frames {
+        Some(known) => {
+            // num_frames 是已减 delay+padding 的可播放帧数；饱和加回得到 raw 近似。
+            known
+                .saturating_add(u64::from(delay_frames))
+                .saturating_add(u64::from(padding_frames))
+        }
+        None => {
+            let mut total_samples = first_samples as u64;
+            while let Some(packet) = next_mp3_packet(&mut format)? {
+                if packet.track_id != track_id {
+                    continue;
+                }
+                let decoded = decoder
+                    .decode(&packet)
+                    .map_err(|error| EngineError::Decode(format!("MP3 frame: {error}")))?;
+                total_samples += u64::try_from(decoded.samples_interleaved())
+                    .map_err(|_| EngineError::Decode("MP3 sample count overflow".into()))?;
+            }
+            let count = total_samples / u64::from(channels);
+            // 扫描已把解码头推到流尾：重置解码器并回退到曲首（raw 帧 0 ↔ ts = -delay）。
+            decoder.reset();
+            format
+                .seek(
+                    SeekMode::Accurate,
+                    SeekTo::Timestamp {
+                        ts: Timestamp::from(-i64::from(delay_frames)),
+                        track_id,
+                    },
+                )
+                .map_err(|error| EngineError::Decode(format!("MP3 scan rewind: {error}")))?;
+            first_samples = 0;
+            first_buf.clear();
+            count
+        }
+    };
+
+    Ok(Mp3Decoder {
         descriptor: DecoderDescriptor {
             track: media.track.clone(),
             format: PcmFormat {
@@ -679,25 +1029,144 @@ fn decode_mp3(media: &TrustedResolvedMedia) -> Result<Mp3Decoder> {
                 channels,
                 sample_format: crate::dsp::PcmSampleFormat::F32,
             },
-            trim: CodecTrim::default(),
+            trim: CodecTrim {
+                delay_frames,
+                padding_frames,
+            },
         },
-        samples,
-        position: 0,
-    }))
+        format,
+        decoder,
+        track_id,
+        delay_frames,
+        raw_total,
+        skip_frames: 0,
+        frame_buf: first_buf,
+        frame_samples: first_samples,
+        frame_pos: 0,
+        eof: false,
+    })
 }
 
 impl Decoder for Mp3Decoder {
     fn descriptor(&self) -> &DecoderDescriptor {
-        self.0.descriptor()
+        &self.descriptor
     }
+
     fn total_frames(&self) -> u64 {
-        self.0.total_frames()
+        // raw 总帧数（含 encoder delay/padding）；runtime.rs 以 total − delay − padding
+        // 计算 playable。
+        self.raw_total
     }
+
     fn read_pcm(&mut self, output: &mut [f32]) -> Result<usize> {
-        self.0.read_pcm(output)
+        let channels = usize::from(self.descriptor.format.channels);
+        if output.is_empty() {
+            return Ok(0);
+        }
+        let mut written = 0;
+        while written < output.len() {
+            // 先排空上一次已解码到暂存的一帧。
+            if self.frame_pos < self.frame_samples {
+                let take = (self.frame_samples - self.frame_pos).min(output.len() - written);
+                output[written..written + take]
+                    .copy_from_slice(&self.frame_buf[self.frame_pos..self.frame_pos + take]);
+                self.frame_pos += take;
+                written += take;
+                continue;
+            }
+            if self.eof {
+                break;
+            }
+            // 增量拉取下一个 packet，只解码一帧到内部暂存，不整包常驻内存。
+            let packet = match next_mp3_packet(&mut self.format)? {
+                Some(packet) => packet,
+                None => {
+                    self.eof = true;
+                    break;
+                }
+            };
+            if packet.track_id != self.track_id {
+                continue;
+            }
+            let decoded = self
+                .decoder
+                .decode(&packet)
+                .map_err(|error| EngineError::Decode(format!("MP3 frame: {error}")))?;
+            let spec = decoded.spec();
+            let current_channels = spec.channels().count();
+            if current_channels != channels || spec.rate() != self.descriptor.format.sample_rate {
+                // MP3 中途改变采样率 / 声道数：与既有语义一致地明确拒绝。
+                return Err(EngineError::Unsupported(
+                    "MP3 streams that change sample rate or channels are unsupported".into(),
+                ));
+            }
+            let samples = decoded.samples_interleaved();
+            if samples == 0 {
+                continue;
+            }
+            if samples > self.frame_buf.len() {
+                self.frame_buf.resize(samples, 0.0);
+            }
+            decoded.copy_to_slice_interleaved(&mut self.frame_buf[..samples]);
+            self.frame_samples = samples;
+            self.frame_pos = 0;
+            // seek 落点在帧内时：跳过目标帧之前的整段前导采样（采样级精确定位）。
+            // demuxer 只能落到参考帧边界（actual_ts ≤ required_ts，含 bit reservoir 预热
+            // 回退），帧内偏差在此逐样本补齐。
+            if self.skip_frames > 0 {
+                let block_frames = (samples / channels) as u64;
+                let skip = self.skip_frames.min(block_frames);
+                self.skip_frames -= skip;
+                self.frame_pos = skip as usize * channels;
+                if self.frame_pos >= self.frame_samples {
+                    // 整块都被跳过：继续拉下一个 packet。
+                    continue;
+                }
+            }
+        }
+        Ok(written)
     }
+
     fn seek(&mut self, frame: u64) -> Result<()> {
-        self.0.seek(frame)
+        // raw 帧号映射回 demuxer 时间轴：ts = raw − delay（raw 帧 0 ↔ ts = -delay，即可
+        // 播放时间轴的 0 点）。runtime.rs 按 raw 契约传入 `delay + frame`，映射后恰好落在
+        // 裁剪后时间轴的 frame 处。
+        let frame = frame.min(self.raw_total);
+        if frame == self.raw_total {
+            // seek 到流末（runtime 在 padding=0 时 `seek(delay + playable)` 会到达此处）：
+            // demuxer 无法 seek 到恰好等于流末的 ts（其循环会越过最后一帧撞 EOF 报
+            // OutOfRange），故直接短路进入 eof 态，read_pcm 返回 0。
+            self.decoder.reset();
+            self.frame_pos = self.frame_samples;
+            self.frame_samples = 0;
+            self.skip_frames = 0;
+            self.eof = true;
+            return Ok(());
+        }
+        let ts = i64::try_from(frame)
+            .ok()
+            .and_then(|raw| raw.checked_sub(i64::from(self.delay_frames)))
+            .ok_or_else(|| EngineError::InvalidInput("seek frame overflows MP3 timeline".into()))?;
+        self.decoder.reset();
+        let seeked = self
+            .format
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Timestamp {
+                    ts: Timestamp::from(ts),
+                    track_id: self.track_id,
+                },
+            )
+            .map_err(|error| EngineError::Decode(format!("MP3 seek: {error}")))?;
+        // 实际落点是参考帧边界（含 reservoir 预热），与目标的帧内差记为 skip，由 read_pcm
+        // 在解码块内逐采样补齐。
+        let delta = ts.saturating_sub(seeked.actual_ts.get());
+        self.skip_frames = u64::try_from(delta).unwrap_or(0);
+        // 丢弃暂存帧并复位 eof：下一次 read_pcm 从新位置重新增量拉取。
+        self.frame_pos = self.frame_samples;
+        self.frame_samples = 0;
+        self.eof = false;
+        Ok(())
     }
 }
 
@@ -963,6 +1432,195 @@ mod tests {
             .all(|sample| sample.is_finite()));
     }
 
+    /// 构造一个带 Xing + LAME 头的真实小 MP3：第一个 72B 帧是 Xing/Info + LAME 扩展，
+    /// 后跟 `n_audio` 个 72B 全零音频帧（MPEG-2.5 Layer III / 8 kHz / mono / 576 采样/帧）。
+    /// 与 `mp3_fixture` 一致，Xing 帧本身不计入 `num_frames`。
+    fn mp3_xing_fixture(n_audio: usize, enc_delay: u32, enc_padding: u32) -> Vec<u8> {
+        const FRAME_SIZE: usize = 72;
+        const HEADER: [u8; 4] = [0xff, 0xe3, 0x18, 0xc0];
+        let mut encoded = Vec::with_capacity(FRAME_SIZE * (1 + n_audio));
+
+        // ---- Xing + LAME 帧 ----
+        let mut xing = [0_u8; FRAME_SIZE];
+        xing[..4].copy_from_slice(&HEADER);
+        // MPEG-2.5 mono 的 side info 为 9B，必须全零，Xing 头紧随其后（offset = 4 + 9 = 13）。
+        xing[13..17].copy_from_slice(b"Xing");
+        // flags：只声明存在 num_frames。
+        xing[17..21].copy_from_slice(&[0, 0, 0, 1]);
+        // num_frames（大端）：音频（非 Xing）帧数。
+        xing[21..25].copy_from_slice(&(n_audio as u32).to_be_bytes());
+        // ---- LAME 扩展（从偏移 25 起，至少 24B 核心）----
+        xing[25..34].copy_from_slice(b"LAME3.99r");
+        // revision / lowpass 全 0；replaygain_peak / radio / audiophile / encoding_flags / abr 全 0。
+        // trim（24-bit u24）：symphonia 按 delay = 529 + (trim >> 12)、
+        // padding = (trim & 0xFFF).saturating_sub(529) 反推 enc_delay / enc_padding。
+        let delay_msb: u32 = enc_delay.saturating_sub(529);
+        let pad_low: u32 = enc_padding.saturating_add(529);
+        let trim24 = (delay_msb << 12) | pad_low;
+        xing[46..49].copy_from_slice(&[(trim24 >> 16) as u8, (trim24 >> 8) as u8, trim24 as u8]);
+        // 其余扩展字段（misc / gain / surround / music_len / music_crc / tag_crc）保持 0：
+        // tag_crc=0 即忽略 CRC。剩余补零填满 72B。
+        encoded.extend_from_slice(&xing);
+
+        // ---- 后跟 n_audio 个音频帧 ----
+        for _ in 0..n_audio {
+            let mut frame = [0_u8; FRAME_SIZE];
+            frame[..4].copy_from_slice(&HEADER);
+            encoded.extend_from_slice(&frame);
+        }
+        encoded
+    }
+
+    #[test]
+    fn incremental_pull_matches_oneshot_and_seek_is_continuous() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("incr.mp3");
+        fs::write(&path, mp3_fixture()).unwrap();
+        let channels = usize::from(
+            LocalDecoderFactory
+                .open(&trusted_local(&path))
+                .unwrap()
+                .descriptor()
+                .format
+                .channels,
+        );
+        // 一次性读完整曲。
+        let mut decoder = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        let total = decoder.total_frames();
+        assert!(total >= 2_304);
+        let mut whole = vec![0.0; total as usize * channels];
+        let read = decoder.read_pcm(&mut whole).unwrap();
+        whole.truncate(read);
+
+        // 小段增量拉取：序列应与一次性读一致，结尾返回 0。
+        let mut decoder2 = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        let mut incremental = Vec::new();
+        let mut chunk = [0.0; 100];
+        loop {
+            let n = decoder2.read_pcm(&mut chunk).unwrap();
+            incremental.extend_from_slice(&chunk[..n]);
+            if n == 0 {
+                break;
+            }
+        }
+        assert_eq!(incremental, whole);
+
+        // seek 后连续：seek(1152) 后读出的样本应等于从头逢 1152 处的区段。
+        let mut decoder3 = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        let skip = 1_152;
+        decoder3.seek(skip).unwrap();
+        let mut after = [0.0; 64];
+        let n = decoder3.read_pcm(&mut after).unwrap();
+        let expected_start = (skip as usize) * channels;
+        let expected = &whole[expected_start..expected_start + n];
+        assert_eq!(&after[..n], expected);
+        assert!(after[..n].iter().all(|sample| sample.is_finite()));
+    }
+
+    #[test]
+    fn mp3_seek_to_non_frame_aligned_position_keeps_exact_sample_accounting() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("misaligned.mp3");
+        // delay=676（= 576 + 100，非 576 的整数倍）使 runtime 的 seek(delay) 落在帧内，
+        // 必须依赖 demuxer actual_ts 差值 + 解码块内逐样本 skip 精确定位。
+        const AUDIO_FRAMES: usize = 8;
+        const DELAY: u32 = 676;
+        fs::write(&path, mp3_xing_fixture(AUDIO_FRAMES, DELAY, 47)).unwrap();
+
+        let raw_total = AUDIO_FRAMES as u64 * 576;
+        for position in [0_u64, 100, 576, 676, 1_500, raw_total] {
+            let mut decoder = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+            decoder.seek(position).unwrap();
+            // 位置记账：从 position 读到流尾，总样本数必须恰好等于 raw_total − position。
+            // skip 多跳或少跳一个采样都会使剩余计数偏离。
+            let mut remaining = Vec::new();
+            let mut chunk = [0.0; 333];
+            loop {
+                let n = decoder.read_pcm(&mut chunk).unwrap();
+                if n == 0 {
+                    break;
+                }
+                remaining.extend_from_slice(&chunk[..n]);
+            }
+            assert_eq!(
+                remaining.len() as u64,
+                raw_total - position,
+                "seek({position}) 后剩余样本数必须精确等于 raw_total − position"
+            );
+        }
+
+        // 流末 seek 后再 seek 回中部仍可继续增量读出（eof 可复位、skip 重新计算）。
+        let mut decoder = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        decoder.seek(raw_total).unwrap();
+        decoder.seek(1_000).unwrap();
+        let mut resumed = Vec::new();
+        let mut chunk = [0.0; 333];
+        loop {
+            let n = decoder.read_pcm(&mut chunk).unwrap();
+            if n == 0 {
+                break;
+            }
+            resumed.extend_from_slice(&chunk[..n]);
+        }
+        assert_eq!(resumed.len() as u64, raw_total - 1_000);
+    }
+
+    #[test]
+    fn applies_xing_lame_gapless_trim_at_sample_boundary() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("xing.mp3");
+        const AUDIO_FRAMES: usize = 8;
+        const DELAY: u32 = 576;
+        const PADDING: u32 = 47;
+        fs::write(&path, mp3_xing_fixture(AUDIO_FRAMES, DELAY, PADDING)).unwrap();
+
+        let decoder = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        // 读到 Xing/LAME 的 enc_delay / enc_padding。
+        assert_eq!(decoder.descriptor().trim.delay_frames, DELAY);
+        assert_eq!(decoder.descriptor().trim.padding_frames, PADDING);
+        // raw 总帧数含 delay/padding（runtime 以 total − delay − padding 计算 playable）。
+        let raw_total = AUDIO_FRAMES as u64 * 576;
+        assert_eq!(decoder.total_frames(), raw_total);
+
+        // raw 全量解码返回全部样本（trim 未在解码层应用，由 runtime 统一裁剪）。
+        let raw = decode_all(LocalDecoderFactory.open(&trusted_local(&path)).unwrap());
+        assert_eq!(raw.len(), raw_total as usize);
+
+        // 按 runtime.rs 的 gapless 模型应用 trim：playable = total − delay − padding；
+        // seek(delay) 后读到 playable 个样本，逐采样等于 raw 去掉首 delay 段与尾 padding 段。
+        let playable = raw_total - u64::from(DELAY) - u64::from(PADDING);
+        let mut decoder2 = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        decoder2.seek(u64::from(DELAY)).unwrap();
+        let mut trimmed = vec![0.0; playable as usize];
+        assert_eq!(decoder2.read_pcm(&mut trimmed).unwrap(), playable as usize);
+        assert_eq!(
+            trimmed,
+            raw[DELAY as usize..(DELAY as usize + playable as usize)]
+        );
+        // raw 契约：padding 段仍可继续读出（裁剪是 runtime 的职责，不是解码器的），
+        // 恰好读完 padding 个样本后流才真正结束。
+        let mut padding_tail = vec![0.0; PADDING as usize];
+        assert_eq!(
+            decoder2.read_pcm(&mut padding_tail).unwrap(),
+            PADDING as usize
+        );
+        assert_eq!(padding_tail, raw[(DELAY as usize + playable as usize)..]);
+        let mut extra = [0.0; 8];
+        assert_eq!(decoder2.read_pcm(&mut extra).unwrap(), 0);
+    }
+
+    #[test]
+    fn mp3_without_gapless_metadata_defaults_to_no_trim() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("no-trim.mp3");
+        fs::write(&path, mp3_fixture()).unwrap();
+        let mut decoder = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        assert_eq!(decoder.descriptor().trim.delay_frames, 0);
+        assert_eq!(decoder.descriptor().trim.padding_frames, 0);
+        let mut buffer = [0.0; 16];
+        assert_eq!(decoder.read_pcm(&mut buffer).unwrap(), 16);
+    }
+
     #[test]
     fn malformed_mp3_inputs_return_errors_without_panicking() {
         let directory = tempdir().unwrap();
@@ -1006,6 +1664,139 @@ mod tests {
         decoder.seek(2).unwrap();
         let mut tail = [0.0; 2];
         assert_eq!(decoder.read_pcm(&mut tail).unwrap(), 2);
+    }
+
+    /// 在 `FLAC_FIXTURE` 的 STREAMINFO 之后插入一个带 `ENCODER_DELAY` / `ENCODER_PADDING`
+    /// Vorbis Comment 元数据块，构造带 gapless 元数据的小 FLAC fixture。
+    fn flac_fixture_with_delay_padding(delay: u32, padding: u32) -> Vec<u8> {
+        // 仅复用 fixture 的开头：`fLaC` 标记 + STREAMINFO 块（其 is_last=false）。
+        // 不整体复用 `FLAC_FIXTURE[..frame]`，否则会把 fixture 自带的 is_last=true 元数据块
+        // 一并带上，导致其后插入的 Vorbis Comment 块不会被 symphonia 解析。
+        let streaminfo_end = 4 + 4 + 34;
+        let frame_start = FLAC_FIXTURE
+            .windows(2)
+            .position(|w| w[0] == 0xff && w[1] == 0xf8)
+            .expect("FLAC fixture contains an audio frame");
+        let mut out = FLAC_FIXTURE[..streaminfo_end].to_vec();
+
+        // Vorbis Comment 块体：vendor 串 + comments 计数 + “KEY=VALUE” 注释。
+        let vendor = b"hyperplayer-test";
+        let comment1 = format!("ENCODER_DELAY={delay}");
+        let comment2 = format!("ENCODER_PADDING={padding}");
+        let mut body = Vec::new();
+        body.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
+        body.extend_from_slice(vendor);
+        body.extend_from_slice(&2_u32.to_le_bytes());
+        for comment in [&comment1, &comment2] {
+            body.extend_from_slice(&(comment.len() as u32).to_le_bytes());
+            body.extend_from_slice(comment.as_bytes());
+        }
+
+        // 元数据块头：type=4（VORBIS_COMMENT），is_last=1；其后为 3 字节大端长度。
+        out.push(0x80 | 4);
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&FLAC_FIXTURE[frame_start..]);
+        out
+    }
+
+    #[test]
+    fn flac_incremental_pull_matches_oneshot_and_seek_is_continuous() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("incr.data");
+        fs::write(&path, FLAC_FIXTURE).unwrap();
+
+        // 一次性读完整曲作为基准（mono，原始 4 帧）。
+        let mut decoder = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        let mut whole = vec![0.0; decoder.total_frames() as usize];
+        let read = decoder.read_pcm(&mut whole).unwrap();
+        whole.truncate(read);
+        assert_eq!(whole.len(), 4);
+
+        // 逐采样增量拉取：序列应与一次性读一致，且读到真正的末尾返回 0。
+        let mut decoder2 = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        let mut incremental = Vec::new();
+        let mut chunk = [0.0; 1];
+        loop {
+            let n = decoder2.read_pcm(&mut chunk).unwrap();
+            incremental.extend_from_slice(&chunk[..n]);
+            if n == 0 {
+                break;
+            }
+        }
+        assert_eq!(incremental, whole);
+
+        // seek 到中部（原始帧 2）后读出的样本应与整曲对应位置连续。
+        let mut decoder3 = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        decoder3.seek(2).unwrap();
+        let mut after = [0.0; 3];
+        let n = decoder3.read_pcm(&mut after).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(&after[..n], &whole[2..4]);
+        // 已到流尾：继续读返回 0。
+        assert_eq!(decoder3.read_pcm(&mut after).unwrap(), 0);
+
+        // 流末 / 越界 seek 的位置记账：seek(raw_total) 与 seek(超出) 后剩余样本数为 0
+        // 且不报错（runtime 在 padding=0 时 seek(delay + playable) 会到达流末）。
+        let mut decoder4 = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        decoder4.seek(4).unwrap();
+        assert_eq!(decoder4.read_pcm(&mut after).unwrap(), 0);
+        let mut decoder5 = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        decoder5.seek(999).unwrap();
+        assert_eq!(decoder5.read_pcm(&mut after).unwrap(), 0);
+        // 流末 seek 后再 seek 回中部仍可继续增量读出（eof 可复位）。
+        let mut decoder6 = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        decoder6.seek(4).unwrap();
+        decoder6.seek(1).unwrap();
+        let mut resumed = [0.0; 3];
+        let n = decoder6.read_pcm(&mut resumed).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(&resumed[..n], &whole[1..4]);
+    }
+
+    #[test]
+    fn flac_applies_vorbis_comment_delay_and_padding_trim() {
+        let directory = tempdir().unwrap();
+        let trimmed_path = directory.path().join("trim.data");
+        fs::write(&trimmed_path, flac_fixture_with_delay_padding(1, 1)).unwrap();
+
+        // 先从无 gapless 元数据的同一 fixture 全量读出原始帧序列作为逐采样基准。
+        let plain_path = directory.path().join("plain.data");
+        fs::write(&plain_path, FLAC_FIXTURE).unwrap();
+        let raw = decode_all(
+            LocalDecoderFactory
+                .open(&trusted_local(&plain_path))
+                .unwrap(),
+        );
+        assert_eq!(raw.len(), 4);
+
+        // 读到 Vorbis Comment 的 ENCODER_DELAY / ENCODER_PADDING。
+        let decoder = LocalDecoderFactory
+            .open(&trusted_local(&trimmed_path))
+            .unwrap();
+        assert_eq!(decoder.descriptor().trim.delay_frames, 1);
+        assert_eq!(decoder.descriptor().trim.padding_frames, 1);
+        // 原始总计仍为 4（trim 交上层 runtime 应用）。
+        assert_eq!(decoder.total_frames(), 4);
+
+        // 按 runtime.rs 的 gapless 模型应用 trim：可播放 = total − delay − padding；
+        // seek(delay) 后读到 playable 个样本，逐采样等于原始帧去掉首尾 delay/padding。
+        let mut decoder = decoder;
+        decoder.seek(1).unwrap();
+        let playable = 2;
+        let mut trimmed = vec![0.0; playable];
+        assert_eq!(decoder.read_pcm(&mut trimmed).unwrap(), playable);
+        assert_eq!(trimmed, raw[1..3]);
+    }
+
+    #[test]
+    fn flac_without_gapless_metadata_defaults_to_zero_trim() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("no-trim.data");
+        fs::write(&path, FLAC_FIXTURE).unwrap();
+        let decoder = LocalDecoderFactory.open(&trusted_local(&path)).unwrap();
+        assert_eq!(decoder.descriptor().trim.delay_frames, 0);
+        assert_eq!(decoder.descriptor().trim.padding_frames, 0);
     }
 
     #[test]

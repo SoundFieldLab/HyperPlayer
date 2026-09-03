@@ -12,7 +12,7 @@ HyperPlayer 已形成可运行的 Tauri 2 + React/TypeScript + Rust Windows 播�
 
 - HSE 完整 22 阶段已全部进入 HyperPlayer 生产播放链（Stage 1–22 共 22 个处理器，默认全 disabled）；Stage 22 spatial 资产（MIT KEMAR）已审计入库并经 SHA-256 校验加载，剩实机验收；
 - D30 已完成 schema v7、v6 备份、缓存策略/淘汰/离线证明、runtime worker、Windows 资源探针、album-fill worker 与 Settings UI（切片 01、10-13）；
-- MP3/FLAC 增量解码、真实 codec trim、设备切换、独占模式和完整 Windows 集成未完成；
+- MP3/FLAC 增量解码与真实 codec trim 已完成（Stage 14 增量部分）；preparation worker、实机 gapless 验收、设备切换、独占模式和完整 Windows 集成未完成；
 - 网易云仍有较多路由、UI 工作流和受控账号外部验收缺口；
 - vGPU/WebGPU 尚未真正接入；
 - DSP 配置已版本化持久化（`settings.json` 内 `dsp` 段，version=1 + revision + DTO），重启恢复 revision 与配置；标准 BS.1770-5 模式已通过解析向量认证 ±0.1 LU（未使用官方 EBU Tech 3341/3342 测试文件，不宣称 EBU 认证；默认保持 HSE v1.5.1 兼容）；Stage 19 LUFS/true-peak/limiter/FFT telemetry 已固化到 HPTM v4；
@@ -425,6 +425,9 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 - manual next/previous、automatic EOF、shuffle、repeat-all、tray、SMTC 输入路径。
 - WAV incremental decode。
 - FLAC/MP3 内容探测和播放。
+- FLAC/MP3 真增量解码（2026-09-03，Stage 14）：symphonia（flac feature 新增、claxon 移除），open 只做 probe/建解码器/读头元数据，read_pcm 逐 packet 增量拉取到单帧缓冲，不整曲驻留内存。
+- codec trim raw 契约（Stage 14）：三 codec 统一「total_frames/read_pcm 为 raw 时间轴，trim 只上报」，runtime 以 total − delay − padding 统一裁剪；MP3 读 Xing/Info LAME enc_delay/enc_padding（显式 gapless(false) 规避 symphonia 包级双重裁剪），FLAC 读 Vorbis Comment ENCODER_DELAY/PADDING；seek 经 demuxer 精确定位 + 帧内逐样本 skip 补齐，流末 seek 短路 eof。
+- runtime 全链路 trim 与 standby 证据测试：Xing MP3 play_to_end 帧数精确 = raw − delay − padding；prime_standby 走 seek(delay) 且 trim 进入 Primed 状态；欠载/慢 IO/EOF/seek 复位 fake backend 矩阵（tests/gapless_backend.rs、tests/gapless_continuity.rs、tests/common）。
 - mono→stereo F32 适配和 sample-rate conversion。
 - CPAL default device、stereo F32 format negotiation、lock-free frame queue。
 - 本地 scanner、SQLite、missing reconciliation、cancel safety、封面内容寻址。
@@ -434,10 +437,10 @@ Engine 只设置 waveform/sample peak/RMS validity；spectrum 等固定区域为
 
 未完成/不可夸大：
 
-- FLAC/MP3 当前仍整体 decode 到 `Vec<f32>`，不是增量解码。
-- Production FLAC/MP3 codec trim 当前为 0，真实 gapless delay/padding 未完成。
-- decoder open/whole decode/standby prepare 仍可能阻塞 engine actor；缺独立 preparation worker。
-- 无 MP3/FLAC 跨曲真实 gapless fixture。
+- decoder open/prepare 仍在 engine actor 控制路径上同步执行；缺独立 preparation worker（Stage 14 剩余）。
+- standby 失败/慢 IO 的 actor 级回退语义未专项测试（decoder/runtime 级已有）。
+- 无真实编码器产出的跨曲 gapless fixture（现有证据来自合成正弦/斜坡/最小 FLAC/Xing MP3 fixture）。
+- Windows 实机（真实 WASAPI 输出）录回/权威 PCM 对比验证 gapless 未做。
 - 无输出设备枚举、选择持久化、live switch、default-device recovery、exclusive WASAPI。
 - SMTC 主要是 transport input；metadata/artwork/timeline/state 同步不完整。
 - 文件关联未完成。
@@ -604,10 +607,11 @@ Build / UI：
 
 ### 音频与设备
 
-- MP3/FLAC incremental decode。
-- real codec trim。
-- decoder preparation worker。
-- cross-codec gapless fixture。
+- ~~MP3/FLAC incremental decode~~（已完成，2026-09-03）。
+- ~~real codec trim~~（已完成，2026-09-03）。
+- decoder preparation worker（open/probe/prepare 移出 actor 控制路径）。
+- actor 级 standby 失败/慢 IO 回退语义。
+- 真实编码器产出的 cross-codec gapless fixture 与 Windows 实机录回验收。
 - device enum/switch/recovery/exclusive。
 
 ### 网易云
