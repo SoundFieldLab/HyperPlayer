@@ -382,7 +382,7 @@ function DetailView({ type }: { type: "album" | "artist" | "playlist" }): React.
       let binary = "";
       bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
       const imageBase64 = window.btoa(binary);
-      await bridge.neteaseUpdatePlaylistCover(detailId, imageBase64, picked.type || null);
+      await bridge.neteaseUpdatePlaylistCover(detailId, imageBase64, picked.type || undefined);
       await reload();
     } catch (error) { notifyError(error, "无法更新歌单封面"); }
     finally { setCoverBusy(false); }
