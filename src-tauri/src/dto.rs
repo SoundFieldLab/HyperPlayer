@@ -377,7 +377,6 @@ pub struct UpdateSettingsRequestDto {
 #[serde(rename_all = "camelCase")]
 pub enum WindowKindDto {
     Main,
-    MiniPlayer,
     DesktopLyrics,
 }
 

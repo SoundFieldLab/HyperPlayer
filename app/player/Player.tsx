@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   CaretDown, Check, CloudArrowDown, DotsThree, Heart, Pause, Play, Queue, Repeat,
@@ -14,6 +14,23 @@ import { useAppStore } from "../store";
 import { useMainWindowTelemetry } from "../visualization/telemetry";
 import { WaveformCanvas2D } from "../visualization/renderers";
 
+// 播放坞浮动弹层（播放模式菜单/音量面板）共用关闭逻辑：打开期间监听外部按下与 Escape；弹层内部交互不关闭
+function useFloatingDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, onClose: () => void): void {
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent): void => {
+      if (ref.current && event.target instanceof Node && !ref.current.contains(event.target)) onClose();
+    };
+    const onKeyDown = (event: KeyboardEvent): void => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, ref, onClose]);
+}
+
 export function PlayerDock(): React.JSX.Element | null {
   const { playback, togglePlayback, stop, next, previous, seek, setVolume, setRepeat, setExpanded, setOverlay, overlay } = useAppStore();
   const [modeMenu, setModeMenu] = useState(false);
@@ -27,6 +44,14 @@ export function PlayerDock(): React.JSX.Element | null {
     ["one", "单曲循环", <RepeatOnce/>], ["shuffle", "随机播放", <Shuffle/>],
   ];
   const currentMode = modes.find(([id]) => id === repeat) ?? modes[0];
+  const volumePercent = Math.round((playback?.volume ?? 0) * 100);
+  const muted = playback != null && playback.volume === 0;
+  const modeControlRef = useRef<HTMLDivElement>(null);
+  const volumeControlRef = useRef<HTMLDivElement>(null);
+  const closeModeMenu = useCallback(() => setModeMenu(false), []);
+  const closeVolumePanel = useCallback(() => setVolumeOpen(false), []);
+  useFloatingDismiss(modeMenu, modeControlRef, closeModeMenu);
+  useFloatingDismiss(volumeOpen, volumeControlRef, closeVolumePanel);
 
   function cycleMode(): void {
     const index = modes.findIndex(([id]) => id === repeat);
@@ -38,7 +63,8 @@ export function PlayerDock(): React.JSX.Element | null {
     void setVolume(nextVolume);
   }
 
-  return <footer className={`player-dock ${track ? "" : "empty"}`}><button className="now-playing" onClick={() => track && setExpanded(true)} disabled={!track}>{track ? <Cover src={track.coverSeed} alt=""/> : <span className="empty-cover"><MusicNotes/></span>}<span><b>{track?.title ?? "选择一首歌曲"}</b><small>{track ? `${track.artists.join(" / ")} · ${track.source === "netease" ? "网易云" : "本地"}` : "播放控制将在载入曲目后启用"}</small></span><Heart/></button><div className="transport"><div><div className="mode-control"><IconButton label={`${currentMode[1]}，单击切换，右键选择`} active={repeat !== "sequence"} disabled={!track} onClick={cycleMode} className="mode-button">{currentMode[2]}</IconButton><button className="mode-menu-hit" aria-label="选择播放模式" disabled={!track} onClick={() => setModeMenu(!modeMenu)} onContextMenu={(event) => { event.preventDefault(); setModeMenu(true); }}/>{modeMenu && <div className="mode-menu" role="menu">{modes.map(([id, label, icon]) => <button key={id} role="menuitemradio" aria-checked={repeat === id} onClick={() => { void setRepeat(id); setModeMenu(false); }}>{icon}<span>{label}</span>{repeat === id && <Check/>}</button>)}</div>}</div><IconButton label="上一首" disabled={!track} onClick={() => void previous()}><SkipBack weight="fill"/></IconButton><button className="main-play" aria-label={playing ? "暂停" : "播放"} disabled={!track} onClick={() => void togglePlayback()}>{playing ? <Pause weight="fill"/> : <Play weight="fill"/>}</button><IconButton label="停止" disabled={!track} onClick={() => void stop()}><Stop weight="fill"/></IconButton><IconButton label="下一首" disabled={!track} onClick={() => void next()}><SkipForward weight="fill"/></IconButton></div><div className="progress-row"><span>{formatTime(playback?.positionMs ?? 0)}</span><input aria-label="播放进度" type="range" min={0} max={track?.durationMs ?? 1} value={playback?.positionMs ?? 0} disabled={!track} onChange={(event) => void seek(Number(event.target.value))}/><span>{formatTime(track?.durationMs ?? 0)}</span></div></div><div className="dock-tools"><span className="quality">{track?.quality ?? "LOSSLESS"}</span><IconButton label="音效工作台" onClick={() => useAppStore.getState().navigate("dsp")}><SlidersHorizontal/></IconButton><IconButton label="播放队列" active={overlay === "queue"} disabled={!track} onClick={() => setOverlay(overlay === "queue" ? "none" : "queue")}><Queue/></IconButton><div className="volume-control" onWheel={(event) => { if (!playback) return; event.preventDefault(); changeVolume(playback.volume + (event.deltaY < 0 ? .04 : -.04)); }}><IconButton label={!playback || playback.volume === 0 ? "取消静音" : `静音，当前音量 ${Math.round(playback.volume * 100)}%`} disabled={!playback} onClick={() => { if (!playback) return; setVolumeOpen(true); changeVolume(playback.volume === 0 ? lastVolume.current : 0); }}>{!playback || playback.volume === 0 ? <SpeakerSlash/> : <SpeakerHigh/>}</IconButton><input aria-label={`音量 ${Math.round((playback?.volume ?? 0) * 100)}%`} className="volume" type="range" min={0} max={1} step={0.01} value={playback?.volume ?? 0} disabled={!playback} onChange={(event) => changeVolume(Number(event.target.value))}/>{volumeOpen && playback && <div className="volume-popover"><b>输出音量</b><input aria-label="紧凑音量" type="range" min={0} max={1} step={.01} value={playback.volume} onChange={(event) => changeVolume(Number(event.target.value))}/><span>{Math.round(playback.volume * 100)}%</span><button disabled>输出设备信息不可用</button></div>}</div></div></footer>;
+  // 弹层交互契约：音量按钮与播放模式角标只负责开合弹层，静音切换在音量弹层内完成；外部按下或 Escape 由 useFloatingDismiss 关闭
+  return <footer className={`player-dock ${track ? "" : "empty"}`}><button className="now-playing" onClick={() => track && setExpanded(true)} disabled={!track}>{track ? <Cover src={track.coverSeed} alt=""/> : <span className="empty-cover"><MusicNotes/></span>}<span><b>{track?.title ?? "选择一首歌曲"}</b><small>{track ? `${track.artists.join(" / ")} · ${track.source === "netease" ? "网易云" : "本地"}` : "播放控制将在载入曲目后启用"}</small></span><Heart/></button><div className="transport"><div><div className="mode-control" ref={modeControlRef}><IconButton label={`${currentMode[1]}，单击切换，右键选择`} active={repeat !== "sequence"} disabled={!track} onClick={cycleMode} className="mode-button">{currentMode[2]}</IconButton><button className="mode-menu-hit" aria-label="选择播放模式" aria-haspopup="menu" aria-expanded={modeMenu} disabled={!track} onClick={() => setModeMenu(!modeMenu)} onContextMenu={(event) => { event.preventDefault(); setModeMenu(true); }}/>{modeMenu && <div className="mode-menu" role="menu">{modes.map(([id, label, icon]) => <button key={id} role="menuitemradio" aria-checked={repeat === id} onClick={() => { void setRepeat(id); setModeMenu(false); }}>{icon}<span>{label}</span>{repeat === id && <Check/>}</button>)}</div>}</div><IconButton label="上一首" disabled={!track} onClick={() => void previous()}><SkipBack weight="fill"/></IconButton><button className="main-play" aria-label={playing ? "暂停" : "播放"} disabled={!track} onClick={() => void togglePlayback()}>{playing ? <Pause weight="fill"/> : <Play weight="fill"/>}</button><IconButton label="停止" disabled={!track} onClick={() => void stop()}><Stop weight="fill"/></IconButton><IconButton label="下一首" disabled={!track} onClick={() => void next()}><SkipForward weight="fill"/></IconButton></div><div className="progress-row"><span>{formatTime(playback?.positionMs ?? 0)}</span><input aria-label="播放进度" type="range" min={0} max={track?.durationMs ?? 1} value={playback?.positionMs ?? 0} disabled={!track} onChange={(event) => void seek(Number(event.target.value))}/><span>{formatTime(track?.durationMs ?? 0)}</span></div></div><div className="dock-tools"><span className="quality">{track?.quality ?? "—"}</span><IconButton label="音效工作台" onClick={() => useAppStore.getState().navigate("dsp")}><SlidersHorizontal/></IconButton><IconButton label="播放队列" active={overlay === "queue"} disabled={!track} onClick={() => setOverlay(overlay === "queue" ? "none" : "queue")}><Queue/></IconButton><div className="volume-control" ref={volumeControlRef} onWheel={(event) => { if (!playback) return; event.preventDefault(); changeVolume(playback.volume + (event.deltaY < 0 ? .04 : -.04)); }}><IconButton label={!playback ? "音量" : `${volumeOpen ? "收起" : "展开"}音量面板，当前${muted ? "已静音" : `音量 ${volumePercent}%`}`} disabled={!playback} onClick={() => setVolumeOpen(!volumeOpen)}>{!playback || muted ? <SpeakerSlash/> : <SpeakerHigh/>}</IconButton><input aria-label={`音量 ${volumePercent}%`} className="volume" type="range" min={0} max={1} step={0.01} value={playback?.volume ?? 0} disabled={!playback} onChange={(event) => changeVolume(Number(event.target.value))}/>{volumeOpen && playback && <div className="volume-popover"><b>输出音量</b><input aria-label="紧凑音量" type="range" min={0} max={1} step={.01} value={playback.volume} onChange={(event) => changeVolume(Number(event.target.value))}/><span>{volumePercent}%</span><button type="button" aria-pressed={muted} style={{ display: "flex", alignItems: "center", gap: 7 }} onClick={() => changeVolume(muted ? lastVolume.current : 0)}>{muted ? <SpeakerSlash/> : <SpeakerHigh/>}<span>{muted ? "取消静音" : "静音"}</span></button><button disabled>输出设备信息不可用</button></div>}</div></div></footer>;
 }
 
 function KaraokeLine({ line, position }: { line: LyricsPayloadDto["document"]["lines"][number]; position: number }): React.JSX.Element {

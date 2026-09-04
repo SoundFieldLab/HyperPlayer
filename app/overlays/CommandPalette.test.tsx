@@ -59,7 +59,7 @@ const playback: PlaybackSnapshotDto = {
   nextUp: [],
   repeat: "sequence",
   shuffled: false,
-  dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
+  dspExecution: { revision: "0", safeBypassActive: false, fault: null },
 };
 
 function deferred<T>() {
@@ -155,5 +155,15 @@ describe("CommandPalette 命令中心", () => {
     expect(container.textContent).toContain("打开设置");
     expect(container.textContent).not.toContain("深圳夜曲");
     expect(container.textContent).not.toContain("打开网易云首页");
+  });
+
+  it("keeps the task summary text unbroken with nowrap and wrap fallback", async () => {
+    await act(async () => root.render(<CommandPalette loadWeather={async () => weather} now={() => new Date("2026-09-01T08:05:00+08:00")}/>));
+    const summary = container.querySelector<HTMLElement>(".command-task-summary")!;
+    expect(summary.style.flexWrap).toBe("wrap");
+    expect(summary.querySelector("span")!.style.whiteSpace).toBe("nowrap");
+    expect(summary.querySelector("button")!.style.whiteSpace).toBe("nowrap");
+    expect(summary.textContent).toContain("1 个后台任务进行中");
+    expect(summary.textContent).toContain("状态中心");
   });
 });

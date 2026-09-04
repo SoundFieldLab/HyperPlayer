@@ -80,11 +80,16 @@ function HomeView(): React.JSX.Element {
     : home.status === "ready" ? home.data.recommendedTracks.map(adaptTrack) : [];
   const state = domain === "local" ? localTracks : home;
   return <Page title="我的喜欢" subtitle={domain === "local" ? "本地曲库中的常听曲目" : "来自网易云的实时推荐"} actions={<><button className="button primary" disabled={!tracks.length} onClick={() => tracks[0] && void useAppStore.getState().playTrack(tracks[0], { kind: "manual", id: null })}><Play weight="fill"/>播放全部</button><button className="button secondary" onClick={() => navigate(domain === "local" ? "folders" : "library")}><FolderOpen/>管理音乐</button></>}>
-    {domain === "netease" && banners.status === "ready" && banners.data.length > 0 && <div className="banner-strip">{banners.data.map((banner) => <button className="banner-card" key={banner.id} onClick={() => banner.targetUrl && window.open(banner.targetUrl, "_blank")}><Cover src={banner.imageUrl} alt={banner.title}/><span>{banner.title}</span></button>)}</div>}
-    <div className="collection-summary"><div className="collection-art" aria-hidden="true"><Heart weight="fill"/></div><div><span className="eyebrow">COLLECTION</span><h2>{tracks.length ? `${tracks.length} 首歌曲` : "你的音乐收藏"}</h2><p>{domain === "local" ? "从本地曲库整理出的私人播放空间。" : "登录后可查看收藏歌单；当前列表来自推荐服务。"}</p></div><button className="round-play" aria-label="播放全部" disabled={!tracks.length} onClick={() => tracks[0] && void useAppStore.getState().playTrack(tracks[0], { kind: "manual", id: null })}><Play weight="fill"/></button></div>
-    <div className="collection-toolbar"><span>{domain === "local" ? "本地曲目" : "推荐曲目"}</span><button type="button" onClick={() => navigate("search")}><MagnifyingGlass/>筛选音乐</button></div>
-    <RemoteNotice state={state} empty="这里还没有可播放的音乐" retry={domain === "local" ? reloadLocalTracks : reloadHome}/>
+    {/* banner-strip/banner-card 无 CSS 定义（样式塌陷根因之一），复用 cover-grid/cover-card 卡片网格 */}
+    {domain === "netease" && banners.status === "ready" && banners.data.length > 0 && <div className="cover-grid">{banners.data.map((banner) => <button className="cover-card" key={banner.id} onClick={() => banner.targetUrl && window.open(banner.targetUrl, "_blank")}><div className="cover-wrap"><Cover src={banner.imageUrl} alt={banner.title}/><span className="hover-play"><Play weight="fill"/></span></div><b>{banner.title}</b></button>)}</div>}
+    {/* collection-summary/collection-art 无 CSS 定义导致首页塌陷，改用 styles.css 已有的 continue-main 英雄卡（42% 封面 + 文案 + round-play） */}
+    <div className="continue-main" style={{ marginBottom: 22 }}><Cover src={tracks.length > 0 ? tracks[0].coverSeed : fallbackCover("hyperplayer-collection")} alt=""/><div><span className="eyebrow">COLLECTION</span><h2>{tracks.length ? `${tracks.length} 首歌曲` : "你的音乐收藏"}</h2><p>{domain === "local" ? "从本地曲库整理出的私人播放空间。" : "登录后可查看收藏歌单；当前列表来自推荐服务。"}</p><button className="round-play" aria-label="播放全部" disabled={!tracks.length} onClick={() => tracks[0] && void useAppStore.getState().playTrack(tracks[0], { kind: "manual", id: null })}><Play weight="fill"/></button></div></div>
+    {/* collection-toolbar 无 CSS 定义，改用已有的 view-toolbar（标签 + 透明按钮行） */}
+    <div className="view-toolbar"><span>{domain === "local" ? "本地曲目" : "推荐曲目"}</span><button type="button" onClick={() => navigate("search")}><MagnifyingGlass/>筛选音乐</button></div>
+    <RemoteNotice state={state} empty="这里还没有可播放的音乐" emptyDetail={domain === "netease" ? "网易云每日推荐需登录后可见" : undefined} retry={domain === "local" ? reloadLocalTracks : reloadHome}/>
     {tracks.length > 0 && <AppTrackTable tracks={tracks} playbackContext={{ kind: "manual", id: null }} preserveOrder/>}
+    {/* 网易云域把已随 neteaseHome 返回但一直未展示的推荐歌单补成卡片网格（cover-grid），凑齐「收藏/推荐卡片」形态 */}
+    {domain === "netease" && home.status === "ready" && home.data.recommendedPlaylists.length > 0 && <><SectionTitle>推荐歌单</SectionTitle><div className="cover-grid">{home.data.recommendedPlaylists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("playlist", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/><span className="hover-play"><Play weight="fill"/></span></div><b>{item.name}</b><small>{item.trackCount} 首</small></button>)}</div></>}
     {domain === "netease" && (exploreTracks.length > 0 || exploreLoading) && <><SectionTitle>探索发现</SectionTitle><RemoteNotice state={exploreLoading && exploreTracks.length === 0 ? { status: "loading" } : { status: "ready", data: null }} empty=""/>{exploreTracks.length > 0 && <AppTrackTable tracks={exploreTracks.map(adaptTrack)} playbackContext={{ kind: "manual", id: null }} preserveOrder/>}<button className="button secondary" onClick={() => void loadExploreNext()} disabled={exploreLoading}>{exploreLoading ? "加载中…" : "加载更多"}</button></>}
   </Page>;
 }
@@ -190,6 +195,9 @@ function ListenSummary(): React.JSX.Element {
 }
 
 function NeteaseLibraryView(): React.JSX.Element {
+  const navigate = useAppStore((state) => state.navigate);
+  // 登录态以 neteaseStatus 为准（store 目前没有暴露网易云登录字段，见报告）；未登录时整页引导，避免收藏区块露出「后端返回了空结果」。
+  const [status, reloadStatus] = useRemote(() => bridge.neteaseStatus(), [], () => false);
   const [favorites, reloadFavorites] = useRemote(() => bridge.neteaseFavorites(), [], (value) => value.playlists.length === 0 && value.likedTrackIds.length === 0);
   const [account, reloadAccount] = useRemote(() => bridge.neteaseAccount(), [], () => false);
   const [cloud, reloadCloud] = useRemote(() => bridge.neteaseCloud(), [], (value) => value.songs.length === 0);
@@ -197,7 +205,8 @@ function NeteaseLibraryView(): React.JSX.Element {
   const artistSublist = useRemote(() => bridge.neteaseArtistSublist(), [], (value) => value.artists.length === 0);
   const albumSublist = useRemote(() => bridge.neteaseAlbumSublist(), [], (value) => value.albums.length === 0);
   const mvSublist = useRemote(() => bridge.neteaseMvSublist(), [], (value) => value.mvs.length === 0);
-  const navigate = useAppStore((state) => state.navigate);
+  if (status.status !== "ready") return <Page title="网易云音乐库" subtitle="收藏、关注、云盘与听歌数据来自当前登录账号"><RemoteNotice state={status} retry={reloadStatus}/></Page>;
+  if (!status.data.authenticated) return <Page title="网易云音乐库" subtitle="收藏、关注、云盘与听歌数据来自当前登录账号"><div className="remote-state empty"><Info/><b>登录后查看收藏</b><span>收藏歌单、收藏艺人、收藏专辑、关注与音乐云盘来自当前登录的网易云账号；当前未登录或会话已失效。</span><button className="button secondary" onClick={() => navigate("account")}><User/>前往网易云账号</button></div></Page>;
   return <Page title="网易云音乐库" subtitle="收藏、关注、云盘与听歌数据来自当前登录账号">
     <SectionTitle>收藏歌单</SectionTitle><RemoteNotice state={favorites} empty="暂无收藏" retry={reloadFavorites}/>{favorites.status === "ready" && <div className="cover-grid">{favorites.data.playlists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("playlist", item.id)}><div className="cover-wrap"><Cover src={item.coverUrl || fallbackCover(String(item.id))} alt=""/></div><b>{item.name}</b><small>{item.trackCount} 首</small></button>)}</div>}
     <SectionTitle>收藏艺人</SectionTitle><RemoteNotice state={artistSublist[0]} empty="暂无收藏艺人" retry={artistSublist[1]}/>{artistSublist[0].status === "ready" && <div className="cover-grid">{artistSublist[0].data.artists.map((item) => <button className="cover-card" key={item.id} onClick={() => navigate("artist", item.id)}><div className="cover-wrap"><Cover src={item.imageUrl || fallbackCover(String(item.id))} alt="" className="artist-cover"/></div><b>{item.name}</b><small>艺人</small></button>)}</div>}
@@ -321,9 +330,22 @@ function LocalBrowseView({ kind }: { kind: "albums" | "artists" | "playlists" | 
 }
 
 function BrowseView({ kind }: { kind: "albums" | "artists" | "playlists" | "discover" | "recent" | "folders" | "songs" }): React.JSX.Element {
+  const domain = useAppStore((state) => state.domain);
   if (kind === "songs") return <LibraryView/>;
   if (kind === "discover") return <DiscoverView/>;
+  // 网易云域的「最近播放」= 听歌记录（ListenSummary），不能再落本地曲库 recent——
+  // 那会在网易云域渲染 Rust 曲库内容，造成切页后内容突变（用户实测页面错乱根因）。
+  if (kind === "recent" && domain === "netease") return <NeteaseRecentView/>;
   return <LocalBrowseView kind={kind}/>;
+}
+
+/** 网易云域最近播放：听歌排行 + 累计（数据来自当前登录账号；未登录给出引导） */
+function NeteaseRecentView(): React.JSX.Element {
+  const [status] = useRemote(() => bridge.neteaseStatus(), [], () => false);
+  if (status.status === "ready" && !status.data.authenticated) {
+    return <Page title="最近播放" subtitle="网易云听歌记录来自当前登录账号"><div className="remote-state empty"><Info/><b>登录后查看听歌记录</b><span>最近播放与听歌排行来自网易云账号；当前未登录或会话已失效。</span></div></Page>;
+  }
+  return <Page title="最近播放" subtitle="网易云听歌记录与排行"><ListenSummary/></Page>;
 }
 
 function DetailView({ type }: { type: "album" | "artist" | "playlist" }): React.JSX.Element {
@@ -440,19 +462,20 @@ function formatMessageTime(occurredAtMs: number | null): string {
 }
 
 function MessagesView(): React.JSX.Element {
+  const navigate = useAppStore((state) => state.navigate);
   const [status, reloadStatus] = useRemote(() => bridge.neteaseStatus(), [], () => false);
   const [notices, reloadNotices] = useRemote(() => bridge.neteaseNotices(), [], (page) => page.items.length === 0);
   const [events, reloadEvents] = useRemote(() => bridge.neteaseFollowedEvents(), [], (page) => page.items.length === 0);
   const authenticated = status.status === "ready" && status.data.authenticated;
   return <Page title="消息" subtitle="系统通知与关注动态来自当前登录账号，保持只读">
     <RemoteNotice state={status} retry={reloadStatus}/>
-    {status.status === "ready" && !authenticated && <div className="remote-state empty"><Info/><b>登录后查看消息</b><span>通知与关注动态来自网易云账号；当前未登录或会话已失效。</span></div>}
-    <SectionTitle>通知</SectionTitle>
+    {status.status === "ready" && !authenticated && <div className="remote-state empty"><Info/><b>登录后查看消息</b><span>通知与关注动态来自网易云账号；当前未登录或会话已失效。</span><button className="button secondary" onClick={() => navigate("account")}><User/>前往网易云账号</button></div>}
+    {authenticated && <><SectionTitle>通知</SectionTitle>
     <RemoteNotice state={notices} empty="暂无通知" retry={reloadNotices}/>
-    {notices.status === "ready" && <div className="message-list">{notices.data.items.map((item) => <div key={item.id}><span aria-hidden="true"/>{item.user?.avatarUrl ? <Cover src={item.user.avatarUrl} alt="" className="avatar-image"/> : <User/>}<span><b>{item.title || item.user?.nickname || "网易云通知"}</b>{item.title && item.user && <small>{item.user.nickname}</small>}<small>{item.text}</small></span><time>{formatMessageTime(item.occurredAtMs)}</time></div>)}</div>}
-    <SectionTitle>关注动态</SectionTitle>
+    {notices.status === "ready" && <div className="message-list">{notices.data.items.map((item) => <div key={item.id}><span aria-hidden="true"/>{item.user?.avatarUrl ? <Cover src={item.user.avatarUrl} alt="" className="avatar-image"/> : <User/>}<span><b>{item.title || item.user?.nickname || "网易云通知"}</b>{item.title && item.user && <small>{item.user.nickname}</small>}<small>{item.text}</small></span><time>{formatMessageTime(item.occurredAtMs)}</time></div>)}</div>}</>}
+    {authenticated && <><SectionTitle>关注动态</SectionTitle>
     <RemoteNotice state={events} empty="暂无关注动态" retry={reloadEvents}/>
-    {events.status === "ready" && <div className="message-list">{events.data.items.map((item) => <div key={item.id}><span aria-hidden="true"/>{item.user?.avatarUrl ? <Cover src={item.user.avatarUrl} alt="" className="avatar-image"/> : <User/>}<span><b>{item.user?.nickname || "网易云用户"}</b>{item.text && <small>{item.text}</small>}{item.track && <small>歌曲：{item.track.title} · {item.track.artists.join(" / ")}</small>}{!item.text && !item.track && item.eventType && <small>{item.eventType}</small>}</span><time>{formatMessageTime(item.occurredAtMs)}</time></div>)}</div>}
+    {events.status === "ready" && <div className="message-list">{events.data.items.map((item) => <div key={item.id}><span aria-hidden="true"/>{item.user?.avatarUrl ? <Cover src={item.user.avatarUrl} alt="" className="avatar-image"/> : <User/>}<span><b>{item.user?.nickname || "网易云用户"}</b>{item.text && <small>{item.text}</small>}{item.track && <small>歌曲：{item.track.title} · {item.track.artists.join(" / ")}</small>}{!item.text && !item.track && item.eventType && <small>{item.eventType}</small>}</span><time>{formatMessageTime(item.occurredAtMs)}</time></div>)}</div>}</>}
   </Page>;
 }
 

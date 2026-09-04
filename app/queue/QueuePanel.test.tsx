@@ -47,7 +47,7 @@ const playback: PlaybackSnapshotDto = {
   nextUp: [{ queueItemId: "queue-next", track: track("next") }],
   repeat: "sequence",
   shuffled: false,
-  dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
+  dspExecution: { revision: "0", safeBypassActive: false, fault: null },
 };
 
 describe("QueuePanel", () => {

@@ -199,7 +199,8 @@ export function CommandPalette({ loadWeather = loadShenzhenWeather, now = curren
             <button type="button" className="primary" onClick={() => void togglePlayback()} disabled={!current} aria-label={playback?.status === "playing" ? "暂停" : "播放"}>{playback?.status === "playing" ? <Pause weight="fill"/> : <Play weight="fill"/>}</button>
             <button type="button" onClick={() => void next()} disabled={!current} aria-label="下一首"><SkipForward weight="fill"/></button>
           </div>
-          <div className="command-task-summary"><span>{activeTasks.length ? `${activeTasks.length} 个后台任务进行中` : "没有进行中的后台任务"}</span><button type="button" onClick={() => runCommand(() => useAppStore.getState().navigate("status"))}>状态中心</button></div>
+          {/* 摘要行文字禁止拆行（main.tsx 的 CSS 导入顺序使 .command-palette 620px 宽度生效，右栏放不下整行）：空间不足时让按钮整体换行而非把文字拆开 */}
+          <div className="command-task-summary" style={{ flexWrap: "wrap" }}><span style={{ whiteSpace: "nowrap" }}>{activeTasks.length ? `${activeTasks.length} 个后台任务进行中` : "没有进行中的后台任务"}</span><button type="button" style={{ whiteSpace: "nowrap" }} onClick={() => runCommand(() => useAppStore.getState().navigate("status"))}>状态中心</button></div>
         </section>
       </div>}
 

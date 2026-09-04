@@ -89,7 +89,7 @@ export class DspService {
       status: 'applied',
       revision: this.revision.toString(),
       configuration: this.configuration,
-      engine: { dspExecution: { revision: this.revision } },
+      engine: { dspExecution: { revision: this.revision.toString() } },
       partial: false,
       unsupportedStages: this.unsupportedStages,
     }

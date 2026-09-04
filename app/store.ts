@@ -52,7 +52,6 @@ interface AppState {
   expandedPlayer: boolean;
   overlay: OverlayId;
   searchOpen: boolean;
-  miniOpen: boolean;
   desktopLyricsOpen: boolean;
   queueFloating: boolean;
   selectedTrackIds: string[];
@@ -91,7 +90,6 @@ interface AppState {
   setExpanded(value: boolean): void;
   setOverlay(value: OverlayId): void;
   setSearchOpen(value: boolean): void;
-  setMiniOpen(value: boolean): void;
   setDesktopLyricsOpen(value: boolean): void;
   setQueueFloating(value: boolean): void;
   selectTrack(id: string, multi?: boolean): void;
@@ -173,11 +171,16 @@ function errorMessage(error: unknown, fallback = "无法连接到 HyperPlayer �
   return error instanceof Error ? error.message : fallback;
 }
 
+/** revision 十进制字符串数值比较（跨位数时字符串比较会错序，如 "9" > "10"） */
+function revisionGte(a: string, b: string): boolean {
+  try { return BigInt(a) >= BigInt(b); } catch { return a >= b; }
+}
+
 function newestPlayback(
   bootstrap: PlaybackSnapshotDto,
   event: PlaybackSnapshotDto | null,
 ): PlaybackSnapshotDto {
-  return event && event.revision >= bootstrap.revision ? event : bootstrap;
+  return event && revisionGte(event.revision, bootstrap.revision) ? event : bootstrap;
 }
 
 function diagnosticForSnapshot(
@@ -186,7 +189,7 @@ function diagnosticForSnapshot(
 ): DspProcessingFaultDto | null {
   const { dspExecution } = snapshot;
   if (dspExecution.safeBypassActive) return dspExecution.fault ?? current;
-  return current && dspExecution.revision <= current.revision ? current : null;
+  return current && !revisionGte(dspExecution.revision, current.revision) ? current : null;
 }
 
 function acceptedPlaybackState(snapshot: PlaybackSnapshotDto, current: DspProcessingFaultDto | null) {
@@ -202,10 +205,10 @@ function nextDspRevision(configuration: DspConfigurationDto | null, pending: Dsp
   return (appliedRevision > pendingRevision ? appliedRevision : pendingRevision) + 1n + "";
 }
 
-function acceptedDspResult(result: DspApplyResultDto, currentPlaybackRevision: bigint | null) {
+function acceptedDspResult(result: DspApplyResultDto, currentPlaybackRevision: string | null) {
   const applied = result.status === "applied"
     || BigInt(result.engine.dspExecution.revision) === BigInt(result.revision)
-    || currentPlaybackRevision === BigInt(result.revision);
+    || currentPlaybackRevision === BigInt(result.revision).toString();
   return {
     dspConfiguration: result.configuration,
     dspPendingConfiguration: applied ? null : result.configuration,
@@ -256,7 +259,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   expandedPlayer: false,
   overlay: "none",
   searchOpen: false,
-  miniOpen: false,
   desktopLyricsOpen: false,
   queueFloating: false,
   selectedTrackIds: [],
@@ -278,7 +280,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           trackScrobbleOnPlaybackChanged(playback);
           set((state) => {
             const pending = state.dspPendingConfiguration;
-            const appliedPending = pending && BigInt(pending.revision) === playback.dspExecution.revision;
+            const appliedPending = pending && BigInt(pending.revision) === BigInt(playback.dspExecution.revision);
             return {
               ...acceptedPlaybackState(playback, state.dspDiagnostic),
               ...(appliedPending ? { dspConfiguration: pending, dspPendingConfiguration: null, dspBusy: false } : {}),
@@ -319,12 +321,12 @@ export const useAppStore = create<AppState>((set, get) => ({
           );
         },
         dspProcessingFault: (dspDiagnostic) => {
-          const acceptedRevision = get().playback?.dspExecution.revision ?? 0n;
-          if (dspDiagnostic.revision < acceptedRevision) return;
+          const acceptedRevision = get().playback?.dspExecution.revision ?? "0";
+          if (!revisionGte(dspDiagnostic.revision, acceptedRevision)) return;
           set({ dspDiagnostic });
           get().notifyError(
-            new Error(`DSP revision ${dspDiagnostic.revision} 的 ${dspDiagnostic.processorName} 处理失败，播放正通过 Rust 安全旁路继续`),
-            "DSP 处理失败，播放正通过 Rust 安全旁路继续",
+            new Error(`DSP revision ${dspDiagnostic.revision} 的 ${dspDiagnostic.processorName} 处理失败，宿主播放链已自动安全旁路继续`),
+            "DSP 处理失败，宿主播放链已自动安全旁路继续",
           );
         },
         closeRequested: (closeRequest) => set({ closeRequest }),
@@ -677,7 +679,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setExpanded(expandedPlayer) { set({ expandedPlayer, overlay: "none" }); },
   setOverlay(overlay) { set({ overlay }); },
   setSearchOpen(searchOpen) { set({ searchOpen }); },
-  setMiniOpen(miniOpen) { set({ miniOpen }); },
   setDesktopLyricsOpen(desktopLyricsOpen) { set({ desktopLyricsOpen }); },
   setQueueFloating(queueFloating) { set({ queueFloating, overlay: queueFloating ? "none" : get().overlay }); },
   selectTrack(id, multi = false) { set((state) => ({ selectedTrackIds: multi ? (state.selectedTrackIds.includes(id) ? state.selectedTrackIds.filter((value) => value !== id) : [...state.selectedTrackIds, id]) : [id] })); },

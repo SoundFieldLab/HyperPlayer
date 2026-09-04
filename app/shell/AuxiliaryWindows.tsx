@@ -1,19 +1,13 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { CaretUp, Check, LockOpen, Minus, Monitor, MusicNotes, Pause, Play, SkipBack, SkipForward, SpeakerHigh, X } from "@phosphor-icons/react";
+import { Check, LockOpen, Minus, MusicNotes, Pause, Play, SkipBack, SkipForward, X } from "@phosphor-icons/react";
 import { bridge } from "../bridge";
-import { Cover, IconButton } from "../components/ui";
+import { IconButton } from "../components/ui";
 import { LyricsContent } from "../player/Player";
 import { useAppStore } from "../store";
 
-export function MiniPlayer({ standalone = false }: { standalone?: boolean }): React.JSX.Element {
-  const { playback, togglePlayback, next, previous, setMiniOpen, setExpanded } = useAppStore();
-  const [alwaysOnTop, setAlwaysOnTop] = useState(true);
-  if (!playback?.current) return <div className="aux-empty">当前没有播放曲目</div>;
-  const track = playback.current;
-  function close(): void { standalone ? void bridge.windowClose("miniPlayer") : setMiniOpen(false); }
-  return <motion.div drag={!standalone} dragMomentum={false} className={`mini-player ${standalone ? "standalone" : ""}`} initial={{opacity:0,scale:.94}} animate={{opacity:1,scale:1}}><div className="mini-top"><span>迷你播放器</span><div>{standalone && <IconButton label="隐藏" onClick={() => void bridge.windowHide("miniPlayer")}><Minus/></IconButton>}<IconButton label={alwaysOnTop ? "取消置顶" : "保持置顶"} active={alwaysOnTop} onClick={() => { const nextValue = !alwaysOnTop; setAlwaysOnTop(nextValue); void bridge.windowSetAlwaysOnTop("miniPlayer", nextValue); }}><CaretUp/></IconButton><IconButton label="关闭" onClick={close}><X/></IconButton></div></div><button className="mini-cover" onClick={() => { if (standalone) void bridge.windowShow("main"); else { setMiniOpen(false); setExpanded(true); } }}><Cover src={track.coverSeed} alt={track.album}/></button><div className="mini-info"><b>{track.title}</b><small>{track.artists.join(" / ")}</small></div><div className="mini-progress"><i style={{width:`${track.durationMs ? playback.positionMs / track.durationMs * 100 : 0}%`}}/></div><div className="mini-controls"><IconButton label="上一首" onClick={() => void previous()}><SkipBack/></IconButton><button className="main-play" onClick={() => void togglePlayback()}>{playback.status === "playing" ? <Pause weight="fill"/> : <Play weight="fill"/>}</button><IconButton label="下一首" onClick={() => void next()}><SkipForward/></IconButton><SpeakerHigh/></div></motion.div>;
-}
+// 迷你播放器已按用户定调整体移除（2026-09-05）；辅助窗口仅剩桌面歌词。
+// WebView2 args 镜像约束（auxiliary_browser_args）对桌面歌词窗口同样生效。
 
 export function DesktopLyrics({ standalone = false }: { standalone?: boolean }): React.JSX.Element {
   const { playback, setDesktopLyricsOpen, togglePlayback, next, previous, notifyError } = useAppStore();
@@ -33,14 +27,25 @@ export function DesktopLyrics({ standalone = false }: { standalone?: boolean }):
 
 export function UtilityLauncher(): React.JSX.Element {
   const notifyError = useAppStore((state) => state.notifyError);
-  return <div className="utility-launcher"><IconButton label="迷你播放器" onClick={() => void bridge.windowShow("miniPlayer").catch((error: unknown) => notifyError(error, "无法打开迷你播放器"))}><Monitor/></IconButton><IconButton label="桌面歌词" onClick={() => void bridge.windowShow("desktopLyrics").catch((error: unknown) => notifyError(error, "无法打开桌面歌词"))}><MusicNotes/></IconButton><IconButton label="关闭桌面歌词点击穿透" onClick={() => void bridge.desktopLyricsSetClickThrough(false).then(() => bridge.windowShow("desktopLyrics")).catch((error: unknown) => notifyError(error, "无法关闭桌面歌词点击穿透"))}><LockOpen/></IconButton></div>;
+  // 锁按钮：先 windowShow（窗口不存在则创建），再关点击穿透——原顺序先调
+  // desktop_lyrics_set_click_through，桌面歌词窗口不存在时该命令直接拒绝，
+  // 表现为「点了没反应」。
+  return <div className="utility-launcher"><IconButton label="桌面歌词" onClick={() => void bridge.windowShow("desktopLyrics").catch((error: unknown) => notifyError(error, "无法打开桌面歌词"))}><MusicNotes/></IconButton><IconButton label="打开桌面歌词并关闭点击穿透" onClick={() => void bridge.windowShow("desktopLyrics").then(() => bridge.desktopLyricsSetClickThrough(false)).catch((error: unknown) => notifyError(error, "无法关闭桌面歌词点击穿透"))}><LockOpen/></IconButton></div>;
 }
 
-export function AuxiliaryRoot({ kind }: { kind: "mini-player" | "desktop-lyrics" }): React.JSX.Element {
+export function AuxiliaryRoot({ kind }: { kind: "desktop-lyrics" }): React.JSX.Element {
   const state = useAppStore();
+  const [slow, setSlow] = useState(false);
   useEffect(() => { void state.init(); return () => state.dispose(); }, []);
-  if (state.initStatus === "error") return <div className="aux-empty" role="alert">{state.initError}</div>;
-  if (!state.ready) return <div className="aux-empty" role="status">正在连接播放器</div>;
-  if (kind === "mini-player" && !state.playback?.current) return <div className="aux-empty"><b>当前没有播放曲目</b><div className="home-actions"><button className="button secondary" onClick={() => void bridge.windowShow("main")}>打开主窗口</button><button className="button secondary" onClick={() => void bridge.windowHide("miniPlayer")}>隐藏</button><button className="button secondary" onClick={() => void bridge.windowClose("miniPlayer")}>关闭</button></div></div>;
-  return kind === "mini-player" ? <MiniPlayer standalone/> : <DesktopLyrics standalone/>;
+  // 连接看门狗：init 长时间未就绪（如主窗口命令链挂起）时切换为可操作的提示文案，
+  // 避免辅助窗口静默停留在「正在连接」。
+  useEffect(() => {
+    if (state.ready || state.initStatus === "error") { setSlow(false); return; }
+    const timer = window.setTimeout(() => setSlow(true), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [state.ready, state.initStatus]);
+  const closeSelf = () => void bridge.windowClose("desktopLyrics").catch(() => bridge.windowHide("desktopLyrics").catch(() => undefined));
+  if (state.initStatus === "error") return <div className="aux-empty" role="alert"><b>播放器连接失败</b><small>{state.initError}</small><div className="home-actions"><button className="button secondary" onClick={() => void state.init()}>重试</button><button className="button secondary" onClick={() => void bridge.windowShow("main")}>打开主窗口</button><button className="button secondary" onClick={closeSelf}>关闭窗口</button></div></div>;
+  if (!state.ready) return <div className="aux-empty" role="status"><b>{slow ? "连接播放器超时" : "正在连接播放器"}</b><small>{slow ? "主窗口可能未就绪，可重试或直接打开主窗口" : "正在从主窗口同步播放状态"}</small><div className="home-actions"><button className="button secondary" onClick={() => void state.init()}>重试</button><button className="button secondary" onClick={() => void bridge.windowShow("main")}>打开主窗口</button>{slow && <button className="button secondary" onClick={closeSelf}>关闭窗口</button>}</div></div>;
+  return <DesktopLyrics standalone/>;
 }

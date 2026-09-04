@@ -30,7 +30,7 @@ vi.mock("../bridge", async (importOriginal) => {
   return { ...actual, bridge: { ...actual.bridge, ...bridgeMocks } };
 });
 
-import { SettingsView } from "./SettingsView";
+import { SettingsView, STATUS_TIMEOUT_MS } from "./SettingsView";
 import { useAppStore } from "../store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -95,8 +95,39 @@ describe("SettingsView 更新器与不可用状态", () => {
     await act(async () => button(container, "关于").click());
 
     expect(container.textContent).toContain("更新器状态暂不可用");
-    expect(container.textContent).toContain("状态读取失败");
+    expect(container.textContent).toContain("暂不可用");
     expect(button(container, "检查更新").disabled).toBe(true);
+  });
+
+  it("shows unconfigured update channel copy with check disabled", async () => {
+    bridgeMocks.updaterStatus.mockResolvedValue({ enabled: false, reason: null });
+    await act(async () => root.render(<SettingsView />));
+    await settle();
+    await act(async () => button(container, "关于").click());
+
+    expect(container.textContent).toContain("更新通道未配置（将在后续版本启用）");
+    expect(button(container, "检查更新").disabled).toBe(true);
+  });
+
+  it("degrades a hung status source without blocking other sections", async () => {
+    vi.useFakeTimers();
+    try {
+      // 模拟挂起：cacheStats 永不落定（如 OPFS/后端命令无响应）
+      bridgeMocks.cacheStats.mockReturnValue(new Promise(() => undefined));
+      await act(async () => root.render(<SettingsView />));
+      await act(async () => { await vi.advanceTimersByTimeAsync(STATUS_TIMEOUT_MS + 1_000); });
+
+      // 缓存分区从「读取中」转为失败态
+      await act(async () => button(container, "缓存").click());
+      expect(container.textContent).toContain("暂不可用");
+      expect(container.textContent).not.toContain("读取中");
+
+      // 其他分区不受挂起影响，正常拿到数据
+      await act(async () => button(container, "曲库").click());
+      expect(container.textContent).toContain("0 首");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows check and install errors instead of retaining success state", async () => {
@@ -151,23 +182,41 @@ describe("SettingsView 更新器与不可用状态", () => {
     expect(button(container, "清理缓存")).toBeTruthy();
   });
 
-  it("states unavailable and read-only settings explicitly", async () => {
+  it("renders resolved status values instead of perpetual loading", async () => {
+    await act(async () => root.render(<SettingsView />));
+    await settle();
+
+    await act(async () => button(container, "缓存").click());
+    expect(container.textContent).toContain("缓存占用");
+    expect(container.textContent).toContain("0.0 MB");
+    expect(container.textContent).not.toContain("读取中");
+  });
+
+  it("states D34 WebView playback chain and unavailable settings explicitly", async () => {
     await act(async () => root.render(<SettingsView />));
     await settle();
 
     await act(async () => button(container, "音频与 DSP").click());
-    expect(container.textContent).toContain("Rust DSP 核心已接通");
-    expect(container.textContent).toContain("22 个处理器");
-    expect(container.textContent).toContain("参数配置、预设与 HSE2 分享码通过 DspPort 生效");
-    expect(container.textContent).toContain("DspPort");
-    expect(container.textContent).toContain("HSE2");
-    expect(container.textContent).toContain("功能降级");
-    expect(container.textContent).toContain("不接管播放");
-    expect(container.textContent).toContain("Rust Engine");
+    expect(container.textContent).toContain("HSE TS 实时处理链已接通");
+    expect(container.textContent).toContain("AudioWorklet");
+    expect(container.textContent).toContain("HSE v1.5.1");
+    expect(container.textContent).toContain("交叉淡变");
+    expect(container.textContent).toContain("safe bypass");
+    expect(container.textContent).toContain("音效");
+    expect(container.textContent).toContain("系统默认输出设备");
+    expect(container.textContent).toContain("共享混音");
+    expect(container.textContent).not.toContain("Rust DSP 核心已接通");
+    expect(container.textContent).not.toContain("DspPort");
+    expect(container.textContent).not.toContain("22 个处理器");
+    expect(container.textContent).not.toContain("Rust Engine");
+
+    await act(async () => button(container, "播放").click());
+    expect(container.textContent).toContain("来自 WebView 播放链（Web Audio + HSE AudioWorklet）的实时快照");
+    expect(container.textContent).not.toContain("Rust 音频引擎");
 
     await act(async () => button(container, "系统集成").click());
-    expect(container.textContent).toContain("系统独占输出");
-    expect(container.textContent).toContain("不可用");
+    expect(container.textContent).toContain("SMTC");
+    expect(container.textContent).not.toContain("系统独占输出");
 
     await act(async () => button(container, "隐私").click());
     expect(container.textContent).toContain("不可导出");

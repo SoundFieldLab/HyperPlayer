@@ -45,7 +45,7 @@ export class PlaybackService {
     shuffled: false,
     queue: [],
     nextUp: [],
-    dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
+    dspExecution: { revision: '0', safeBypassActive: false, fault: null },
   }
   private revisionCounter = 0n
 

@@ -201,7 +201,7 @@ export interface TaskAcceptedDto {
   accepted: boolean;
 }
 
-export type WindowKind = "main" | "miniPlayer" | "desktopLyrics";
+export type WindowKind = "main" | "desktopLyrics";
 
 // ---- 网易云服务层 DTO（D34：UI 保留，服务层在 app/services/netease） ----
 import type {
@@ -392,7 +392,8 @@ export interface PlaybackSnapshotDto {
   queue: QueueItemDto[];
   nextUp: QueueItemDto[];
   dspExecution: {
-    revision: bigint;
+    /** HSE 宿主执行修订（十进制字符串；bigint 无法过 Tauri event JSON 序列化） */
+    revision: string;
     safeBypassActive: boolean;
     fault: DspProcessingFaultDto | null;
   };
@@ -404,9 +405,9 @@ export interface QueueItemDto {
   track: TrackDto;
 }
 
-/** DSP 处理故障（D34：HSE worklet 故障，Rust 安全旁路概念移植 TS） */
+/** DSP 处理故障（D34：HSE worklet 故障时宿主播放链自动安全旁路） */
 export interface DspProcessingFaultDto {
-  revision: bigint;
+  revision: string;
   processorName: string;
   stage: string | null;
   code: string;
@@ -457,7 +458,7 @@ export interface DspApplyResultDto {
   status: "applied" | "rejected" | "partial";
   revision: string;
   configuration: DspConfigurationDto;
-  engine: { dspExecution: { revision: bigint } };
+  engine: { dspExecution: { revision: string } };
   partial: boolean;
   unsupportedStages: string[];
 }

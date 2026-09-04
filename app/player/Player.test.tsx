@@ -24,6 +24,8 @@ const bridgeMocks = vi.hoisted(() => ({
   cacheRemove: vi.fn(),
   lyricsGet: vi.fn(),
   createTelemetryTransport: vi.fn(),
+  setVolume: vi.fn(),
+  setRepeatMode: vi.fn(),
 }));
 
 vi.mock("../bridge", async (importOriginal) => {
@@ -68,7 +70,7 @@ const playback = (current: TrackDto): PlaybackSnapshotDto => ({
   nextUp: [],
   repeat: "sequence",
   shuffled: false,
-  dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
+  dspExecution: { revision: "0", safeBypassActive: false, fault: null },
 });
 
 function status(id: string, value: BackendCacheStatusDto["status"]): BackendCacheStatusDto {
@@ -131,6 +133,123 @@ describe("PlayerDock 固定播放栏", () => {
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="播放"]')?.disabled).toBe(true);
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="停止"]')?.disabled).toBe(true);
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="播放队列"]')?.disabled).toBe(true);
+  });
+
+  it("never shows a placeholder quality label without a track", async () => {
+    await act(async () => root.render(<PlayerDock />));
+    expect(container.querySelector(".quality")?.textContent).toBe("—");
+  });
+
+  it("shows the loaded track quality in the dock", async () => {
+    useAppStore.setState({ playback: playback(track("first", "Hi-Res")), overlay: "none" });
+    await act(async () => root.render(<PlayerDock />));
+    expect(container.querySelector(".quality")?.textContent).toBe("Hi-Res");
+  });
+});
+
+describe("PlayerDock 弹层交互", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAppStore.getState().dispose();
+    useAppStore.setState(useAppStore.getInitialState(), true);
+    // bridge 回包沿用注入的曲目快照，避免真实 playback 服务的空快照覆盖 store 状态
+    bridgeMocks.setVolume.mockImplementation(async (volume: number) => ({ ...playback(track("first")), volume }));
+    bridgeMocks.setRepeatMode.mockImplementation(async (repeat: PlaybackSnapshotDto["repeat"]) => ({ ...playback(track("first")), repeat }));
+    useAppStore.setState({ playback: playback(track("first")), overlay: "none" });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+    container.remove();
+    vi.restoreAllMocks();
+  });
+
+  function volumeButton(): HTMLButtonElement {
+    return container.querySelector<HTMLButtonElement>(".volume-control .icon-button")!;
+  }
+
+  function popoverButton(label: string): HTMLButtonElement {
+    const match = [...container.querySelectorAll<HTMLButtonElement>(".volume-popover button")].find((item) => item.textContent?.includes(label));
+    if (!match) throw new Error(`找不到弹层按钮：${label}`);
+    return match;
+  }
+
+  it("toggles the volume panel open and closed without muting", async () => {
+    await act(async () => root.render(<PlayerDock />));
+    expect(container.querySelector(".volume-popover")).toBeNull();
+
+    await act(async () => volumeButton().click());
+    expect(container.querySelector(".volume-popover")).not.toBeNull();
+    expect(useAppStore.getState().playback?.volume).toBe(0.6);
+
+    await act(async () => volumeButton().click());
+    expect(container.querySelector(".volume-popover")).toBeNull();
+  });
+
+  it("toggles mute inside the panel and restores the previous level", async () => {
+    await act(async () => root.render(<PlayerDock />));
+    await act(async () => volumeButton().click());
+    await act(async () => popoverButton("静音").click());
+    await settle();
+    expect(useAppStore.getState().playback?.volume).toBe(0);
+    expect(container.querySelector(".volume-popover")?.textContent).toContain("取消静音");
+
+    await act(async () => popoverButton("取消静音").click());
+    await settle();
+    expect(useAppStore.getState().playback?.volume).toBe(0.72);
+    expect(container.querySelector(".volume-popover")).not.toBeNull();
+  });
+
+  it("closes the volume panel on Escape and outside pointer down", async () => {
+    await act(async () => root.render(<PlayerDock />));
+    await act(async () => volumeButton().click());
+    expect(container.querySelector(".volume-popover")).not.toBeNull();
+
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
+    expect(container.querySelector(".volume-popover")).toBeNull();
+
+    await act(async () => volumeButton().click());
+    await act(async () => { container.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); });
+    expect(container.querySelector(".volume-popover")).toBeNull();
+  });
+
+  it("keeps the volume panel open when interacting inside it", async () => {
+    await act(async () => root.render(<PlayerDock />));
+    await act(async () => volumeButton().click());
+    await act(async () => { container.querySelector<HTMLButtonElement>(".volume-popover button")!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); });
+    expect(container.querySelector(".volume-popover")).not.toBeNull();
+  });
+
+  it("opens the playback mode menu and closes it on Escape or outside pointer down", async () => {
+    await act(async () => root.render(<PlayerDock />));
+    const hit = container.querySelector<HTMLButtonElement>(".mode-menu-hit")!;
+    await act(async () => hit.click());
+    expect(container.querySelector(".mode-menu")).not.toBeNull();
+
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
+    expect(container.querySelector(".mode-menu")).toBeNull();
+
+    await act(async () => hit.click());
+    await act(async () => { container.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); });
+    expect(container.querySelector(".mode-menu")).toBeNull();
+  });
+
+  it("selects a playback mode from the menu and closes it", async () => {
+    await act(async () => root.render(<PlayerDock />));
+    await act(async () => container.querySelector<HTMLButtonElement>(".mode-menu-hit")!.click());
+    await act(async () => button(container, "单曲循环").click());
+    await settle();
+    expect(useAppStore.getState().playback?.repeat).toBe("one");
+    expect(container.querySelector(".mode-menu")).toBeNull();
   });
 });
 

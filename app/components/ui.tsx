@@ -118,10 +118,12 @@ export function Page({ title, subtitle, actions, children }: PageProps): React.J
 interface RemoteNoticeProps {
   state: RemoteState<unknown>;
   empty?: string;
+  /** 空态副文案（默认「后端返回了空结果」；用于给空态附加原因/引导） */
+  emptyDetail?: string;
   retry?: () => void;
 }
 
-export function RemoteNotice({ state, empty = "暂无数据", retry }: RemoteNoticeProps): React.JSX.Element | null {
+export function RemoteNotice({ state, empty = "暂无数据", emptyDetail, retry }: RemoteNoticeProps): React.JSX.Element | null {
   if (state.status === "loading" || state.status === "idle") {
     return <div className="remote-state" role="status"><SpinnerGap className="spin" /><b>正在加载</b></div>;
   }
@@ -130,7 +132,7 @@ export function RemoteNotice({ state, empty = "暂无数据", retry }: RemoteNot
   let title = "加载失败";
   if (state.status === "empty") title = empty;
   if (state.status === "unavailable") title = "此功能当前不可用";
-  const message = "message" in state ? state.message : "后端返回了空结果";
+  const message = "message" in state ? state.message : emptyDetail ?? "后端返回了空结果";
 
   return (
     <div className={`remote-state ${state.status}`} role={state.status === "error" ? "alert" : "status"}>

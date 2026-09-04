@@ -44,7 +44,7 @@ const playback: PlaybackSnapshotDto = {
   shuffled: false,
   queue: [],
   nextUp: [],
-  dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
+  dspExecution: { revision: "0", safeBypassActive: false, fault: null },
 };
 
 const dspConfiguration: DspConfigurationDto = {
@@ -312,7 +312,7 @@ describe("app store", () => {
       status: "applied",
       partial: false,
       unsupportedStages: [],
-      engine: { dspExecution: { revision: 2n } },
+      engine: { dspExecution: { revision: "2" } },
       configuration: resultConfiguration,
     };
     const testBridge = mockBridge({ dspConfigure: vi.fn(async () => result) });
@@ -348,7 +348,7 @@ describe("app store", () => {
       status: "applied",
       partial: false,
       unsupportedStages: [],
-      engine: { dspExecution: { revision: 2n } },
+      engine: { dspExecution: { revision: "2" } },
       configuration,
     }));
     const testBridge = mockBridge({ dspConfigure });

@@ -59,15 +59,15 @@ describe("bridge contract surface", () => {
       shuffled: false,
       queue: [],
       nextUp: [],
-      dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
+      dspExecution: { revision: "0", safeBypassActive: false, fault: null },
     };
-    expect(snapshot.dspExecution.revision).toBe(0n);
+    expect(snapshot.dspExecution.revision).toBe("0");
     expect(snapshot.queue).toEqual([]);
   });
 
   it("DSP processing fault DTO carries processor/stage/code/reason", () => {
     const fault: DspProcessingFaultDto = {
-      revision: 1n,
+      revision: "1",
       processorName: "Limiter",
       stage: "21",
       code: "LIMITER_OVERDRIVE",

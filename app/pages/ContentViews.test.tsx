@@ -35,6 +35,9 @@ const bridgeMocks = vi.hoisted(() => ({
   neteaseDjRadios: vi.fn(),
   neteaseDjPrograms: vi.fn(),
   neteaseStatus: vi.fn(),
+  neteaseHome: vi.fn(),
+  neteaseBanner: vi.fn(),
+  neteaseExploreNext: vi.fn(),
   neteaseSearch: vi.fn(),
   neteaseNotices: vi.fn(),
   neteaseFollowedEvents: vi.fn(),
@@ -145,6 +148,9 @@ describe("CurrentView 页面能力边界", () => {
     bridgeMocks.neteaseDjRadios.mockResolvedValue({ radios: [], programs: [], nextCursor: null });
     bridgeMocks.neteaseDjPrograms.mockResolvedValue({ radios: [], programs: [], nextCursor: null });
     bridgeMocks.neteaseStatus.mockResolvedValue({ enabled: true, authenticated: false, userId: null, displayName: null });
+    bridgeMocks.neteaseHome.mockResolvedValue({ recommendedTracks: [], recommendedPlaylists: [], anonymous: true, unavailableSections: [] });
+    bridgeMocks.neteaseBanner.mockResolvedValue([]);
+    bridgeMocks.neteaseExploreNext.mockResolvedValue({ songs: [], batch: 1 });
     bridgeMocks.neteaseSearch.mockResolvedValue({ tracks: [], albums: [], artists: [], playlists: [], nextCursor: null });
     bridgeMocks.neteaseNotices.mockResolvedValue({ items: [], hasMore: false, nextCursor: null });
     bridgeMocks.neteaseFollowedEvents.mockResolvedValue({ items: [], hasMore: false, nextCursor: null });
@@ -344,10 +350,13 @@ describe("CurrentView 页面能力边界", () => {
     await settle();
 
     expect(container.textContent).toContain("榜单暂时离线");
+    // 错误态必须有可操作的重试入口（而不是被当空结果吞掉），点击后重新请求同一公开端点
+    await act(async () => button(container, "重试").click());
+    await settle();
+    expect(bridgeMocks.neteaseCharts).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("公开新歌");
     expect(container.textContent).toContain("现场 MV");
     expect(container.textContent).toContain("公开电台");
-    expect(bridgeMocks.neteaseCharts).toHaveBeenCalledOnce();
   });
 
   it("opens charts through playlist detail and keeps MV detail metadata-only", async () => {
@@ -415,7 +424,7 @@ describe("CurrentView 页面能力边界", () => {
   });
 
   it("plays and queues a DJ main track through existing store actions", async () => {
-    const result: PlaybackSnapshotDto = { revision: "1", current: null, currentQueueItemId: null, status: "paused", positionMs: 0, durationMs: null, volume: 0.5, queue: [], nextUp: [], repeat: "sequence", shuffled: false, dspExecution: { revision: 0n, safeBypassActive: false, fault: null } };
+    const result: PlaybackSnapshotDto = { revision: "1", current: null, currentQueueItemId: null, status: "paused", positionMs: 0, durationMs: null, volume: 0.5, queue: [], nextUp: [], repeat: "sequence", shuffled: false, dspExecution: { revision: "0", safeBypassActive: false, fault: null } };
     const playTrack = vi.spyOn(useAppStore.getState(), "playTrack");
     const enqueueTrack = vi.spyOn(useAppStore.getState(), "enqueueTrack");
     bridgeMocks.neteaseDjRadios.mockResolvedValue({ radios: [{ id: 20, name: "公开电台", coverUrl: null, description: null, programCount: 1, subscriberCount: null, category: null }], programs: [], nextCursor: null });
@@ -456,6 +465,12 @@ describe("CurrentView 页面能力边界", () => {
     await settle();
     expect(container.textContent).toContain("登录后查看消息");
     expect(container.textContent).toContain("保持只读");
+    // 未登录时通知/关注动态区块隐藏，不得露出「后端返回了空结果」，并提供跳转账号页的入口
+    expect(container.textContent).not.toContain("暂无通知");
+    expect(container.textContent).not.toContain("暂无关注动态");
+    expect(container.textContent).not.toContain("后端返回了空结果");
+    await act(async () => button(container, "前往网易云账号").click());
+    expect(useAppStore.getState()).toMatchObject({ view: "account" });
   });
 
   it("switches search sub-tabs and opens album/artist/playlist result cards", async () => {
@@ -596,6 +611,7 @@ describe("CurrentView 页面能力边界", () => {
   });
 
   it("renders the listen summary under the netease library and switches periods", async () => {
+    bridgeMocks.neteaseStatus.mockResolvedValue({ enabled: true, authenticated: true, userId: "1", displayName: "测试用户" });
     bridgeMocks.neteaseAccount.mockResolvedValue({ user: { userId: 1, nickname: "测试用户", avatarUrl: null }, vip: { active: false, expiresAtMs: null, level: null, verifiedAtMs: 0 } });
     bridgeMocks.neteaseListenTotal.mockResolvedValue({ totalMinutes: 120, totalPlays: 45, songs: [] });
     bridgeMocks.neteaseListenReport.mockResolvedValue({ period: "week", endTime: null, stats: { totalMinutes: 30, totalPlays: 10, songs: [] } });
@@ -617,6 +633,38 @@ describe("CurrentView 页面能力边界", () => {
     expect(bridgeMocks.neteaseListenReport).toHaveBeenCalledWith("month");
     expect(bridgeMocks.neteaseListenSongRank).toHaveBeenCalledWith("month");
     expect(container.textContent).toContain("本月播放");
+  });
+
+  it("guides unauthenticated users in the netease library instead of empty results", async () => {
+    useAppStore.setState({ domain: "netease", view: "library" });
+    await act(async () => root.render(<CurrentView />));
+    await settle();
+
+    expect(container.textContent).toContain("登录后查看收藏");
+    // 未登录不得把账号数据区块当空结果展示
+    expect(container.textContent).not.toContain("暂无收藏");
+    expect(container.textContent).not.toContain("暂无收藏艺人");
+    expect(container.textContent).not.toContain("后端返回了空结果");
+    await act(async () => button(container, "前往网易云账号").click());
+    expect(useAppStore.getState()).toMatchObject({ view: "account" });
+  });
+
+  it("renders the home collection hero with the stable layout classes", async () => {
+    bridgeMocks.neteaseHome.mockResolvedValue({ recommendedTracks: [], recommendedPlaylists: [], anonymous: true, unavailableSections: [] });
+    bridgeMocks.neteaseBanner.mockResolvedValue([]);
+    useAppStore.setState({ domain: "netease", view: "home" });
+    await act(async () => root.render(<CurrentView />));
+    await settle();
+
+    // 首页英雄卡使用 styles.css 已定义的 continue-main，塌陷的 collection-summary/collection-toolbar 不得再出现
+    expect(container.querySelector(".continue-main")).not.toBeNull();
+    expect(container.querySelector(".view-toolbar")).not.toBeNull();
+    expect(container.querySelector(".collection-summary")).toBeNull();
+    expect(container.querySelector(".collection-toolbar")).toBeNull();
+    expect(container.textContent).toContain("你的音乐收藏");
+    expect(container.textContent).toContain("推荐曲目");
+    await act(async () => button(container, "筛选音乐").click());
+    expect(useAppStore.getState()).toMatchObject({ view: "search" });
   });
 
 });

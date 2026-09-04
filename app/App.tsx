@@ -7,7 +7,7 @@ import { CloseConfirmDialog, ToastRegion } from "./overlays/SystemOverlays";
 import { CurrentView } from "./pages/ContentViews";
 import { ExpandedPlayer, PlayerDock } from "./player/Player";
 import { QueuePanel } from "./queue/QueuePanel";
-import { AuxiliaryRoot, DesktopLyrics, MiniPlayer, UtilityLauncher } from "./shell/AuxiliaryWindows";
+import { AuxiliaryRoot, DesktopLyrics, UtilityLauncher } from "./shell/AuxiliaryWindows";
 import { SidebarNav, Titlebar } from "./shell/Navigation";
 import { Onboarding } from "./shell/Onboarding";
 import { useAppStore } from "./store";
@@ -105,7 +105,6 @@ function MainApp(): React.JSX.Element {
         {state.searchOpen && <CommandPalette/>}
         {state.overlay === "queue" && !state.queueFloating && !state.expandedPlayer && <QueuePanel/>}
         {state.queueFloating && !state.expandedPlayer && <QueuePanel floating/>}
-        {state.miniOpen && <MiniPlayer/>}
         {state.desktopLyricsOpen && <DesktopLyrics/>}
       </AnimatePresence>
       <UtilityLauncher/>
