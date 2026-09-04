@@ -67,7 +67,9 @@ impl CacheRuntime {
                 }
                 let result = run_once(&repository, cache_root.as_path());
                 if let Err(error) = result {
-                    eprintln!("[cache-runtime] startup reconciliation failed: {error}");
+                    crate::app_log::error(format!(
+                        "[cache-runtime] startup reconciliation failed: {error}"
+                    ));
                 }
             })?;
         *worker = Some(handle);
@@ -170,7 +172,7 @@ impl AlbumFillWorker {
                         now_unix_ms(),
                     ));
                     if let Err(error) = result {
-                        eprintln!("[album-fill] pass failed: {error}");
+                        crate::app_log::warn(format!("[album-fill] pass failed: {error}"));
                     }
                     thread::sleep(std::time::Duration::from_secs(30));
                 }

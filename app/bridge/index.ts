@@ -259,6 +259,7 @@ export const TAURI_COMMANDS = {
   telemetrySetActivity: "telemetry_set_activity",
   telemetryClose: "telemetry_close",
   windowResolveClose: "window_resolve_close",
+  logWeb: "log_web",
 } as const;
 
 export const TAURI_EVENTS = {

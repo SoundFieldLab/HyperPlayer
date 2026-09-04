@@ -175,8 +175,9 @@ describe("bridge contract adapters", () => {
   });
 
   it("declares every newly connected command", () => {
-    expect(Object.values(TAURI_COMMANDS)).toHaveLength(140);
+    expect(Object.values(TAURI_COMMANDS)).toHaveLength(141);
     expect(Object.values(TAURI_COMMANDS)).toEqual(expect.arrayContaining([
+      "log_web",
       "playback_stop", "playback_next", "playback_previous", "playback_set_repeat_mode",
       "library_overview", "library_query_tracks", "library_register_location", "library_start_scan", "library_cancel_scan",
       "library_create_playlist", "library_rename_playlist", "library_delete_playlist", "library_add_playlist_track", "library_remove_playlist_track", "library_reorder_playlist_track",

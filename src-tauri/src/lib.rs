@@ -1,5 +1,6 @@
 mod adapter_mapping;
 mod adapters;
+pub mod app_log;
 mod cache_runtime;
 mod commands;
 mod credential_vault;
@@ -12,13 +13,17 @@ pub mod ports;
 mod secure_http;
 
 use commands::{
-    bootstrap, cache, compat, dsp, library, lyrics, netease, playback, queue, settings, telemetry,
-    updater, weather, window,
+    bootstrap, cache, compat, dsp, library, logging, lyrics, netease, playback, queue, settings,
+    telemetry, updater, weather, window,
 };
 use ports::AppState;
 use tauri::Manager;
 
 pub fn run() {
+    // 日志系统最先启动（后续任何 panic/命令错误都能落盘）；初始化失败仅退化
+    // 为 stderr，不阻止应用启动。panic hook 记录后转默认行为。
+    app_log::init();
+    app_log::install_panic_hook();
     let updater_config = updater::UpdaterConfig::from_env();
     let mut builder = tauri::Builder::default();
     if let Some(public_key) = updater_config.public_key() {
@@ -188,6 +193,7 @@ pub fn run() {
             updater::updater_check,
             updater::updater_update,
             weather::shenzhen_weather,
+            logging::log_web,
         ])
         .setup(move |app| {
             let app_data_dir = app.path().app_data_dir()?;

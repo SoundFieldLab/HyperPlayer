@@ -35,12 +35,8 @@ fn install_cache_runtime<R: Runtime>(app: &tauri::AppHandle<R>) {
     // startup and is cancelled on exit via `shutdown_services` / close handling.
     let state = app.state::<AppState>();
     if let Err(error) = state.services.cache_runtime.clone().start() {
-        log_or_eprintln(&format!("failed to start cache runtime: {error}"));
+        crate::app_log::error(format!("failed to start cache runtime: {error}"));
     }
-}
-
-fn log_or_eprintln(message: &str) {
-    eprintln!("{message}");
 }
 
 fn install_progress_forwarder<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {

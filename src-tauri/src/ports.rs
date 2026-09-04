@@ -506,9 +506,9 @@ fn spawn_prefetch_worker(
                         quality: request.quality,
                     }))
                 {
-                    eprintln!(
+                    crate::app_log::error(format!(
                         "cache prefetch failed for track {track_id} at quality {quality}: {error}"
-                    );
+                    ));
                 }
             }
         })?;
@@ -623,7 +623,9 @@ impl AppState {
         let mut config = match persisted.configuration.clone().into_engine_config() {
             Ok(config) => config,
             Err(error) => {
-                eprintln!("persisted DSP configuration invalid; falling back to default: {error}");
+                crate::app_log::warn(format!(
+                    "persisted DSP configuration invalid; falling back to default: {error}"
+                ));
                 return Ok(DspConfigurationState::new());
             }
         };
@@ -636,10 +638,10 @@ impl AppState {
             .configure_dsp(persisted.revision, config.clone())
             .is_err()
         {
-            eprintln!(
+            crate::app_log::warn(format!(
                 "restoring persisted DSP configuration (revision {}) failed; falling back to default",
                 persisted.revision
-            );
+            ));
             return Ok(DspConfigurationState::new());
         }
         Ok(DspConfigurationState::from_persisted(
