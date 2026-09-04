@@ -266,6 +266,10 @@ impl LibraryPort for LibraryAdapter {
         })
     }
 
+    fn registered_roots(&self) -> AppResult<Vec<std::path::PathBuf>> {
+        self.locations.all()
+    }
+
     fn query_tracks(&self, request: LibraryQueryDto) -> AppResult<LibraryPageDto> {
         validate_page(&request.page)?;
         let offset = parse_cursor(request.page.cursor.as_deref())?;
@@ -903,6 +907,11 @@ impl SettingsPort for SettingsAdapter {
         }
         if let Some(value) = request.album_fill_quality {
             settings.album_fill_quality = value;
+        }
+        // DSP 配置哑 KV（D35 Q16）：Rust 不解析内容，schema 归 TS；
+        // Some(None) 清除，Some(Some(config)) 写入。
+        if let Some(value) = request.dsp {
+            settings.dsp = value;
         }
         validate_cache_policy(&settings)?;
         self.persist(&settings)?;

@@ -1,4 +1,5 @@
 pub mod bootstrap;
+pub mod credential;
 pub mod library;
 pub mod logging;
 pub mod settings;

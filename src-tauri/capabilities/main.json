@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "应用窗口仅获得事件订阅和自绘标题栏所需窗口操作。",
+  "description": "应用窗口仅获得事件订阅、自绘标题栏窗口操作与 HTTP(S) 任意域传输（D35 Q19：tauri-plugin-http 放开 HTTPS 任意域，音源禁用由前端模块边界承担）。",
   "windows": ["main", "mini-player", "desktop-lyrics"],
   "permissions": [
     "core:event:allow-listen",
@@ -13,6 +13,7 @@
     "core:window:allow-hide",
     "core:window:allow-set-always-on-top",
     "core:window:allow-set-ignore-cursor-events",
-    "core:window:allow-close"
+    "core:window:allow-close",
+    "http:default"
   ]
 }

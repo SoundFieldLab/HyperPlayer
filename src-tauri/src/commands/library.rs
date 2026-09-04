@@ -14,7 +14,7 @@ use crate::{
     ports::AppState,
 };
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 fn require_main(window: &WebviewWindow) -> Result<&str, crate::error::ErrorDto> {
@@ -270,13 +270,17 @@ pub async fn library_pick_location(
 #[tauri::command]
 pub fn library_register_location(
     window: WebviewWindow,
+    app: AppHandle,
     state: State<'_, AppState>,
     request: RegisterLibraryLocationRequestDto,
 ) -> CommandResult<LibraryLocationDto> {
     let window_label = require_main(&window)?;
     let path =
         super::command(state.consume_location_ticket(window_label, &request.selection_ticket))?;
-    super::command(state.services.library.register_location(&path))
+    let location = super::command(state.services.library.register_location(&path))?;
+    // asset 协议 scope：新曲库目录登记后允许经 http://asset.localhost/ 播放。
+    let _ = app.asset_protocol_scope().allow_directory(&location.path, true);
+    Ok(location)
 }
 
 #[tauri::command]

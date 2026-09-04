@@ -1,5 +1,6 @@
 use crate::{
     adapters::{LibraryAdapter, LocationRegistry, SettingsAdapter},
+    credential_vault::{netease_credential_vault, CredentialVault},
     dto::*,
     error::AppResult,
 };
@@ -17,6 +18,7 @@ pub type ScanProgressSink = Arc<dyn Fn(ScanProgressDto) + Send + Sync>;
 
 pub trait LibraryPort: Send + Sync {
     fn overview(&self) -> AppResult<LibraryOverviewDto>;
+    fn registered_roots(&self) -> AppResult<Vec<std::path::PathBuf>>;
     fn query_tracks(&self, request: LibraryQueryDto) -> AppResult<LibraryPageDto>;
     fn query_albums(&self, request: LibraryQueryDto) -> AppResult<EntityPageDto<LibraryAlbumDto>>;
     fn query_artists(&self, request: LibraryQueryDto)
@@ -65,12 +67,13 @@ pub trait SettingsPort: Send + Sync {
 pub struct AppServices {
     pub library: Arc<dyn LibraryPort>,
     pub settings: Arc<dyn SettingsPort>,
+    pub credential: Arc<dyn CredentialVault>,
 }
 
 impl AppServices {
-    /// 启动装配：本地曲库（SQLite repository + 位置注册 + 扫描/封面适配器）与设置。
-    /// 播放/DSP/网易云/缓存/遥测/歌词已迁入 WebView 前端（TypeScript），不再在此构造；
-    /// 网易云凭据保险库将在接线阶段经 command 暴露，此处不建立实例。
+    /// 启动装配：本地曲库（SQLite repository + 位置注册 + 扫描/封面适配器）、
+    /// 设置与 DPAPI 凭据保险库。播放/DSP/网易云/缓存/遥测/歌词已迁入
+    /// WebView 前端（TypeScript），不再在此构造。
     pub fn new(app_data_dir: &Path) -> AppResult<Self> {
         std::fs::create_dir_all(app_data_dir)?;
         let repository = Arc::new(Mutex::new(
@@ -91,12 +94,17 @@ impl AppServices {
         }
         let artwork_root = app_data_dir.join("artwork");
         let settings = Arc::new(SettingsAdapter::open(app_data_dir.join("settings.json"))?);
+        let credential = netease_credential_vault(app_data_dir)?;
         let library = Arc::new(LibraryAdapter::new(
             repository.clone(),
             locations,
             artwork_root,
         )?);
-        Ok(Self { library, settings })
+        Ok(Self {
+            library,
+            settings,
+            credential,
+        })
     }
 
     #[cfg(test)]
@@ -111,12 +119,17 @@ impl AppServices {
             uuid::Uuid::new_v4()
         ));
         let settings = Arc::new(SettingsAdapter::new());
+        let credential = Arc::new(crate::credential_vault::MemoryCredentialVault::new(None));
         let library = Arc::new(LibraryAdapter::new(
             repository.clone(),
             locations,
             artwork_root,
         )?);
-        Ok(Self { library, settings })
+        Ok(Self {
+            library,
+            settings,
+            credential,
+        })
     }
 }
 

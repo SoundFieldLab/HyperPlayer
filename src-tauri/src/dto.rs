@@ -352,7 +352,7 @@ const fn default_dsp_revision() -> u64 {
     1
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSettingsRequestDto {
     pub theme: Option<ThemeDto>,
@@ -368,6 +368,9 @@ pub struct UpdateSettingsRequestDto {
     pub cache_recent_track_limit: Option<usize>,
     pub album_fill_enabled: Option<bool>,
     pub album_fill_quality: Option<String>,
+    /// DSP 配置持久化（D35 Q16：哑 KV，schema 归 TS；Rust 不解析内容）。
+    /// None = 不改动；Some(None) = 清除；Some(Some(config)) = 写入。
+    pub dsp: Option<Option<PersistedDspConfig>>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -464,5 +467,45 @@ pub struct ScanProgressDto {
     pub completed: u64,
     pub total: Option<u64>,
     pub phase: String,
+}
+
+/// DPAPI 保险库哑存取（D35 Q17）：payload 为不透明字符串（TS 侧会话 JSON）。
+/// `None` 表示删除。Rust 不解析内容，schema 归 TS。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialUpdateRequestDto {
+    pub payload: Option<String>,
+}
+
+/// SMTC 上行元数据（D35 Q13）：Rust 纯桥，只写 SystemMediaTransportControls。
+/// thumbnail 为 data URL（data:image/...;base64,...），空/非法时忽略。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SmtcMetadataRequestDto {
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub thumbnail_data_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SmtcPlaybackStateDto {
+    Playing,
+    Paused,
+    Stopped,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SmtcPlaybackStateRequestDto {
+    pub state: SmtcPlaybackStateDto,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SmtcPositionRequestDto {
+    pub position_ms: u64,
+    pub duration_ms: Option<u64>,
 }
 

@@ -26,3 +26,9 @@ vite.config.d.ts
 .DS_Store
 Thumbs.db
 nul.*
+
+# 网易云协议包浏览器化生成物（scripts/build-netease-vendor.mjs 构建期生成）
+app/services/netease/generated/
+
+# HSE worklet bundle（scripts/build-hse.mjs 复制，dev/build 前自动生成）
+public/hse-worklet-bundle.js

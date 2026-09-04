@@ -1,6 +1,10 @@
 
 use crate::{
-    dto::{FileAssociationRequestDto, IntegrationCapabilityDto, WindowsIntegrationStatusDto},
+    dto::{
+        FileAssociationRequestDto, IntegrationCapabilityDto, SmtcMetadataRequestDto,
+        SmtcPlaybackStateDto, SmtcPlaybackStateRequestDto, SmtcPositionRequestDto,
+        WindowsIntegrationStatusDto,
+    },
     error::{AppError, CommandResult},
 };
 use std::{
@@ -298,6 +302,202 @@ pub fn windows_register_file_associations(
     require_main(&window)?;
     validate_extensions(&request.extensions).map_err(crate::error::ErrorDto::from)?;
     Err(AppError::Unavailable(platform_reason(FILE_ASSOCIATIONS_UNAVAILABLE)).into())
+}
+
+/// SMTC 上行：曲目元数据（D35 Q13）。Rust 纯桥——只写
+/// SystemMediaTransportControls，零播放知识；SMTC 未启用时静默丢弃。
+#[tauri::command]
+pub fn smtc_update_metadata(
+    window: WebviewWindow,
+    request: SmtcMetadataRequestDto,
+) -> CommandResult<()> {
+    require_main(&window)?;
+    #[cfg(windows)]
+    {
+        update_smtc_metadata(&request).map_err(Into::into)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = request;
+        Err(AppError::Unavailable(platform_reason("SMTC requires Windows")).into())
+    }
+}
+
+/// SMTC 上行：播放状态（播放/暂停/停止）。未启用时静默丢弃。
+#[tauri::command]
+pub fn smtc_update_playback_state(
+    window: WebviewWindow,
+    request: SmtcPlaybackStateRequestDto,
+) -> CommandResult<()> {
+    require_main(&window)?;
+    #[cfg(windows)]
+    {
+        update_smtc_playback_state(request.state).map_err(Into::into)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = request;
+        Err(AppError::Unavailable(platform_reason("SMTC requires Windows")).into())
+    }
+}
+
+/// SMTC 上行：进度节拍（position/duration，毫秒）。未启用时静默丢弃。
+#[tauri::command]
+pub fn smtc_update_position(
+    window: WebviewWindow,
+    request: SmtcPositionRequestDto,
+) -> CommandResult<()> {
+    require_main(&window)?;
+    #[cfg(windows)]
+    {
+        update_smtc_position(&request).map_err(Into::into)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = request;
+        Err(AppError::Unavailable(platform_reason("SMTC requires Windows")).into())
+    }
+}
+
+#[cfg(windows)]
+fn update_smtc_metadata(request: &SmtcMetadataRequestDto) -> Result<(), AppError> {
+    use windows::{
+        core::HSTRING,
+        Media::{MediaPlaybackType, SystemMediaTransportControlsDisplayUpdater},
+    };
+
+    let Some(registration) = smtc_registration()
+        .lock()
+        .map_err(|_| AppError::StateUnavailable)?
+        .as_ref()
+        .map(|registration| &registration.controls)
+        .cloned()
+    else {
+        // SMTC 未启用：纯桥语义，更新静默丢弃。
+        return Ok(());
+    };
+    let updater: SystemMediaTransportControlsDisplayUpdater =
+        registration.DisplayUpdater().map_err(|error| {
+            AppError::Unavailable(format!("SMTC could not get the display updater: {error}"))
+        })?;
+    updater
+        .SetType(MediaPlaybackType::Music)
+        .map_err(|error| smtc_unavailable("set playback type", error))?;
+    let music = updater
+        .MusicProperties()
+        .map_err(|error| smtc_unavailable("get music properties", error))?;
+    music
+        .SetTitle(&HSTRING::from(request.title.as_str()))
+        .map_err(|error| smtc_unavailable("set title", error))?;
+    music
+        .SetArtist(&HSTRING::from(request.artist.as_str()))
+        .map_err(|error| smtc_unavailable("set artist", error))?;
+    if let Some(album) = &request.album {
+        music
+            .SetAlbumTitle(&HSTRING::from(album.as_str()))
+            .map_err(|error| smtc_unavailable("set album", error))?;
+    }
+    if let Some(data_url) = &request.thumbnail_data_url {
+        if let Some(reference) = smtc_thumbnail_reference(data_url) {
+            updater
+                .SetThumbnail(&reference)
+                .map_err(|error| smtc_unavailable("set thumbnail", error))?;
+        }
+    }
+    updater
+        .Update()
+        .map_err(|error| smtc_unavailable("update display", error))
+}
+
+#[cfg(windows)]
+fn smtc_thumbnail_reference(
+    data_url: &str,
+) -> Option<windows::Storage::Streams::RandomAccessStreamReference> {
+    use windows::{
+        core::Interface,
+        Storage::Streams::{
+            DataWriter, IOutputStream, InMemoryRandomAccessStream, RandomAccessStreamReference,
+        },
+    };
+    use base64::Engine;
+
+    // data URL 形状：data:image/png;base64,....
+    let rest = data_url.strip_prefix("data:")?;
+    let (mime, payload) = rest.split_once(',')?;
+    if !mime.ends_with(";base64") {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(payload).ok()?;
+    let stream = InMemoryRandomAccessStream::new().ok()?;
+    let output: IOutputStream = stream.cast().ok()?;
+    let writer = DataWriter::CreateDataWriter(&output).ok()?;
+    writer.WriteBytes(&bytes).ok()?;
+    writer.StoreAsync().ok()?.get().ok()?;
+    writer.FlushAsync().ok()?.get().ok()?;
+    stream.Seek(0).ok()?;
+    RandomAccessStreamReference::CreateFromStream(&stream).ok()
+}
+
+#[cfg(windows)]
+fn update_smtc_playback_state(state: SmtcPlaybackStateDto) -> Result<(), AppError> {
+    use windows::Media::MediaPlaybackStatus;
+
+    let Some(controls) = smtc_registration()
+        .lock()
+        .map_err(|_| AppError::StateUnavailable)?
+        .as_ref()
+        .map(|registration| &registration.controls)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let status = match state {
+        SmtcPlaybackStateDto::Playing => MediaPlaybackStatus::Playing,
+        SmtcPlaybackStateDto::Paused => MediaPlaybackStatus::Paused,
+        SmtcPlaybackStateDto::Stopped => MediaPlaybackStatus::Stopped,
+    };
+    controls
+        .SetPlaybackStatus(status)
+        .map_err(|error| smtc_unavailable("update playback status", error))
+}
+
+#[cfg(windows)]
+fn update_smtc_position(request: &SmtcPositionRequestDto) -> Result<(), AppError> {
+    use windows::{
+        Foundation::TimeSpan,
+        Media::SystemMediaTransportControlsTimelineProperties,
+    };
+
+    let Some(controls) = smtc_registration()
+        .lock()
+        .map_err(|_| AppError::StateUnavailable)?
+        .as_ref()
+        .map(|registration| &registration.controls)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let timeline = SystemMediaTransportControlsTimelineProperties::new()
+        .map_err(|error| smtc_unavailable("create timeline properties", error))?;
+    let position = TimeSpan {
+        Duration: (request.position_ms as i64) * 10_000,
+    };
+    timeline
+        .SetPosition(position)
+        .map_err(|error| smtc_unavailable("set position", error))?;
+    timeline
+        .SetStartTime(TimeSpan { Duration: 0 })
+        .map_err(|error| smtc_unavailable("set start time", error))?;
+    if let Some(duration_ms) = request.duration_ms {
+        timeline
+            .SetEndTime(TimeSpan {
+                Duration: (duration_ms as i64) * 10_000,
+            })
+            .map_err(|error| smtc_unavailable("set end time", error))?;
+    }
+    controls
+        .UpdateTimelineProperties(&timeline)
+        .map_err(|error| smtc_unavailable("update timeline", error))
 }
 
 fn available() -> IntegrationCapabilityDto {

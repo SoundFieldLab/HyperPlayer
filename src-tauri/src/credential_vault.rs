@@ -18,10 +18,10 @@ pub fn netease_credential_vault(app_data_dir: &Path) -> AppResult<Arc<dyn Creden
     }
     #[cfg(not(windows))]
     {
+        // 非 Windows 平台（开发/CI）使用内存 vault：不落盘、不加密，
+        // 仅保证应用可用；Windows 实机才是生产路径。
         let _ = app_data_dir;
-        Err(AppError::Unavailable(
-            "secure NetEase credential storage is unavailable on this platform".into(),
-        ))
+        Ok(Arc::new(MemoryCredentialVault::new(None)))
     }
 }
 
@@ -203,13 +203,13 @@ impl CredentialVault for WindowsDpapiVault {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, not(windows)))]
 pub struct MemoryCredentialVault {
     value: std::sync::Mutex<Option<Vec<u8>>>,
     fail_replace: std::sync::atomic::AtomicBool,
 }
 
-#[cfg(test)]
+#[cfg(any(test, not(windows)))]
 impl MemoryCredentialVault {
     pub fn new(value: Option<Vec<u8>>) -> Self {
         Self {
@@ -228,7 +228,7 @@ impl MemoryCredentialVault {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, not(windows)))]
 impl CredentialVault for MemoryCredentialVault {
     fn load(&self) -> AppResult<Option<Vec<u8>>> {
         Ok(self.value.lock().unwrap().clone())

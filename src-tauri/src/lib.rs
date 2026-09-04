@@ -1,7 +1,6 @@
 mod adapters;
 pub mod app_log;
 mod commands;
-#[allow(dead_code)]
 mod credential_vault;
 pub mod dto;
 pub mod error;
@@ -10,7 +9,7 @@ mod lifecycle;
 mod platform;
 pub mod ports;
 
-use commands::{bootstrap, library, logging, settings, updater, window};
+use commands::{bootstrap, credential, library, logging, settings, updater, window};
 use ports::AppState;
 use tauri::Manager;
 
@@ -30,6 +29,7 @@ pub fn run() {
     }
 
     builder = builder.plugin(tauri_plugin_dialog::init());
+    builder = builder.plugin(tauri_plugin_http::init());
 
     builder
         .invoke_handler(tauri::generate_handler![
@@ -61,6 +61,8 @@ pub fn run() {
             library::library_cancel_scan,
             settings::settings_get,
             settings::settings_update,
+            credential::credential_get,
+            credential::credential_set,
             window::window_show,
             window::window_close,
             window::window_hide,
@@ -70,6 +72,9 @@ pub fn run() {
             platform::windows::windows_integration_status,
             platform::windows::windows_enable_media_controls,
             platform::windows::windows_register_file_associations,
+            platform::windows::smtc_update_metadata,
+            platform::windows::smtc_update_playback_state,
+            platform::windows::smtc_update_position,
             updater::updater_status,
             updater::updater_check,
             updater::updater_update,
@@ -82,6 +87,11 @@ pub fn run() {
                     "failed to initialize application services: {error}"
                 ))
             })?;
+            // asset 协议 scope：已注册曲库目录在启动时登记，新位置在
+            // library_register_location 命令中登记（见 library.rs）。
+            for root in state.services.library.registered_roots()? {
+                app.asset_protocol_scope().allow_directory(&root, true)?;
+            }
             app.manage(state);
             app.manage(updater_config.clone());
             lifecycle::install(app.handle())?;
