@@ -2,26 +2,16 @@
 name = "hyperplayer-engine"
 version = "0.1.0"
 edition = "2021"
-description = "HyperPlayer 框架无关的音频引擎与曲库核心"
+description = "HyperPlayer 框架无关的本地曲库核心（SQLite/lofty/封面）"
 license = "Apache-2.0"
 
 [dependencies]
-cpal = "0.18.2"
-crossbeam-queue = "0.3"
-hse-core = { package = "hyperplayer-hse-core", version = "=1.5.1", path = "../hyperplayer-hse-core" }
-hrtf-core = { package = "hyperplayer-hrtf-core", version = "=1.5.1", path = "../hyperplayer-hrtf-core" }
 lofty = "0.25.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac"] }
 thiserror = "2.0"
 
 [dev-dependencies]
 tempfile = "3.23"
-# 测试用：启用 hrtf-core 的合成 SOFA fixture 生成器（产品构建不启用）。
-hrtf-core = { package = "hyperplayer-hrtf-core", version = "=1.5.1", path = "../hyperplayer-hrtf-core", features = ["test-fixtures"] }
-# 测试用：真实 FLAC 编码器（Apache-2.0），为 Stage 14 生成真实编码器产出的连续专辑
-# fixture（非手工合成字节）；仅 dev-dependency，不进入产品构建。
-flacenc = { version = "0.5.1", default-features = false, features = ["log"] }

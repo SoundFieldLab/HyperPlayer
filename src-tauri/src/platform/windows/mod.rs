@@ -1,16 +1,13 @@
-pub mod resource_probe;
 
 use crate::{
     dto::{FileAssociationRequestDto, IntegrationCapabilityDto, WindowsIntegrationStatusDto},
     error::{AppError, CommandResult},
-    events,
-    ports::{AppState, PlaybackTransition},
 };
 use std::{
     path::Path,
     sync::{Mutex, OnceLock},
 };
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, WebviewWindow};
 
 fn require_main(window: &WebviewWindow) -> CommandResult<()> {
     if window.label() != "main" {
@@ -263,38 +260,27 @@ fn handle_media_button(
     app: &AppHandle,
     button: windows::Media::SystemMediaTransportControlsButton,
 ) {
+    // D35 Q13：Rust 是纯转发桥——媒体键化为 media_button_pressed 事件，
+    // 播放语义由 WebView 前端播放服务执行。
     use windows::Media::SystemMediaTransportControlsButton as Button;
 
-    let state = app.state::<AppState>();
-    let result = if button == Button::Play {
-        tauri::async_runtime::block_on(crate::commands::playback::resume_resolved(
-            state.services.playback.as_ref(),
-            state.services.tracks.as_ref(),
-        ))
+    let name = if button == Button::Play {
+        "play"
     } else if button == Button::Pause {
-        state.services.playback.pause()
+        "pause"
     } else if button == Button::Stop {
-        state.services.playback.stop()
+        "stop"
     } else if button == Button::Next {
-        tauri::async_runtime::block_on(crate::commands::playback::transition_resolved(
-            state.services.playback.as_ref(),
-            state.services.tracks.as_ref(),
-            PlaybackTransition::Next { automatic: false },
-        ))
+        "next"
     } else if button == Button::Previous {
-        tauri::async_runtime::block_on(crate::commands::playback::transition_resolved(
-            state.services.playback.as_ref(),
-            state.services.tracks.as_ref(),
-            PlaybackTransition::Previous,
-        ))
+        "previous"
     } else {
         return;
     };
-    if let Ok(snapshot) = result {
-        let _ = app.emit(events::ENGINE_SNAPSHOT_CHANGED, &snapshot);
-        let _ = app.emit(events::PLAYBACK_STATE_CHANGED, &snapshot.playback);
-        let _ = app.emit(events::QUEUE_CHANGED, &snapshot.queue);
-    }
+    let _ = app.emit(
+        crate::events::MEDIA_KEY_PRESSED,
+        &serde_json::json!({ "button": name }),
+    );
 }
 
 #[cfg(not(windows))]

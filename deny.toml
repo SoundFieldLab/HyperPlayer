@@ -26,12 +26,6 @@ exceptions = [
   { allow = ["MPL-2.0"], crate = "dtoa-short" },
   { allow = ["MPL-2.0"], crate = "option-ext" },
   { allow = ["MPL-2.0"], crate = "selectors" },
-  { allow = ["MPL-2.0"], crate = "symphonia" },
-  { allow = ["MPL-2.0"], crate = "symphonia-bundle-flac" },
-  { allow = ["MPL-2.0"], crate = "symphonia-bundle-mp3" },
-  { allow = ["MPL-2.0"], crate = "symphonia-common" },
-  { allow = ["MPL-2.0"], crate = "symphonia-core" },
-  { allow = ["MPL-2.0"], crate = "symphonia-metadata" },
 ]
 
 [licenses.private]

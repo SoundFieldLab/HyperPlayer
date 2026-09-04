@@ -1,4 +1,7 @@
-use crate::audio::PLAYABLE_LOCAL_EXTENSIONS;
+/// 本地曲库扫描收录的可播放扩展名（D34 Q9：WebView2 原生格式集）。
+/// APE/DSF/DFF 等 WebView2 不支持的格式不收录。
+pub const PLAYABLE_LOCAL_EXTENSIONS: &[&str] = &["mp3", "flac", "aac", "ogg", "wav", "m4a", "oga"];
+
 use crate::error::{EngineError, Result};
 use crate::model::{MediaId, MediaSource, Track};
 use crate::repository::{LibraryTrack, ScanRepository};
@@ -438,8 +441,8 @@ mod tests {
         });
 
         let report = scanner.scan(&[root.path().to_path_buf()]).unwrap();
-        assert_eq!(report.discovered, PLAYABLE_LOCAL_EXTENSIONS.len());
-        assert_eq!(report.tracks.len(), PLAYABLE_LOCAL_EXTENSIONS.len());
+        assert_eq!(report.discovered, 3);
+        assert_eq!(report.tracks.len(), 3);
         assert!(report.failures.is_empty());
     }
 
@@ -480,16 +483,18 @@ mod tests {
 
     #[test]
     fn scanner_uses_the_decoder_playable_extension_set() {
-        assert_eq!(PLAYABLE_LOCAL_EXTENSIONS, &["wav", "flac", "mp3"]);
+        // D34 Q9：本地格式集 = WebView2 原生支持集
+        assert_eq!(
+            PLAYABLE_LOCAL_EXTENSIONS,
+            &["mp3", "flac", "aac", "ogg", "wav", "m4a", "oga"]
+        );
         for extension in PLAYABLE_LOCAL_EXTENSIONS {
             assert!(is_supported_audio(Path::new(&format!(
                 "song.{}",
                 extension.to_ascii_uppercase()
             ))));
         }
-        for extension in [
-            "aac", "m4a", "mp4", "ogg", "opus", "ape", "aif", "aiff", "wv",
-        ] {
+        for extension in ["ape", "dsf", "dff", "aif", "aiff", "wv", "mp4", "opus"] {
             assert!(!is_supported_audio(Path::new(&format!("song.{extension}"))));
         }
         assert!(!is_supported_audio(Path::new("cover.jpg")));
@@ -501,9 +506,7 @@ mod tests {
         for extension in PLAYABLE_LOCAL_EXTENSIONS {
             fs::write(root.path().join(format!("broken.{extension}")), b"broken").unwrap();
         }
-        for extension in [
-            "aac", "m4a", "mp4", "ogg", "opus", "ape", "aif", "aiff", "wv",
-        ] {
+        for extension in ["ape", "dsf", "dff", "aif", "aiff", "wv", "mp4", "opus"] {
             fs::write(root.path().join(format!("ignored.{extension}")), b"broken").unwrap();
         }
 

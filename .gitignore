@@ -25,3 +25,4 @@ vite.config.d.ts
 *.tmp
 .DS_Store
 Thumbs.db
+nul.*

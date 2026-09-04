@@ -72,34 +72,3 @@ pub struct PlaylistSummary {
     pub track_count: u64,
     pub updated_unix_ms: u64,
 }
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueueItem {
-    pub queue_id: u64,
-    pub track: Track,
-}
-
-impl QueueItem {
-    pub fn new(queue_id: u64, track: Track) -> Self {
-        Self { queue_id, track }
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn test_item(queue_id: u64) -> QueueItem {
-    QueueItem::new(
-        queue_id,
-        Track {
-            id: MediaId::new(format!("track-{queue_id}")),
-            source: MediaSource::Netease { song_id: queue_id },
-            title: format!("Track {queue_id}"),
-            artists: vec!["Artist".into()],
-            album: Some("Album".into()),
-            album_id: Some("album-1".into()),
-            artist_ids: vec!["artist-1".into()],
-            artwork_hash: None,
-            artwork_mime: None,
-            duration_ms: Some(180_000),
-        },
-    )
-}

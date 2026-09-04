@@ -17,6 +17,12 @@ importers:
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1
+      animejs:
+        specifier: 4.5.0
+        version: 4.5.0
+      hypersoundengine:
+        specifier: link:shared/hypersoundengine
+        version: link:shared/hypersoundengine
       motion:
         specifier: ^12.23.24
         version: 12.43.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -30,9 +36,6 @@ importers:
         specifier: ^5.0.15
         version: 5.0.15(@types/react@19.2.18)(react@19.2.8)
     devDependencies:
-      '@hyperplayer/hse-ts-core':
-        specifier: link:shared/hse-ts-core
-        version: link:shared/hse-ts-core
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.3(vite@8.2.2(@types/node@26.4.0)(jiti@2.7.0))
@@ -624,6 +627,17 @@ packages:
 
   '@vitest/utils@4.1.11':
     resolution: {integrity: sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ==}
+
+  animejs@4.5.0:
+    resolution: {integrity: sha512-NQimYX+lz8WaXonGS9zVVoviCIAjONeJayxacUditaivYLqyXgGjFKjuyl0aUUhFKm5MriX9ty1TGovNzoJQWA==}
+    peerDependencies:
+      '@types/three': '>=0.150.0'
+      three: '>=0.150.0'
+    peerDependenciesMeta:
+      '@types/three':
+        optional: true
+      three:
+        optional: true
 
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
@@ -1536,6 +1550,8 @@ snapshots:
       '@vitest/pretty-format': 4.1.11
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.1
+
+  animejs@4.5.0: {}
 
   assertion-error@2.0.1: {}
 

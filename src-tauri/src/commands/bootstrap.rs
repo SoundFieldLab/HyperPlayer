@@ -1,5 +1,5 @@
 use crate::{
-    dto::{AppInfoDto, BootstrapDto, DspAvailabilityDto},
+    dto::{AppInfoDto, BootstrapDto},
     error::CommandResult,
     ports::AppState,
 };
@@ -15,23 +15,7 @@ pub fn bootstrap(state: State<'_, AppState>) -> CommandResult<BootstrapDto> {
                 platform: "windows".into(),
                 initialized: true,
             },
-            engine: state.services.playback.engine_snapshot()?,
             settings: state.services.settings.get()?,
-            netease: state.services.netease.status()?,
-            dsp: dsp_availability_value(),
         })
     })())
-}
-
-#[tauri::command]
-pub fn dsp_availability() -> CommandResult<DspAvailabilityDto> {
-    Ok(dsp_availability_value())
-}
-
-pub(super) fn dsp_availability_value() -> DspAvailabilityDto {
-    DspAvailabilityDto {
-        available: true,
-        reason: "Rust DSP runtime and six configuration commands are available through DspPort"
-            .into(),
-    }
 }

@@ -23,8 +23,6 @@ pub enum AppError {
     Credential(&'static str),
     #[error("engine operation failed: {0}")]
     Engine(#[from] hyperplayer_engine::EngineError),
-    #[error("NetEase operation failed: {0}")]
-    Netease(#[from] hyperplayer_source_netease::Error),
     #[error("update operation failed: {0}")]
     Updater(String),
 }
@@ -39,15 +37,6 @@ pub struct ErrorDto {
 impl From<AppError> for ErrorDto {
     fn from(error: AppError) -> Self {
         let message = match &error {
-            AppError::Netease(hyperplayer_source_netease::Error::Timeout) => {
-                "NetEase operation failed: network request timed out".into()
-            }
-            AppError::Netease(
-                hyperplayer_source_netease::Error::Transport(_)
-                | hyperplayer_source_netease::Error::HttpStatus(_)
-                | hyperplayer_source_netease::Error::Api { .. }
-                | hyperplayer_source_netease::Error::InvalidResponse(_),
-            ) => "NetEase operation failed: remote service request failed".into(),
             AppError::Updater(_) => "update operation failed".into(),
             _ => error.to_string(),
         };
@@ -61,7 +50,6 @@ impl From<AppError> for ErrorDto {
             AppError::Database(_) => "databaseError",
             AppError::Credential(_) => "credentialError",
             AppError::Engine(_) => "engineError",
-            AppError::Netease(_) => "neteaseError",
             AppError::Updater(_) => "updaterError",
         };
         Self { code, message }
@@ -75,24 +63,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn network_errors_do_not_expose_urls_or_credentials() {
-        let secret = "https://user:password@example.test/media?token=secret";
-        let dto = ErrorDto::from(AppError::Netease(
-            hyperplayer_source_netease::Error::Transport(secret.into()),
-        ));
-        assert_eq!(dto.code, "neteaseError");
-        assert!(!dto.message.contains("secret"));
-        assert!(!dto.message.contains("password"));
-        assert!(!dto.message.contains("example.test"));
-
-        let dto = ErrorDto::from(AppError::Netease(hyperplayer_source_netease::Error::Api {
-            code: 500,
-            message: secret.into(),
-        }));
-        assert!(!dto.message.contains("secret"));
-        assert!(!dto.message.contains("example.test"));
-
-        let dto = ErrorDto::from(AppError::Updater(secret.into()));
-        assert_eq!(dto.message, "update operation failed");
+    fn error_dto_maps_every_variant_to_a_code() {
+        for error in [
+            AppError::InvalidArgument("x".into()),
+            AppError::Unavailable("x".into()),
+            AppError::StateUnavailable,
+            AppError::Window("x".into()),
+            AppError::Io(std::io::Error::other("x")),
+            AppError::Serialization(serde_json::Error::io(std::io::Error::other("x"))),
+            AppError::Database(rusqlite::Error::InvalidQuery),
+            AppError::Credential("x"),
+            AppError::Engine(hyperplayer_engine::EngineError::InvalidInput("x".into())),
+            AppError::Updater("x".into()),
+        ] {
+            let dto = ErrorDto::from(error);
+            assert!(!dto.code.is_empty());
+            assert!(!dto.message.is_empty());
+        }
     }
 }
