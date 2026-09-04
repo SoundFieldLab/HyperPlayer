@@ -213,7 +213,10 @@ export function bridgeError(error: unknown): { code: string; message: string; un
 function tauriBridge(): BridgeContract {
   return {
     async bootstrap() {
+      // 网易云会话恢复（DPAPI 凭据）+ 匿名 MUSIC_A 引导：不阻塞主引导，失败仅告警。
+      void netease.bootstrapNetease().catch(() => undefined);
       const value = await invoke<BackendBootstrapDto>(TAURI_COMMANDS.bootstrap);
+      netease.setNeteaseDomainEnabled(adaptSettings(value.settings).neteaseEnabled);
       return {
         app: value.app,
         settings: adaptSettings(value.settings),
@@ -226,7 +229,9 @@ function tauriBridge(): BridgeContract {
       if (patch.material !== undefined) localStorage.setItem(materialKey, patch.material);
       const request = settingsRequest(patch);
       if (Object.keys(request).length === 0) return { ...(await this.getSettings()), material: patch.material ?? getMaterial() };
-      return { ...adaptSettings(await invoke<BackendSettingsDto>(TAURI_COMMANDS.settingsUpdate, { request })), material: patch.material ?? getMaterial() };
+      const updated = adaptSettings(await invoke<BackendSettingsDto>(TAURI_COMMANDS.settingsUpdate, { request }));
+      netease.setNeteaseDomainEnabled(updated.neteaseEnabled);
+      return { ...updated, material: patch.material ?? getMaterial() };
     },
     async libraryOverview() { return invoke<LibraryOverviewDto>(TAURI_COMMANDS.libraryOverview); },
     async libraryQuery(search, cursor = null) {
@@ -361,13 +366,30 @@ function tauriBridge(): BridgeContract {
       try {
         // D35 Q18：主窗口权威——播放服务本地事件 + 跨窗口广播；辅助窗口纯订阅广播。
         if (windowRoot(window.location.search) === "main") {
+          let lastSnapshot: PlaybackSnapshotDto | null = null;
+          let lastBroadcastAt = 0;
+          const broadcast = (snapshot: PlaybackSnapshotDto) => {
+            lastSnapshot = snapshot;
+            void emit(TAURI_EVENTS.playbackBroadcast, snapshot).catch(() => undefined);
+          };
           const playbackUnlisten = playback.subscribe({
             onChanged: (snapshot) => {
               handlers.playbackChanged?.(snapshot);
-              void emit(TAURI_EVENTS.playbackBroadcast, snapshot).catch(() => undefined);
+              broadcast(snapshot);
             },
-            onQueueChanged: (snapshot) => handlers.queueChanged?.(snapshot),
-            onProgress: (revision, positionMs, durationMs) => handlers.playbackProgress?.({ revision, positionMs, durationMs }),
+            onQueueChanged: (snapshot) => {
+              handlers.queueChanged?.(snapshot);
+              broadcast(snapshot);
+            },
+            onProgress: (revision, positionMs, durationMs) => {
+              handlers.playbackProgress?.({ revision, positionMs, durationMs });
+              // 辅助窗口打开后 ≤1s 收到完整快照：进度路径承担 D35 的 1Hz 广播。
+              const now = Date.now();
+              if (lastSnapshot && now - lastBroadcastAt >= 1000) {
+                lastBroadcastAt = now;
+                void emit(TAURI_EVENTS.playbackBroadcast, lastSnapshot).catch(() => undefined);
+              }
+            },
             onFault: (fault) => handlers.dspProcessingFault?.(fault),
           });
           listeners.push(playbackUnlisten);
@@ -375,7 +397,11 @@ function tauriBridge(): BridgeContract {
           await add<PlaybackSnapshotDto>(TAURI_EVENTS.playbackBroadcast, ({ payload }) => handlers.playbackChanged?.(payload));
         }
         await add<BackendScanProgressDto>(TAURI_EVENTS.libraryScanProgress, ({ payload }) => handlers.scanProgress?.(payload));
-        await add<BackendSettingsDto>(TAURI_EVENTS.settingsChanged, ({ payload }) => handlers.settingsChanged?.(adaptSettings(payload)));
+        await add<BackendSettingsDto>(TAURI_EVENTS.settingsChanged, ({ payload }) => {
+          const settings = adaptSettings(payload);
+          netease.setNeteaseDomainEnabled(settings.neteaseEnabled);
+          handlers.settingsChanged?.(settings);
+        });
         await add<BackendCloseRequestedDto>(TAURI_EVENTS.closeRequested, ({ payload }) => handlers.closeRequested?.(payload));
         await add<{ button: string }>(TAURI_EVENTS.mediaKeyPressed, ({ payload }) => {
           handlers.mediaKeyPressed?.(payload.button as MediaButton);

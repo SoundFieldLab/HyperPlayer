@@ -5,15 +5,16 @@
   "type": "module",
   "description": "HyperPlayer — 现代化 Windows 桌面音乐播放器（Tauri 2 + React/TS + Rust 引擎）",
   "scripts": {
-    "dev": "tauri dev",
-    "build": "tauri build",
-    "build:debug": "tauri build --debug --no-bundle",
-    "build:netease-vendor": "node scripts/build-netease-vendor.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build": "pnpm prepare-sidecar && tauri build",
+    "build:debug": "pnpm prepare-sidecar && tauri build --debug --no-bundle",
+    "sidecar": "node server/netease-sidecar.mjs",
+    "prepare-sidecar": "node scripts/prepare-sidecar-dist.mjs",
     "build:hse": "node scripts/build-hse.mjs",
-    "frontend:dev": "pnpm build:hse && pnpm build:netease-vendor && vite --host 127.0.0.1",
-    "frontend:build": "pnpm build:hse && pnpm build:netease-vendor && pnpm check:ipc && tsc -b && vite build",
+    "frontend:dev": "pnpm build:hse && vite --host 127.0.0.1",
+    "frontend:build": "pnpm build:hse && pnpm check:ipc && tsc -b && vite build",
     "check:ipc": "node app/bridge/verify-contract.mjs",
-    "test": "pnpm build:hse && pnpm build:netease-vendor && vitest run"
+    "test": "pnpm build:hse && vitest run"
   },
   "dependencies": {
     "@noble/ciphers": "^2.4.0",

@@ -1,10 +1,10 @@
-// 网易云服务层（D34/D35）：UI 消费面（约 45 个函数）。
-// 业务规则移植自 vendor/waveforge-netease（音质阶梯/重试/付费拦截/QR 透传），
-// 协议调用走 vendored bundle（tauri-plugin-http 传输）。红线：无跨平台兜底。
+// 网易云服务层（D34/D35 + D36）：UI 消费面（约 45 个函数）。
+// 业务规则移植自 vendor/waveforge-netease（音质阶梯/重试/付费拦截/QR 透传）；
+// 协议调用走本地 Node sidecar（vendored 包原生运行，server/netease-sidecar.mjs，
+// 经 tauri-plugin-http 调回环端口绕 CORS）。红线：无跨平台兜底。
 
-import api from './generated/netease-api.generated.js'
 import { neteaseSession } from './session'
-import { cookieToJson, type NeteaseCookie } from './cookie'
+import { cookieToJson } from './cookie'
 import type {
   NeteaseAccountDto,
   NeteaseAlbumDetailDto,
@@ -57,34 +57,77 @@ export interface NeteaseResponse<Body = Record<string, unknown>> {
   cookie: string[]
 }
 
-interface NeteaseApiMap {
-  [key: string]: (query: Record<string, unknown>) => Promise<NeteaseResponse>
+/** sidecar 基址（D36：dev 端口固定 14321；打包期经配置注入，M6 定稿） */
+const SIDECAR_BASE = 'http://127.0.0.1:14321'
+const SIDECAR_TIMEOUT_MS = 20_000
+
+/** 网易云内容域开关（设置「网易云内容域」；由 bridge 随 bootstrap/设置变更同步进来） */
+let domainEnabled = true
+
+export function setNeteaseDomainEnabled(enabled: boolean): void {
+  domainEnabled = enabled
 }
 
-const apiMap = api as unknown as NeteaseApiMap
+/** 统一中文错误（含协议 code，UI 可按 code 区分「需登录」与「故障」） */
+function neteaseError(code: number): Error {
+  const message =
+    code === 301 ? '网易云接口需要登录后使用（code 301）'
+    : code === 502 ? '网易云接口网络请求失败（code 502）'
+    : `网易云接口暂不可用（code ${code}）`
+  const error = new Error(message)
+  ;(error as Error & { code?: number }).code = code
+  return error
+}
+
+/** 模块名 → sidecar 路由：vendored server 把文件名下划线转斜杠（getModulesDefinitions），如 toplist_detail → /toplist/detail */
+function moduleRoute(name: string): string {
+  return `/${name.replace(/_/g, '/')}`
+}
 
 function call<T = Record<string, unknown>>(
   name: string,
   query: Record<string, unknown>,
+  allowCodes: number[] = [],
 ): Promise<T> {
-  const fn = apiMap[name]
-  if (!fn) throw new Error(`netease protocol function unavailable: ${name}`)
-  const cookie = neteaseSession.current()
-  const cookieParam = cookie.MUSIC_U || cookie.MUSIC_A
-    ? { cookie: Object.entries(cookie).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(';') }
-    : {}
-  return fn({ ...cookieParam, ...query }).then((response) => {
-    const body = response.body as { code?: unknown } & Record<string, unknown>
-    if (body && typeof body === 'object' && 'code' in body) {
-      const code = Number(body.code)
-      if (code !== 200) {
-        const error = new Error(`netease api error: code=${code}`)
-        ;(error as Error & { code?: number }).code = code
-        throw error
+  // 内容域禁用即整体拒绝（D34：模块边界承担禁用，不与播放核心耦合）
+  if (!domainEnabled) return Promise.reject(new Error('网易云内容域已在设置中禁用'))
+  return postSidecar(moduleRoute(name), query)
+    .then((response) => {
+      const body = response.body as { code?: unknown } & Record<string, unknown>
+      if (body && typeof body === 'object' && 'code' in body) {
+        const code = Number(body.code)
+        if (code !== 200 && !allowCodes.includes(code)) throw neteaseError(code)
       }
-    }
-    return body as T
+      return body as T
+    })
+    .catch((error) => {
+      if (error instanceof Error) throw error
+      // sidecar 传输层异常（非 Error reject）归一为 502
+      throw neteaseError(502)
+    })
+}
+
+/** sidecar 传输（D36）：POST JSON，cookie 字符串随 body 传给 vendored 路由注入。
+ *  用原生 fetch（CSP 已放行 14321；vendored server 自带 CORS 中间件）——
+ *  plugin-http 对本机回环地址存在请求挂死且 AbortSignal 不生效的缺陷（实测）。 */
+async function postSidecar(route: string, query: Record<string, unknown>): Promise<NeteaseResponse> {
+  const cookie = neteaseSession.current()
+  const cookieString = Object.entries(cookie).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(';')
+  const response = await fetch(`${SIDECAR_BASE}${route}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cookieString ? { ...query, cookie: cookieString } : query),
+    signal: AbortSignal.timeout(SIDECAR_TIMEOUT_MS),
   })
+  // vendored 路由成功/协议错误同构：res.status(...).send(body)——body.code 才是协议语义，
+  // 由 call() 统一归一为中文错误；此处只兜「无 JSON 可解析」的传输故障。
+  let body: Record<string, unknown>
+  try {
+    body = await response.json() as Record<string, unknown>
+  } catch {
+    throw neteaseError(response.status || 502)
+  }
+  return { status: response.status, body, cookie: [] }
 }
 
 // ============ 会话与账号 ============
@@ -134,15 +177,17 @@ export async function neteaseLogout(): Promise<void> {
 }
 
 export async function neteaseStartQrLogin(): Promise<NeteaseLoginStartDto> {
-  const body = await call<{ unikey?: string }>('login_qr_key', {})
-  const loginId = body.unikey ?? ''
-  if (!loginId) throw new Error('未能获取二维码 key')
+  // login_qr_key 响应形状：{ data: { code, unikey }, code: 200 }（vendor module 重包一层 data）
+  const body = await call<{ data?: { unikey?: string }; unikey?: string }>('login_qr_key', {})
+  const loginId = body.data?.unikey ?? body.unikey ?? ''
+  if (!loginId) throw new Error('未能获取二维码 key（网易云未返回 unikey，请稍后重试）')
   // qrimg 由前端以 canvas 渲染（qrcode shim 无副作用）；此处返回 key 供轮询
   return { loginId, qrImageDataUrl: '' }
 }
 
 export async function neteasePollQrLogin(loginId: string): Promise<NeteaseLoginStateDto> {
-  const body = await call<{ code?: number; cookie?: string }>('login_qr_check', { key: loginId })
+  // 轮询 code 800/801/802/803 是状态语义而非错误（vendor 将其列为 SPECIAL_STATUS_CODES）
+  const body = await call<{ code?: number; cookie?: string }>('login_qr_check', { key: loginId }, [800, 801, 802, 803])
   const code = Number(body.code ?? -1)
   if (code === 800) return { phase: 'expired' }
   if (code === 802) return { phase: 'scanned' }
@@ -169,12 +214,17 @@ export async function neteaseHome(): Promise<NeteaseHomeDto> {
     personalized.status === 'fulfilled' && Array.isArray(personalized.value.result)
       ? personalized.value.result.map(mapPlaylist)
       : []
+  const recommendNeedsLogin =
+    recommend.status === 'rejected' && (recommend.reason as { code?: number } | null)?.code === 301
   return {
     recommendedTracks,
     recommendedPlaylists,
     anonymous: !neteaseSession.isLoggedIn,
+    // 区分「空」与「需登录」：每日推荐匿名 code 301，歌单推荐匿名可用
     unavailableSections:
-      recommendedTracks.length === 0 && !neteaseSession.isLoggedIn ? ['recommendedTracks'] : [],
+      recommendedTracks.length === 0 && (!neteaseSession.isLoggedIn || recommendNeedsLogin)
+        ? ['recommendedTracks']
+        : [],
   }
 }
 
@@ -195,16 +245,20 @@ export async function neteaseCharts(): Promise<NeteaseChartDto[]> {
     name: chart.name ?? '未知榜单',
     coverUrl: chart.coverImgUrl ?? null,
     updateFrequency: chart.updateFrequency ?? null,
+    // /api/toplist/detail 的 preview tracks 是 { first: 歌名, second: 歌手 } 摘要形状
     previewTracks: (chart.tracks ?? []).slice(0, 3).map((track) => {
-      const t = track as { name?: string; artists?: Array<{ name?: string }> }
-      return { trackRef: { id: '0', source: 'netease' as const }, title: t.name ?? '', artists: (t.artists ?? []).map((a) => a.name ?? '') }
+      const t = track as { first?: string; second?: string; name?: string; artists?: Array<{ name?: string }> }
+      const title = t.first ?? t.name ?? ''
+      const artists = t.second ? [t.second] : (t.artists ?? []).map((a) => a.name ?? '')
+      return { trackRef: { id: '0', source: 'netease' as const }, title, artists }
     }),
   }))
 }
 
 export async function neteaseNewSongs(): Promise<NeteaseNewSongsDto> {
-  const body = await call<{ result?: unknown[] }>('personalized_newsong', { limit: 30 })
-  return { tracks: (body.result ?? []).map(mapSong) }
+  // /api/personalized/newsong 响应为 { data: [...] }（旧字段形状 id/name/artists/album/duration）
+  const body = await call<{ data?: unknown[] }>('personalized_newsong', { limit: 30 })
+  return { tracks: (body.data ?? []).map(mapSong) }
 }
 
 // ============ 搜索 ============
@@ -215,7 +269,8 @@ export async function neteaseSearch(keywords: string, kind: NeteaseSearchKind): 
   const type = { track: 1, album: 10, artist: 100, playlist: 1000 }[kind]
   const body = await call<{ result?: { songs?: unknown[]; albums?: unknown[]; artists?: unknown[]; playlists?: unknown[] } }>(
     'cloudsearch',
-    { s: keywords, type, limit: 30, offset: 0 },
+    // /api/cloudsearch/pc 读取 query.keywords（vendor module/cloudsearch.js），传 s 无效
+    { keywords, type, limit: 30, offset: 0 },
   )
   const result = body.result ?? {}
   return {
@@ -233,7 +288,8 @@ export async function neteaseSearchHot(): Promise<Array<{ word: string }>> {
 }
 
 export async function neteaseSearchSuggest(keywords: string): Promise<NeteaseSearchSuggestionsDto> {
-  const body = await call<{ result?: { songs?: unknown[] } }>('search_suggest', { s: keywords })
+  // module/search_suggest.js 内部以 { s: keywords } 请求 /api/search/suggest/web
+  const body = await call<{ result?: { songs?: unknown[] } }>('search_suggest', { keywords })
   return { songs: (body.result?.songs ?? []).map(mapSong) }
 }
 
@@ -312,9 +368,20 @@ export async function neteasePlaymodeIntelligenceList(songId: number, playlistId
 // ============ 收藏 / 云盘 ============
 
 export async function neteaseFavorites(): Promise<NeteaseFavoritesDto> {
+  // user_playlist / likelist 均需真实数字 uid；会话只存 cookie，先经 user_account 换取 userId
+  let uid: number | null = null
+  if (neteaseSession.isLoggedIn) {
+    try {
+      const account = await call<{ profile?: { userId?: number } }>('user_account', {})
+      uid = account.profile?.userId ?? null
+    } catch {
+      // 取不到 uid：返回空结构（未登录/会话失效）
+    }
+  }
+  if (uid === null) return { playlists: [], likedTrackIds: [] }
   const [playlists, liked] = await Promise.allSettled([
-    call<{ playlist?: Array<Record<string, unknown>> }>('user_playlist', { uid: neteaseSession.current().uid ?? '', limit: 50 }),
-    call<{ ids?: number[] }>('likelist', { uid: neteaseSession.current().uid ?? '' }),
+    call<{ playlist?: Array<Record<string, unknown>> }>('user_playlist', { uid, limit: 50 }),
+    call<{ ids?: number[] }>('likelist', { uid }),
   ])
   return {
     playlists:
@@ -328,8 +395,9 @@ export async function neteaseFavorites(): Promise<NeteaseFavoritesDto> {
 export async function neteaseCloud(): Promise<NeteaseCloudDto> {
   const body = await call<{ data?: unknown[] }>('user_cloud', { limit: 30 })
   return {
+    // /api/v1/cloud/get 条目为 { simpleSong, songId, fileName, ... }（旧版字段名 song）
     songs: (body.data ?? []).map((item) => {
-      const song = mapSong((item as { song?: unknown }).song ?? item)
+      const song = mapSong((item as { simpleSong?: unknown; song?: unknown }).simpleSong ?? (item as { song?: unknown }).song ?? item)
       return { ...song, track: song }
     }),
   }
@@ -416,10 +484,17 @@ const COMMENT_TYPE: Record<NeteaseCommentResource, number> = {
 }
 
 export async function neteaseComments(resource: NeteaseCommentResource, resourceId: number): Promise<NeteaseCommentPageDto> {
-  const body = await call<{ comments?: unknown[]; total?: number }>('comment', { id: resourceId, type: COMMENT_TYPE[resource], pageNo: 1, pageSize: 30, sortType: 3 })
+  // 读评论用 comment_new（/api/v2/resource/comments，pageNo/pageSize/sortType）；
+  // 'comment' 是写端点（add/delete/reply），t 未映射会请求 /api/resource/comments/undefined。
+  // v2 响应嵌套在 data 下（comments/totalCount）。
+  const body = await call<{ data?: { comments?: unknown[]; totalCount?: number }; comments?: unknown[]; total?: number }>(
+    'comment_new',
+    { id: resourceId, type: COMMENT_TYPE[resource], pageNo: 1, pageSize: 30, sortType: 3 },
+  )
+  const data = body.data ?? {}
   return {
-    comments: (body.comments ?? []).map(mapComment),
-    total: Number(body.total ?? 0),
+    comments: (data.comments ?? body.comments ?? []).map(mapComment),
+    total: Number(data.totalCount ?? body.total ?? 0),
     nextCursor: null,
   }
 }
@@ -507,17 +582,25 @@ export async function neteaseListenSongRank(period: NeteaseListenPeriod): Promis
 // ============ 杂项 ============
 
 export async function neteaseImage(src: string): Promise<NeteaseImageDto> {
-  // 图片直连下载（http(s)），经 tauri-plugin-http 绕 CORS；返回字节供 Blob 使用
-  const response = await fetch(src)
-  if (!response.ok) throw new Error(`image fetch failed: ${response.status}`)
+  // 图片直连下载：走 tauri-plugin-http 绕 CORS（WebView2 原生 fetch 会被跨域拦截），
+  // 与 shims/axios.ts 同一传输管道；返回字节供 Blob 使用
+  const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
+  const response = await tauriFetch(src)
+  if (!response.ok) throw new Error(`图片下载失败（HTTP ${response.status}）`)
   const mimeType = response.headers.get('content-type')?.split(';')[0] ?? 'image/jpeg'
   const buffer = await response.arrayBuffer()
   return { mimeType, bytes: Array.from(new Uint8Array(buffer)) }
 }
 
 export async function neteaseUpdatePlaylistCover(playlistId: number, imageBase64: string, mimeType?: string): Promise<void> {
-  // 服务端仅支持 jpeg/png；base64 原样上传
-  await call('playlist_cover_update', { id: playlistId, img: imageBase64, imgSize: 0, imgX: 0, imgY: 0 })
+  // 上传链（plugins/upload.js）要求 imgFile: { name, mimetype, data }（data 走 NOS 直传字节），
+  // 传 img/imgSize/imgX/imgY 会被 module 以 400「imgFile is required」拒绝
+  const raw = imageBase64.replace(/^data:[^;]+;base64,/, '')
+  const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0))
+  await call('playlist_cover_update', {
+    id: playlistId,
+    imgFile: { name: 'cover.jpg', mimetype: mimeType ?? 'image/jpeg', data: bytes },
+  })
 }
 
 export async function neteaseScrobble(payload: { songId: number; sourceId: number; playedSeconds: number }): Promise<void> {
@@ -647,6 +730,7 @@ function mapDjProgram(raw: unknown): NeteaseDjProgramDto {
 }
 
 export async function bootstrapNetease(): Promise<void> {
+  // D36：匿名身份由 sidecar 的 generateConfig 原生自管，前端只恢复登录会话（DPAPI）。
   await neteaseSession.restore()
 }
 
@@ -662,11 +746,11 @@ export interface LyricResult {
 const LYRIC_RETRY_DELAYS_MS = [300, 600, 1200, 2400, 4800]
 
 export async function getLyric(id: number): Promise<LyricResult> {
-  const query = { id, tv: -1, lv: -1, rv: -1, kv: -1, yv: -1, ytv: -1, yrv: -1 }
+  // lyric_new（/api/song/lyric/v1）为 'lyric' 超集，额外返回 yrc 逐字时间轴（D34 歌词要求）
   let lastError: unknown = null
   for (let attempt = 0; attempt <= LYRIC_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
-      return await call<LyricResult>('lyric', query)
+      return await call<LyricResult>('lyric_new', { id })
     } catch (error) {
       lastError = error
       if (attempt < LYRIC_RETRY_DELAYS_MS.length) {
@@ -694,30 +778,46 @@ const BR_BY_QUALITY: Record<QualityLevel, number> = {
   jymaster: 1411000,
 }
 
+/** 候选降级链对齐 WaveForge getNeteaseQualityCandidates（目标档起向下降级）。
+ *  song_url_v1 已按红线排除（其内部挂 song_url_match 跨平台匹配），改用
+ *  song_url（/api/song/enhance/player/url）+ br 上限请求。 */
+const QUALITY_LADDER: Record<QualityLevel, QualityLevel[]> = {
+  standard: ['standard'],
+  higher: ['higher', 'standard'],
+  exhigh: ['exhigh', 'standard'],
+  lossless: ['lossless', 'exhigh', 'standard'],
+  hires: ['hires', 'lossless', 'exhigh', 'standard'],
+  jyeffect: ['jyeffect', 'lossless', 'exhigh', 'standard'],
+  sky: ['sky', 'lossless', 'exhigh', 'standard'],
+  jymaster: ['jymaster', 'hires', 'lossless', 'exhigh', 'standard'],
+}
+
 export interface SongUrlResult {
   url: string | null
   level: string
   fee: number
 }
 
-/** 播放地址：候选序按 WaveForge getNeteaseQualityCandidates 语义（首档 2 次、其余 1 次），
+/** 播放地址：WaveForge 语义 = 首档 2 次尝试（间隔 150ms）、其余 1 次；
  *  付费曲目（fee 1/4）无有效 URL 时如实返回 null（不跨平台兜底，红线）。 */
 export async function getSongUrl(id: number, quality: QualityLevel = 'standard'): Promise<SongUrlResult> {
-  const order: QualityLevel[] = ['standard', 'higher', 'exhigh', 'lossless', 'hires', 'jyeffect', 'sky', 'jymaster']
-  const target = order.indexOf(quality)
-  const candidates = target < 0 ? ['standard'] as QualityLevel[] : order.slice(0, target + 1).reverse()
+  const candidates = QUALITY_LADDER[quality] ?? QUALITY_LADDER.standard
   let lastFee = 0
-  for (const level of candidates) {
-    try {
-      const body = await call<{ data?: Array<{ url?: string | null; level?: string; fee?: number }> }>(
-        'song_url',
-        { id, br: BR_BY_QUALITY[level] },
-      )
-      const item = body.data?.[0]
-      if (item?.url) return { url: item.url, level: item.level ?? level, fee: Number(item.fee ?? 0) }
-      lastFee = Number(item?.fee ?? lastFee)
-    } catch {
-      // 该档位失败，继续降级
+  for (let index = 0; index < candidates.length; index += 1) {
+    const attempts = index === 0 ? 2 : 1
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const body = await call<{ data?: Array<{ url?: string | null; level?: string; fee?: number }> }>(
+          'song_url',
+          { id, br: BR_BY_QUALITY[candidates[index]] },
+        )
+        const item = body.data?.[0]
+        if (item?.url) return { url: item.url, level: item.level ?? candidates[index], fee: Number(item.fee ?? 0) }
+        lastFee = Number(item?.fee ?? lastFee)
+        break // 该档有响应但无 URL：进入下一降级档
+      } catch {
+        if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 150))
+      }
     }
   }
   return { url: null, level: 'standard', fee: lastFee }
@@ -733,7 +833,8 @@ export interface SongDetailResult {
 }
 
 export async function getSongDetail(id: number): Promise<SongDetailResult | null> {
-  const body = await call<{ songs?: Array<Record<string, unknown>> }>('song_detail', { ids: JSON.stringify([id]) })
+  // module/song_detail.js 对 query.ids 自行 split(',')，须传逗号分隔串而非 JSON 数组
+  const body = await call<{ songs?: Array<Record<string, unknown>> }>('song_detail', { ids: String(id) })
   const song = body.songs?.[0]
   if (!song) return null
   const artists = (song.ar ?? song.artists ?? []) as Array<Record<string, unknown>>

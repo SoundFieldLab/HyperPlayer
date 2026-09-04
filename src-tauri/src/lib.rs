@@ -6,6 +6,7 @@ pub mod dto;
 pub mod error;
 pub mod events;
 mod lifecycle;
+mod netease_sidecar;
 mod platform;
 pub mod ports;
 
@@ -95,8 +96,12 @@ pub fn run() {
             app.manage(state);
             app.manage(updater_config.clone());
             lifecycle::install(app.handle())?;
+            // 网易云协议 sidecar（D36）：完整版拉起 node 跑 vendored 服务；dev 期由
+            // scripts/dev.mjs 编排，此处自动跳过。退出清理挂事件循环（on_event）。
+            netease_sidecar::spawn(app.handle());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run HyperPlayer");
+        .build(tauri::generate_context!())
+        .expect("failed to build HyperPlayer")
+        .run(move |app, event| netease_sidecar::on_event(app, event));
 }

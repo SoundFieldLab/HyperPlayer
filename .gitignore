@@ -32,3 +32,8 @@ app/services/netease/generated/
 
 # HSE worklet bundle（scripts/build-hse.mjs 复制，dev/build 前自动生成）
 public/hse-worklet-bundle.js
+
+# D36 sidecar 物化产物与捆绑二进制（构建期生成，不入库）
+src-tauri/sidecar-dist/
+src-tauri/binaries/
+vendor/netease-cloudmusic-api/node_modules/

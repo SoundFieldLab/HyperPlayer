@@ -2,11 +2,11 @@
 
 ## 项目简介
 
-HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + React/TypeScript + Rust）。UI 定调（UI-D1~80）与**前后端边界定调（D34 / ADR-0006，2026-09-04）**已完成：**播放、DSP、网易云协议、缓存治理全部在 WebView 前端（TypeScript）；Rust 只留本地曲库与桌面壳。** 现处于 D34 重定调后的实现阶段：vendor 代码已落位、删除清单已确认待执行、接线未开始。
+HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + React/TypeScript + Rust）。UI 定调（UI-D1~80）、**前后端边界定调（D34 / ADR-0006，2026-09-04）**与**接缝定调（D35）**已完成；**D36（2026-09-05）修订网易云协议层为 Node sidecar 原生接入**。现状：播放/DSP/缓存治理在 WebView 前端（TypeScript），Rust 留本地曲库与桌面壳，网易云协议由 vendored 包以自带 express 服务跑本地 Node sidecar（`server/netease-sidecar.mjs`），前端经 sidecar HTTP 调用；浏览器化 shims/适配层已删除。处于实现接线阶段：主链路已接（壳/网易云/播放/DSP），实机 bug 修复与波次收尾进行中。
 
 ## 硬性约束
 
-- **现行技术栈是 Tauri 2（D21 / ADR-0005 + ADR-0006 / D34）**：D13 Electron 方案已作废；不得恢复 Electron、Node sidecar、napi-rs 或打包 Chromium，除非用户重新定调并新增 ADR；零 Node 运行时
+- **现行技术栈是 Tauri 2（D21 / ADR-0005 + ADR-0006 / D34，D36 修订）**：D13 Electron 方案已作废；不得恢复 Electron、napi-rs 或打包 Chromium。**D36 允许网易云协议层使用本地 Node sidecar**（vendored 包原生运行）；播放/DSP/壳层仍零 Node。
 - **播放链在 WebView（D34）**：Web Audio + HSE AudioWorklet；双源调度——本地完整数据（本地文件/整轨缓存）走 decodeAudioData + AudioBufferSource 采样级调度（真 gapless），流式在线播放走 MediaElement 近似 gapless（预载+快切）；本地格式支持 = WebView2 原生格式集（MP3/FLAC/AAC/OGG/WAV），APE/DSF/DFF 明确不支持；放弃 WASAPI 独占（走系统共享混音）
 - **DSP 权威 = HSE TS（D34，推翻 D29/D31/D33）**：`shared/hypersoundengine`（HSE v1.5.1 完整 TS：core + worklet + browser + ui + specs）是唯一 DSP 实现；DSP 工作台 = HSE 自带 MixingStudio UI + HyperPlayer 视觉统一（theme.ts 令牌、lucide→Phosphor），**不大改 HSE UI 结构**；授权链 `LICENSE-HSE-AUTHORIZATION.md`（IceFireIcer 专项授权）覆盖 TS 拷贝，保留
 - 项目许可证 **Apache-2.0**：依赖仅接受 Apache-2.0/MIT/BSD/ISC/Zlib/Unicode/OFL 等经审核可兼容许可证；GPL/AGPL 组件不引入（**folia 不接、删除**）；LGPL/MPL 等弱 copyleft 仅限完成合规评估并记录后使用（**unblockneteasemusic 永不引入**）
@@ -15,7 +15,7 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 - **本地曲库归 Rust（D14 / ADR-0004，D34 维持）**：`crates/hyperplayer-engine` 仅保留 repository/library/lofty/SQLite 曲库；src-tauri 仅壳层（窗口/托盘/SMTC/文件关联/更新/日志）+ library commands 透传；command 面从约 160 剪到约 46 个，全部无领域知识
 - **前后端接缝（D35，2026-09-04）**：SMTC = WebView 权威 + Rust 纯桥（上行 3 个 smtc_update command、下行 media_button_pressed 事件）；本地文件走 `asset:` 协议（曲库目录进 scope）；缓存介质 = OPFS（用户不可见、数据钉在应用数据目录随程序走）；配置/DSP 预设 = Rust app-data JSON 哑 KV（`settings_get/set`，schema 归 TS）；Cookie = Rust DPAPI 保险库哑存取（`credential_vault.rs` 保留，防数据目录拷贝盗号）；多窗口 = 主窗口权威 + Tauri event 广播（进度 1Hz、歌词按行）；tauri-plugin-http 放开 HTTPS 任意域（音源禁用改由前端模块边界承担，非传输层 enforcement——已记录的偏差）；天气 = 保留、TS 重做完整功能（weather.rs 删除）；compat.rs 删除
 - 官方内置网易云音源：模块隔离、可整体禁用，不与播放核心/壳层耦合（版权风险自担，用户知情决策）
-- **网易云实现（D34，推翻 D15/D21 网易云侧）**：协议核心 = `vendor/netease-cloudmusic-api`（`@neteasecloudmusicapienhanced/api` 4.39.0，MIT，431 端点；三处手术：axios→tauri-plugin-http、fs/os.tmpdir 落盘→浏览器存储、express 入口与 fs 模块自动发现→构建期静态枚举）+ `vendor/waveforge-netease`（WaveForge 业务层：路由重试/缓存/音质降级/付费拦截/QR 透传 + musicApi 服务模式）；WaveForge（https://github.com/SoundFieldLab/WaveForge ）经项目方授权直接入库，LICENSE/THIRD_PARTY_NOTICES 登记；D15 Cleanroom 作废，`docs/音源-网易云-行为规范.md` 保留作协议行为参考；Cookie/会话存浏览器侧
+- **网易云实现（D36，2026-09-05，修订 D34「三处手术」）**：协议核心 = `vendor/netease-cloudmusic-api`（`@neteasecloudmusicapienhanced/api` 4.39.0，MIT，431 端点）**以标准 Node 包原生运行**——pnpm workspace 成员、安装自身依赖、经 `server/netease-sidecar.mjs` 调 `serveNcmApi` 起 express（dev 端口 14321，`ENABLE_GENERAL_UNBLOCK` 不设置）；前端 `neteaseService.call()` 走 sidecar HTTP（POST JSON + `cookie` 随 body 传，响应 `{status,body,cookie}`），会话主权在前端（MUSIC_U 存 DPAPI 保险库，sidecar 不持久化登录态）。浏览器 shims/generated/build-netease-vendor **已删除、不得复活**。WaveForge 业务层（音质阶梯降级/付费拦截/重试）保留在 TS 服务层；WaveForge（https://github.com/SoundFieldLab/WaveForge ）经项目方授权直接入库，LICENSE/THIRD_PARTY_NOTICES 登记；`docs/音源-网易云-行为规范.md` 保留作协议行为参考。sidecar 打包形态（node.exe 捆绑 + Rust 进程托管）M6 定稿
 - **歌词（D34）**：`vendor/waveforge-lyrics`（LRC/YRC/TTML 解析 + 逐字时间轴 + LyricsDisplay 等渲染组件成套接入）；folia/pv/FoliaLyricsPage/MultidimensionalLyrics 不引入
 - **不提供音乐文件下载/导出**；播放缓存必须是应用私有缓存，不能暴露为 MP3/FLAC 文件
 - **VIP 缓存权益门禁（D23，D34 改 TS 执行）**：VIP 缓存绑定 `AccountEntitled(userId)`；只有当前登录同一网易账号且服务端实时确认 VIP/对应权益有效时才能播放。未登录、非 VIP、会员过期、切换账号或校验失败一律 fail closed，缓存文件存在不构成播放授权。规则在 TS 服务层执行，强制力降档（JS 拦截可被绕过，威胁模型 = 防误用不防故意）
@@ -39,7 +39,8 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 ## 目录结构
 
 - `docs/` — 调研、需求基线、决策记录、ADR、术语表和网易云行为规范，已 gitignore
-- `vendor/netease-cloudmusic-api/` — vendored 网易云协议核心（4.39.0，MIT，431 端点）
+- `server/netease-sidecar.mjs` — 网易云协议 Node sidecar（D36）：起 vendored 包自带 serveNcmApi（express，dev 端口 14321）；`scripts/dev.mjs` 编排 sidecar + tauri dev
+- `vendor/netease-cloudmusic-api/` — vendored 网易云协议核心（4.39.0，MIT，431 端点；D36 起为 pnpm workspace 成员，原生 Node 依赖）
 - `vendor/waveforge-netease/` — WaveForge 网易云业务层（local-server.mjs 路由逻辑 + services 前端服务）
 - `vendor/waveforge-lyrics/` — WaveForge 歌词解析+渲染层
 - `shared/hypersoundengine/` — HSE v1.5.1 完整 TS（DSP core/worklet/browser + MixingStudio UI + specs）
@@ -48,12 +49,13 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 - `src-tauri/` — Tauri 2 壳层（窗口/托盘/SMTC/更新/日志 + library commands）
 - `temp/` — 第三方参考、PoC 和依赖探针，已 gitignore，永不入库（WaveForge 快照/HSE tarball 的存档仍在 temp，作为引入源头凭证）
 
-## 技术栈（D34 现行）
+## 技术栈（D34 现行，D36 修订）
 
-- **Web 前端（运行时主体）**：React + TypeScript + Vite，运行在系统 WebView2；播放链（Web Audio + HSE AudioWorklet）、网易云服务（vendored 协议 + tauri-plugin-http）、DSP 宿主、缓存治理全部在前端
+- **Web 前端（运行时主体）**：React + TypeScript + Vite，运行在系统 WebView2；播放链（Web Audio + HSE AudioWorklet）、DSP 宿主、缓存治理、网易云业务服务层（会话/音质阶梯/门禁）全部在前端
+- **网易云协议 sidecar（D36）**：本地 Node 进程跑 vendored express 服务，前端经 tauri-plugin-http 调 `http://127.0.0.1:14321`（scope 含回环 http；cookie 每请求注入，sidecar 无登录态持久化）
 - **桌面壳**：Tauri 2 Rust 应用层 —— 窗口、托盘、SMTC、生命周期、capabilities、更新和 Windows 集成；`tauri-plugin-http` 作哑传输管道
 - **Rust 曲库**：`hyperplayer-engine` crate —— lofty + rusqlite；框架无关，ADR-0004 边界维持
-- **桥**：曲库/窗口/系统走 Tauri commands（约 40 个）+ events（扫描进度等）；网易云 HTTP 走 tauri-plugin-http（绕 CORS）；播放/DSP 数据不过 IPC
+- **桥**：曲库/窗口/系统走 Tauri commands（约 40 个）+ events（扫描进度等）；网易云协议走本地 sidecar HTTP、封面/CDN/天气走 tauri-plugin-http（绕 CORS）；播放/DSP 数据不过 IPC
 - **UI 设计基线已完成（UI-D1~UI-D80）**：现行规则见 `docs/UI设计基线.md`，决策过程见 `docs/UI定调决策记录.md`；不得回退成默认 shadcn、移动端底部 Tab、营销页布局或遍地玻璃卡片；DSP 工作台条款按 D34 修订为「HSE 自带 UI + HyperPlayer 皮肤」
 - **UI 体系**：Tailwind CSS 4 + 深度定制 shadcn/ui（Radix）+ Phosphor Regular/Fill；zustand（分域 store）+ TanStack Query；Motion 管产品过渡，CSS 管短反馈；复杂/编排式动画可用 animejs 4.5.0 补充（2026-09-04 用户定调）；主窗口的封面氛围、按需波形/频谱、DSP 曲线/仪表和 2D/2.5D 空间场可选用 vGPU 0.3.1，必须运行时检测 WebGPU 并保留 Canvas2D/SVG/DOM 降级；不引入 GSAP
 - **视觉方向**：明亮柔和消费产品 + 克制 Apple/Liquid Glass 近似；默认明亮、完整深石墨主题；`#3F55F9` 管交互、`#FF761C` 管播放；得意黑展示、思源黑体内容/歌词、Cascadia Mono 数据
@@ -70,7 +72,8 @@ HyperPlayer 是一款**现代化 Windows 桌面音乐播放器**（Tauri 2 + Rea
 正式应用已经建立，开发和验证以仓库脚本为准（D34 删除执行后部分脚本将移除，见 D34 清单）：
 
 - 安装依赖：`pnpm install --frozen-lockfile`
-- 开发运行：`pnpm dev`（启动 Tauri 2 + WebView2；不提供浏览器预览）
+- 开发运行：`pnpm dev`（Node 编排器并行启动网易云 sidecar + Tauri 2 + WebView2；不提供浏览器预览）
+- 单独起协议 sidecar：`pnpm sidecar`（端口 14321；`ENABLE_GENERAL_UNBLOCK` 永不设置）
 - 完整构建：`pnpm build`
 - 仅供 Tauri 内部调用的前端构建：`pnpm frontend:build`
 - 前端单元测试：`pnpm test`
