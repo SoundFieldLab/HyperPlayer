@@ -159,7 +159,7 @@ export async function neteasePollQrLogin(loginId: string): Promise<NeteaseLoginS
 export async function neteaseHome(): Promise<NeteaseHomeDto> {
   const [recommend, personalized] = await Promise.allSettled([
     call<{ recommend?: { songs?: unknown[] } }>('recommend_songs', {}),
-    call<{ result?: unknown[] }>('personalized_playlist', { limit: 10 }),
+    call<{ result?: unknown[] }>('personalized', { limit: 10 }),
   ])
   const recommendedTracks: NeteaseSongDto[] =
     recommend.status === 'fulfilled' && Array.isArray(recommend.value.recommend?.songs)

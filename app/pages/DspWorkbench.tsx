@@ -32,14 +32,26 @@ export function DspWorkbenchView(): React.JSX.Element {
 
   return (
     <Page title="音效工作台" subtitle="HSE 实时处理链 · 参数变更经宿主交叉淡变生效">
-      <HyperSoundEngineMixingStudio
-        bridge={bridge}
-        playerTheme={playerTheme}
-        onClose={() => navigate("home")}
-        anchorRect={null}
-        exportWav={null}
-        exporting={false}
-      />
+      {/* 嵌入宿主：高度 = 视口 − 标题栏(54) − 播放坞(80) − 页面留白/标题，面板铺满其中 */}
+      <div
+        style={{
+          height: "calc(100vh - 300px)",
+          minHeight: 540,
+          maxWidth: 1080,
+          width: "100%",
+          margin: "0 auto",
+        }}
+      >
+        <HyperSoundEngineMixingStudio
+          bridge={bridge}
+          playerTheme={playerTheme}
+          onClose={() => navigate("home")}
+          anchorRect={null}
+          exportWav={null}
+          exporting={false}
+          variant="embedded"
+        />
+      </div>
     </Page>
   );
 }
