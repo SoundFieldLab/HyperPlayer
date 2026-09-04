@@ -22,15 +22,16 @@ import { CommandPalette } from "./CommandPalette";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const weather: ShenzhenWeatherDto = {
-  location: "深圳",
-  observedAt: "2026-09-01T12:30",
   temperatureC: 31.2,
+  humidityPercent: 72,
+  weatherCode: 61,
+  description: "雨",
+  updatedAtMs: 1_752_000_000_000,
+  isDay: true,
+  condition: "雨",
   apparentTemperatureC: 35.7,
   relativeHumidityPercent: 72,
-  weatherCode: 61,
-  condition: "雨",
   windSpeedKmh: 8.4,
-  isDay: true,
 };
 
 const track: TrackDto = {
@@ -47,16 +48,17 @@ const track: TrackDto = {
 };
 
 const playback: PlaybackSnapshotDto = {
-  revision: 1,
+  revision: "1",
   current: track,
   currentQueueItemId: "queue-current",
   status: "playing",
   positionMs: 42_000,
+  durationMs: 180_000,
   volume: 0.7,
   queue: [],
   nextUp: [],
   repeat: "sequence",
-  dsp: { available: true, bypassed: true, label: "Rust DSP runtime 已内建；完整 22 阶段与 DspPort 尚未接通" },
+  shuffled: false,
   dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
 };
 

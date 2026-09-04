@@ -57,28 +57,28 @@ const track = (id: string, quality: TrackDto["quality"] = "无损"): TrackDto =>
 });
 
 const playback = (current: TrackDto): PlaybackSnapshotDto => ({
-  revision: 1,
+  revision: "1",
   current,
   currentQueueItemId: `queue-${current.id}`,
   status: "playing",
   positionMs: 10_000,
+  durationMs: current.durationMs,
   volume: 0.6,
   queue: [],
   nextUp: [],
   repeat: "sequence",
-  dsp: { available: true, bypassed: true, label: "Rust DSP runtime 已内建；完整 22 阶段与 DspPort 尚未接通" },
+  shuffled: false,
   dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
 });
 
 function status(id: string, value: BackendCacheStatusDto["status"]): BackendCacheStatusDto {
+  const ready = value === "ready";
   return {
-    track: { id, source: "netease" },
-    quality: value === "missing" ? null : "lossless",
-    cachedVersions: value === "missing" ? 0 : 1,
     status: value,
-    accessClass: value === "lockedEntitlement" ? "accountEntitled" : "public",
-    ownerUserId: value === "lockedEntitlement" ? "owner" : null,
-    lastValidatedAt: null,
+    bytesUsed: ready ? 8 * 1024 * 1024 : 0,
+    entryCount: ready ? 1 : 0,
+    activeTasks: 0,
+    lockedEntries: value === "entitlement-locked" ? 1 : 0,
   };
 }
 
@@ -148,7 +148,7 @@ describe("ExpandedPlayer 缓存控制", () => {
       acknowledge: vi.fn(() => true),
       close: vi.fn(),
     }));
-    bridgeMocks.cacheStatus.mockResolvedValue(status("first", "missing"));
+    bridgeMocks.cacheStatus.mockResolvedValue(status("first", "none"));
     bridgeMocks.cacheTrack.mockResolvedValue({ taskId: "cache-first", accepted: true });
     bridgeMocks.cacheRemove.mockResolvedValue(undefined);
     bridgeMocks.lyricsGet.mockResolvedValue({
@@ -171,19 +171,19 @@ describe("ExpandedPlayer 缓存控制", () => {
   });
 
   it.each([
-    ["missing", "缓存", false],
+    ["none", "缓存", false],
     ["failed", "重试缓存", false],
-    ["queued", "已加入缓存队列", true],
-    ["caching", "正在缓存", true],
+    ["prefetching", "正在缓存", true],
+    ["prefetching", "正在缓存", true],
     ["ready", "移除缓存", false],
-    ["lockedEntitlement", "权益缓存已锁定", true],
+    ["entitlement-locked", "权益缓存已锁定", true],
   ] as const)("renders the %s cache state", async (cacheState, label, disabled) => {
     bridgeMocks.cacheStatus.mockResolvedValue(status("first", cacheState));
     await act(async () => root.render(<ExpandedPlayer />));
     await settle();
 
     expect(button(container, label).disabled).toBe(disabled);
-    if (cacheState === "lockedEntitlement") {
+    if (cacheState === "entitlement-locked") {
       expect(container.textContent).toContain("当前绑定账号的服务端权益验证通过后才能使用");
     }
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="更多"]')?.disabled).toBe(true);
@@ -193,8 +193,8 @@ describe("ExpandedPlayer 缓存控制", () => {
   it("uses the trusted current track ref and actual quality, then refreshes status", async () => {
     useAppStore.setState({ playback: playback(track("first", "Hi-Res")) });
     bridgeMocks.cacheStatus
-      .mockResolvedValueOnce(status("first", "missing"))
-      .mockResolvedValueOnce(status("first", "queued"));
+      .mockResolvedValueOnce(status("first", "none"))
+      .mockResolvedValueOnce(status("first", "prefetching"));
     await act(async () => root.render(<ExpandedPlayer />));
     await settle();
     await act(async () => button(container, "缓存").click());
@@ -203,13 +203,13 @@ describe("ExpandedPlayer 缓存控制", () => {
     expect(bridgeMocks.cacheTrack).toHaveBeenCalledWith({ id: "first", source: "netease" }, "Hi-Res");
     expect(bridgeMocks.cacheStatus).toHaveBeenNthCalledWith(1, { id: "first", source: "netease" });
     expect(bridgeMocks.cacheStatus).toHaveBeenNthCalledWith(2, { id: "first", source: "netease" });
-    expect(button(container, "已加入缓存队列").disabled).toBe(true);
+    expect(button(container, "正在缓存").disabled).toBe(true);
   });
 
   it("removes a ready cache and refreshes status", async () => {
     bridgeMocks.cacheStatus
       .mockResolvedValueOnce(status("first", "ready"))
-      .mockResolvedValueOnce(status("first", "missing"));
+      .mockResolvedValueOnce(status("first", "none"));
     await act(async () => root.render(<ExpandedPlayer />));
     await settle();
     await act(async () => button(container, "移除缓存").click());
@@ -229,7 +229,7 @@ describe("ExpandedPlayer 缓存控制", () => {
     await act(async () => useAppStore.setState({ playback: playback(track("second", "Hi-Res")) }));
     second.resolve(status("second", "ready"));
     await settle();
-    first.resolve(status("first", "missing"));
+    first.resolve(status("first", "none"));
     await settle();
 
     expect(bridgeMocks.cacheStatus).toHaveBeenNthCalledWith(2, { id: "second", source: "netease" });
@@ -240,7 +240,7 @@ describe("ExpandedPlayer 缓存控制", () => {
   it("shows status errors inline and retries without affecting playback", async () => {
     bridgeMocks.cacheStatus
       .mockRejectedValueOnce(new Error("缓存状态暂时不可用"))
-      .mockResolvedValueOnce(status("first", "missing"));
+      .mockResolvedValueOnce(status("first", "none"));
     await act(async () => root.render(<ExpandedPlayer />));
     await settle();
 

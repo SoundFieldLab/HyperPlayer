@@ -19,6 +19,10 @@
       "types": "./dist/worklet.d.ts",
       "import": "./dist/worklet.js"
     },
+    "./ui": {
+      "types": "./ui/index.ts",
+      "import": "./ui/index.ts"
+    },
     "./package.json": "./package.json"
   },
   "files": [

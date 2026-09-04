@@ -36,16 +36,17 @@ const track = (id: string): TrackDto => ({
 });
 
 const playback: PlaybackSnapshotDto = {
-  revision: 1,
+  revision: "1",
   current: track("current"),
   currentQueueItemId: "queue-current",
   status: "playing",
   positionMs: 12_000,
+  durationMs: 120_000,
   volume: 0.6,
   queue: [{ queueItemId: "queue-context", track: track("context") }],
   nextUp: [{ queueItemId: "queue-next", track: track("next") }],
   repeat: "sequence",
-  dsp: { available: true, bypassed: true, label: "测试 DSP" },
+  shuffled: false,
   dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
 };
 

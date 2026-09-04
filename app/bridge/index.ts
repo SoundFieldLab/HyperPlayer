@@ -1,6 +1,14 @@
 import { fallbackCover } from "../artwork";
+import * as netease from "../services/netease/neteaseService";
+import { playbackService as playback } from "../services/playback/playbackService";
+import { dspService as dsp } from "../services/dsp/dspService";
+import { cacheService as cache } from "../services/cache/cacheService";
+import { lyricsService as lyrics } from "../services/lyrics/lyricsService";
+import { weatherService as weather } from "../services/weather/weatherService";
+import { createHseTelemetryTransport } from "../visualization/telemetry/hse-transport";
+import { windowRoot } from "../window-root";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type Event } from "@tauri-apps/api/event";
+import { emit, listen, type Event } from "@tauri-apps/api/event";
 import type {
   AppSettingsDto,
   BackendBootstrapDto,
@@ -8,6 +16,7 @@ import type {
   BackendScanProgressDto,
   BackendSettingsDto,
   BackendTrackDto,
+  BackendTrackRefDto,
   BackgroundTaskDto,
   BridgeContract,
   BridgeEventHandlers,
@@ -19,11 +28,23 @@ import type {
   LibraryFolderDto,
   LibraryLocationDto,
   LibraryLocationSelectionDto,
+  MediaButton,
   LibraryMutationResultDto,
   LibraryOverviewDto,
   LibraryPageDto,
   LibraryPlaylistDto,
   LibraryRecentDto,
+  NeteaseChartDto,
+  NeteaseCommentPageDto,
+  NeteaseCommentResource,
+  NeteaseHomeDto,
+  NeteaseLoginStateDto,
+  NeteaseMutationDto,
+  NeteaseNewSongsDto,
+  NeteaseSearchKind,
+  NeteaseSearchPageDto,
+  NeteaseSearchSuggestionsDto,
+  PlaybackSnapshotDto,
   TaskAcceptedDto,
   TrackDto,
   Unlisten,
@@ -74,6 +95,11 @@ export const TAURI_COMMANDS = {
   updaterStatus: "updater_status",
   updaterCheck: "updater_check",
   updaterUpdate: "updater_update",
+  credentialGet: "credential_get",
+  credentialSet: "credential_set",
+  smtcUpdateMetadata: "smtc_update_metadata",
+  smtcUpdatePlaybackState: "smtc_update_playback_state",
+  smtcUpdatePosition: "smtc_update_position",
   logWeb: "log_web",
 } as const;
 
@@ -83,6 +109,7 @@ export const TAURI_EVENTS = {
   closeRequested: "hyperplayer://window/close-requested",
   mediaKeyPressed: "hyperplayer://windows/media-key-pressed",
   updaterStatusChanged: "hyperplayer://updater/status-changed",
+  playbackBroadcast: "hyperplayer://playback/broadcast",
 } as const;
 
 const materialKey = "hyperplayer.material";
@@ -90,6 +117,29 @@ const getMaterial = (): AppSettingsDto["material"] => localStorage.getItem(mater
 
 function quality(value: string | null): TrackDto["quality"] {
   return value === "Hi-Res" || value === "无损" || value === "极高" ? value : "标准";
+}
+
+async function resolveTrackDto(ref: BackendTrackRefDto): Promise<TrackDto> {
+  if (ref.source === "local") {
+    const page = await invoke<LibraryPageDto>(TAURI_COMMANDS.libraryQueryTracks, { request: { search: ref.id, page: { cursor: null, limit: 100 } } });
+    const found = page.items.find((item) => item.trackRef.id === ref.id);
+    if (!found) throw new Error("本地曲库未找到该曲目");
+    return adaptTrack(found);
+  }
+  const detail = await netease.getSongDetail(Number(ref.id));
+  if (!detail) throw new Error("网易云未找到该曲目");
+  return {
+    id: String(detail.id),
+    title: detail.name,
+    artists: detail.artists.map((artist) => artist.name),
+    album: detail.album.name,
+    durationMs: detail.dt,
+    source: "netease",
+    entitlement: "free",
+    quality: "标准",
+    cache: "none",
+    coverSeed: "",
+  };
 }
 
 export function adaptTrack(track: BackendTrackDto): TrackDto {
@@ -123,6 +173,7 @@ function adaptSettings(settings: BackendSettingsDto): AppSettingsDto {
     cacheRecentTrackLimit: settings.cacheRecentTrackLimit,
     albumFillEnabled: settings.albumFillEnabled,
     albumFillQuality: settings.albumFillQuality,
+    dsp: settings.dsp ?? null,
   };
 }
 
@@ -163,7 +214,12 @@ function tauriBridge(): BridgeContract {
   return {
     async bootstrap() {
       const value = await invoke<BackendBootstrapDto>(TAURI_COMMANDS.bootstrap);
-      return { app: value.app, settings: adaptSettings(value.settings), tasks: localTasks(value) };
+      return {
+        app: value.app,
+        settings: adaptSettings(value.settings),
+        tasks: localTasks(value),
+        playback: playback.getPlayback(),
+      };
     },
     async getSettings() { return adaptSettings(await invoke<BackendSettingsDto>(TAURI_COMMANDS.settingsGet)); },
     async updateSettings(patch) {
@@ -210,15 +266,120 @@ function tauriBridge(): BridgeContract {
     async updaterStatus() { return invoke<UpdaterStatusDto>(TAURI_COMMANDS.updaterStatus); },
     async updaterCheck() { return invoke<UpdateCheckDto>(TAURI_COMMANDS.updaterCheck); },
     async updaterUpdate(expectedVersion) { return invoke<boolean>(TAURI_COMMANDS.updaterUpdate, { expectedVersion }); },
+    async credentialGet() { return invoke<string | null>(TAURI_COMMANDS.credentialGet); },
+    async credentialSet(payload) { await invoke(TAURI_COMMANDS.credentialSet, { request: { payload } }); },
+    async smtcUpdateMetadata(metadata) { await invoke(TAURI_COMMANDS.smtcUpdateMetadata, { request: metadata }); },
+    async smtcUpdatePlaybackState(state) { await invoke(TAURI_COMMANDS.smtcUpdatePlaybackState, { request: { state } }); },
+    async smtcUpdatePosition(position) { await invoke(TAURI_COMMANDS.smtcUpdatePosition, { request: position }); },
+    // ---- 网易云服务层委托（D34：UI 保留、服务层实现，不经过 Tauri command） ----
+    async neteaseStatus() { return netease.neteaseStatus(); },
+    async neteaseAccount() { return netease.neteaseAccount(); },
+    async neteaseStartQrLogin() { return netease.neteaseStartQrLogin(); },
+    async neteasePollQrLogin(loginId) { return netease.neteasePollQrLogin(loginId); },
+    async neteaseLogout() { return netease.neteaseLogout(); },
+    async neteaseHome() { return netease.neteaseHome(); },
+    async neteaseBanner() { return netease.neteaseBanner(); },
+    async neteaseCharts() { return netease.neteaseCharts(); },
+    async neteaseNewSongs() { return netease.neteaseNewSongs(); },
+    async neteaseExploreNext(limit, batch, exclude) { return netease.neteaseExploreNext(limit, batch, exclude); },
+    async neteaseSearch(keywords, kind) { return netease.neteaseSearch(keywords, kind); },
+    async neteaseSearchHot() { return netease.neteaseSearchHot(); },
+    async neteaseSearchSuggest(keywords) { return netease.neteaseSearchSuggest(keywords); },
+    async neteasePlaylistDetail(id) { return netease.neteasePlaylistDetail(id); },
+    async neteaseAlbumDetail(id) { return netease.neteaseAlbumDetail(id); },
+    async neteaseArtistDetail(id) { return netease.neteaseArtistDetail(id); },
+    async neteaseRelatedPlaylists(id) { return netease.neteaseRelatedPlaylists(id); },
+    async neteaseSimilarArtists(id) { return netease.neteaseSimilarArtists(id); },
+    async neteasePlaymodeIntelligenceList(songId, playlistId) { return netease.neteasePlaymodeIntelligenceList(songId, playlistId); },
+    async neteaseComments(resource, resourceId) { return netease.neteaseComments(resource, resourceId); },
+    async neteasePrepareMutation(mutation) { return netease.neteasePrepareMutation(mutation); },
+    async neteaseCommitMutation(token, confirmed) { return netease.neteaseCommitMutation(token, confirmed); },
+    async neteaseFavorites() { return netease.neteaseFavorites(); },
+    async neteaseCloud() { return netease.neteaseCloud(); },
+    async neteaseAlbumSublist() { return netease.neteaseAlbumSublist(); },
+    async neteaseArtistSublist() { return netease.neteaseArtistSublist(); },
+    async neteaseMvSublist() { return netease.neteaseMvSublist(); },
+    async neteaseDjSublist() { return netease.neteaseDjSublist(); },
+    async neteaseMvs(cursor) { return netease.neteaseMvs(cursor); },
+    async neteaseMvDetail(id) { return netease.neteaseMvDetail(id); },
+    async neteaseMvPlayback(id) { return netease.neteaseMvPlayback(id); },
+    async neteaseDjRadios(cursor) { return netease.neteaseDjRadios(cursor); },
+    async neteaseDjPrograms(radioId, cursor) { return netease.neteaseDjPrograms(radioId, cursor); },
+    async neteaseDjCategories() { return netease.neteaseDjCategories(); },
+    async neteaseDjRecommend() { return netease.neteaseDjRecommend(); },
+    async neteaseDjProgramToplist() { return netease.neteaseDjProgramToplist(); },
+    async neteaseNotices() { return netease.neteaseNotices(); },
+    async neteaseFollowedEvents() { return netease.neteaseFollowedEvents(); },
+    async neteaseFollows(userId) { return netease.neteaseFollows(userId); },
+    async neteaseListenTotal() { return netease.neteaseListenTotal(); },
+    async neteaseListenReport(period) { return netease.neteaseListenReport(period); },
+    async neteaseListenSongRank(period) { return netease.neteaseListenSongRank(period); },
+    async neteaseScrobble(payload) { return netease.neteaseScrobble(payload); },
+    async neteaseImage(src) { return netease.neteaseImage(src); },
+    async neteaseUpdatePlaylistCover(playlistId, imageBase64, mimeType) { return netease.neteaseUpdatePlaylistCover(playlistId, imageBase64, mimeType); },
+    // ---- 播放服务（D34：WebView 播放链） ----
+    async getPlayback() { return playback.getPlayback(); },
+    async play(track, context) {
+      if (track) {
+        const fullTrack = await resolveTrackDto(track);
+        return playback.playTrack(fullTrack, context);
+      }
+      return playback.play();
+    },
+    async pause() { return playback.pause(); },
+    async stop() { return playback.stop(); },
+    async next() { return playback.next(); },
+    async previous() { return playback.previous(); },
+    async seek(positionMs) { return playback.seek(positionMs); },
+    async setVolume(volume) { return playback.setVolume(volume); },
+    async setRepeatMode(repeat) { return playback.setRepeatMode(repeat); },
+    async enqueue(track, position) { return playback.enqueue(track, position); },
+    async removeQueueItem(queueItemId) { return playback.removeQueueItem(queueItemId); },
+    async reorderQueueItem(queueItemId, targetIndex) { return playback.reorderQueueItem(queueItemId, targetIndex); },
+    async clearQueue(scope) { return playback.clearQueue(scope); },
+    // ---- DSP 服务（D34：HSE 控制面） ----
+    async dspGetConfiguration() { return dsp.getConfiguration(); },
+    async dspListPresets() { return dsp.listPresets(); },
+    async dspConfigure(request) { return dsp.configure(request); },
+    async dspApplyPreset(presetId, revision) { return dsp.applyPreset(presetId, revision); },
+    async dspImportHse2(code, revision) { return dsp.importHse2(code, revision); },
+    async dspExportHse2() { return dsp.exportHse2(); },
+    // ---- 歌词 / 缓存 / 天气 / 遥测 ----
+    async lyricsGet(request) { return lyrics.get(request); },
+    async cacheStatus(request) { return cache.status(request); },
+    async cacheTrack(request, quality) { return cache.cacheTrack(request, quality); },
+    async cacheRemove(request) { return cache.remove(request); },
+    async cacheClear() { return cache.clear(); },
+    async cacheStats() { return cache.stats(); },
+    async shenzhenWeather() { return weather.shenzhen(); },
+    createTelemetryTransport() { return createHseTelemetryTransport(); },
     async logWeb(level, message) { await invoke(TAURI_COMMANDS.logWeb, { request: { level, message } }); },
     async resolveClose(action: CloseDecision, remember) { await invoke(TAURI_COMMANDS.windowResolveClose, { request: { action, remember } }); },
     async subscribe(handlers: BridgeEventHandlers): Promise<Unlisten> {
       const listeners: Unlisten[] = [];
       const add = async <T>(event: string, handler: (event: Event<T>) => void) => { listeners.push(await listen<T>(event, handler)); };
       try {
+        // D35 Q18：主窗口权威——播放服务本地事件 + 跨窗口广播；辅助窗口纯订阅广播。
+        if (windowRoot(window.location.search) === "main") {
+          const playbackUnlisten = playback.subscribe({
+            onChanged: (snapshot) => {
+              handlers.playbackChanged?.(snapshot);
+              void emit(TAURI_EVENTS.playbackBroadcast, snapshot).catch(() => undefined);
+            },
+            onQueueChanged: (snapshot) => handlers.queueChanged?.(snapshot),
+            onProgress: (revision, positionMs, durationMs) => handlers.playbackProgress?.({ revision, positionMs, durationMs }),
+            onFault: (fault) => handlers.dspProcessingFault?.(fault),
+          });
+          listeners.push(playbackUnlisten);
+        } else {
+          await add<PlaybackSnapshotDto>(TAURI_EVENTS.playbackBroadcast, ({ payload }) => handlers.playbackChanged?.(payload));
+        }
         await add<BackendScanProgressDto>(TAURI_EVENTS.libraryScanProgress, ({ payload }) => handlers.scanProgress?.(payload));
         await add<BackendSettingsDto>(TAURI_EVENTS.settingsChanged, ({ payload }) => handlers.settingsChanged?.(adaptSettings(payload)));
         await add<BackendCloseRequestedDto>(TAURI_EVENTS.closeRequested, ({ payload }) => handlers.closeRequested?.(payload));
+        await add<{ button: string }>(TAURI_EVENTS.mediaKeyPressed, ({ payload }) => {
+          handlers.mediaKeyPressed?.(payload.button as MediaButton);
+        });
       } catch (error) {
         listeners.forEach((unlisten) => unlisten());
         throw error;

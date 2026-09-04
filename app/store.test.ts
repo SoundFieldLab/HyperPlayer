@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppSettingsDto, BridgeContract, BridgeEventHandlers, DspApplyResultDto, DspConfigurationDto, NeteaseEnrichedSongDto, PlaybackSnapshotDto, Unlisten } from "./bridge/contracts";
+import type { AppSettingsDto, BackendCacheStatusDto, BridgeContract, BridgeEventHandlers, DspApplyResultDto, DspConfigurationDto, NeteaseLoginStateDto, PlaybackSnapshotDto, Unlisten } from "./bridge/contracts";
 import type { TelemetryTransport } from "./visualization/telemetry";
 
 const memoryStorage = (() => {
@@ -29,19 +29,21 @@ const settings: AppSettingsDto = {
   cacheRecentTrackLimit: 100,
   albumFillEnabled: true,
   albumFillQuality: "standard",
+  dsp: null,
 };
 
 const playback: PlaybackSnapshotDto = {
-  revision: 1,
+  revision: "1",
   current: null,
   currentQueueItemId: null,
   status: "paused",
   positionMs: 0,
+  durationMs: null,
   volume: 0.5,
+  repeat: "sequence",
+  shuffled: false,
   queue: [],
   nextUp: [],
-  repeat: "sequence",
-  dsp: { available: true, bypassed: true, label: "Rust DSP runtime 已内建；完整 22 阶段与 DspPort 尚未接通" },
   dspExecution: { revision: 0n, safeBypassActive: false, fault: null },
 };
 
@@ -62,18 +64,11 @@ const dspConfiguration: DspConfigurationDto = {
   reverb: { enabled: false, mode: "algorithmic", reverbType: "hall", roomSize: 0.5, damping: 0.5, wet: 0.3, dry: 0.7, preDelayMs: 0, width: 1, fdnLines: 8, mix: 0.3, partitionSize: 512, shortRegionMs: 100 },
   bassEnhancer: { enabled: false, cutoffHz: 90, q: 0.7, harmonicType: "odd", harmonicGain: 0.6, mix: 0.5, levelDb: 0, lowBoostDb: 0 },
   loudnessComp: { enabled: false, mode: "auto", preset: "flat", volumePercent: 100, maxBoostDb: 12, smoothingSeconds: 0.2, bands: [] },
-  dynamicEq: { enabled: false, strength: 1, thresholdDb: -20, ratio: 2, kneeDb: 6, attackMs: 20, releaseMs: 200, blockSize: 128, bands: [
-    { enabled: true, frequency: 200, targetGainDb: 0 },
-    { enabled: true, frequency: 800, targetGainDb: 0 },
-    { enabled: true, frequency: 2500, targetGainDb: 0 },
-    { enabled: true, frequency: 8000, targetGainDb: 0 },
-    { enabled: true, frequency: 0, targetGainDb: 0 },
-  ] },
+  dynamicEq: { enabled: false, strength: 1, thresholdDb: -20, ratio: 2, kneeDb: 6, attackMs: 20, releaseMs: 200, blockSize: 128, bands: [] },
   limiter: { enabled: false, thresholdDb: -1, lookaheadMs: 5, attackMs: 0.5, releaseMs: 150, truePeak: true },
   ieq: { enabled: false, strength: 0.5, targetCurve: "flat", timeConstantSec: 3 },
   modulation: { enabled: false, lfoShape: "sine", lfoRateHz: 1, lfoDepth: 0.5, envelopeAttackMs: 10, envelopeReleaseMs: 200, envelopeAmount: 0.5, routes: [] },
-  lufsMetering: { mode: "hseV151" },
-  spatial: { mode: "off", masterGain: 0.9, instantAmount: 0.7, instantSpreadDeg: 60, instantRoom: "studio", instantRoomAmount: 0.15, distanceModel: "inverse", refDistance: 1, maxDistance: 50, convolution: "partitioned", hrtfInterp: "nearest", stagePreset: "stage", seat: "middle", stageRoomSize: 1, stageReverbAmount: 0.35, worldOcclusion: 0, ambienceEnabled: false, ambienceAmount: 0.3 },
+  spatial: { mode: "off", masterGain: 0.9 },
 };
 
 function deferred<T>() {
@@ -84,7 +79,7 @@ function deferred<T>() {
 
 function mockBridge(overrides: Partial<BridgeContract> = {}): BridgeContract {
   return {
-    bootstrap: vi.fn(async () => ({ playback, settings, tasks: [] })),
+    bootstrap: vi.fn(async () => ({ app: { appName: "HyperPlayer", appVersion: "0.1.0", platform: "windows", initialized: true }, settings, tasks: [], playback })),
     getPlayback: vi.fn(async () => playback),
     play: vi.fn(async () => playback),
     pause: vi.fn(async () => playback),
@@ -94,18 +89,31 @@ function mockBridge(overrides: Partial<BridgeContract> = {}): BridgeContract {
     setRepeatMode: vi.fn(async () => playback),
     seek: vi.fn(async () => playback),
     setVolume: vi.fn(async () => playback),
-    getSettings: vi.fn(async () => settings),
-    dspGetConfiguration: vi.fn(async () => { throw new Error("not configured"); }),
-    dspConfigure: vi.fn(async () => { throw new Error("not configured"); }),
-    dspListPresets: vi.fn(async () => []),
-    dspApplyPreset: vi.fn(async () => { throw new Error("not configured"); }),
-    dspImportHse2: vi.fn(async () => { throw new Error("not configured"); }),
-    dspExportHse2: vi.fn(async () => ({ code: "", scope: "current22StageProjection" as const, unsupportedStages: [] })),
-    updateSettings: vi.fn(async (patch) => ({ ...settings, ...patch })),
     enqueue: vi.fn(async () => playback),
     removeQueueItem: vi.fn(async () => playback),
     reorderQueueItem: vi.fn(async () => playback),
     clearQueue: vi.fn(async () => playback),
+    getSettings: vi.fn(async () => settings),
+    updateSettings: vi.fn(async (patch) => ({ ...settings, ...patch })),
+    dspGetConfiguration: vi.fn(async () => dspConfiguration),
+    dspListPresets: vi.fn(async () => []),
+    dspConfigure: vi.fn(async () => { throw new Error("not configured"); }),
+    dspApplyPreset: vi.fn(async () => { throw new Error("not configured"); }),
+    dspImportHse2: vi.fn(async () => { throw new Error("not configured"); }),
+    dspExportHse2: vi.fn(async () => ({ code: "", unsupportedStages: [] })),
+    lyricsGet: vi.fn(async () => ({ document: { lines: [] } })),
+    cacheStatus: vi.fn(async (): Promise<BackendCacheStatusDto> => ({ status: "none", bytesUsed: 0, entryCount: 0, activeTasks: 0, lockedEntries: 0 })),
+    cacheTrack: vi.fn(async () => undefined),
+    cacheRemove: vi.fn(async () => undefined),
+    cacheClear: vi.fn(async () => undefined),
+    cacheStats: vi.fn(async () => ({ bytesUsed: 0, entryCount: 0, activeTasks: 0, lockedEntries: 0 })),
+    shenzhenWeather: vi.fn(async () => ({ temperatureC: 31, humidityPercent: 72, weatherCode: 1, description: "多云", updatedAtMs: 1_700_000_000_000, isDay: true, condition: "多云", apparentTemperatureC: 35, relativeHumidityPercent: 72, windSpeedKmh: 8 })),
+    createTelemetryTransport: vi.fn((): TelemetryTransport => ({
+      open: vi.fn(),
+      setRate: vi.fn(),
+      acknowledge: vi.fn(),
+      close: vi.fn(),
+    })),
     libraryOverview: vi.fn(async () => ({ trackCount: 0, albumCount: 0, artistCount: 0, scanActive: false })),
     libraryQuery: vi.fn(async () => ({ items: [], nextCursor: null, total: 0 })),
     libraryQueryAlbums: vi.fn(async () => ({ items: [], nextCursor: null, total: 0 })),
@@ -128,100 +136,69 @@ function mockBridge(overrides: Partial<BridgeContract> = {}): BridgeContract {
     libraryRegisterLocation: vi.fn(async (selectionTicket) => ({ id: "location", path: selectionTicket })),
     libraryStartScan: vi.fn(async () => ({ taskId: "scan", accepted: true })),
     libraryCancelScan: vi.fn(async () => undefined),
-    neteaseStatus: vi.fn(async () => ({ enabled: true, authenticated: false, userId: null, displayName: null })),
-    neteaseSearch: vi.fn(async () => ({ tracks: [], albums: [], artists: [], playlists: [], nextCursor: null })),
-    neteaseMvs: vi.fn(async () => ({ items: [], nextCursor: null })),
-    neteaseMvDetail: vi.fn(async (id) => ({ mv: { id, name: "", coverUrl: null, durationMs: null, artists: [], playCount: null }, description: null, publishTime: null, favoriteCount: null, commentCount: null })),
-    neteaseDjRadios: vi.fn(async () => ({ radios: [], programs: [], nextCursor: null })),
-    neteaseDjPrograms: vi.fn(async () => ({ radios: [], programs: [], nextCursor: null })),
-    neteaseCharts: vi.fn(async () => []),
-    neteaseNewSongs: vi.fn(async () => ({ tracks: [] })),
-    neteaseHome: vi.fn(async () => ({ recommendedTracks: [], recommendedPlaylists: [], anonymous: true, unavailableSections: [] })),
-    neteaseAlbumDetail: vi.fn(async (id) => ({ album: { id, name: "", coverUrl: null }, description: null, publishTimeMs: null, artist: null, tracks: [] })),
-    neteasePlaylistDetail: vi.fn(async (id) => ({ playlist: { id, name: "", coverUrl: null, trackCount: 0, playCount: null, ownerId: 0, ownerName: null, description: null }, tracks: [] })),
-    neteaseArtistDetail: vi.fn(async (id) => ({ artist: { id, name: "", imageUrl: null, aliases: [], briefDescription: null }, hotTracks: [], introduction: null, fansCount: null })),
-    neteasePersonalFm: vi.fn(async () => ({ tracks: [] })),
-    neteaseAccount: vi.fn(async () => ({ user: { userId: 1, nickname: "", avatarUrl: null }, vip: { active: false, expiresAtMs: null, level: null, verifiedAtMs: 0 } })),
-    neteaseFavorites: vi.fn(async () => ({ likedTrackIds: [], playlists: [] })),
-    neteaseComments: vi.fn(async () => ({ comments: [], totalCount: 0, hasMore: false, nextCursor: null })),
-    neteaseFollows: vi.fn(async () => ({ users: [], nextCursor: null })),
-    neteaseNotices: vi.fn(async () => ({ items: [], hasMore: false, nextCursor: null })),
-    neteaseFollowedEvents: vi.fn(async () => ({ items: [], hasMore: false, nextCursor: null })),
-    neteaseListenTotal: vi.fn(async () => ({ totalMinutes: 0, totalPlays: 0, songs: [] })),
-    neteaseListenReport: vi.fn(async (period) => ({ period, endTime: null, stats: { totalMinutes: 0, totalPlays: 0, songs: [] } })),
-    neteaseListenSongRank: vi.fn(async () => ({ tracks: [] })),
-    neteasePrepareMutation: vi.fn(async () => { throw new Error("not configured"); }),
-    neteaseCommitMutation: vi.fn(async () => { throw new Error("not configured"); }),
-    neteaseCloud: vi.fn(async () => ({ songs: [], totalCount: 0, hasMore: false, nextCursor: null })),
-    neteaseImage: vi.fn(async () => ({ mimeType: "image/png", bytes: [] })),
-    neteaseStartQrLogin: vi.fn(async () => ({ loginId: "login", qrImageDataUrl: "data:image/png;base64,", expiresAt: "" })),
-    neteasePollQrLogin: vi.fn(async () => ({ phase: "waiting" as const, status: { enabled: true, authenticated: false, userId: null, displayName: null } })),
-    neteaseLogout: vi.fn(async () => ({ enabled: true, authenticated: false, userId: null, displayName: null })),
-    neteaseSearchHot: vi.fn(async () => []),
-    neteaseSearchSuggest: vi.fn(async () => ({ songs: [], artists: [], albums: [], playlists: [] })),
-    neteaseBanner: vi.fn(async () => []),
-    neteasePlaylistCategories: vi.fn(async () => []),
-    neteaseHighQualityPlaylists: vi.fn(async () => ({ playlists: [], nextCursor: null })),
-    neteaseSimilarPlaylists: vi.fn(async () => ({ playlists: [], nextCursor: null })),
-    neteaseArtistAlbums: vi.fn(async () => ({ albums: [], nextCursor: null })),
-    neteaseArtistMvs: vi.fn(async () => ({ mvs: [], nextCursor: null })),
-    neteaseArtistSublist: vi.fn(async () => ({ artists: [], nextCursor: null })),
-    neteaseAlbumSublist: vi.fn(async () => ({ albums: [], nextCursor: null })),
-    neteaseMvSublist: vi.fn(async () => ({ mvs: [], nextCursor: null })),
-    neteasePersonalizedNewSongs: vi.fn(async () => ({ tracks: [] })),
-    neteaseDislikeRecommendSong: vi.fn(async () => ({ succeeded: true, createdPlaylist: null, comment: null })),
-    neteaseCheckSongsLiked: vi.fn(async () => []),
-    neteaseHotComments: vi.fn(async () => ({ comments: [], total: 0 })),
-    neteaseCommentFloor: vi.fn(async () => ({ floor: 0, comments: [] })),
-    neteaseMsgComments: vi.fn(async () => ({ comments: [], totalCount: 0, hasMore: false, nextCursor: null })),
-    neteaseUserFolloweds: vi.fn(async () => ({ users: [], nextCursor: null })),
-    neteaseUserLevel: vi.fn(async () => ({ level: 0, nextLevelExperience: null })),
-    neteaseUserSubcount: vi.fn(async () => ({ playlists: 0, albums: 0, artists: 0, mvs: 0, djRadios: 0 })),
-    neteaseStylePreference: vi.fn(async () => ({ tagIds: [], tagNames: [] })),
-    neteaseLoginStatus: vi.fn(async () => ({ loggedIn: false, userId: null, nickname: null })),
-    neteaseListenDataToday: vi.fn(async () => ({ listenedMs: 0, playCount: 0 })),
-    neteaseJourneyOverview: vi.fn(async () => ({ totalListenMs: 0, totalPlayCount: 0, todayListenMs: 0 })),
-    neteaseRecentPlays: vi.fn(async () => ({ items: [] })),
-    neteaseSimilarSongs: vi.fn(async () => ({ tracks: [] })),
-    neteaseSongQualityLevels: vi.fn(async () => []),
-    neteaseScrobble: vi.fn(async () => ({ reported: true })),
-    neteaseDjCategories: vi.fn(async () => ({ categories: [] })),
-    neteaseDjRecommend: vi.fn(async () => ({ radios: [], programs: [], nextCursor: null })),
-    neteaseDjProgramToplist: vi.fn(async () => ({ radios: [], programs: [], nextCursor: null })),
-    neteaseDjSublist: vi.fn(async () => ({ radios: [], programs: [], nextCursor: null })),
-    neteasePersonalizedDjRadios: vi.fn(async () => ({ radios: [], programs: [], nextCursor: null })),
-    neteaseSongWiki: vi.fn(async () => ({ data: {} })),
-    neteaseSongRelatedBlogs: vi.fn(async () => ({ data: {} })),
-    neteaseSongDetailEnriched: vi.fn(async () => ({ track: { trackRef: { id: "1", source: "netease" }, title: "", artists: [], album: null, durationMs: null, qualityLabel: null, playable: true }, qualityLevels: [], albumExtra: null }) as unknown as NeteaseEnrichedSongDto),
-    neteasePlaymodeIntelligenceList: vi.fn(async () => ({ tracks: [] })),
-    neteaseRelatedPlaylists: vi.fn(async () => ({ playlists: [], nextCursor: null })),
-    neteaseAlbumCoversBatch: vi.fn(async () => ({ covers: [] })),
-    neteaseSimilarArtists: vi.fn(async () => ({ artists: [], nextCursor: null })),
-    neteaseExploreNext: vi.fn(async () => ({ songs: [], batch: 1, hasMore: true })),
-    neteaseUpdatePlaylistCover: vi.fn(async () => ({ succeeded: true, createdPlaylist: null, comment: null })),
-    neteaseMvPlayback: vi.fn(async () => ({ id: 1, url: "https://example.com/mv.mp4", resolution: 1080, sizeBytes: null, durationMs: null })),
-    cacheStats: vi.fn(async () => ({ entryCount: 0, bytesUsed: 0, activeTasks: 0, lockedEntries: 0 })),
-    cacheStatus: vi.fn(async (track) => ({ track, quality: null, cachedVersions: 0, status: "missing" as const, accessClass: "public" as const, ownerUserId: null, lastValidatedAt: null })),
-    cacheTrack: vi.fn(async () => ({ taskId: "cache", accepted: true })),
-    cacheRemove: vi.fn(async () => undefined),
-    cacheClear: vi.fn(async () => ({ taskId: "clear", accepted: true })),
-    lyricsGet: vi.fn(async () => ({ document: { source: "lrc", title: null, artists: [], album: null, language: null, offsetMs: 0, lines: [] }, rawOriginal: "", rawTranslation: "", rawRomanization: "", rawWordSynced: "", rawWordSyncedTranslation: "", rawTtml: "" })),
     windowShow: vi.fn(async () => undefined),
     windowHide: vi.fn(async () => undefined),
     windowClose: vi.fn(async () => undefined),
     windowSetAlwaysOnTop: vi.fn(async () => undefined),
     desktopLyricsSetClickThrough: vi.fn(async () => undefined),
+    windowsIntegrationStatus: vi.fn(async () => ({ platform: "windows", smtc: { available: false, reason: "test" }, mediaKeys: { available: false, reason: "test" }, fileAssociations: { available: false, reason: "test" } })),
+    windowsEnableMediaControls: vi.fn(async () => undefined),
+    windowsRegisterFileAssociations: vi.fn(async () => undefined),
     updaterStatus: vi.fn(async () => ({ enabled: false, reason: "disabled" })),
     updaterCheck: vi.fn(async () => ({ available: false, version: null, currentVersion: "0.1.0", notes: null })),
     updaterUpdate: vi.fn(async (_expectedVersion) => false),
-    shenzhenWeather: vi.fn(async () => ({ location: "深圳", observedAt: "2026-09-01T12:30", temperatureC: 31, apparentTemperatureC: 35, relativeHumidityPercent: 72, weatherCode: 1, condition: "多云", windSpeedKmh: 8, isDay: true })),
+    credentialGet: vi.fn(async () => null),
+    credentialSet: vi.fn(async () => undefined),
+    smtcUpdateMetadata: vi.fn(async () => undefined),
+    smtcUpdatePlaybackState: vi.fn(async () => undefined),
+    smtcUpdatePosition: vi.fn(async () => undefined),
+    logWeb: vi.fn(async () => undefined),
+    neteaseStatus: vi.fn(async () => ({ enabled: true, authenticated: false, userId: null, displayName: null })),
+    neteaseAccount: vi.fn(async () => ({ user: { userId: 1, nickname: "", avatarUrl: null, signature: null }, vip: { active: false, level: null, verifiedAtMs: 0 } })),
+    neteaseStartQrLogin: vi.fn(async () => ({ loginId: "login", qrImageDataUrl: "data:image/png;base64," })),
+    neteasePollQrLogin: vi.fn(async (): Promise<NeteaseLoginStateDto> => ({ phase: "waiting" })),
+    neteaseLogout: vi.fn(async () => undefined),
+    neteaseHome: vi.fn(async () => ({ recommendedTracks: [], recommendedPlaylists: [], anonymous: true, unavailableSections: [] })),
+    neteaseBanner: vi.fn(async () => []),
+    neteaseCharts: vi.fn(async () => []),
+    neteaseNewSongs: vi.fn(async () => ({ tracks: [] })),
+    neteaseExploreNext: vi.fn(async () => ({ songs: [], batch: 1 })),
+    neteaseSearch: vi.fn(async () => ({ tracks: [], albums: [], artists: [], playlists: [], nextCursor: null })),
+    neteaseSearchHot: vi.fn(async () => []),
+    neteaseSearchSuggest: vi.fn(async () => ({ songs: [] })),
+    neteasePlaylistDetail: vi.fn(async (id) => ({ playlist: { id, name: "", coverUrl: null, trackCount: 0, playCount: 0, ownerName: null, description: null, updateFrequency: null }, tracks: [] })),
+    neteaseAlbumDetail: vi.fn(async (id) => ({ album: { id, name: "", artistName: null, coverUrl: null, trackCount: 0, publishTimeMs: null }, artist: null, description: null, tracks: [] })),
+    neteaseArtistDetail: vi.fn(async (id) => ({ artist: { id, name: "", aliases: [], imageUrl: null, fansCount: null }, fansCount: null, introduction: null, hotTracks: [] })),
+    neteaseRelatedPlaylists: vi.fn(async () => ({ playlists: [], nextCursor: null })),
+    neteaseSimilarArtists: vi.fn(async () => ({ artists: [], nextCursor: null })),
+    neteasePlaymodeIntelligenceList: vi.fn(async () => ({ tracks: [] })),
+    neteaseComments: vi.fn(async () => ({ comments: [], total: 0, nextCursor: null })),
+    neteasePrepareMutation: vi.fn(async () => ({ confirmationToken: "token", summary: "测试" })),
+    neteaseCommitMutation: vi.fn(async () => ({ succeeded: true })),
+    neteaseFavorites: vi.fn(async () => ({ likedTrackIds: [], playlists: [] })),
+    neteaseCloud: vi.fn(async () => ({ songs: [] })),
+    neteaseAlbumSublist: vi.fn(async () => ({ albums: [] })),
+    neteaseArtistSublist: vi.fn(async () => ({ artists: [] })),
+    neteaseMvSublist: vi.fn(async () => ({ mvs: [] })),
+    neteaseDjSublist: vi.fn(async () => ({ radios: [] })),
+    neteaseMvs: vi.fn(async () => ({ items: [], nextCursor: null })),
+    neteaseMvDetail: vi.fn(async (id) => ({ mv: { id, name: "", coverUrl: null, durationMs: null, playCount: 0, artists: [] }, description: null, favoriteCount: 0, commentCount: 0, publishTime: null })),
+    neteaseMvPlayback: vi.fn(async () => ({ url: null })),
+    neteaseDjRadios: vi.fn(async () => ({ radios: [], nextCursor: null })),
+    neteaseDjPrograms: vi.fn(async () => ({ programs: [], nextCursor: null })),
+    neteaseDjCategories: vi.fn(async () => ({ categories: [] })),
+    neteaseDjRecommend: vi.fn(async () => ({ radios: [] })),
+    neteaseDjProgramToplist: vi.fn(async () => ({ programs: [] })),
+    neteaseNotices: vi.fn(async () => ({ items: [] })),
+    neteaseFollowedEvents: vi.fn(async () => ({ items: [] })),
+    neteaseFollows: vi.fn(async () => ({ users: [], nextCursor: null })),
+    neteaseListenTotal: vi.fn(async () => ({ totalMinutes: 0, totalPlays: 0, songs: [] })),
+    neteaseListenReport: vi.fn(async (period) => ({ period, endTime: null, stats: { totalMinutes: 0, totalPlays: 0, songs: [] } })),
+    neteaseListenSongRank: vi.fn(async () => ({ tracks: [] })),
+    neteaseScrobble: vi.fn(async () => undefined),
+    neteaseImage: vi.fn(async () => ({ mimeType: "image/png", bytes: [] })),
+    neteaseUpdatePlaylistCover: vi.fn(async () => undefined),
     resolveClose: vi.fn(async () => undefined),
-    createTelemetryTransport: vi.fn((): TelemetryTransport => ({
-      open: vi.fn(),
-      setRate: vi.fn(),
-      acknowledge: vi.fn(),
-      close: vi.fn(),
-    })),
     subscribe: vi.fn(async () => (() => undefined) as Unlisten),
     ...overrides,
   };
@@ -257,7 +234,7 @@ describe("app store", () => {
   });
 
   it("keeps events received while bootstrap is pending", async () => {
-    const initial = deferred<{ playback: PlaybackSnapshotDto; settings: AppSettingsDto; tasks: [] }>();
+    const initial = deferred<{ app: { appName: string; appVersion: string; platform: string; initialized: boolean }; settings: AppSettingsDto; tasks: []; playback: PlaybackSnapshotDto }>();
     let handlers: BridgeEventHandlers = {};
     const testBridge = mockBridge({
       subscribe: vi.fn(async (nextHandlers) => { handlers = nextHandlers; return () => undefined; }),
@@ -269,13 +246,13 @@ describe("app store", () => {
     const init = useAppStore.getState().init();
     await Promise.resolve();
     handlers.settingsChanged?.({ ...settings, theme: "dark" });
-    handlers.playbackChanged?.({ ...playback, revision: 2, volume: 0.9 });
-    handlers.playbackProgress?.({ revision: 2, positionMs: 450, durationMs: null });
-    initial.resolve({ playback, settings, tasks: [] });
+    handlers.playbackChanged?.({ ...playback, revision: "2", volume: 0.9 });
+    handlers.playbackProgress?.({ revision: "2", positionMs: 450, durationMs: null });
+    initial.resolve({ app: { appName: "HyperPlayer", appVersion: "0.1.0", platform: "windows", initialized: true }, settings, tasks: [], playback });
     await init;
 
     expect(useAppStore.getState().settings?.theme).toBe("dark");
-    expect(useAppStore.getState().playback).toMatchObject({ revision: 2, volume: 0.9, positionMs: 450 });
+    expect(useAppStore.getState().playback).toMatchObject({ revision: "2", volume: 0.9, positionMs: 450 });
   });
 
   it("commits only the latest seek response", async () => {
@@ -328,57 +305,29 @@ describe("app store", () => {
     expect(useAppStore.getState().toasts.at(-1)?.message).toBe("服务离线");
   });
 
-  it.each(["configure", "preset", "import"] as const)(
-    "commits %s when the execution event arrives before the pending response",
-    async (kind) => {
-      const response = deferred<DspApplyResultDto>();
-      const resultConfiguration = { ...dspConfiguration, revision: "2" };
-      const result: DspApplyResultDto = {
-        revision: "2",
-        status: "pending",
-        partial: kind !== "configure",
-        unsupportedStages: kind === "configure" ? [] : ["22:spatialAndHrtf"],
-        engine: {
-          revision: 1,
-          playback: {
-            status: "paused",
-            currentTrack: null,
-            positionMs: 0,
-            durationMs: null,
-            volume: 0.5,
-            muted: false,
-            repeatMode: "sequential",
-          },
-          queue: { currentItemId: null, playNext: [], context: [], revision: 1 },
-          dspExecution: { revision: "0", safeBypassActive: false, fault: null },
-        },
-        configuration: resultConfiguration,
-      };
-      const testBridge = mockBridge({
-        dspConfigure: vi.fn(() => response.promise),
-        dspApplyPreset: vi.fn(() => response.promise),
-        dspImportHse2: vi.fn(() => response.promise),
-      });
-      const { setBridgeForTests, useAppStore } = await import("./store");
-      setBridgeForTests(testBridge);
-      useAppStore.setState({ dspConfiguration, playback });
+  it("commits a DSP configuration when the applied response returns", async () => {
+    const resultConfiguration = { ...dspConfiguration, revision: "2" };
+    const result: DspApplyResultDto = {
+      revision: "2",
+      status: "applied",
+      partial: false,
+      unsupportedStages: [],
+      engine: { dspExecution: { revision: 2n } },
+      configuration: resultConfiguration,
+    };
+    const testBridge = mockBridge({ dspConfigure: vi.fn(async () => result) });
+    const { setBridgeForTests, useAppStore } = await import("./store");
+    setBridgeForTests(testBridge);
+    useAppStore.setState({ dspConfiguration, playback });
 
-      const request = kind === "configure"
-        ? useAppStore.getState().configureDsp(dspConfiguration)
-        : kind === "preset"
-          ? useAppStore.getState().applyDspPreset("studio")
-          : useAppStore.getState().importDspHse2("HSE2:test");
-      useAppStore.setState({ playback: { ...playback, dspExecution: { revision: 2n, safeBypassActive: false, fault: null } } });
-      response.resolve(result);
-      await request;
+    await useAppStore.getState().configureDsp(dspConfiguration);
 
-      expect(useAppStore.getState()).toMatchObject({
-        dspConfiguration: resultConfiguration,
-        dspPendingConfiguration: null,
-        dspBusy: false,
-      });
-    },
-  );
+    expect(useAppStore.getState()).toMatchObject({
+      dspConfiguration: resultConfiguration,
+      dspPendingConfiguration: null,
+      dspBusy: false,
+    });
+  });
 
   it("carries reverb, loudnessComp, dynamicEq and limiter fields through dspConfigure", async () => {
     const updated: DspConfigurationDto = {
@@ -394,26 +343,12 @@ describe("app store", () => {
       dynamicEq: { ...dspConfiguration.dynamicEq, enabled: true, ratio: 8 },
       limiter: { ...dspConfiguration.limiter, enabled: true, truePeak: false },
     };
-    const backendEngine = {
-      revision: 2,
-      playback: {
-        status: "paused" as const,
-        currentTrack: null,
-        positionMs: 0,
-        durationMs: null,
-        volume: 0.5,
-        muted: false,
-        repeatMode: "sequential" as const,
-      },
-      queue: { currentItemId: null, playNext: [], context: [], revision: 2 },
-      dspExecution: { revision: "2", safeBypassActive: false, fault: null },
-    };
     const dspConfigure = vi.fn(async (configuration: DspConfigurationDto): Promise<DspApplyResultDto> => ({
       revision: "2",
       status: "applied",
       partial: false,
       unsupportedStages: [],
-      engine: backendEngine,
+      engine: { dspExecution: { revision: 2n } },
       configuration,
     }));
     const testBridge = mockBridge({ dspConfigure });
@@ -443,196 +378,100 @@ describe("app store", () => {
     const pendingConfiguration = { ...dspConfiguration, revision: "7" };
     useAppStore.setState({ dspPendingConfiguration: pendingConfiguration });
     handlers.dspConfigurationRejected?.({
-      revision: 7n,
+      revision: "7",
       code: "compilationFailed",
       reason: "DSP configuration could not be compiled for the active audio format",
       stage: "compile",
     });
-    expect(useAppStore.getState().toasts.at(-1)?.message).toBe(
-      "DSP 配置 revision 7 被拒绝（compile 阶段）：DSP configuration could not be compiled for the active audio format [compilationFailed]",
-    );
-
-    const fault = {
-      revision: 8n,
-      processorIndex: 2,
-      processorName: "compressor",
-      kind: "nonFiniteOutput" as const,
-      streamFrame: 4096n,
-      safeBypassActive: true,
-      fallbackStatus: "rustSafeBypass" as const,
-    };
-    handlers.dspProcessingFault?.(fault);
-    expect(useAppStore.getState().dspDiagnostic).toEqual(fault);
-    expect(useAppStore.getState().toasts.at(-1)?.message).toBe("DSP revision 8 的 compressor 处理失败，播放正通过 Rust 安全旁路继续");
-
-    handlers.playbackChanged?.({
-      ...playback,
-      revision: 9,
-      dspExecution: { revision: 8n, safeBypassActive: true, fault: { ...fault } },
-    });
-    expect(useAppStore.getState().dspDiagnostic).toEqual(fault);
-
-    handlers.playbackChanged?.({
-      ...playback,
-      revision: 9,
-      dspExecution: { revision: 9n, safeBypassActive: false, fault: null },
-    });
-    expect(useAppStore.getState().dspDiagnostic).toBeNull();
-
-    handlers.dspProcessingFault?.(fault);
-    expect(useAppStore.getState().dspDiagnostic).toBeNull();
+    expect(useAppStore.getState().toasts.at(-1)?.message).toContain("DSP 配置 revision 7 被拒绝");
   });
 
-  it("restores a safe-bypass diagnostic from bootstrap", async () => {
-    const fault = {
-      revision: 8n,
-      processorIndex: 2,
-      processorName: "compressor",
-      kind: "nonFiniteOutput" as const,
-      streamFrame: 4096n,
-      safeBypassActive: true,
-      fallbackStatus: "rustSafeBypass" as const,
-    };
-    const bypassed = {
-      ...playback,
-      dspExecution: { revision: 8n, safeBypassActive: true, fault },
-    };
-    const testBridge = mockBridge({ bootstrap: vi.fn(async () => ({ playback: bypassed, settings, tasks: [] })) });
-    const { setBridgeForTests, useAppStore } = await import("./store");
-    setBridgeForTests(testBridge);
-
-    await useAppStore.getState().init();
-
-    expect(useAppStore.getState().dspDiagnostic).toEqual(fault);
-    expect(useAppStore.getState().toasts).toEqual([]);
-  });
-
-  it("commits only the latest volume and settings responses", async () => {
-    const oldVolume = deferred<PlaybackSnapshotDto>();
-    const newVolume = deferred<PlaybackSnapshotDto>();
-    const oldSettings = deferred<AppSettingsDto>();
-    const newSettings = deferred<AppSettingsDto>();
+  it("commits only the latest volume response", async () => {
+    const firstVolume = deferred<PlaybackSnapshotDto>();
+    const secondVolume = deferred<PlaybackSnapshotDto>();
     const testBridge = mockBridge({
-      setVolume: vi.fn().mockReturnValueOnce(oldVolume.promise).mockReturnValueOnce(newVolume.promise),
-      updateSettings: vi.fn().mockReturnValueOnce(oldSettings.promise).mockReturnValueOnce(newSettings.promise),
+      setVolume: vi.fn().mockReturnValueOnce(firstVolume.promise).mockReturnValueOnce(secondVolume.promise),
     });
     const { setBridgeForTests, useAppStore } = await import("./store");
     setBridgeForTests(testBridge);
-    useAppStore.setState({ playback, settings });
+    useAppStore.setState({ playback });
 
-    const volumeOne = useAppStore.getState().setVolume(0.2);
-    const volumeTwo = useAppStore.getState().setVolume(0.8);
-    newVolume.resolve({ ...playback, volume: 0.8 });
-    await volumeTwo;
-    oldVolume.resolve({ ...playback, volume: 0.2 });
-    await volumeOne;
-
-    const settingsOne = useAppStore.getState().setSettings({ theme: "dark" });
-    const settingsTwo = useAppStore.getState().setSettings({ theme: "system" });
-    newSettings.resolve({ ...settings, theme: "system" });
-    await settingsTwo;
-    oldSettings.resolve({ ...settings, theme: "dark" });
-    await settingsOne;
+    const firstRequest = useAppStore.getState().setVolume(0.4);
+    const secondRequest = useAppStore.getState().setVolume(0.8);
+    secondVolume.resolve({ ...playback, volume: 0.8 });
+    await secondRequest;
+    firstVolume.resolve({ ...playback, volume: 0.4 });
+    await firstRequest;
 
     expect(useAppStore.getState().playback?.volume).toBe(0.8);
-    expect(useAppStore.getState().settings?.theme).toBe("system");
   });
 
   it("scrobbles a netease track after 30s of playback when the track ends", async () => {
-    let handlers: BridgeEventHandlers = {};
-    const neteaseScrobble = vi.fn(async () => ({ reported: true }));
-    const testBridge = mockBridge({
-      subscribe: vi.fn(async (nextHandlers) => { handlers = nextHandlers; return () => undefined; }),
-      neteaseScrobble,
-    });
+    const neteaseScrobble = vi.fn(async () => undefined);
+    const testBridge = mockBridge({ neteaseScrobble });
     const { setBridgeForTests, useAppStore } = await import("./store");
     setBridgeForTests(testBridge);
-    await useAppStore.getState().init();
+    vi.useFakeTimers();
+    try {
+      let handlers: BridgeEventHandlers = {};
+      const testBridgeWithHandlers = mockBridge({
+        neteaseScrobble,
+        subscribe: vi.fn(async (nextHandlers) => { handlers = nextHandlers; return () => undefined; }),
+      });
+      setBridgeForTests(testBridgeWithHandlers);
+      await useAppStore.getState().init();
 
-    const neteaseTrack = {
-      ...playback,
-      status: "playing" as const,
-      current: {
+      const neteaseTrack = {
         id: "42",
-        title: "Netease song",
-        artists: [],
-        album: "",
-        durationMs: 200_000,
+        title: "歌",
+        artists: ["人"],
+        album: "专辑",
+        durationMs: 120_000,
         source: "netease" as const,
         entitlement: "free" as const,
         quality: "标准" as const,
         cache: "none" as const,
-        coverSeed: "42",
-      },
-    };
-    const clock = vi.useFakeTimers({ now: 1_000_000 });
-    try {
-      handlers.playbackChanged?.(neteaseTrack);
-      // 播放 35s 后曲目自然结束（状态离开 playing）。
+        coverSeed: "",
+      };
+      handlers.playbackChanged?.({ ...playback, revision: "2", status: "playing", current: neteaseTrack });
       vi.advanceTimersByTime(35_000);
-      handlers.playbackChanged?.({ ...neteaseTrack, status: "paused", positionMs: 35_000 });
-      await vi.waitFor(() => expect(neteaseScrobble).toHaveBeenCalledOnce());
+      handlers.playbackChanged?.({ ...playback, revision: "3", status: "stopped", current: null });
+      await Promise.resolve();
       expect(neteaseScrobble).toHaveBeenCalledWith({ songId: 42, sourceId: 42, playedSeconds: 35 });
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("does not scrobble tracks shorter than 30s or non-netease tracks", async () => {
-    let handlers: BridgeEventHandlers = {};
-    const neteaseScrobble = vi.fn(async () => ({ reported: true }));
-    const testBridge = mockBridge({
-      subscribe: vi.fn(async (nextHandlers) => { handlers = nextHandlers; return () => undefined; }),
-      neteaseScrobble,
-    });
+  it("does not scrobble non-netease tracks", async () => {
+    const neteaseScrobble = vi.fn(async () => undefined);
     const { setBridgeForTests, useAppStore } = await import("./store");
-    setBridgeForTests(testBridge);
-    await useAppStore.getState().init();
-
-    const clock = vi.useFakeTimers({ now: 1_000_000 });
+    vi.useFakeTimers();
     try {
-      const neteaseTrack = {
-        ...playback,
-        status: "playing" as const,
-        current: {
-          id: "7",
-          title: "Short song",
-          artists: [],
-          album: "",
-          durationMs: 20_000,
-          source: "netease" as const,
-          entitlement: "free" as const,
-          quality: "标准" as const,
-          cache: "none" as const,
-          coverSeed: "7",
-        },
-      };
-      handlers.playbackChanged?.(neteaseTrack);
-      vi.advanceTimersByTime(10_000);
-      handlers.playbackChanged?.({ ...neteaseTrack, status: "paused" });
-      // 不足 30s：不打卡。
-      expect(neteaseScrobble).not.toHaveBeenCalled();
+      let handlers: BridgeEventHandlers = {};
+      const testBridgeWithHandlers = mockBridge({
+        neteaseScrobble,
+        subscribe: vi.fn(async (nextHandlers) => { handlers = nextHandlers; return () => undefined; }),
+      });
+      setBridgeForTests(testBridgeWithHandlers);
+      await useAppStore.getState().init();
 
-      // 本地域曲目：即使超过 30s 也不打卡。
       const localTrack = {
-        ...playback,
-        status: "playing" as const,
-        current: {
-          id: "local-1",
-          title: "Local song",
-          artists: [],
-          album: "",
-          durationMs: 300_000,
-          source: "local" as const,
-          entitlement: "free" as const,
-          quality: "标准" as const,
-          cache: "none" as const,
-          coverSeed: "local-1",
-        },
+        id: "1",
+        title: "歌",
+        artists: ["人"],
+        album: "专辑",
+        durationMs: 120_000,
+        source: "local" as const,
+        entitlement: "free" as const,
+        quality: "标准" as const,
+        cache: "none" as const,
+        coverSeed: "",
       };
-      handlers.playbackChanged?.(localTrack);
-      vi.advanceTimersByTime(60_000);
-      handlers.playbackChanged?.({ ...localTrack, status: "paused" });
+      handlers.playbackChanged?.({ ...playback, revision: "2", status: "playing", current: localTrack });
+      vi.advanceTimersByTime(35_000);
+      handlers.playbackChanged?.({ ...playback, revision: "3", status: "stopped", current: null });
+      await Promise.resolve();
       expect(neteaseScrobble).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();

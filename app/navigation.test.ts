@@ -179,7 +179,7 @@ describe("content-domain navigation history", () => {
       onboarding: false,
       init,
       dispose,
-      settings: { theme: "light", material: "clean", dynamicColor: true, reduceMotion: false, reduceTransparency: false, restoreQueue: true, autoPlayOnLaunch: false, neteaseEnabled: true, cacheCapacityBytes: 10 * 1024 * 1024 * 1024, cacheTrimPercent: 90, cacheRecentTrackLimit: 100, albumFillEnabled: true, albumFillQuality: "standard" },
+      settings: { theme: "light", material: "clean", dynamicColor: true, reduceMotion: false, reduceTransparency: false, restoreQueue: true, autoPlayOnLaunch: false, neteaseEnabled: true, cacheCapacityBytes: 10 * 1024 * 1024 * 1024, cacheTrimPercent: 90, cacheRecentTrackLimit: 100, albumFillEnabled: true, albumFillQuality: "standard", dsp: null },
     });
     container = document.createElement("div");
     document.body.append(container);

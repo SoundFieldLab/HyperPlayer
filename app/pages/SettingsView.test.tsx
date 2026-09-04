@@ -49,6 +49,7 @@ const settings: AppSettingsDto = {
   cacheRecentTrackLimit: 100,
   albumFillEnabled: true,
   albumFillQuality: "standard",
+  dsp: null,
 };
 
 function button(container: HTMLElement, label: string): HTMLButtonElement {

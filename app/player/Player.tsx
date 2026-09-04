@@ -139,12 +139,11 @@ function ExpandedCacheControl({ track }: { track: TrackDto }): React.JSX.Element
   }
 
   switch (state.data.status) {
-    case "missing": return <button onClick={() => void runAction("cache")}><CloudArrowDown/>缓存</button>;
+    case "none": return <button onClick={() => void runAction("cache")}><CloudArrowDown/>缓存</button>;
     case "failed": return <button onClick={() => void runAction("cache")}><CloudArrowDown/>重试缓存</button>;
-    case "queued": return <button disabled><CloudArrowDown/>已加入缓存队列</button>;
-    case "caching": return <button disabled><CloudArrowDown/>正在缓存</button>;
-    case "ready": return <button title={state.data.quality ? `已缓存 ${state.data.quality}` : `已缓存 ${state.data.cachedVersions} 个音质版本`} onClick={() => void runAction("remove")}><CloudArrowDown/>{state.data.cachedVersions > 1 ? `移除全部缓存版本（${state.data.cachedVersions}）` : "移除缓存"}</button>;
-    case "lockedEntitlement": return <><button disabled><CloudArrowDown/>权益缓存已锁定</button><span role="status">当前绑定账号的服务端权益验证通过后才能使用</span></>;
+    case "prefetching": return <button disabled><CloudArrowDown/>正在缓存</button>;
+    case "ready": return <button onClick={() => void runAction("remove")}><CloudArrowDown/>移除缓存</button>;
+    case "entitlement-locked": return <><button disabled><CloudArrowDown/>权益缓存已锁定</button><span role="status">当前绑定账号的服务端权益验证通过后才能使用</span></>;
   }
 }
 
