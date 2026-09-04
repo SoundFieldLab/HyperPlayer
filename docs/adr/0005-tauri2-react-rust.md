@@ -1,7 +1,7 @@
 # Tauri 2 + React UI + Rust 应用层与引擎（取代 ADR-0003）
 
 ---
-status: accepted
+status: superseded（2026-09-04 由 ADR-0006 / D34 修订：NetEase Source 节与「引擎 crate 承担音频/DSP/WASAPI 输出」边界被取代；壳、曲库边界 ADR-0004、拒 Node sidecar、打包更新条款仍有效）
 date: 2026-08-30
 supersedes: 0003-electron-react-rust.md
 ---
