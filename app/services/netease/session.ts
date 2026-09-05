@@ -45,18 +45,29 @@ export class NeteaseSession {
       const payload = await bridge.credentialGet()
       if (payload) {
         const parsed = JSON.parse(payload) as { cookie?: NeteaseCookie }
-        if (parsed.cookie) this.cookie = parsed.cookie
+        if (parsed.cookie) {
+          this.cookie = parsed.cookie
+          console.info('[netease] 会话恢复:', this.cookie.MUSIC_U ? '已恢复登录态' : '保险库无登录态')
+        } else {
+          console.info('[netease] 会话恢复: 保险库 payload 无 cookie 字段')
+        }
+      } else {
+        console.info('[netease] 会话恢复: 保险库为空（首次使用或已登出）')
       }
-    } catch {
-      // 无持久化会话或保险库不可用：匿名状态继续
+    } catch (error) {
+      // 保险库不可用：匿名状态继续，但必须可见——否则「上次登录成功本次却要重扫」无迹可循
+      console.error('[netease] 会话恢复失败（保险库读取）:', String(error).slice(0, 160))
     }
   }
 
   private async persist(): Promise<void> {
+    // 写入失败必须可见：扫码登录的 cookie 丢了就是「下次启动要重扫」，静默=事故
     try {
       await bridge.credentialSet(JSON.stringify({ cookie: this.cookie }))
-    } catch {
-      // 保险库写入失败仅影响下次启动恢复，不阻断本次会话
+      console.info('[netease] 会话持久化: 已写入保险库（MUSIC_U=', Boolean(this.cookie.MUSIC_U), '）')
+    } catch (error) {
+      console.error('[netease] 会话持久化失败（DPAPI 写入）:', String(error).slice(0, 160))
+      throw error
     }
   }
 }
