@@ -799,14 +799,125 @@ HyperPlayer 是供重度音乐用户长期使用的 Windows 桌面产品，不�
 - 测试分层：`vgpu/mock` 测资源与生命周期、`vgpu check --require-validation` 校验 WGSL、固定 DPR 单帧像素测试验证 shader、真实 Tauri/WebView2 验证 WebGPU/设备丢失/fallback；mock 通过不能代替真实 GPU 验收
 - 正式 runtime 依赖尚未加入 `package.json`。接入顺序必须是 Rust telemetry 契约 → Canvas2D fallback → vGPU renderer → WebView2 硬件验收
 
+## 2026-09-05 重建定调增补（UI-D81~D90）
+
+> 2026-09-05 项目推倒重来：实现代码清空，HSE 转纯 TS 接入（Rust 支线删除），桌面壳定为 Tauri 2 + 零自定义 Rust + 全 TS 应用层。核心聆听路径重新定调，与壳/引擎能力冲突的条目点状修订。工程事实源见 `docs/架构基线.md`。
+
+### UI-D81 · 播放坞：底部悬浮胶囊坞（2026-09-05，取代 UI-D3/D25 的贴底整宽坞形态）
+
+- 播放坞为底部悬浮胶囊：不贴满整宽，与窗口边缘留间距，大圆角，单层玻璃
+- UI-D3 的精神保留：跨内容域/页面持续可见；点击封面或歌曲信息连续展开为沉浸播放层，展开/收起期间播放、队列、歌词时间轴、DSP 状态不变
+- 默认位置底部水平居中；窄窗口自动收窄，只保留封面/歌名/播放三键
+
+### UI-D82 · 胶囊坞内容：均衡胶囊（2026-09-05）
+
+- 内容：封面 + 歌名/歌手（点击展开播放层）+ 上一首/播放/下一首 + 队列入口 + 音量图标（点击弹出滑杆）
+- 进度：胶囊底边细进度条贯穿、可拖拽 seek
+- 喜欢/音质/DSP/来源状态收进播放层与次级弹出；胶囊坞不设 DSP 入口
+
+### UI-D83 · 高频态全响应式（2026-09-05）
+
+- 播放进度、逐字索引等高频态进 zustand，帧级更新，React 全响应式
+- 配套纪律（强制）：所有订阅使用窄选择器，组件只订阅所需单字段；禁止宽 selector 将帧级更新放大为全树渲染
+
+### UI-D84 · 辅助窗口 v1 砍除（2026-09-05，取代 UI-D36/37/38）
+
+- 迷你播放器与桌面歌词 v1 均不实现：胶囊坞已承担常驻小控制面，迷你窗边际价值低；上版多窗口实现反复失败（迷你窗白屏、桌面歌词未跑通）
+- 未来恢复时单独立项：主窗口唯一状态源，广播只发"控制面"（切歌/行级歌词时间轴/播放状态），辅助窗本地 rAF 自驱插值渲染
+
+### UI-D85 · 音量与输出设备修订（2026-09-05，取代 UI-D45 的独占模式部分）
+
+- 输出设备枚举用 `enumerateDevices`，切换用 `AudioContext.setSinkId` 即时生效；失败保持原设备并提示
+- 删除独占模式、位深/采样率控制条目（零 Rust 架构不可达，不做假开关）；显示当前实际采样率（只读）
+- 音量交互按 UI-D82：胶囊坞音量图标弹出滑杆，方向键/滚轮可调，单击静音切换
+
+### UI-D86 · 可视化 telemetry 数据源修订（2026-09-05，取代 UI-D80 的 Rust bounded channel 部分）
+
+- 数据源改为独立分析 worklet：接在 HSE 节点之后、输出增益之前（post-DSP pre-output-gain 语义不变）
+- worklet 内计算 64 桶波形/频谱带，`port.postMessage` 发帧，主线程只取最新帧（覆盖式，无 ACK）；LUFS 用链内 LufsMeter 结果
+- vGPU 可选渲染层、Canvas2D fallback 与全部降级规则沿用
+
+### UI-D87 · 启动页修订（2026-09-05，取代启动页面定调文件的动画库与渐变色）
+
+- 启动页 v2 规格沿用：毛玻璃板、流动感、随机相位、弹性入场、单窗口条件渲染、8s 超时
+- 动画实现统一 Motion/CSS keyframes（对齐 UI-D68，不引入 GSAP）
+- 渐变色改为 Hyper Blue `#3F55F9` → Pulse Orange `#FF761C`，消除与 UI-D9 反紫蓝、UI-D11 品牌双色的冲突
+
+### UI-D88 · 验收流程修订（2026-09-05，取代 UI-D63）
+
+- 自动化验收为 tauri-driver WebDriverIO E2E 行为流；不建自动化截图基线
+- 视觉验证仅限人工手动进行；布局/对比度/减少动效等自动检查并入 E2E 断言
+
+### UI-D89 · 核心路径重定调确认（2026-09-05）
+
+- 以下决策经重新定调确认维持：展开播放层 42/58 双主角全套（UI-D4/D16/D46/D74）、安静专业逐字歌词（UI-D26）、双区队列（UI-D43）
+- DSP 层级维持 UI-D5（一级音效工作台 + 播放层状态显示），UI-D57 挂起解除：工作台基于 HSE v1.5.1 真实能力定制（14+ 处理器、12 场景、分享串、空间音频、LUFS）；HSE `ui/` 组件仅作参考实现，按 HyperPlayer 令牌重新主题化
+
+### UI-D90 · 栈与架构基线（2026-09-05）
+
+- 桌面壳：Tauri 2 + 零自定义 Rust（官方/社区插件 + 配置）；应用层全 TypeScript（React 19 + Vite + Tailwind 4 + shadcn/Radix + Motion + Phosphor + zustand 域切片）
+- 播放链：双 `<audio>` 交替 → MediaElementSource → HSE host 节点 → 分析 tap → masterGain → destination；MediaElement 起步 + PCM 升级闸门
+- 完整分层、持久化、协议层、曲库、门禁与里程碑以 `docs/架构基线.md` 为准
+
+## 2026-09-05 Apple 设计语言重定调增补（UI-D91~D98）
+
+> 依据：`docs/DESIGN-apple.md` 令牌分析 + apple-design（WWDC 流体界面原则）。约束：Hyper Blue `#3F55F9`、Pulse Orange `#FF761C` 双色与现有 LOGO 资产不变。完整令牌与参数见 `docs/设计语言-apple.md`。
+
+### UI-D91 · 设计语言重定调总纲：Apple 人格（2026-09-05）
+
+- 全应用 UI 设计语言以 Apple 为基准：安静、精确、内容优先；chrome 后退、零装饰渐变、层级靠留白/字重/表面明度/材质重量建立
+- 双主题继续（UI-D10）：明亮默认 + 完整暗色，切换即时生效
+- Apple 八原则（目的/掌控/责任/熟悉/灵活/简洁/工艺/愉悦）作为设计推理词汇
+
+### UI-D92 · 字体体系修订（2026-09-05，取代 UI-D13）
+
+- 得意黑退出 UI，仅存在于 LOGO 图片资产；品牌感由排版纪律承载
+- Latin/数字 `Segoe UI Variable`（平台系统字体优先），中文思源黑体，技术数值 Cascadia Mono，时间码 tabular-nums
+- 字重 400/600；字号专属字距（display 32px/-0.02em/600、title 24、heading 17、body 14、caption 12/+0.01em）；行高与字号反向联动；letter-spacing 永远跟字号绑定
+
+### UI-D93 · 圆角与按钮语法修订（2026-09-05，取代 UI-D15 阶值）
+
+- 圆角三阶：8px 控件（含专辑封面）/ 18px 卡片与大表面 / pill 主动作与胶囊坞、域切换器；禁止自由值
+- 双按钮语法：Hyper Blue pill = 主动作 CTA（每屏至多一个），8px utility 矩形 = 次级/工具动作
+- 按下态 scale(0.95~0.97)；焦点 2px Hyper Blue（UI-D53 不变）；悬停只做明度微变
+
+### UI-D94 · 色彩系统修订（2026-09-05，取代 UI-D9 中性板与 UI-D52 暗色板）
+
+- 亮色 adopt Apple 中性板：白画布 + parchment #F5F5F7 侧栏/分区 + ink #1D1D1F + hairline #E0E0E0
+- 暗色 adopt Apple 中性近黑：#1C1C1E 画布 / #2C2C2E 抬升 / #3A3A3C 芯片；禁止大面积纯黑纯白
+- Hyper Blue = 唯一交互色（Action Blue 角色）；Pulse Orange = 播放能量角色不变（UI-D12 维持）；暗色下两色用亮度校正变体 #5B6CFF / #FF8A3D；语义色独立令牌
+
+### UI-D95 · 材质系统修订（2026-09-05，取代 UI-D59）
+
+- 内容穿底：主内容延伸到自绘标题栏/侧栏下方，两者半透明 material，内容滚过；滚动边缘效应取代 1px 硬分隔线
+- 基线参数：亮 chrome rgba(245,245,247,0.72)+blur(20px) saturate(180%)；暗 chrome rgba(28,28,30,0.68)+blur(20px) saturate(160%)；顶缘高光
+- 重量分级：大表面重 blur+深阴影，小芯片轻；浮层之外无阴影；玻璃上文字按 vibrancy 规则（高对比/600/微字距）
+- 浮层进出场 materialize（blur+scale 同动）；永不轻玻璃叠轻玻璃；降低透明度/高对比全量退实色
+
+### UI-D96 · 动效体系修订（2026-09-05，取代 UI-D61 固定时长主线）
+
+- 全面流体弹簧（Motion）：默认 bounce 0/duration 0.35 临界阻尼；仅 momentum 手势（播放层下拖、拖拽停靠）bounce 0.2 + 释放速度交接
+- pointer-down 即时反馈 scale(0.96)；动画全程可中断、从当前呈现值起跳；手势驱动禁用 CSS transition/keyframes
+- 播放层下拖 1:1 跟手 + 橡皮筋 + 速度投影落点；进出场同路径、origin 锚定触发源、反向镜像缓动
+- reduced-motion 降级为 200ms opacity 交叉淡化；opacity 类非手势过渡保留 150-200ms 固定时长
+
+### UI-D97 · 布局语法（2026-09-05）
+
+- 开放分区 + Apple utility-card 语法（18px 卡 + hairline 描边 + 无阴影）用于真实实体内容；禁止卡片墙与卡片套卡片
+- 曲库表格 48px 行高效率密度保留（UI-D22/35），页面级留白按 Apple 节奏放宽（分区间距 ≥48px）
+
+### UI-D98 · 保留确认（2026-09-05）
+
+- Phosphor Regular/Fill 唯一图标族（UI-D14 不变）；LOGO 资产不变；封面动态色（UI-D73）、氛围场（UI-D4）、逐字橙填充（UI-D26）、表格交互、无障碍、i18n 等既有决策全部维持
+- UI-D78 首轮双视觉变体 A/B 作废：设计语言已定调 Apple 单人格
+
 ## 当前状态与未决项
 
-> 2026-08-31 实现状态更新：UI-D55~UI-D79 中关于独立浏览器原型和本地 mock 状态的内容保留为历史设计过程，现行执行方式已由产品 D27/D28 取代。正式 UI、IPC、窗口和交互只在 Tauri/WebView2 中运行与验收，生产 bridge 不包含浏览器 fallback。
+> 2026-09-05 重建状态：实现代码已清空，进入从 0 重建。UI-D1~D80 中未被上文修订条目取代的部分默认沿用；与旧"Rust 引擎 crate"架构绑定的表述（如 UI-D80 数据源）以修订条目为准。
 
-UI 主干和正式 Tauri 实现已经建立。产品-D29 已解除 DSP 规格阻塞，UI-D80 已确定可选 vGPU 可视化边界。仍需实施或逐页确认：
-
-- [ ] D29 / UI-D57：HSE 完整 DSP 核心接入后，实现 HyperPlayer 原生效果链、参数、预设、A/B、旁路与真实分析器
-- [ ] UI-D80：Rust bounded telemetry、Canvas2D fallback、vGPU 主窗口渲染和 WebView2 device-loss 验收
-- [ ] UI-D49 后续验收：三线 Logo 的单色、高对比、任务栏和托盘小尺寸版本
-- [ ] UI-D64：真实 Tauri 窗口中的核心与剩余页面逐页最终确认
-- [ ] Tauri 实测后校准最终颜色、玻璃不透明度、阴影、间距和动效曲线
+- [ ] M0：行走骨架（壳/Apple 设计令牌落地/启动页/双域框架/胶囊坞/本地单曲出声 + HSE 场景可听切换）
+- [ ] UI-D86：分析 worklet tap 落地 + Canvas2D fallback + vGPU 主窗口渲染与 device-loss 验收
+- [ ] UI-D49 后续验收：Logo 的单色、高对比、任务栏和托盘小尺寸版本
+- [ ] UI-D89：DSP 工作台（M4）基于 HSE 真实清单的完整布局与控件设计
+- [ ] UI-D85：SMTC 若无现成 Tauri 插件则 v1 缺席并记录（M6 调研）
+- [ ] WebView2 实测：半透明 chrome 滚动性能（UI-D95）、blur 参数、弹簧手感（UI-D96）校准
