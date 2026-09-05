@@ -1,5 +1,5 @@
 /**
- * wiring —— 服务装配（完整：音频链 + 播放 + 队列 + 缓存 + 设置 + 曲库 + 网易云）。
+ * wiring —— 服务装配（完整：音频链 + 播放 + 队列 + 缓存 + 设置 + 曲库 + 网易云 + 系统集成）。
  * 原生能力全部经 infra 薄封装；vendored 网易云 API 注入浏览器传输与存储。
  * 本文件被入口引用，确保 vendored CJS 进入打包图并经受 vite 转译验证。
  */
@@ -17,6 +17,7 @@ import { createIdbCache } from '../infra/idbCache';
 import type { CacheStore } from '../infra/idbCache';
 import { createVault } from '../infra/vault';
 import type { Vault } from '../infra/vault';
+import { getOrCreateVaultPassword } from '../infra/vaultPassword';
 import { wireNeteaseApi, createNeteaseApi } from '../domains/netease/api/neteaseApi';
 import type { NeteaseApi } from '../domains/netease/api/neteaseApi';
 import { SessionService } from '../domains/netease/SessionService';
@@ -87,6 +88,10 @@ export interface Services {
   player: PlayerController;
 }
 
+/**
+ * stronghold 解锁密码（后端补充规划 #47）：首启生成随机强密码存 store，
+ * 重启复用；Rust 侧 Builder::with_argon2 派生密钥。
+ */
 const ANONYMOUS_TOKEN_KEY = 'netease.anonymousToken';
 
 /** 匿名 token：首次生成随机值并持久化（网易云 MUSIC_A 语义）。 */
@@ -98,12 +103,6 @@ async function getAnonymousToken(store: KeyValueStore): Promise<string> {
   return token;
 }
 
-/**
- * stronghold 解锁密码。M5 初始化向导接入用户密码前使用 dev 默认值，
- * 与 src-tauri lib.rs 的 Builder key 派生保持一致（降级已登记 docs/架构基线.md）。
- */
-const VAULT_PASSWORD = 'hyperplayer-vault-default-password';
-
 export async function initServices(): Promise<Services> {
   const http = createTauriHttp();
   const fs = createTauriFs();
@@ -112,7 +111,7 @@ export async function initServices(): Promise<Services> {
   const idb = await createIdbCache('hyperplayer-cache');
   const vault = await createVault({
     path: await appDataPath('hyperplayer.stronghold'),
-    password: VAULT_PASSWORD,
+    password: await getOrCreateVaultPassword(store),
   });
 
   // —— 网易云协议层 ——
