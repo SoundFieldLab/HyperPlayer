@@ -1,0 +1,32 @@
+[package]
+name = "hyperplayer"
+version = "0.1.0"
+description = "HyperPlayer desktop shell (Tauri 2, zero custom Rust)"
+edition = "2021"
+authors = ["IceFireIcer"]
+
+# Official Tauri 2 template structure. No custom Rust business logic.
+
+[lib]
+name = "hyperplayer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-http = "2"
+tauri-plugin-store = "2"
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-stronghold = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
+# Key derivation for the stronghold vault, per the official plugin README example.
+argon2 = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

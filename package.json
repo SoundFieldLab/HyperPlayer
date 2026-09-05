@@ -1,0 +1,13 @@
+{
+  "name": "hyperplayer-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "pnpm --filter @hyperplayer/app typecheck",
+    "lint": "pnpm --filter @hyperplayer/app lint && pnpm license-check",
+    "test": "pnpm --filter @hyperplayer/app test && pnpm --filter hypersoundengine test",
+    "build": "pnpm --filter hypersoundengine build:types && pnpm --filter hypersoundengine build:core && pnpm --filter hypersoundengine build:worklet && pnpm --filter @hyperplayer/app build",
+    "license-check": "node scripts/license-check.mjs"
+  }
+}

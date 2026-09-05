@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for the main window (plugins wired in P0, refined per milestone).",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "fs:default",
+    "http:default",
+    "store:default",
+    "sql:default",
+    "stronghold:default",
+    "window-state:default",
+    "global-shortcut:default",
+    "notification:default",
+    "updater:default"
+  ]
+}
