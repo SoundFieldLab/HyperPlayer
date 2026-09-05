@@ -6,7 +6,7 @@ Desktop music player (Windows/Electron) for QQ Music + NetEase Cloud Music. Fron
 
 ```bash
 npm run dev:electron     # Full dev: Vite (3000) + API server (3001) + Electron window
-npm run dev              # Vite dev server only (port 3000)
+npm run dev              # Vite dev server only (port 3000; Weather Lab: http://127.0.0.1:3000/weather-debug.html)
 npm run dev:api          # Express backend only (local-server.mjs, port 3001)
 npm run lint             # Typecheck: tsc --noEmit (covers src/ only; no ESLint in repo)
 npm run test             # vitest 单测 (test/ + src/services/waveforge-engine-v3/, 2026-08-26 实测：64 文件 829 用例 = 824 过 + 5 跳过；跳过的 5 项是 v3 LGPL 可选依赖未装自动跳过)
@@ -30,6 +30,13 @@ test-python-service.bat  # Health-check Python service on port 3002
 注意：`prebuild` 钩子会在每次 `build`/`build:electron` 前自动运行 `sync:sponsors --optional`（需 `WaveForge-Afdian.env` 爱发电密钥文件，缺失时 `--optional` 软失败，不影响构建）。
 
 Python beat service runs on **port 3002** (not 5001 — historical docs are stale). Offline wheel cache in `python-beat-service/packages/` is cp313 and matches the embedded 3.13 runtime; `start.bat` installs from it with `--no-index --find-links=packages`.
+
+## Independent debug pages
+
+Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./DEBUG_PAGES.md). It registers developer-only visual tools, their launch command, local URL, data/network constraints, and production-build status.
+
+- **Weather Lab**: run the existing `npm run dev`, then open `http://127.0.0.1:3000/weather-debug.html`. Use it to compare all Apple weather scenes and desktop `full`/`simple` cards with local mock data. Do not add `weather-debug.html` to production Vite inputs.
+
 
 **响度测量服务**：`python-beat-service/loudness_server.py`（独立于节拍服务，**端口 3003**，`/lufs` 端点返回 ITU-R BS.1770 积分响度）。响度归一化（调音室开关）按曲目调用它；该服务未运行/失败时归一化自动回退原声，不影响播放。启动入口：dev 模式 `dev-electron.mjs` 自动拉起；打包版 `main.cjs` startLocalBackend() 用嵌入式 Python spawn；手动 `start-full.bat` 同起。
 
