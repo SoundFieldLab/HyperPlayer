@@ -54,6 +54,28 @@ describe('ScanMachine', () => {
     );
   });
 
+  it('扫描：带封面元数据时经 saveCover 钩子落盘（专辑键规范化）', async () => {
+    const fs = createFakeFs();
+    seedFolder(fs, '/music/a', [['song1.mp3', 'x']]);
+    const saveCover = vi.fn(async () => {});
+    const sql = createFakeSql();
+    const machine = new ScanMachine({
+      fs,
+      sql,
+      parseMetadata: async () => ({ title: 'song1', artist: 'Artist', album: 'Album', albumArtist: 'Artist', cover: new Uint8Array([1, 2, 3]), coverFormat: 'image/png' }),
+      saveCover,
+      logger: createNullLogger(),
+    });
+
+    await machine.scan(['/music/a']);
+    expect(saveCover).toHaveBeenCalledTimes(1);
+    const args = saveCover.mock.calls[0] as unknown as [Uint8Array, string, string];
+    const [picture, albumKey, mime] = args;
+    expect(albumKey).toBe('artist|album');
+    expect(mime).toBe('image/png');
+    expect(picture).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
   it('增量：mtime 未变跳过（added=0）', async () => {
     const fs = createFakeFs();
     seedFolder(fs, '/music/a', [['song1.mp3', 'x']]);

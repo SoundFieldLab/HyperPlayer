@@ -9,6 +9,7 @@
 import type { TauriFs } from '../../infra/tauriFs';
 import type { SqlDatabase } from '../../infra/tauriSql';
 import type { TaskCenter, CenterTaskState } from '../../services/TaskCenter';
+import { albumKeyFor } from '../../services/CoverService';
 import type { Logger } from '../../shared/logger';
 import { createNullLogger } from '../../shared/logger';
 
@@ -35,8 +36,9 @@ export interface TrackMetadata {
   duration?: number;
   format?: string;
   bitrate?: number;
-  /** 封面（P3 不做嵌入封面落盘，字段预留）。 */
+  /** 内嵌封面原始字节（后端补充规划 #23，worker 提取）。 */
   cover?: Uint8Array;
+  coverFormat?: string;
 }
 
 export type MetadataParser = (path: string, bytes: Uint8Array) => Promise<TrackMetadata | null>;
@@ -51,6 +53,8 @@ export interface ScanMachineDeps {
   onStateChange?: (state: ScanState) => void;
   /** UI-D29 状态中心统一任务模型。 */
   taskCenter?: TaskCenter;
+  /** 封面落盘钩子（后端补充规划 #23：专辑键去重，CoverService 实现）。 */
+  saveCover?: (picture: Uint8Array, albumKey: string, mime: string) => Promise<void>;
   logger?: Logger;
 }
 
@@ -168,6 +172,17 @@ export class ScanMachine {
           added_at: Date.now(),
         };
         changes.push({ track: record, mode: existing[0] ? 'update' : 'insert' });
+        // 内嵌封面落盘（专辑键去重；失败不阻塞扫描）
+        if (metadata?.cover && this.deps.saveCover) {
+          const albumKey = albumKeyFor(record.album, record.album_artist);
+          if (albumKey) {
+            try {
+              await this.deps.saveCover(metadata.cover, albumKey, metadata.coverFormat ?? 'image/jpeg');
+            } catch (error) {
+              this.logger.warn(`library: 封面落盘失败 ${file.path}`, error);
+            }
+          }
+        }
       } catch (error) {
         this.logger.warn(`library: parse failed ${file.path}`, error);
         this.state = { ...this.state, failed: this.state.failed + 1 };

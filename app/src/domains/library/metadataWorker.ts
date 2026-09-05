@@ -26,6 +26,9 @@ export interface MetadataWorkerResponse {
     duration: number | null;
     format: string | null;
     bitrate: number | null;
+    /** 内嵌封面（第一张，原始字节；后端补充规划 #23）。 */
+    cover?: Uint8Array;
+    coverFormat?: string;
   };
   error?: string;
 }
@@ -36,6 +39,7 @@ self.onmessage = async (event: MessageEvent<MetadataWorkerRequest>) => {
   const { id, path, bytes } = event.data;
   try {
     const meta = await parseBlob(new Blob([bytes]), { duration: true });
+    const picture = meta.common.picture?.[0];
     const response: MetadataWorkerResponse = {
       id,
       path,
@@ -48,6 +52,8 @@ self.onmessage = async (event: MessageEvent<MetadataWorkerRequest>) => {
         duration: meta.format.duration ?? null,
         format: meta.format.container ?? null,
         bitrate: meta.format.bitrate ?? null,
+        cover: picture ? new Uint8Array(picture.data) : undefined,
+        coverFormat: picture?.format,
       },
     };
     self.postMessage(response);

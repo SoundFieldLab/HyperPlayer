@@ -56,6 +56,7 @@ import { useDspStore } from '../stores/slices/dsp';
 import { RingBufferLogger } from '../shared/logger';
 import { FileLogger } from '../shared/fileLogger';
 import { DiagnosticsService } from '../services/DiagnosticsService';
+import { CoverService } from '../services/CoverService';
 import { getAppVersion } from '../infra/appInfo';
 import type { QueueItem } from '../domains/player/types';
 
@@ -89,6 +90,7 @@ export interface Services {
   autostart: AutostartService;
   updater: UpdateService;
   diagnostics: DiagnosticsService;
+  covers: CoverService;
   player: PlayerController;
 }
 
@@ -180,6 +182,15 @@ export async function initServices(): Promise<Services> {
     taskCenter,
     logger,
   });
+  // —— 封面链路（后端补充规划 #23：worker 提取 → 专辑键去重落盘 → asset 供给）——
+  const covers = new CoverService({
+    fs,
+    sql,
+    coversDir: await appDataPath('covers'),
+    logger,
+  });
+  await covers.init();
+
   const library = new LibraryService(sql);
   const scanMachine = new ScanMachine({
     fs,
@@ -187,6 +198,7 @@ export async function initServices(): Promise<Services> {
     parseMetadata: createMetadataWorkerParser(),
     taskCenter,
     onStateChange: (state) => useLibraryStore.getState().setScanState(state),
+    saveCover: (picture, albumKey, mime) => covers.ensureCover(albumKey, picture, mime).then(() => undefined),
     logger,
   });
 
@@ -352,5 +364,5 @@ export async function initServices(): Promise<Services> {
     appVersion: await getAppVersion(),
   });
 
-  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, notification, autostart, updater, diagnostics, player };
+  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, notification, autostart, updater, diagnostics, covers, player };
 }
