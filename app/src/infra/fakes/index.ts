@@ -184,7 +184,13 @@ export function createFakeSql(): SqlDatabase {
 
     select: async <T,>(sql: string, bindValues: unknown[] = []): Promise<T[]> => {
       const statement = stripComments(sql);
-      const match = /^SELECT\s+([\s\S]+?)\s+FROM\s+(\w+)(?:\s+WHERE\s+([\s\S]+))?$/u.exec(statement);
+      // 支持 ORDER BY col [ASC|DESC] 与 LIMIT n（LibraryService 用到的子集）
+      const orderMatch = /\s+ORDER\s+BY\s+(\w+)\s+(ASC|DESC)?/iu.exec(statement);
+      const limitMatch = /\s+LIMIT\s+(\d+)/iu.exec(statement);
+      const base = statement
+        .replace(/\s+ORDER\s+BY\s+(\w+)\s+(ASC|DESC)?/iu, '')
+        .replace(/\s+LIMIT\s+\d+/iu, '');
+      const match = /^SELECT\s+([\s\S]+?)\s+FROM\s+(\w+)(?:\s+WHERE\s+([\s\S]+))?$/u.exec(base);
       if (!match) throw new Error(`fake-sql: unsupported select: ${statement.slice(0, 80)}`);
       const columnList = match[1] as string;
       const name = match[2] as string;
@@ -192,7 +198,22 @@ export function createFakeSql(): SqlDatabase {
       const table = tables.get(name);
       if (!table) return [];
       const predicate = whereClause ? parseWhere(whereClause, bindValues) : () => true;
-      const rows = table.rows.filter(predicate);
+      let rows = table.rows.filter(predicate);
+      if (orderMatch) {
+        const column = orderMatch[1] as string;
+        const direction = (orderMatch[2] ?? 'ASC').toUpperCase();
+        rows = [...rows].sort((a, b) => {
+          const av = normalizeValue(a[column]);
+          const bv = normalizeValue(b[column]);
+          if (typeof av === 'number' && typeof bv === 'number') return direction === 'DESC' ? bv - av : av - bv;
+          return direction === 'DESC'
+            ? String(bv).localeCompare(String(av))
+            : String(av).localeCompare(String(bv));
+        });
+      }
+      if (limitMatch) {
+        rows = rows.slice(0, Number(limitMatch[1]));
+      }
       return parseColumns(columnList, table, rows) as T[];
     },
 

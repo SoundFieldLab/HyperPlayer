@@ -184,7 +184,13 @@ export class SessionService {
       if (separator <= 0) continue;
       const key = pair.slice(0, separator).trim();
       const value = pair.slice(separator + 1).trim();
-      if (key) cookie[key] = decodeURIComponent(value);
+      if (key) {
+        try {
+          cookie[key] = decodeURIComponent(value);
+        } catch {
+          cookie[key] = value; // 非法 % 序列：原样保留（不阻断登录成功）
+        }
+      }
     }
     return cookie;
   }

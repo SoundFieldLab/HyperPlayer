@@ -25,7 +25,8 @@ module.exports = async (query) => {
   const refresh = query.refresh === '1' || query.refresh === 'true'
   let token = refresh ? null : _token
   if (!token) {
-    token = await fetch()
+    token = await // HyperPlayer adaptations: 启动拉取失败静默（token 为空由 request.js 兜底）
+fetch().catch(() => {})
     _token = token
   }
   return {

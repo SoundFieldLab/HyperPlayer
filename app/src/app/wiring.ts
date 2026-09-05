@@ -34,7 +34,12 @@ import { SettingsService } from '../services/SettingsService';
 import { ScanMachine } from '../domains/library/ScanMachine';
 import { LibraryService } from '../domains/library/LibraryService';
 import { createMetadataWorkerParser } from '../domains/library/metadataWorkerFactory';
+import { DspService } from '../domains/dsp/DspService';
+import { TaskCenter } from '../services/TaskCenter';
+import { AlbumCompletionService } from '../services/AlbumCompletionService';
 import { useAppStore } from '../stores/store';
+import { useLibraryStore } from '../stores/slices/library';
+import { useDspStore } from '../stores/slices/dsp';
 import { createNullLogger } from '../shared/logger';
 import type { QueueItem } from '../domains/player/types';
 
@@ -58,6 +63,9 @@ export interface Services {
   cache: StreamCacheService;
   library: LibraryService;
   scanMachine: ScanMachine;
+  taskCenter: TaskCenter;
+  dsp: DspService;
+  albumCompletion: AlbumCompletionService;
   player: PlayerController;
 }
 
@@ -117,6 +125,9 @@ export async function initServices(): Promise<Services> {
   const queue = new QueueController();
   const settings = new SettingsService({ store, logger: createNullLogger() });
 
+  // —— 状态中心统一任务模型（UI-D29） ——
+  const taskCenter = new TaskCenter({ logger: createNullLogger() });
+
   // —— 缓存 + 曲库 ——
   const cache = new StreamCacheService({
     http,
@@ -127,6 +138,7 @@ export async function initServices(): Promise<Services> {
       // 权益缓存播放前重验证（P4 简化：登录态有效即视为权益有效；M3 细化 VIP 校验）
       return session.isLoggedIn && session.getCookie()?.userId === ownerUserId;
     },
+    taskCenter,
     logger: createNullLogger(),
   });
   const library = new LibraryService(sql);
@@ -134,6 +146,23 @@ export async function initServices(): Promise<Services> {
     fs,
     sql,
     parseMetadata: createMetadataWorkerParser(),
+    taskCenter,
+    onStateChange: (state) => useLibraryStore.getState().setScanState(state),
+    logger: createNullLogger(),
+  });
+
+  // —— M4 音效工作台后端（DSP 跨模式全局，UI-D1） ——
+  const dsp = new DspService({
+    hse,
+    sampleRate: audio.ensureContext().sampleRate,
+    onStateChange: (state) => useDspStore.getState().setFromService(state),
+    logger: createNullLogger(),
+  });
+  const albumCompletion = new AlbumCompletionService({
+    cache,
+    netease,
+    session,
+    taskCenter,
     logger: createNullLogger(),
   });
 
@@ -201,5 +230,5 @@ export async function initServices(): Promise<Services> {
     logger: createNullLogger(),
   });
 
-  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, player };
+  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, player };
 }

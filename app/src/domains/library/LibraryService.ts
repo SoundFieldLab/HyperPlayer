@@ -115,8 +115,8 @@ export class LibraryService {
     await this.init();
     const now = Date.now();
     await this.sql.execute('INSERT INTO playlists (name, created_at) VALUES (?, ?)', [name, now]);
-    const rows = await this.sql.select<PlaylistRow>('SELECT * FROM playlists');
-    return rows[rows.length - 1]?.id ?? -1;
+    const rows = await this.sql.select<PlaylistRow>('SELECT id FROM playlists ORDER BY id DESC LIMIT 1');
+    return rows[0]?.id ?? -1;
   }
 
   async listPlaylists(): Promise<PlaylistRow[]> {

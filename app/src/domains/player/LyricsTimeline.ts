@@ -112,14 +112,11 @@ export class LyricsTimeline {
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
       const line = lines[lineIndex] as LyricLine;
       if (this.parsed?.timingLevel === 'word' && line.words && line.words.length > 0) {
-        let cursor = line.time;
         for (const word of line.words) {
           const start = line.time + word.startTime;
           const end = line.time + word.startTime + word.duration;
           this.glyphs.push({ lineIndex, glyphIndex: this.glyphs.length, start, end: Math.max(end, start + 1) });
-          cursor = end;
         }
-        void cursor;
       } else {
         // 行级：整行一个字块（行级渐进填充由渲染层做）。
         this.glyphs.push({ lineIndex, glyphIndex: this.glyphs.length, start: line.time, end: line.time + 1 });

@@ -26,7 +26,8 @@ module.exports = async (query) => {
   const refresh = query.refresh === '1' || query.refresh === 'true'
   let token = refresh ? null : _token
   if (!token) {
-    token = await fetch()
+    token = await // HyperPlayer adaptations: 启动拉取失败静默（token 为空由 request.js 兜底）
+fetch().catch(() => {})
     _token = token
   }
   return {
@@ -36,7 +37,8 @@ module.exports = async (query) => {
 }
 
 // 模块加载时自动获取一次 Token，确保 request.js 使用时不为空
-fetch()
+// HyperPlayer adaptations: 启动拉取失败静默（token 为空由 request.js 兜底）
+fetch().catch(() => {})
   .then((token) => {
     _token = token
   })
@@ -48,7 +50,8 @@ fetch()
 module.exports.getToken = () => {
   if (!_token) {
     // 如果 Token 为空，异步触发获取
-    fetch()
+    // HyperPlayer adaptations: 启动拉取失败静默（token 为空由 request.js 兜底）
+fetch().catch(() => {})
       .then((token) => {
         _token = token
       })
@@ -56,3 +59,6 @@ module.exports.getToken = () => {
   }
   return _token
 }
+
+// HyperPlayer adaptations: 启动拉取失败静默（token 为空由 request.js 兜底）
+fetch().catch(() => {})

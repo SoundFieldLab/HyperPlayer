@@ -83,7 +83,8 @@ const ROUTES: Record<string, RouteEntry> = {
   '/netease/song/similar': { endpoint: 'simi_song' },
   '/netease/song/related-playlist': { endpoint: 'simi_playlist' },
   '/netease/song/like-check': { endpoint: 'song_like_check' },
-  '/netease/song/wiki': { endpoint: 'song_detail' },
+  '/netease/song/wiki': { endpoint: 'song_wiki_summary' },
+  // song/blog（歌曲动态）vendored 无独立端点：以 song_detail 近似（非核心路径）
   '/netease/song/blog': { endpoint: 'song_detail' },
   // 榜单 / 推荐
   '/netease/top/song': { endpoint: 'top_song' },
@@ -145,9 +146,9 @@ const ROUTES: Record<string, RouteEntry> = {
   '/netease/user/follows': { endpoint: 'user_follows' },
   '/netease/user/followeds': { endpoint: 'user_followeds' },
   '/netease/user/subscribe': { endpoint: 'follow' },
-  '/netease/record/recent/:type': { endpoint: 'record_recent_song' },
-  '/netease/record/rank/:type': { endpoint: 'record_recent_song' },
-  '/netease/record/recent/report': { endpoint: 'record_recent_song' },
+  '/netease/record/recent/:type': { endpoint: 'record_recent' },
+  '/netease/record/rank/:type': { endpoint: 'user_record' },
+  '/netease/record/recent/report': { endpoint: 'record_recent' },
   // 喜欢 / 评论
   '/netease/like': { endpoint: 'like' },
   '/netease/likelist': { endpoint: 'likelist' },
@@ -184,12 +185,40 @@ export class NeteaseService {
   /**
    * 92 条路由入口（waveforge local-server.mjs 移植）：
    * route('/netease/song/url', { id, quality, vip }).
+   * 支持 :type 参数路由（record/recent/:type、record/rank/:type）按类型分发。
    */
   async route(uri: string, params: Record<string, unknown> = {}): Promise<unknown> {
     const entry = ROUTES[uri];
-    if (!entry) throw new Error(`netease: 未知路由 ${uri}`);
-    if ('handler' in entry) return entry.handler.call(this, params);
-    return this.call(entry.endpoint, params);
+    if (entry) {
+      if ('handler' in entry) return entry.handler.call(this, params);
+      return this.call(entry.endpoint, params);
+    }
+    // :type 参数路由
+    for (const [pattern, routeEntry] of Object.entries(ROUTES)) {
+      if (!pattern.includes(':type')) continue;
+      const regex = new RegExp(`^${pattern.replace(':type', '([^/]+)')}$`);
+      const match = regex.exec(uri);
+      if (match) {
+        const type = match[1] ?? '';
+        if ('handler' in routeEntry) return routeEntry.handler.call(this, { ...params, type });
+        return this.call(this.resolveTypeEndpoint(routeEntry.endpoint ?? '', type), params);
+      }
+    }
+    throw new Error(`netease: 未知路由 ${uri}`);
+  }
+
+  /** :type 路由 → 真实端点（record/recent 按类型分发）。 */
+  private resolveTypeEndpoint(base: string, type: string): string {
+    if (base === 'record_recent') {
+      const map: Record<string, string> = {
+        song: 'record_recent_song',
+        album: 'record_recent_album',
+        playlist: 'record_recent_playlist',
+        dj: 'record_recent_dj',
+      };
+      return map[type] ?? 'record_recent_song';
+    }
+    return base;
   }
 
   /**

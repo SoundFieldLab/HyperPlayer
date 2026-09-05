@@ -12,8 +12,15 @@ import type { KeyValueStore } from '../infra/tauriStore';
 import type { Logger } from '../shared/logger';
 import { createNullLogger } from '../shared/logger';
 
-export const SETTINGS_SCHEMA_VERSION = 1;
+export const SETTINGS_SCHEMA_VERSION = 2;
 export const QUEUE_PERSIST_DEBOUNCE_MS = 2000;
+
+/** UI-D51：初始化向导进度（中途关闭保存已完成步骤，下次继续）。 */
+export interface OnboardingState {
+  started: boolean;
+  completedSteps: string[];
+  completedAt: number | null;
+}
 
 export interface AppSettings {
   schemaVersion: number;
@@ -37,6 +44,7 @@ export interface AppSettings {
   /** 缓存容量预算（字节），默认 5 GB。 */
   cacheCapacityBytes: number;
   libraryFolders: string[];
+  onboarding: OnboardingState;
 }
 
 export interface PersistedQueue {
@@ -63,6 +71,7 @@ export function createDefaultSettings(): AppSettings {
     keepUpNextOnContextSwitch: true,
     cacheCapacityBytes: 5 * 1024 * 1024 * 1024,
     libraryFolders: [],
+    onboarding: { started: false, completedSteps: [], completedAt: null },
   };
 }
 
@@ -162,6 +171,11 @@ export function migrateSettings(stored: AppSettings): AppSettings {
   if (storedVersion < 1) {
     // v0 → v1：初始基线（所有字段已含默认，无结构性变更）。
     settings = { ...settings, schemaVersion: 1 };
+  }
+  if (storedVersion < 2) {
+    // v1 → v2：初始化向导进度（UI-D51 中途续填）。
+    settings = { ...settings, onboarding: settings.onboarding ?? { started: false, completedSteps: [], completedAt: null } };
+    settings.schemaVersion = 2;
   }
   return settings;
 }

@@ -8,6 +8,7 @@
  */
 import type { TauriFs } from '../../infra/tauriFs';
 import type { SqlDatabase } from '../../infra/tauriSql';
+import type { TaskCenter, CenterTaskState } from '../../services/TaskCenter';
 import type { Logger } from '../../shared/logger';
 import { createNullLogger } from '../../shared/logger';
 
@@ -48,6 +49,8 @@ export interface ScanMachineDeps {
   /** 元数据解析（真实路径：Web Worker 内 music-metadata；测试注入 fake）。 */
   parseMetadata: MetadataParser;
   onStateChange?: (state: ScanState) => void;
+  /** UI-D29 状态中心统一任务模型。 */
+  taskCenter?: TaskCenter;
   logger?: Logger;
 }
 
@@ -105,7 +108,6 @@ export class ScanMachine {
       }
       // 被中断（取消/暂停）的文件夹回队首：已提交保留、未提交可续扫
       if (interrupted) queue.unshift(folder);
-      await this.pauseCheckpoint();
     }
 
     this.state = { ...this.state, phase: 'summarizing', currentFolder: null };
@@ -234,11 +236,6 @@ export class ScanMachine {
     return result;
   }
 
-  private async pauseCheckpoint(): Promise<void> {
-    // 每文件夹边界检查暂停/取消（保持已提交事务）
-    if (this.cancelled || this.state.phase === 'paused') return;
-  }
-
   private async ensureSchema(): Promise<void> {
     await this.deps.sql.execute(`
       CREATE TABLE IF NOT EXISTS tracks (
@@ -266,6 +263,41 @@ export class ScanMachine {
 
   private emit(): void {
     this.deps.onStateChange?.({ ...this.state });
+    this.reportTask();
+  }
+
+  /** UI-D29：扫描任务上报状态中心（与来源页同 ID 'scan:library'）。 */
+  private reportTask(): void {
+    const tc = this.deps.taskCenter;
+    if (!tc) return;
+    const state = this.state;
+    const id = 'scan:library';
+    const progress = state.totalFolders > 0 ? state.processedFolders / state.totalFolders : 0;
+    const detail = `${state.processedFolders}/${state.totalFolders} 文件夹 · ${state.filesScanned} 文件`;
+    if (state.phase === 'done' || state.phase === 'cancelled') {
+      tc.complete(id, state.phase, detail);
+      return;
+    }
+    if (state.phase === 'idle') return;
+    const phaseState: Record<ScanPhase, CenterTaskState> = {
+      idle: 'running',
+      scanning: 'running',
+      summarizing: 'running',
+      done: 'done',
+      paused: 'paused',
+      cancelled: 'cancelled',
+    };
+    const existing = tc.getTask(id);
+    if (existing) {
+      tc.update(id, { state: phaseState[state.phase], progress, detail });
+    } else {
+      tc.register({
+        id,
+        kind: 'scan',
+        title: '本地曲库扫描',
+        actions: state.phase === 'paused' ? ['view'] : ['pause', 'cancel', 'view'],
+      });
+    }
   }
 }
 

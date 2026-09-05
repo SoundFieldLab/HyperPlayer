@@ -49,22 +49,35 @@ describe('SettingsService', () => {
     expect((await reloaded.load()).volume).toBe(0.5);
   });
 
-  it('schema 版本迁移：旧版本数据升级并回写', async () => {
+  it('schema 版本迁移：v0 → v2 升级并回写（含向导进度 onboarding）', async () => {
     const store = createFakeStore();
     await store.set('app.settings', { schemaVersion: 0, startupPage: 'last-page' });
     const service = new SettingsService({ store, logger: createNullLogger() });
     const settings = await service.load();
-    expect(settings.schemaVersion).toBe(1);
+    expect(settings.schemaVersion).toBe(2);
     expect(settings.startupPage).toBe('last-page'); // 旧值保留
     expect(settings.keepUpNextOnContextSwitch).toBe(true); // 新字段取默认
+    expect(settings.onboarding).toEqual({ started: false, completedSteps: [], completedAt: null }); // UI-D51
     const stored = await store.get<{ schemaVersion: number }>('app.settings');
-    expect(stored?.schemaVersion).toBe(1);
+    expect(stored?.schemaVersion).toBe(2);
   });
 
   it('migrateSettings 直接迁移（纯函数）', () => {
     const migrated = migrateSettings({ schemaVersion: 0 } as never);
-    expect(migrated.schemaVersion).toBe(1);
+    expect(migrated.schemaVersion).toBe(2);
     expect(migrated.restoreQueue).toBe(true);
+    expect(migrated.onboarding.completedSteps).toEqual([]);
+  });
+
+  it('向导进度持久化：update onboarding 中途续填（UI-D51）', async () => {
+    const store = createFakeStore();
+    const service = new SettingsService({ store, logger: createNullLogger() });
+    await service.load();
+    await service.update({ onboarding: { started: true, completedSteps: ['appearance', 'account'], completedAt: null } });
+    const reloaded = new SettingsService({ store, logger: createNullLogger() });
+    const settings = await reloaded.load();
+    expect(settings.onboarding.started).toBe(true);
+    expect(settings.onboarding.completedSteps).toEqual(['appearance', 'account']);
   });
 });
 

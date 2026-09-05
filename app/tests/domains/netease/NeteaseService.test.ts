@@ -103,6 +103,27 @@ describe('NeteaseService（waveforge oracle 对拍）', () => {
     expect(endpoints).not.toContain('artist_sub');
   });
 
+  it(':type 参数路由：record/recent/:type 按类型分发 + record/rank/:type → user_record', async () => {
+    const { api, calls } = makeFakeApi();
+    const { session } = makeSession(api);
+    const service = new NeteaseService({ api, session, logger: createNullLogger() });
+    await service.route('/netease/record/recent/song', { limit: 10 }).catch(() => {});
+    await service.route('/netease/record/recent/album', { limit: 10 }).catch(() => {});
+    await service.route('/netease/record/rank/play', { limit: 10 }).catch(() => {});
+    const endpoints = calls.map((c) => c.endpoint);
+    expect(endpoints).toContain('record_recent_song');
+    expect(endpoints).toContain('record_recent_album');
+    expect(endpoints).toContain('user_record');
+  });
+
+  it('song/wiki 映射真实端点 song_wiki_summary', async () => {
+    const { api, calls } = makeFakeApi();
+    const { session } = makeSession(api);
+    const service = new NeteaseService({ api, session, logger: createNullLogger() });
+    await service.route('/netease/song/wiki', { id: 1 }).catch(() => {});
+    expect(calls.some((c) => c.endpoint === 'song_wiki_summary')).toBe(true);
+  });
+
   it('红线：song_url_match 永不调用（LGPL 解灰路径废除）', async () => {
     const { api, calls } = makeFakeApi();
     const { session } = makeSession(api);

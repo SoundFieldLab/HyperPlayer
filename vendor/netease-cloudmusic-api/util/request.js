@@ -184,11 +184,12 @@ const createRequest = async (uri, data, options) => {
   const xeapiPublicKey = await loadXeapiPublicKey()
   let token = ''
   switch (options.checkToken) {
+    // HyperPlayer adaptations: 反作弊 token 拉取失败不阻塞请求
     case 'v2':
-      token = antiCheatTokenV2()
+      try { token = antiCheatTokenV2() } catch { token = '' }
       break
     case 'v3':
-      token = antiCheatTokenV3()
+      try { token = antiCheatTokenV3() } catch { token = '' }
       break
   }
 

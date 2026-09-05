@@ -12,6 +12,7 @@ import type { QueueItem } from '../domains/player/types';
 import type { TauriHttp } from '../infra/tauriHttp';
 import type { TauriFs } from '../infra/tauriFs';
 import type { SqlDatabase } from '../infra/tauriSql';
+import type { TaskCenter } from './TaskCenter';
 import type { Logger } from '../shared/logger';
 import { createNullLogger } from '../shared/logger';
 
@@ -48,9 +49,6 @@ interface CacheRow {
   created_at: number;
 }
 
-const CHUNK_SIZE = 256 * 1024;
-void CHUNK_SIZE; // 分块由 http reader 驱动；保留常量供后续流控
-
 export interface StreamCacheServiceDeps {
   http: TauriHttp;
   fs: TauriFs;
@@ -61,6 +59,8 @@ export interface StreamCacheServiceDeps {
   /** 权益重验证（P4 接 SessionService：账号/权益/权限）。 */
   verifyEntitlement?: (trackId: string, ownerUserId: string) => Promise<boolean>;
   onTaskChange?: (task: CacheTask) => void;
+  /** UI-D29 状态中心统一任务模型。 */
+  taskCenter?: TaskCenter;
   now?: () => number;
   logger?: Logger;
 }
@@ -312,5 +312,33 @@ export class StreamCacheService {
 
   private emit(task: CacheTask): void {
     this.deps.onTaskChange?.({ ...task });
+    this.reportTask(task);
+  }
+
+  /** UI-D29：缓存任务上报状态中心；锁定缓存单独以 vip-lock 任务呈现。 */
+  private reportTask(task: CacheTask): void {
+    const tc = this.deps.taskCenter;
+    if (!tc) return;
+    const id = `cache:${task.trackId}`;
+    const detail = `${Math.round(task.progress * 100)}% · ${task.bytesWritten} bytes`;
+    if (task.state === 'ready' || task.state === 'failed') {
+      tc.complete(id, task.state === 'ready' ? 'done' : 'failed', detail);
+      return;
+    }
+    if (task.state === 'locked') {
+      tc.complete(id, 'done', '权益锁定，文件保留不可播放');
+      const lockId = `vip-lock:${task.trackId}`;
+      if (!tc.getTask(lockId)) {
+        tc.register({ id: lockId, kind: 'vip-lock', title: `VIP 缓存锁定 #${task.trackId}`, actions: ['view'] });
+      }
+      tc.complete(lockId, 'done', '会员过期/账号切换，缓存已锁定');
+      return;
+    }
+    const existing = tc.getTask(id);
+    if (existing) {
+      tc.update(id, { state: 'running', progress: task.progress, detail });
+    } else {
+      tc.register({ id, kind: 'stream-cache', title: `缓存 #${task.trackId}`, actions: ['view'] });
+    }
   }
 }

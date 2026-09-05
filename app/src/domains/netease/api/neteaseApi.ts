@@ -69,6 +69,12 @@ import * as recordRecentAlbumModule from '@neteasecloudmusicapienhanced/api/modu
 const recordRecentAlbum = unwrapCjs<NeteaseApiModule>(recordRecentAlbumModule);
 import * as recordRecentPlaylistModule from '@neteasecloudmusicapienhanced/api/module/record_recent_playlist.js';
 const recordRecentPlaylist = unwrapCjs<NeteaseApiModule>(recordRecentPlaylistModule);
+import * as recordRecentDjModule from '@neteasecloudmusicapienhanced/api/module/record_recent_dj.js';
+const recordRecentDj = unwrapCjs<NeteaseApiModule>(recordRecentDjModule);
+import * as userRecordModule from '@neteasecloudmusicapienhanced/api/module/user_record.js';
+const userRecord = unwrapCjs<NeteaseApiModule>(userRecordModule);
+import * as songWikiSummaryModule from '@neteasecloudmusicapienhanced/api/module/song_wiki_summary.js';
+const songWikiSummary = unwrapCjs<NeteaseApiModule>(songWikiSummaryModule);
 import * as recommendSongsModule from '@neteasecloudmusicapienhanced/api/module/recommend_songs.js';
 const recommendSongs = unwrapCjs<NeteaseApiModule>(recommendSongsModule);
 import * as recommendResourceModule from '@neteasecloudmusicapienhanced/api/module/recommend_resource.js';
@@ -234,6 +240,9 @@ const MODULES: Record<string, NeteaseApiModule> = {
   record_recent_song: recordRecentSong,
   record_recent_album: recordRecentAlbum,
   record_recent_playlist: recordRecentPlaylist,
+  record_recent_dj: recordRecentDj,
+  user_record: userRecord,
+  song_wiki_summary: songWikiSummary,
   recommend_songs: recommendSongs,
   recommend_resource: recommendResource,
   recommend_songs_dislike: recommendSongsDislike,
