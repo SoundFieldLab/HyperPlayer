@@ -9,6 +9,9 @@ import type { HttpResponse, TauriHttp } from '../tauriHttp';
 import type { FsEntry, FsStat, TauriFs } from '../tauriFs';
 import type { Vault } from '../vault';
 import type { Shortcuts, ShortcutEvent } from '../shortcuts';
+import type { Tray, TrayMenuItem, WindowControl } from '../tray';
+import type { Notifications } from '../notifications';
+import type { SingleInstance, SecondInstancePayload } from '../singleInstance';
 
 export function createFakeStore(): KeyValueStore {
   const map = new Map<string, unknown>();
@@ -49,6 +52,95 @@ export function createFakeShortcuts(): Shortcuts & {
     trigger: (shortcut, state = 'Pressed') => {
       const handler = handlers.get(shortcut);
       if (handler) handler({ shortcut, state });
+    },
+  };
+}
+
+/** 托盘替身：记录构建的菜单项与点击回调，可手动触发菜单动作。 */
+export function createFakeTray(): Tray & {
+  items: Array<TrayMenuItem | 'separator'>;
+  click(id: string): void;
+} {
+  const state: { items: Array<TrayMenuItem | 'separator'>; onItem: ((id: string) => void) | null } = {
+    items: [],
+    onItem: null,
+  };
+  return {
+    get items() {
+      return state.items;
+    },
+    build: async (_iconPath, items, onItem) => {
+      state.items = items;
+      state.onItem = onItem;
+    },
+    destroy: async () => {
+      state.items = [];
+      state.onItem = null;
+    },
+    click: (id) => {
+      state.onItem?.(id);
+    },
+  };
+}
+
+/** 窗口控制替身：记录调用，可注入/触发关闭拦截。 */
+export function createFakeWindowControl(): WindowControl & {
+  calls: string[];
+  triggerCloseRequest(): void;
+  lastCloseEvent: { preventDefault(): void; prevented: boolean };
+} {
+  const calls: string[] = [];
+  let closeHandler: ((event: { preventDefault(): void }) => void | Promise<void>) | null = null;
+  const lastCloseEvent = { prevented: false, preventDefault: () => { lastCloseEvent.prevented = true; } };
+  return {
+    calls,
+    show: async () => { calls.push('show'); },
+    hide: async () => { calls.push('hide'); },
+    setFocus: async () => { calls.push('setFocus'); },
+    destroy: async () => { calls.push('destroy'); },
+    onCloseRequested: async (handler) => {
+      closeHandler = handler;
+      return () => { closeHandler = null; };
+    },
+    lastCloseEvent,
+    triggerCloseRequest: () => {
+      lastCloseEvent.prevented = false;
+      void closeHandler?.(lastCloseEvent);
+    },
+  };
+}
+
+/** 通知替身：记录发送内容；可配置权限结果。 */
+export function createFakeNotifications(): Notifications & {
+  sent: Array<{ title: string; body?: string }>;
+  setSupported(value: boolean): void;
+  setPermission(value: boolean): void;
+} {
+  const state = { supported: true, permission: true, sent: [] as Array<{ title: string; body?: string }> };
+  return {
+    sent: state.sent,
+    isSupported: async () => state.supported,
+    ensurePermission: async () => state.permission,
+    send: async (title, body) => {
+      state.sent.push({ title, body });
+    },
+    setSupported: (value) => { state.supported = value; },
+    setPermission: (value) => { state.permission = value; },
+  };
+}
+
+/** 单实例替身：可手动触发二次启动。 */
+export function createFakeSingleInstance(): SingleInstance & {
+  trigger(payload: SecondInstancePayload): void;
+} {
+  let handler: ((payload: SecondInstancePayload) => void) | null = null;
+  return {
+    onSecondInstance: async (cb) => {
+      handler = cb;
+      return () => { handler = null; };
+    },
+    trigger: (payload) => {
+      handler?.(payload);
     },
   };
 }

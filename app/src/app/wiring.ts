@@ -39,7 +39,12 @@ import { TaskCenter } from '../services/TaskCenter';
 import { AlbumCompletionService } from '../services/AlbumCompletionService';
 import { PlayHistoryService } from '../services/PlayHistoryService';
 import { ShortcutService } from '../services/ShortcutService';
+import { TrayService } from '../services/TrayService';
+import { NotificationService } from '../services/NotificationService';
 import { createTauriShortcuts } from '../infra/shortcuts';
+import { createTauriTray, createTauriWindowControl } from '../infra/tray';
+import { createTauriNotifications } from '../infra/notifications';
+import { createTauriSingleInstance } from '../infra/singleInstance';
 import { useAppStore } from '../stores/store';
 import { useLibraryStore } from '../stores/slices/library';
 import { useDspStore } from '../stores/slices/dsp';
@@ -71,6 +76,8 @@ export interface Services {
   albumCompletion: AlbumCompletionService;
   playHistory: PlayHistoryService;
   shortcut: ShortcutService;
+  tray: TrayService;
+  notification: NotificationService;
   player: PlayerController;
 }
 
@@ -241,17 +248,18 @@ export async function initServices(): Promise<Services> {
   });
 
   // —— 全局快捷键（后端补充规划 #7/#8：媒体键回退接线，SMTC v1 缺席）——
+  const transportCommands = {
+    playPause: async () => {
+      if (stateMachine.snapshot.status === 'playing') await player.pause();
+      else await player.play();
+    },
+    next: () => player.next(),
+    prev: () => player.prev(),
+  };
   const shortcut = new ShortcutService({
     shortcuts: createTauriShortcuts(),
     settings,
-    commands: {
-      playPause: async () => {
-        if (stateMachine.snapshot.status === 'playing') await player.pause();
-        else await player.play();
-      },
-      next: () => player.next(),
-      prev: () => player.prev(),
-    },
+    commands: transportCommands,
     logger: createNullLogger(),
   });
   await shortcut.init();
@@ -259,5 +267,36 @@ export async function initServices(): Promise<Services> {
     void shortcut.rebind(); // 快捷键设置变更即时生效
   });
 
-  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, player };
+  // —— 系统托盘（UI-D77：菜单 + 关闭拦截）+ 桌面通知（后端补充规划 #42/#43）——
+  const trayWindow = createTauriWindowControl();
+  const tray = new TrayService({
+    tray: createTauriTray(),
+    window: trayWindow,
+    settings,
+    commands: transportCommands,
+    logger: createNullLogger(),
+  });
+  await tray.init();
+
+  const notification = new NotificationService({
+    notifications: createTauriNotifications(),
+    settings,
+    logger: createNullLogger(),
+  });
+  // 切歌通知：仅在有歌词变化语义的换曲时触发（track 变更，非暂停恢复）
+  let notifiedTrackId: string | null = null;
+  stateMachine.subscribe((state) => {
+    if (state.status === 'playing' && state.track && state.track.id !== notifiedTrackId) {
+      notifiedTrackId = state.track.id;
+      void notification.notifyTrackChange(state.track);
+    }
+  });
+
+  // —— 单实例（后端补充规划 #40：聚焦已有窗口 + 载荷透传；文件打开 #41 留待后续）——
+  const singleInstance = createTauriSingleInstance(trayWindow);
+  await singleInstance.onSecondInstance((payload) => {
+    console.info(`single-instance: 二次启动聚焦（args=${payload.args.length}，cwd=${payload.cwd}）`);
+  });
+
+  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, notification, player };
 }

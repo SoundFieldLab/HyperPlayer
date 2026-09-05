@@ -52,6 +52,8 @@ export interface AppSettings {
   perTrackLyricOffset: Record<string, number>;
   /** 全局快捷键覆盖（空串 = 禁用该动作；后端补充规划 #8，UI-D24/UI-D53）。 */
   shortcuts: Partial<Record<ShortcutAction, string>>;
+  /** 切歌通知开关（默认关；后端补充规划 #43）。 */
+  notifyOnTrackChange: boolean;
 }
 
 export interface PersistedQueue {
@@ -82,6 +84,7 @@ export function createDefaultSettings(): AppSettings {
     lyricOffsetMs: 0,
     perTrackLyricOffset: {},
     shortcuts: {},
+    notifyOnTrackChange: false,
   };
 }
 
@@ -201,8 +204,8 @@ export function migrateSettings(stored: AppSettings): AppSettings {
     settings.schemaVersion = 3;
   }
   if (storedVersion < 4) {
-    // v3 → v4：全局快捷键覆盖（后端补充规划 #8）。
-    settings = { ...settings, shortcuts: settings.shortcuts ?? {} };
+    // v3 → v4：全局快捷键覆盖 + 切歌通知开关（后端补充规划 #8/#43）。
+    settings = { ...settings, shortcuts: settings.shortcuts ?? {}, notifyOnTrackChange: settings.notifyOnTrackChange ?? false };
     settings.schemaVersion = 4;
   }
   return settings;
