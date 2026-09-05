@@ -2,7 +2,7 @@
 
 基于 Tauri 2 壳 + 全 TypeScript 的现代化 Windows 桌面音乐播放器。
 
-项目处于**从 0 重建阶段**（2026-09-05 推倒重来）。工程事实源与里程碑见 [docs/架构基线.md](./docs/架构基线.md)；模块/状态机/保险机制细化见 [docs/播放器架构.md](./docs/播放器架构.md)；设计语言见 [docs/设计语言-apple.md](./docs/设计语言-apple.md)；统一语言见 [docs/CONTEXT.md](./docs/CONTEXT.md)；UI 决策记录（含 UI-D81+ 修订条目）见 [docs/UI定调决策记录.md](./docs/UI定调决策记录.md)。
+项目处于**从 0 重建阶段**（2026-09-05 推倒重来）。工程事实源与里程碑见 [docs/架构基线.md](./docs/架构基线.md)；模块/状态机/保险机制细化见 [docs/播放器架构.md](./docs/播放器架构.md)；页面地图与动线见 [docs/页面与动线.md](./docs/页面与动线.md)；设计语言见 [docs/设计语言-apple.md](./docs/设计语言-apple.md)；统一语言见 [docs/CONTEXT.md](./docs/CONTEXT.md)；UI 决策记录（含 UI-D81+ 修订条目）见 [docs/UI定调决策记录.md](./docs/UI定调决策记录.md)。
 
 ## 核心形态
 

@@ -1,6 +1,6 @@
 # HyperPlayer
 
-现代化 Windows 桌面音乐播放器的统一语言（Tauri 2 壳 + 全 TypeScript 应用层）。工程基线见 `docs/架构基线.md`，UI 设计语言见 `docs/设计语言-apple.md`，UI 决策记录见 `docs/UI定调决策记录.md`。
+现代化 Windows 桌面音乐播放器的统一语言（Tauri 2 壳 + 全 TypeScript 应用层）。工程基线见 `docs/架构基线.md`，页面与动线见 `docs/页面与动线.md`，UI 设计语言见 `docs/设计语言-apple.md`，UI 决策记录见 `docs/UI定调决策记录.md`。
 
 ## Language
 
@@ -66,6 +66,18 @@ _Avoid_: 多主按钮、渐变按钮、无 pill 的主动作
 
 **流体弹簧（Fluid Springs）**:
 全应用动效基座：可中断弹簧（默认临界阻尼 bounce 0），momentum 手势带轻微 bounce 与释放速度交接；pointer-down 即时反馈；进出场同路径。_Avoid_: 固定时长手势动画、不可中断过渡、GSAP
+
+**分段控件（Segmented）**:
+页面内平行子区的唯一导航组件：大标题下方浅灰胶囊分段条，选中项白底浮起；状态计入历史栈 entry 可恢复；每页最多一层。
+_Avoid_: 下划线 tabs、二级侧栏、分段嵌套
+
+**大标题（Large Title）**:
+所有一级页与详情页的 32px display 起手标题；滚动越过阈值收缩为标题栏中央内联标题，弹簧过渡。
+_Avoid_: 标题常驻页面顶部、无收缩的静态标题
+
+**命令面板（Command Palette）**:
+`Ctrl+K` / 标题栏入口打开的轻量浮层：快速结果 + `>` 前缀命令模式；与搜索页共享搜索服务但形态独立。
+_Avoid_: 把完整搜索页塞进面板、无命令模式的纯搜索框
 
 **双栈导航（Dual-Stack Navigation）**:
 自研导航切片：网易云/本地两个内容域各自维护 entry 历史栈（routeId + 实体 ID + 快照）；瞬时层（播放层/面板/命令面板）不进栈。
