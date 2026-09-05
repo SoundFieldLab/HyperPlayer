@@ -1,0 +1,499 @@
+{
+  "version": 1,
+  "authoredSize": [
+    640,
+    1136
+  ],
+  "scenes": [
+    {
+      "id": "clear-day",
+      "caml": "sunny@3x-812h.caml",
+      "hash": "96d82d612b546bc42d7bba5993dfbc3becaa31e7bfba468e98c0f5e634a6a1af",
+      "assets": [
+        "Lens-Flare-Medium.heic",
+        "Sun-Left.heic",
+        "Ray-Cyan.heic"
+      ]
+    },
+    {
+      "id": "clear-night",
+      "caml": "clear@3x-812h.caml",
+      "hash": "50fb481f7a129759023edb84c5736874e792d420413e98c29bec35017a7d2378",
+      "assets": [
+        "Star-Frames.heic",
+        "Meteor.heic"
+      ]
+    },
+    {
+      "id": "partly-cloudy-day",
+      "caml": "partlyCloudy_day@3x-812h.caml",
+      "hash": "763e97b32497c09286cc303652506fe844dc76e685df3589a9db52cb35aae2eb",
+      "assets": [
+        "Sun-Left.heic",
+        "Cirrus-One-Overlap.heic",
+        "Cirrus-Two-Overlap.heic",
+        "Cumulus-One-Blue.heic",
+        "Fringe-Large-Blue.heic",
+        "Cumulus-Two-Blue.heic",
+        "Ray-Cyan.heic",
+        "Cumulus-Three-Blue.heic"
+      ]
+    },
+    {
+      "id": "partly-cloudy-night",
+      "caml": "partlyCloudy_night@3x-812h.caml",
+      "hash": "809b5cd3628b13da93930ad7efa47980794d690d65e6841b207402954699166a",
+      "assets": [
+        "Star-Frames.heic",
+        "Cirrus-One-Overlap.heic",
+        "Cirrus-Two-Overlap.heic",
+        "Cumulus-One-Neutral.heic",
+        "Fringe-Large-Neutral.heic",
+        "Cumulus-Two-Neutral.heic",
+        "Cumulus-Three-Neutral.heic"
+      ]
+    },
+    {
+      "id": "cloudy-day",
+      "caml": "cloudy_day@3x-812h.caml",
+      "hash": "44a5e7548a67996777e21f5c73a5471fb433d549c75c72eaa2fe935c07169549",
+      "assets": [
+        "Cloudy-Background-One.heic",
+        "Cumulus-One-Neutral.heic",
+        "Fringe-Large-Neutral.heic",
+        "Cumulus-Two-Neutral.heic",
+        "Cumulus-Three-Neutral.heic"
+      ]
+    },
+    {
+      "id": "cloudy-night",
+      "caml": "cloudy_night@3x-812h.caml",
+      "hash": "713580dae612bd5a8cca00e674020ac148315f6ee89d1eee68de9d5e733f882e",
+      "assets": [
+        "Cloudy-Background-One.heic",
+        "Cumulus-One-Neutral.heic",
+        "Fringe-Large-Neutral.heic",
+        "Cumulus-Two-Neutral.heic",
+        "Cumulus-Three-Neutral.heic"
+      ]
+    },
+    {
+      "id": "fog-day",
+      "caml": "fog_day@3x-812h.caml",
+      "hash": "d78dbdd1f7b6ed31c6ae90e513a03beaa7e69f4caf6489464296e171078f7999",
+      "assets": [
+        "Cloud-Patch-One.heic"
+      ]
+    },
+    {
+      "id": "fog-night",
+      "caml": "fog_night@3x-812h.caml",
+      "hash": "72a4a083088f6c6a770add875c75e48479f509e77e33ef770453153041c8e9de",
+      "assets": [
+        "Cloud-Patch-One.heic"
+      ]
+    },
+    {
+      "id": "drizzle-day",
+      "caml": "drizzle_day@3x-812h.caml",
+      "hash": "07e8c7d5b57979b518f86f72fe87223b5a01dc2e9d28414ed65bb9683cf2485e",
+      "assets": [
+        "Cloud-Drizzle.heic",
+        "Raindrop.heic"
+      ]
+    },
+    {
+      "id": "drizzle-night",
+      "caml": "drizzle_night@3x-812h.caml",
+      "hash": "3ec7384360e5d6fec556aed8a38485448afb30c90bb02d27a794da69bc45a303",
+      "assets": [
+        "Cloud-Drizzle.heic",
+        "Raindrop.heic"
+      ]
+    },
+    {
+      "id": "rain-day",
+      "caml": "rain_day@3x-812h.caml",
+      "hash": "f2e783a69cb9ce2d173546ed5357b77dc5f29d0e78d786c8ed039aa7cb6e8a69",
+      "assets": [
+        "Raindrop-Tile-Heavy.heic",
+        "Raindrop.heic"
+      ]
+    },
+    {
+      "id": "rain-night",
+      "caml": "rain_night@3x-812h.caml",
+      "hash": "cda9b15297afd1604803f6b6007db1947f0c8be9792561f26b6b4efaabc66395",
+      "assets": [
+        "Raindrop-Tile-Heavy.heic",
+        "Raindrop.heic"
+      ]
+    },
+    {
+      "id": "heavy-rain-day",
+      "caml": "heavyRain_day@3x-812h.caml",
+      "hash": "17a0aa89f632fa1ecc549a5310119f0098b074f0e3a6a9ea451788c05493ba4c",
+      "assets": [
+        "Raindrop-Tile-Heavy.heic",
+        "Raindrop.heic"
+      ]
+    },
+    {
+      "id": "heavy-rain-night",
+      "caml": "heavyRain_night@3x-812h.caml",
+      "hash": "55279ecab2cb7d531c56c4b4deac614b1132ed6887ef8fe9410798b37b94e919",
+      "assets": [
+        "Raindrop-Tile-Heavy.heic",
+        "Raindrop.heic"
+      ]
+    },
+    {
+      "id": "thunder-day",
+      "caml": "thunderstorm_day@3x-812h.caml",
+      "hash": "9b02ce67b39435e0d6531d41713821ce101faf5fee06ef8a22d31cb45c465aac",
+      "assets": [
+        "Thunderstorm-Gradient-Bottom-Day.heic",
+        "Thunderstorm-Day-Main.heic",
+        "Thunderstorm-Day-Flicker-01.heic",
+        "Thunderstorm-Day-Flicker-02.heic",
+        "Thunderstorm-Day-Flicker-03.heic",
+        "Thunderstorm-Day-Flicker-04.heic",
+        "Thunderstorm-Day-Flicker-05.heic",
+        "Thunderstorm-Day-Flicker-06.heic",
+        "Bolt-and-Halo.heic",
+        "Bolt-Screen-Flash.heic",
+        "Bolt-Screen-Blind.heic",
+        "Raindrop-Tile-Heavy.heic",
+        "Raindrop-Cluster-Small.heic",
+        "Raindrop.heic"
+      ]
+    },
+    {
+      "id": "thunder-night",
+      "caml": "thunderstorm_night@3x-812h.caml",
+      "hash": "9bd1076701e2cb8290b67b9244ba396d635c3ec806048a5e55cf18b8e2273d65",
+      "assets": [
+        "Thunderstorm-Gradient-Bottom-Night.heic",
+        "Thunderstorm-Night-Main.heic",
+        "Thunderstorm-Night-Flicker-01.heic",
+        "Thunderstorm-Night-Flicker-02.heic",
+        "Thunderstorm-Night-Flicker-03.heic",
+        "Thunderstorm-Night-Flicker-04.heic",
+        "Thunderstorm-Night-Flicker-05.heic",
+        "Thunderstorm-Night-Flicker-06.heic",
+        "Bolt-and-Halo.heic",
+        "Bolt-Screen-Flash.heic",
+        "Bolt-Screen-Blind.heic",
+        "Raindrop-Tile-Heavy.heic",
+        "Raindrop-Cluster-Small.heic",
+        "Raindrop.heic"
+      ]
+    },
+    {
+      "id": "snow-day",
+      "caml": "snow_day@3x-812h.caml",
+      "hash": "3b439c259909908208ee7bc6c810379851dc25bb6429103ad4fbe34505774d5e",
+      "assets": [
+        "Snow-Flake-Small.heic"
+      ]
+    },
+    {
+      "id": "snow-night",
+      "caml": "snow_night@3x-812h.caml",
+      "hash": "4e9f807134b6b61e78d1ce6214db6dbdd71be2f2481f68faf0253d528ef95d57",
+      "assets": [
+        "Snow-Flake-Small.heic"
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "source": "Bolt-Screen-Blind.heic",
+      "output": "Bolt-Screen-Blind.webp",
+      "width": 1,
+      "height": 1136,
+      "frames": 1
+    },
+    {
+      "source": "Bolt-Screen-Flash.heic",
+      "output": "Bolt-Screen-Flash.webp",
+      "width": 1,
+      "height": 512,
+      "frames": 1
+    },
+    {
+      "source": "Bolt-and-Halo.heic",
+      "output": "Bolt-and-Halo.webp",
+      "width": 27,
+      "height": 27,
+      "frames": 1
+    },
+    {
+      "source": "Cirrus-One-Overlap.heic",
+      "output": "Cirrus-One-Overlap.webp",
+      "width": 1440,
+      "height": 360,
+      "frames": 1
+    },
+    {
+      "source": "Cirrus-Two-Overlap.heic",
+      "output": "Cirrus-Two-Overlap.webp",
+      "width": 1440,
+      "height": 360,
+      "frames": 1
+    },
+    {
+      "source": "Cloud-Drizzle.heic",
+      "output": "Cloud-Drizzle.webp",
+      "width": 768,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Cloud-Patch-One.heic",
+      "output": "Cloud-Patch-One.webp",
+      "width": 1024,
+      "height": 1024,
+      "frames": 1
+    },
+    {
+      "source": "Cloudy-Background-One.heic",
+      "output": "Cloudy-Background-One.webp",
+      "width": 1152,
+      "height": 384,
+      "frames": 1
+    },
+    {
+      "source": "Cumulus-One-Blue.heic",
+      "output": "Cumulus-One-Blue.webp",
+      "width": 1536,
+      "height": 768,
+      "frames": 1
+    },
+    {
+      "source": "Cumulus-One-Neutral.heic",
+      "output": "Cumulus-One-Neutral.webp",
+      "width": 1536,
+      "height": 768,
+      "frames": 1
+    },
+    {
+      "source": "Cumulus-Three-Blue.heic",
+      "output": "Cumulus-Three-Blue.webp",
+      "width": 2048,
+      "height": 1024,
+      "frames": 1
+    },
+    {
+      "source": "Cumulus-Three-Neutral.heic",
+      "output": "Cumulus-Three-Neutral.webp",
+      "width": 2048,
+      "height": 1024,
+      "frames": 1
+    },
+    {
+      "source": "Cumulus-Two-Blue.heic",
+      "output": "Cumulus-Two-Blue.webp",
+      "width": 1536,
+      "height": 768,
+      "frames": 1
+    },
+    {
+      "source": "Cumulus-Two-Neutral.heic",
+      "output": "Cumulus-Two-Neutral.webp",
+      "width": 1536,
+      "height": 768,
+      "frames": 1
+    },
+    {
+      "source": "Fringe-Large-Blue.heic",
+      "output": "Fringe-Large-Blue.webp",
+      "width": 1024,
+      "height": 512,
+      "frames": 1
+    },
+    {
+      "source": "Fringe-Large-Neutral.heic",
+      "output": "Fringe-Large-Neutral.webp",
+      "width": 1024,
+      "height": 512,
+      "frames": 1
+    },
+    {
+      "source": "Lens-Flare-Medium.heic",
+      "output": "Lens-Flare-Medium.webp",
+      "width": 768,
+      "height": 192,
+      "frames": 1
+    },
+    {
+      "source": "Meteor.heic",
+      "output": "Meteor.webp",
+      "width": 56,
+      "height": 128,
+      "frames": 1
+    },
+    {
+      "source": "Raindrop-Cluster-Small.heic",
+      "output": "Raindrop-Cluster-Small.webp",
+      "width": 300,
+      "height": 100,
+      "frames": 1
+    },
+    {
+      "source": "Raindrop-Tile-Heavy.heic",
+      "output": "Raindrop-Tile-Heavy.webp",
+      "width": 500,
+      "height": 500,
+      "frames": 1
+    },
+    {
+      "source": "Raindrop.heic",
+      "output": "Raindrop.webp",
+      "width": 5,
+      "height": 50,
+      "frames": 1
+    },
+    {
+      "source": "Ray-Cyan.heic",
+      "output": "Ray-Cyan.webp",
+      "width": 64,
+      "height": 512,
+      "frames": 1
+    },
+    {
+      "source": "Snow-Flake-Small.heic",
+      "output": "Snow-Flake-Small.webp",
+      "width": 5,
+      "height": 5,
+      "frames": 1
+    },
+    {
+      "source": "Star-Frames.heic",
+      "output": "Star-Frames.webp",
+      "width": 16,
+      "height": 32,
+      "frames": 1
+    },
+    {
+      "source": "Sun-Left.heic",
+      "output": "Sun-Left.webp",
+      "width": 240,
+      "height": 240,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Day-Flicker-01.heic",
+      "output": "Thunderstorm-Day-Flicker-01.webp",
+      "width": 480,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Day-Flicker-02.heic",
+      "output": "Thunderstorm-Day-Flicker-02.webp",
+      "width": 480,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Day-Flicker-03.heic",
+      "output": "Thunderstorm-Day-Flicker-03.webp",
+      "width": 300,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Day-Flicker-04.heic",
+      "output": "Thunderstorm-Day-Flicker-04.webp",
+      "width": 480,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Day-Flicker-05.heic",
+      "output": "Thunderstorm-Day-Flicker-05.webp",
+      "width": 480,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Day-Flicker-06.heic",
+      "output": "Thunderstorm-Day-Flicker-06.webp",
+      "width": 440,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Day-Main.heic",
+      "output": "Thunderstorm-Day-Main.webp",
+      "width": 1840,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Gradient-Bottom-Day.heic",
+      "output": "Thunderstorm-Gradient-Bottom-Day.webp",
+      "width": 16,
+      "height": 664,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Gradient-Bottom-Night.heic",
+      "output": "Thunderstorm-Gradient-Bottom-Night.webp",
+      "width": 16,
+      "height": 664,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Night-Flicker-01.heic",
+      "output": "Thunderstorm-Night-Flicker-01.webp",
+      "width": 480,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Night-Flicker-02.heic",
+      "output": "Thunderstorm-Night-Flicker-02.webp",
+      "width": 480,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Night-Flicker-03.heic",
+      "output": "Thunderstorm-Night-Flicker-03.webp",
+      "width": 300,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Night-Flicker-04.heic",
+      "output": "Thunderstorm-Night-Flicker-04.webp",
+      "width": 480,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Night-Flicker-05.heic",
+      "output": "Thunderstorm-Night-Flicker-05.webp",
+      "width": 480,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Night-Flicker-06.heic",
+      "output": "Thunderstorm-Night-Flicker-06.webp",
+      "width": 440,
+      "height": 480,
+      "frames": 1
+    },
+    {
+      "source": "Thunderstorm-Night-Main.heic",
+      "output": "Thunderstorm-Night-Main.webp",
+      "width": 1840,
+      "height": 480,
+      "frames": 1
+    }
+  ],
+  "unsupportedTextures": []
+}
