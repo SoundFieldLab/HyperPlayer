@@ -11,11 +11,14 @@
 import { createDefaultParams } from 'hypersoundengine';
 import type { HyperSoundEngineParams } from 'hypersoundengine';
 import type { HseController } from './HseController';
+import type { TelemetryTap } from './TelemetryTap';
 
 export type AudioContextLifecycle = 'absent' | 'running' | 'suspended';
 
 export interface AudioEngineControllerDeps {
   hse: HseController;
+  /** 分析 tap（UI-D80/86：post-DSP pre-output-gain）；装配图时接入 analyser→outputGain。 */
+  telemetry?: TelemetryTap;
   /** 测试注入 fake AudioContext；缺省 new AudioContext()。 */
   createContext?: () => AudioContext;
   /** 测试注入 rAF；缺省 requestAnimationFrame。 */
@@ -83,7 +86,10 @@ export class AudioEngineController {
     }
   }
 
-  /** 接入 HSE 节点（host 负责 masterGain 槽全断与 engine 插入）。 */
+  /**
+   * 接入 HSE 节点（host 负责 masterGain 槽全断与 engine 插入），并装配分析 tap：
+   * analyser（HSE 输出挂点）→ tap（post-DSP pre-output-gain）→ 输出增益。
+   */
   async attachHse(params?: HyperSoundEngineParams): Promise<void> {
     const ctx = this.ensureContext();
     const handle = {
@@ -92,6 +98,18 @@ export class AudioEngineController {
       analyser: this.analyser as unknown as HseHandleNode,
     };
     await this.deps.hse.attach(handle, params ?? createDefaultParams(ctx.sampleRate));
+    // 闭合规格书链图：source→HSE→analyser→tap→outputGain→destination
+    if (this.deps.telemetry && this.analyser && this.outputGain) {
+      await this.deps.telemetry.connect(ctx, this.analyser, this.outputGain);
+    }
+  }
+
+  /** MediaElement 接入：元素 → MediaElementSource → 输入总线（每个元素一次）。 */
+  attachMediaElement(element: HTMLMediaElement): MediaElementAudioSourceNode | null {
+    const ctx = this.ensureContext();
+    const source = ctx.createMediaElementSource(element);
+    this.wireSource(source);
+    return source;
   }
 
   get outputNode(): AudioNode | null {

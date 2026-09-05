@@ -4,6 +4,7 @@ import type { AudioEngineControllerDeps } from '../../../src/domains/player/Audi
 import { HseController } from '../../../src/domains/player/HseController';
 import type { HseAttachHandle, HyperSoundEngineHostLike } from '../../../src/domains/player/HseController';
 import type { HyperSoundEngineParams } from 'hypersoundengine';
+import type { TelemetryTap } from '../../../src/domains/player/TelemetryTap';
 
 class FakeNode {
   connects: unknown[] = [];
@@ -26,12 +27,18 @@ class FakeAudioContext {
   closeCalls = 0;
   sinkCalls: string[] = [];
   failSink = false;
+  mediaSources: FakeNode[] = [];
 
   createGain(): FakeNode {
     return new FakeNode();
   }
   createAnalyser(): FakeNode {
     return new FakeNode();
+  }
+  createMediaElementSource(): FakeNode {
+    const node = new FakeNode();
+    this.mediaSources.push(node);
+    return node;
   }
   async resume(): Promise<void> {
     this.resumeCalls += 1;
@@ -116,6 +123,45 @@ describe('AudioEngineController', () => {
     expect(hse.state).toBe('attached');
     const host = (hse as unknown as { host: StubHost }).host;
     expect(host.attachParams?.sampleRate).toBe(48000);
+  });
+
+  it('attachHse 闭合分析 tap：analyser→tap→outputGain（post-DSP pre-output-gain）', async () => {
+    const { contexts } = makeController();
+    const connect = vi.fn(async () => {});
+    const telemetry = {
+      connect,
+      latestFrame: null,
+      dispose: vi.fn(),
+    } as unknown as TelemetryTap;
+    const hse = new HseController({ createHost: () => new StubHost() });
+    const controller = new AudioEngineController({
+      hse,
+      telemetry,
+      createContext: () => {
+        const ctx = new FakeAudioContext();
+        contexts.push(ctx);
+        return ctx as unknown as AudioContext;
+      },
+      readPosition: () => 0,
+      writePosition: () => {},
+    });
+    await controller.attachHse();
+    expect(hse.state).toBe('attached');
+    expect(connect).toHaveBeenCalledTimes(1);
+    const [ctx, analyser, outputGain] = connect.mock.calls[0] as unknown as [unknown, unknown, unknown];
+    expect(ctx).toBe(contexts[0] as unknown as AudioContext);
+    expect(analyser).toBeDefined();
+    expect(outputGain).toBeDefined();
+  });
+
+  it('attachMediaElement：元素 → MediaElementSource → 输入总线', () => {
+    const { controller, contexts } = makeController();
+    const element = { src: '' } as unknown as HTMLMediaElement;
+    controller.attachMediaElement(element);
+    const ctx = contexts[0] as FakeAudioContext;
+    expect(ctx.mediaSources).toHaveLength(1);
+    // source.connect(inputBus)：MediaElementSource 的 connects 含输入总线节点
+    expect(ctx.mediaSources[0]?.connects.length).toBe(1);
   });
 
   it('setSinkId 成功记录当前设备', async () => {

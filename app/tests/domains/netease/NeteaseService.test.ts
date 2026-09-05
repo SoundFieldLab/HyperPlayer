@@ -86,6 +86,23 @@ describe('NeteaseService（waveforge oracle 对拍）', () => {
     expect(result.fallbackBlocked).toBe('paid-content');
   });
 
+  it('失真路由修复：event/following、event/user、cloud/delete、user/subscribe 映射真实端点', async () => {
+    const { api, calls } = makeFakeApi();
+    const { session } = makeSession(api);
+    const service = new NeteaseService({ api, session, logger: createNullLogger() });
+    await service.route('/netease/event/following', { pagesize: 10 }).catch(() => {});
+    await service.route('/netease/event/user', { uid: 1 }).catch(() => {});
+    await service.route('/netease/cloud/delete', { id: 1 }).catch(() => {});
+    await service.route('/netease/user/subscribe', { id: 1 }).catch(() => {});
+    const endpoints = calls.map((c) => c.endpoint);
+    expect(endpoints).toContain('event');
+    expect(endpoints).toContain('user_event');
+    expect(endpoints).toContain('user_cloud_del');
+    expect(endpoints).toContain('follow');
+    expect(endpoints).not.toContain('event_forward'); // 不再被这 4 条路由使用
+    expect(endpoints).not.toContain('artist_sub');
+  });
+
   it('红线：song_url_match 永不调用（LGPL 解灰路径废除）', async () => {
     const { api, calls } = makeFakeApi();
     const { session } = makeSession(api);

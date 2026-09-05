@@ -179,6 +179,14 @@ import * as songCloudDownloadModule from '@neteasecloudmusicapienhanced/api/modu
 const songCloudDownload = unwrapCjs<NeteaseApiModule>(songCloudDownloadModule);
 import * as eventForwardModule from '@neteasecloudmusicapienhanced/api/module/event_forward.js';
 const eventForward = unwrapCjs<NeteaseApiModule>(eventForwardModule);
+import * as eventModule from '@neteasecloudmusicapienhanced/api/module/event.js';
+const event = unwrapCjs<NeteaseApiModule>(eventModule);
+import * as userEventModule from '@neteasecloudmusicapienhanced/api/module/user_event.js';
+const userEvent = unwrapCjs<NeteaseApiModule>(userEventModule);
+import * as userCloudDelModule from '@neteasecloudmusicapienhanced/api/module/user_cloud_del.js';
+const userCloudDel = unwrapCjs<NeteaseApiModule>(userCloudDelModule);
+import * as followModule from '@neteasecloudmusicapienhanced/api/module/follow.js';
+const follow = unwrapCjs<NeteaseApiModule>(followModule);
 import * as msgNoticesModule from '@neteasecloudmusicapienhanced/api/module/msg_notices.js';
 const msgNotices = unwrapCjs<NeteaseApiModule>(msgNoticesModule);
 import * as msgCommentsModule from '@neteasecloudmusicapienhanced/api/module/msg_comments.js';
@@ -281,6 +289,10 @@ const MODULES: Record<string, NeteaseApiModule> = {
   cloudsearch: cloudSearch,
   song_cloud_download: songCloudDownload,
   event_forward: eventForward,
+  event,
+  user_event: userEvent,
+  user_cloud_del: userCloudDel,
+  follow,
   msg_notices: msgNotices,
   msg_comments: msgComments,
 };

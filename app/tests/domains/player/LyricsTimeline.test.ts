@@ -8,8 +8,8 @@ const LRC = `[ti:test]
 [00:03.50]第二句歌词
 [00:06.00]第三句歌词`;
 
-const YRC = `[00:01.00]<第 500><一 300><句 400><歌 300>
-[00:03.50]<第 300><二 300><句 300>`;
+const YRC = `[1000,2000](1000,500,0)第(1500,300,0)一(1800,400,0)句(2200,300,0)歌
+[3500,1500](3500,300,0)第(3800,300,0)二(4100,300,0)句`;
 
 describe('lyrics 解析（parseLrc / parseLrcTimeTag）', () => {
   it('parseLrcTimeTag 支持 mm:ss 与 mm:ss.xx', () => {
@@ -27,7 +27,7 @@ describe('lyrics 解析（parseLrc / parseLrcTimeTag）', () => {
     expect(parsed.lines[0]?.text).toBe('第一句歌词');
   });
 
-  it('YRC 逐字扩展：解析为逐字轴（timingLevel=word）', () => {
+  it('YRC 逐字（真实格式 [ms,ms](start,dura,0)字）：解析为逐字轴（timingLevel=word）', () => {
     const parsed = parseLrc(YRC);
     expect(parsed.timingLevel).toBe('word');
     expect(parsed.format).toBe('yrc');
@@ -35,7 +35,15 @@ describe('lyrics 解析（parseLrc / parseLrcTimeTag）', () => {
     expect(line0?.words).toHaveLength(4);
     expect(line0?.words?.[0]).toEqual({ word: '第', startTime: 0, duration: 500 });
     expect(line0?.words?.[1]).toEqual({ word: '一', startTime: 500, duration: 300 });
-    expect(line0?.text).toBe('第一句歌');
+    expect(line0?.text).toBe('第一句歌'); // 时间戳已清理，无残留
+    expect(parsed.lines[0]?.time).toBe(1000); // 行时间毫秒
+  });
+
+  it('YRC 前缀标签（词:）不污染逐字轴', () => {
+    const parsed = parseLrc(`[5000,1000]词:(5000,500,0)前(5500,500,0)言`);
+    expect(parsed.lines[0]?.words).toHaveLength(2);
+    expect(parsed.lines[0]?.words?.[0]?.word).toBe('前');
+    expect(parsed.lines[0]?.text).toBe('前言');
   });
 });
 

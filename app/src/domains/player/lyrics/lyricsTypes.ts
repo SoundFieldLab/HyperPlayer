@@ -2,6 +2,7 @@
  * 歌词域类型（自 waveforge-lyrics 提取后按 HyperPlayer 令牌定义；字段语义与上游一致）。
  * 无 React 依赖；LyricsTimeline 与歌词渲染组件共享。
  */
+import { parseYrc } from './yrcParser';
 
 /** 歌词行（兼容 waveforge musicApi 的 LyricLine 语义）。 */
 export interface LyricLine {
@@ -47,10 +48,16 @@ export function parseLrcTimeTag(tag: string): number {
   return minutes * 60_000 + seconds * 1000 + fraction;
 }
 
-/** 解析 LRC 文本（含逐字 YRC 扩展 [mm:ss.xx]<word 时长>，若存在）。 */
+/** 解析 LRC / YRC 文本。YRC（网易云逐字格式 [ms,ms](start,dura,0)字…）由 yrcParser 处理。 */
 export function parseLrc(text: string): ParsedLyrics {
+  // 网易云 YRC 逐字格式：[开始ms,持续ms](字开始ms,字持续ms,0)字...
+  if (hasYrcFormat(text)) {
+    const lines = parseYrc(text);
+    return { lines, timingLevel: 'word', format: 'yrc' };
+  }
+
+  // 普通 LRC：[mm:ss.xx] 行级（不伪造逐字符节拍，UI-D26）
   const lines: LyricLine[] = [];
-  let hasWordTiming = false;
   for (const raw of text.split(/\r?\n/u)) {
     const line = raw.trim();
     if (!line) continue;
@@ -59,26 +66,13 @@ export function parseLrc(text: string): ParsedLyrics {
     const time = parseLrcTimeTag(tags[0] as string);
     if (Number.isNaN(time)) continue;
     const rest = line.replace(/\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/gu, '').trim();
-    // YRC 逐字扩展：<字 时长ms> 序列（网易云逐字格式）。
-    const words = parseYrcWords(rest);
-    if (words.length > 0) hasWordTiming = true;
-    lines.push({ time, text: words.length > 0 ? words.map((w) => w.word).join('') : rest, words: words.length > 0 ? words : undefined });
+    lines.push({ time, text: rest });
   }
   lines.sort((a, b) => a.time - b.time);
-  return { lines, timingLevel: hasWordTiming ? 'word' : 'line', format: hasWordTiming ? 'yrc' : 'lrc' };
+  return { lines, timingLevel: 'line', format: 'lrc' };
 }
 
-/** 解析网易云 YRC 逐字扩展：<字 时长>。 */
-function parseYrcWords(text: string): LyricWord[] {
-  const words: LyricWord[] = [];
-  const re = /<([^<>\s]+)\s+(\d+)(?:,\s*(\d+))?>/gu;
-  let cursor = 0;
-  for (const match of text.matchAll(re)) {
-    const word = match[1] ?? '';
-    const duration = Number(match[2] ?? 0);
-    if (!word) continue;
-    words.push({ word, startTime: cursor, duration });
-    cursor += duration;
-  }
-  return words;
+/** YRC 格式检测：行头 [数字,数字] 且内容含 (数字,数字) 时间戳。 */
+export function hasYrcFormat(text: string): boolean {
+  return /^\[\d+,\d+\]/mu.test(text) && /\(\d+,\d+[^)]*\)/mu.test(text);
 }
