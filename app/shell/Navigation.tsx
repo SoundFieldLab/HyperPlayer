@@ -33,7 +33,7 @@ const localNav: NavItem[] = [
 ];
 
 export function SidebarNav(): React.JSX.Element {
-  const { domain, view, tasks, setDomain, navigate } = useAppStore();
+  const { domain, view, tasks, setDomain, navigate, neteaseAuthenticated } = useAppStore();
   const nav = domain === "netease" ? neteaseNav : localNav;
   const activeTasks = tasks.filter((task) => task.state !== "complete").length;
   return <aside className="sidebar">
@@ -45,7 +45,7 @@ export function SidebarNav(): React.JSX.Element {
     <div className="sidebar-spacer"/>
     <button type="button" className={`nav-special ${view === "messages" ? "selected" : ""}`} aria-current={view === "messages" ? "page" : undefined} aria-label="消息" title="消息" onClick={() => navigate("messages")}><Bell/><span>消息</span></button>
     <button type="button" className={`nav-special ${view === "status" ? "selected" : ""}`} aria-current={view === "status" ? "page" : undefined} onClick={() => navigate("status")} aria-label={activeTasks ? `状态中心，${activeTasks} 个进行中任务` : "状态中心"} title="状态中心"><WifiHigh/><span>状态中心</span>{activeTasks > 0 && <span className="task-count" aria-hidden="true">{activeTasks}</span>}</button>
-    <button type="button" className={`account-mini ${view === "account" ? "selected" : ""}`} aria-current={view === "account" ? "page" : undefined} aria-label="网易云账号" title="网易云账号" onClick={() => navigate("account")}><span className="avatar"><User weight="fill"/></span><span><b>网易云账号</b><small>查看真实登录状态</small></span><CaretRight/></button>
+    <button type="button" className={`account-mini ${view === "account" ? "selected" : ""}`} aria-current={view === "account" ? "page" : undefined} aria-label="网易云账号" title="网易云账号" onClick={() => navigate("account")}><span className="avatar"><User weight="fill"/></span><span><b>网易云账号</b><small>{neteaseAuthenticated ? "已登录网易云" : "查看真实登录状态"}</small></span><CaretRight/></button>
     <button type="button" className={`nav-special ${view === "settings" ? "selected" : ""}`} aria-current={view === "settings" ? "page" : undefined} aria-label="设置" title="设置" onClick={() => navigate("settings")}><Gear/><span>设置</span></button>
   </aside>;
 }

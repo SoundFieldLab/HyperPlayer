@@ -56,6 +56,8 @@ interface AppState {
   queueFloating: boolean;
   selectedTrackIds: string[];
   toasts: ToastMessage[];
+  /** 网易云登录态（扫码 confirmed 显式分发；neteaseStatusChanged 事件驱动同步） */
+  neteaseAuthenticated: boolean;
   unlisten: Unlisten | null;
   init(): Promise<void>;
   dispose(): void;
@@ -81,7 +83,9 @@ interface AppState {
   importDspHse2(code: string): Promise<void>;
   exportDspHse2(): Promise<string>;
   notifyError(error: unknown, fallback: string): void;
+  notifyInfo(message: string): void;
   dismissToast(id: number): void;
+  setNeteaseAuthenticated(value: boolean): void;
   enqueueTrack(track: TrackDto, position?: QueueInsertPosition): Promise<void>;
   removeQueueItem(queueItemId: string): Promise<void>;
   reorderQueueItem(queueItemId: string, targetIndex: number): Promise<void>;
@@ -263,6 +267,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   queueFloating: false,
   selectedTrackIds: [],
   toasts: [],
+  neteaseAuthenticated: false,
   unlisten: null,
   async init() {
     const generation = ++initGeneration;
@@ -307,7 +312,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         scanProgress: (progress) => { scanEvents.push(progress); set((state) => ({ tasks: upsertScanTask(state.tasks, progress) })); },
         neteaseStatusChanged: (status) => {
           neteaseAuthenticated = status.authenticated;
-          set((state) => ({ tasks: status.authenticated ? state.tasks.filter((task) => task.id !== "netease-login") : state.tasks }));
+          set((state) => ({ neteaseAuthenticated: status.authenticated, tasks: status.authenticated ? state.tasks.filter((task) => task.id !== "netease-login") : state.tasks }));
         },
         dspConfigurationRejected: ({ revision, code, reason, stage }) => {
           const pending = get().dspPendingConfiguration;
@@ -340,6 +345,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...initial,
         ...acceptedPlaybackState(playback, state.dspDiagnostic),
         settings: eventSettings ?? initial.settings,
+        neteaseAuthenticated,
         tasks: neteaseAuthenticated ? tasks.filter((task) => task.id !== "netease-login") : tasks,
         unlisten: pendingUnlisten,
         ready: true,
@@ -458,7 +464,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const toast = { id: ++toastId, message: errorMessage(error, fallback) };
     set((state) => ({ toasts: [...state.toasts.slice(-3), toast] }));
   },
+  notifyInfo(message) {
+    const toast = { id: ++toastId, message };
+    set((state) => ({ toasts: [...state.toasts.slice(-3), toast] }));
+  },
   dismissToast(id) { set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) })); },
+  setNeteaseAuthenticated(value) { set({ neteaseAuthenticated: value }); },
   async togglePlayback() {
     const previous = get().playback;
     if (!previous?.current) return;
