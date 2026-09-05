@@ -43,8 +43,8 @@ export class TrayService {
       { id: 'show', label: '显示主窗口' },
       'separator',
       { id: 'playPause', label: '播放/暂停' },
-      { id: 'next', label: '上一首' },
-      { id: 'prev', label: '下一首' },
+      { id: 'prev', label: '上一首' },
+      { id: 'next', label: '下一首' },
       'separator',
       { id: 'quit', label: '完全退出' },
     ];

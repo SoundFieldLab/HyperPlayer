@@ -109,10 +109,23 @@ export async function initServices(): Promise<Services> {
   const store = await createTauriStore('hyperplayer.json');
   const sql = await loadSqlDatabase('sqlite:hyperplayer.db');
   const idb = await createIdbCache('hyperplayer-cache');
-  const vault = await createVault({
-    path: await appDataPath('hyperplayer.stronghold'),
-    password: await getOrCreateVaultPassword(store),
-  });
+  const vaultPath = await appDataPath('hyperplayer.stronghold');
+  let vault: Vault;
+  try {
+    vault = await createVault({
+      path: vaultPath,
+      password: await getOrCreateVaultPassword(store),
+    });
+  } catch {
+    // vault 文件与 store 密码失配（store 被清空/损坏时密码重新生成）：
+    // 删除旧 vault 文件重建，凭据（网易云 cookie）需重新登录，应用可正常启动。
+    console.warn('vault: 密码与 vault 文件失配，删除重建（登录凭据将失效）');
+    await fs.removeFile(vaultPath).catch(() => {});
+    vault = await createVault({
+      path: vaultPath,
+      password: await getOrCreateVaultPassword(store),
+    });
+  }
 
   // —— 网易云协议层 ——
   const request = wireNeteaseApi(http, {

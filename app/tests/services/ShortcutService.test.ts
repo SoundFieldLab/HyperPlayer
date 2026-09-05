@@ -86,6 +86,29 @@ describe('ShortcutService（后端补充规划 #7/#8）', () => {
     expect(snapshot.bindings.playPause).toBe(DEFAULT_SHORTCUTS.playPause);
   });
 
+  it('绑定未变更时 rebind 跳过重注册（设置高频更新不空转 IPC）', async () => {
+    const raw = createFakeShortcuts();
+    let registerCalls = 0;
+    const shortcuts = {
+      ...raw,
+      register: async (shortcut: string, handler: (e: { shortcut: string; state: 'Released' | 'Pressed' }) => void) => {
+        registerCalls += 1;
+        return raw.register(shortcut, handler);
+      },
+    };
+    const store = createFakeStore();
+    const settings = new SettingsService({ store, logger: createNullLogger() });
+    const service = new ShortcutService({ shortcuts, settings, commands: { playPause: vi.fn(), next: vi.fn(), prev: vi.fn() }, logger: createNullLogger() });
+    await service.init();
+    const initial = registerCalls;
+    expect(initial).toBe(3);
+    await service.rebind(); // 设置未变
+    expect(registerCalls).toBe(initial);
+    await settings.update({ volume: 0.5 }); // 无关设置变更
+    await service.rebind();
+    expect(registerCalls).toBe(initial);
+  });
+
   it('dispose 卸载全部绑定', async () => {
     const { service, shortcuts } = makeContext();
     await service.init();

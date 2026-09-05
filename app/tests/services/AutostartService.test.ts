@@ -41,6 +41,32 @@ describe('AutostartService（后端补充规划 #39）', () => {
     expect(await autostart.isEnabled()).toBe(false);
   });
 
+  it('期望值未变化时 init 跳过 IPC 探测（设置高频更新不空转）', async () => {
+    const raw = createFakeAutostart();
+    let isEnabledCalls = 0;
+    const autostart = {
+      ...raw,
+      isEnabled: async () => {
+        isEnabledCalls += 1;
+        return raw.isEnabled();
+      },
+    };
+    const store = createFakeStore();
+    const settings = new SettingsService({ store, logger: createNullLogger() });
+    const service = new AutostartService({ autostart, settings, logger: createNullLogger() });
+    await settings.load();
+    await service.init();
+    expect(isEnabledCalls).toBe(1);
+    await service.init(); // 期望未变
+    expect(isEnabledCalls).toBe(1);
+    await settings.update({ volume: 0.5 });
+    await service.init(); // 无关设置变更
+    expect(isEnabledCalls).toBe(1);
+    await settings.update({ autostart: true });
+    await service.init();
+    expect(isEnabledCalls).toBe(2);
+  });
+
   it('setAutostart：成功时写设置并应用系统', async () => {
     const { settings, autostart, service } = makeContext();
     await settings.load();

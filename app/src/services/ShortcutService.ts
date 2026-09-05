@@ -44,6 +44,10 @@ export class ShortcutService {
   private readonly logger: Logger;
   private readonly registered = new Map<string, ShortcutAction>();
   private conflicts: string[] = [];
+  /** 生效绑定指纹：绑定未变时 rebind 直接跳过（设置高频更新不空转 IPC）。 */
+  private bindingsKey: string | null = null;
+  /** 并发 rebind 令牌：旧重注册在 await 边界发现被取代即放弃。 */
+  private rebindToken = 0;
 
   constructor(deps: ShortcutServiceDeps) {
     this.deps = deps;
@@ -55,15 +59,20 @@ export class ShortcutService {
     await this.rebind();
   }
 
-  /** 按 settings 重算绑定并重注册（设置变更后调用）。 */
+  /** 按 settings 重算绑定并重注册（设置变更后调用；绑定未变时跳过）。 */
   async rebind(): Promise<void> {
+    const token = ++this.rebindToken;
+    const bindings = this.resolveBindings();
+    const key = JSON.stringify(bindings);
+    if (key === this.bindingsKey) return; // 绑定未变，跳过
+
     for (const shortcut of this.registered.keys()) {
       await this.deps.shortcuts.unregister(shortcut);
     }
+    if (token !== this.rebindToken) return; // 已被更新的 rebind 取代
     this.registered.clear();
     this.conflicts = [];
 
-    const bindings = this.resolveBindings();
     for (const [action, shortcut] of Object.entries(bindings) as Array<[ShortcutAction, string | undefined]>) {
       if (!shortcut) continue; // 空串 = 禁用该动作
       if (this.registered.has(shortcut)) {
@@ -72,6 +81,7 @@ export class ShortcutService {
         continue;
       }
       const ok = await this.deps.shortcuts.register(shortcut, (event) => this.handlePress(action, event));
+      if (token !== this.rebindToken) return; // 并发 rebind 已取代本次
       if (!ok) {
         this.conflicts.push(shortcut);
         this.logger.warn(`shortcut: ${shortcut} 注册失败（被占用/非法组合），跳过`);
@@ -79,6 +89,7 @@ export class ShortcutService {
       }
       this.registered.set(shortcut, action);
     }
+    this.bindingsKey = key;
     this.logger.info(`shortcut: 生效 ${this.registered.size} 个绑定，冲突 ${this.conflicts.length} 个`);
   }
 
@@ -90,9 +101,11 @@ export class ShortcutService {
 
   /** 全部卸载（应用退出）。 */
   async dispose(): Promise<void> {
+    this.rebindToken += 1; // 作废进行中的 rebind
     await this.deps.shortcuts.unregisterAll();
     this.registered.clear();
     this.conflicts = [];
+    this.bindingsKey = null;
   }
 
   private handlePress(action: ShortcutAction, event: ShortcutEvent): void {

@@ -29,6 +29,19 @@ describe('TrayService（后端补充规划 #42，UI-D77）', () => {
     expect(tray.items.filter((item) => item === 'separator')).toHaveLength(2);
   });
 
+  it('菜单标签与命令配对：上一首→prev、下一首→next（回归：标签与命令曾对调）', async () => {
+    const { service, tray, commands } = makeContext();
+    await service.init();
+    tray.click('prev');
+    await Promise.resolve();
+    expect(commands.prev).toHaveBeenCalledTimes(1);
+    expect(commands.next).not.toHaveBeenCalled();
+    tray.click('next');
+    await Promise.resolve();
+    expect(commands.next).toHaveBeenCalledTimes(1);
+    expect(commands.prev).toHaveBeenCalledTimes(1);
+  });
+
   it('菜单动作映射：show → 显示并聚焦窗口；quit → 直接关闭', async () => {
     const { service, tray, window } = makeContext();
     await service.init();

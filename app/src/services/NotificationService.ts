@@ -31,7 +31,8 @@ export class NotificationService {
   async notifyTrackChange(track: QueueItem | null): Promise<void> {
     if (!this.deps.settings.snapshot.notifyOnTrackChange) return;
     if (!track) return;
-    await this.notify(track.title, track.artist ? `${track.artist}${track.album ? ` — ${track.album}` : ''}` : undefined);
+    const meta = [track.artist, track.album].filter(Boolean).join(' — ') || undefined;
+    await this.notify(track.title, meta);
   }
 
   /** 通用通知（权限守卫：不支持/未授权静默跳过）。 */
