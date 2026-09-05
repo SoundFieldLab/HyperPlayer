@@ -436,15 +436,28 @@ function AccountView(): React.JSX.Element {
     if (login.status !== "ready") return;
     const generation = ++pollGeneration.current;
     let timer = 0;
+    let consecutiveFailures = 0;
     async function run(): Promise<void> {
       try {
         if (login.status !== "ready") return;
         const value = await bridge.neteasePollQrLogin(login.data.loginId);
         if (generation !== pollGeneration.current) return;
+        consecutiveFailures = 0;
         setPoll(remoteSuccess(value));
-        if (value.phase === "waiting" || value.phase === "scanned") timer = window.setTimeout(run, 1800);
+        // waiting/scanned 期间必须持续轮询：一次网络抖动就终止会让扫码确认后
+        // 永远等不到 803（实机「登录没成功」根因）
+        if (value.phase === "waiting" || value.phase === "scanned") timer = window.setTimeout(run, 2000);
         if (value.phase === "confirmed") { reloadStatus(); reloadAccount(); }
-      } catch (error) { if (generation === pollGeneration.current) setPoll(remoteFailure(error)); }
+      } catch (error) {
+        if (generation !== pollGeneration.current) return;
+        consecutiveFailures += 1;
+        // 传输抖动（sidecar 重启间隙等）容忍至 5 次，退避重试而非终止轮询
+        if (consecutiveFailures <= 5) {
+          timer = window.setTimeout(run, 2500 * consecutiveFailures);
+          return;
+        }
+        setPoll(remoteFailure(error));
+      }
     }
     void run();
     return () => { pollGeneration.current += 1; window.clearTimeout(timer); };

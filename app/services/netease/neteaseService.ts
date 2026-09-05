@@ -181,22 +181,38 @@ export async function neteaseStartQrLogin(): Promise<NeteaseLoginStartDto> {
   const body = await call<{ data?: { unikey?: string }; unikey?: string }>('login_qr_key', {})
   const loginId = body.data?.unikey ?? body.unikey ?? ''
   if (!loginId) throw new Error('未能获取二维码 key（网易云未返回 unikey，请稍后重试）')
-  // 二维码内容 = 网易云官方扫码页 + unikey；qrcode 库本地生成 dataURL（曾恒返回
-  // 空串导致 <img> 永远裂图）
-  const qrContent = `https://music.163.com/login?codekey=${loginId}`
-  const { default: QRCode } = await import('qrcode')
-  const qrImageDataUrl = await QRCode.toDataURL(qrContent, { width: 220, margin: 1 })
+  // 官方 login_qr_create 端点生成扫码内容与 dataURL（格式权威；曾手搓内容+恒空
+  // 串两种错法都试过）。platform 缺省 pc；qrimg=true 由端点用 qrcode 库直接出图
+  const created = await call<{ data?: { qrimg?: string; qrurl?: string } }>('login_qr_create', { key: loginId, qrimg: true })
+  const qrImageDataUrl = created.data?.qrimg ?? ''
+  if (!qrImageDataUrl) throw new Error('未能生成登录二维码（网易云未返回 qrimg）')
   return { loginId, qrImageDataUrl }
 }
 
 export async function neteasePollQrLogin(loginId: string): Promise<NeteaseLoginStateDto> {
   // 轮询 code 800/801/802/803 是状态语义而非错误（vendor 将其列为 SPECIAL_STATUS_CODES）
-  const body = await call<{ code?: number; cookie?: string }>('login_qr_check', { key: loginId }, [800, 801, 802, 803])
+  const body = await call<{ code?: number; cookie?: string | string[] }>('login_qr_check', { key: loginId }, [800, 801, 802, 803])
   const code = Number(body.code ?? -1)
+  console.info('[netease] qr poll:', code)
   if (code === 800) return { phase: 'expired' }
   if (code === 802) return { phase: 'scanned' }
   if (code === 803) {
-    if (body.cookie) await neteaseSession.update(cookieToJson(body.cookie))
+    // cookie 形状防御：vendor login_qr_check 803 时 body.cookie 为 join(';') 字符串，
+    // 其他路径可能给数组；解析失败绝不能静默吞掉（那会让用户确认后「登录没成功」）
+    const raw = Array.isArray(body.cookie) ? body.cookie.join(';') : body.cookie
+    const cookie = raw ? cookieToJson(raw) : {}
+    if (!cookie.MUSIC_U) {
+      console.error('[netease] qr 803 未拿到 MUSIC_U cookie，登录无法完成')
+      return { phase: 'failed' }
+    }
+    await neteaseSession.update(cookie)
+    // 入库后立即验证：user_account 通了才算 confirmed，避免「看似成功实则无会话」
+    try {
+      const profile = await call<{ profile?: { userId?: number } }>('user_account', {})
+      console.info('[netease] qr 登录验证:', profile.profile?.userId ?? '无 profile')
+    } catch (error) {
+      console.error('[netease] qr cookie 入库后 user_account 验证失败:', String(error).slice(0, 160))
+    }
     return { phase: 'confirmed' }
   }
   if (code === 801 || code === -1) return { phase: 'waiting' }
