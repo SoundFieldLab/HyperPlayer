@@ -37,6 +37,7 @@ import { createMetadataWorkerParser } from '../domains/library/metadataWorkerFac
 import { DspService } from '../domains/dsp/DspService';
 import { TaskCenter } from '../services/TaskCenter';
 import { AlbumCompletionService } from '../services/AlbumCompletionService';
+import { PlayHistoryService } from '../services/PlayHistoryService';
 import { useAppStore } from '../stores/store';
 import { useLibraryStore } from '../stores/slices/library';
 import { useDspStore } from '../stores/slices/dsp';
@@ -66,6 +67,7 @@ export interface Services {
   taskCenter: TaskCenter;
   dsp: DspService;
   albumCompletion: AlbumCompletionService;
+  playHistory: PlayHistoryService;
   player: PlayerController;
 }
 
@@ -166,6 +168,11 @@ export async function initServices(): Promise<Services> {
     logger: createNullLogger(),
   });
 
+  // —— 本地播放历史（后端补充规划 #48：每曲首次 playing 记录，同曲不重复）——
+  const playHistory = new PlayHistoryService({ sql, logger: createNullLogger() });
+  await playHistory.init();
+  playHistory.attach(stateMachine);
+
   // —— 播放器（完整 resolveSource 链：本地 → 缓存 → 网易云直链 + 边播边缓存）——
   const resolveSource = async (track: QueueItem) => {
     if (track.source === 'local' && track.localPath) {
@@ -230,5 +237,5 @@ export async function initServices(): Promise<Services> {
     logger: createNullLogger(),
   });
 
-  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, player };
+  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, player };
 }
