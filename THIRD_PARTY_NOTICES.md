@@ -22,6 +22,19 @@ HyperSoundEngine 纯 TS 完整包（引擎核心、浏览器宿主、规格与�
 
 网易云业务层（92 条路由的重试/缓存/音质降级/付费拦截逻辑与前端服务调用层）及歌词解析/渲染层（TTML 逐字解析、逐字时间归一、主歌词页及多模式歌词组件）源自 WaveForge 项目（https://github.com/SoundFieldLab/WaveForge ），经项目方授权引入 HyperPlayer 使用与分发。授权范围以 WaveForge 项目方书面授权为准；`src/vendor/folia`（AGPL-3.0）、`src/vendor/pv`（授权对象为 WaveForge 本项目）、`@unblockneteasemusic`（LGPL-3.0）及跨平台音源匹配路径未随本引入进入 HyperPlayer，也不得后续引入。`temp/netease-lyrics-code` 中的 folia 快照仅作只读参考，严禁拷入仓库。
 
+## 运行依赖许可登记
+
+以下为 app 运行时依赖与 Tauri 壳依赖（许可以包内 LICENSE / crates.io 元数据为准，此处登记备查；新依赖必须先登记本段并经 `pnpm license-check`）：
+
+| 依赖 | 范围 | 许可 |
+| :-- | :-- | :-- |
+| react / react-dom / zustand | npm | MIT |
+| music-metadata | npm | MIT |
+| @tauri-apps/api 及 plugin-{dialog,fs,http,sql,store,stronghold,window-state,global-shortcut,notification,updater,autostart} | npm | MIT / Apache-2.0 双许可 |
+| hypersoundengine / @neteasecloudmusicapienhanced/api | npm（workspace vendored） | 见上方 Vendored 章节 |
+| tauri / tauri-build 及 tauri-plugin-{dialog,fs,http,sql,store,stronghold,window-state,global-shortcut,notification,updater,single-instance,autostart} | cargo | MIT / Apache-2.0 双许可 |
+| serde / serde_json | cargo | MIT / Apache-2.0 双许可 |
+
 ## 红线
 
 - 不引入 AGPL-3.0 组件（含 folia 及其派生代码）。

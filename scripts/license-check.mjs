@@ -34,6 +34,7 @@ const appAllowlist = new Set([
   '@tauri-apps/plugin-global-shortcut',
   '@tauri-apps/plugin-notification',
   '@tauri-apps/plugin-updater',
+  '@tauri-apps/plugin-autostart',
   // Vendored workspace packages (covered by their own NOTICES entries).
   'hypersoundengine',
   '@neteasecloudmusicapienhanced/api',
@@ -62,7 +63,8 @@ const cargoAllowlist = new Set([
   'tauri-plugin-global-shortcut',
   'tauri-plugin-notification',
   'tauri-plugin-updater',
-  'argon2',
+  'tauri-plugin-single-instance',
+  'tauri-plugin-autostart',
   'serde',
   'serde_json',
 ]);

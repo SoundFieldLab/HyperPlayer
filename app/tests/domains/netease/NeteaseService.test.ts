@@ -183,8 +183,9 @@ describe('SessionService（QR 登录状态机）', () => {
     });
     const { session } = makeSession(api);
     const promise = session.startQrLogin();
+    const assertion = expect(promise).rejects.toThrow('network'); // 先挂 rejection 处理器，避免假定时器推进期间出现 unhandled rejection
     await vi.advanceTimersByTimeAsync(QR_RETRY_DELAY_MS * 3);
-    await expect(promise).rejects.toThrow('network');
+    await assertion;
     expect(QR_RETRY_COUNT).toBe(3);
   });
 

@@ -22,3 +22,10 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Local signing keys (never commit)
+.local-keys/
+
+# libsodium-sys build artifacts (downloaded locally to skip flaky network)
+src-tauri/libsodium-*
+src-tauri/LATEST*
