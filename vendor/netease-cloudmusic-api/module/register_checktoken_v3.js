@@ -5,7 +5,8 @@
 // POST /register/checktoken        → 强制刷新 token
 // GET  /register/checktoken?refresh=1 → 强制刷新
 //
-const { default: axios } = require('axios')
+// HyperPlayer adaptations: 浏览器传输
+const axios = require('../util/browserHttp')
 const { APP_CONF } = require('../util/config.json')
 
 const URL = APP_CONF.dunDomainV3 + '/v3/b?pn=YD00000558929251'

@@ -1,6 +1,7 @@
 const logger = require('./logger')
-const fs = require('fs')
-const path = require('path')
+// HyperPlayer adaptations: 浏览器无 fs/path；中国 IP 段加载退化到兜底随机
+const fs = null
+const path = null
 
 // IP地址转换函数
 function ipToInt(ip) {

@@ -1,22 +1,15 @@
-// 预先导入和绑定常用模块及函数
+// HyperPlayer adaptations: 浏览器版传输（axios → infra tauriHttp 注入；无 node fs/path/os/tunnel）
 const encrypt = require('./crypto')
 const CryptoJS = require('crypto-js')
-const { default: axios } = require('axios')
+const axios = require('./browserHttp')
 const logger = require('./logger')
-const { PacProxyAgent } = require('pac-proxy-agent')
-const http = require('http')
-const https = require('https')
-const tunnel = require('tunnel')
-const fs = require('fs')
-const path = require('path')
-const tmpPath = require('os').tmpdir()
 const {
   cookieToJson,
   cookieObjToString,
   toBoolean,
   generateRandomChineseIP,
 } = require('./index')
-const { URLSearchParams, URL } = require('url')
+const { URLSearchParams, URL } = globalThis
 const { APP_CONF } = require('../util/config.json')
 const {
   getToken: antiCheatTokenV2,
@@ -25,25 +18,19 @@ const {
   getToken: antiCheatTokenV3,
 } = require('../module/register_checktoken_v3')
 
-// 预先读取匿名token并缓存
-const anonymous_token = fs.readFileSync(
-  path.resolve(tmpPath, './anonymous_token'),
-  'utf-8',
-)
-const xeapiPublicKeyPath = path.resolve(tmpPath, './xeapi_public_key')
-let xeapi_public_key = null
-const loadXeapiPublicKey = () => {
-  if (!xeapi_public_key && fs.existsSync(xeapiPublicKeyPath)) {
-    try {
-      xeapi_public_key = JSON.parse(
-        fs.readFileSync(xeapiPublicKeyPath, 'utf-8'),
-      )
-    } catch (error) {
-      console.log('[ERR]', error)
-    }
-  }
-  return xeapi_public_key
+// HyperPlayer adaptations: 浏览器无 fs；anonymous_token / xeapi 公钥由注入 storage 提供
+let browserStorage = {
+  getAnonymousToken: async () => '',
+  getXeapiPublicKey: async () => null,
 }
+let anonymousTokenPromise = null
+const getAnonymousToken = () => {
+  if (!anonymousTokenPromise) {
+    anonymousTokenPromise = browserStorage.getAnonymousToken()
+  }
+  return anonymousTokenPromise
+}
+const loadXeapiPublicKey = async () => browserStorage.getXeapiPublicKey()
 
 // 预先绑定常用函数和常量
 const floor = Math.floor
@@ -54,10 +41,6 @@ const stringify = JSON.stringify
 const parse = JSON.parse
 const characters = 'abcdefghijklmnopqrstuvwxyz'
 const charactersLength = characters.length
-
-// 预先创建HTTP/HTTPS agents并重用
-const createHttpAgent = () => new http.Agent({ keepAlive: true })
-const createHttpsAgent = () => new https.Agent({ keepAlive: true })
 
 // 预先计算WNMCID（只计算一次）
 const WNMCID = (function () {
@@ -136,7 +119,7 @@ const chooseUserAgent = (crypto, uaType = 'pc') => {
 }
 
 // cookie处理
-const processCookieObject = (cookie, uri) => {
+const processCookieObject = (cookie, uri, anonymousToken) => {
   const _ntes_nuid = CryptoJS.lib.WordArray.random(32).toString()
   const os = osMap[cookie.os] || osMap['pc']
 
@@ -160,7 +143,7 @@ const processCookieObject = (cookie, uri) => {
   }
 
   if (!processedCookie.MUSIC_U) {
-    processedCookie.MUSIC_A = processedCookie.MUSIC_A || anonymous_token
+    processedCookie.MUSIC_A = processedCookie.MUSIC_A || anonymousToken
   }
 
   return processedCookie
@@ -180,6 +163,15 @@ const createHeaderCookie = (header) => {
   return cookieParts.join('; ')
 }
 
+// 浏览器 bytes → hex（替代 node Buffer.toString('hex')）
+const bytesToHex = (bytes) => {
+  let hex = ''
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0')
+  }
+  return hex.toUpperCase()
+}
+
 // requestId生成
 const generateRequestId = () => {
   return `${now()}_${floor(random() * 1000)
@@ -187,7 +179,9 @@ const generateRequestId = () => {
     .padStart(4, '0')}`
 }
 
-const createRequest = (uri, data, options) => {
+const createRequest = async (uri, data, options) => {
+  const anonymousToken = await getAnonymousToken()
+  const xeapiPublicKey = await loadXeapiPublicKey()
   let token = ''
   switch (options.checkToken) {
     case 'v2':
@@ -215,7 +209,7 @@ const createRequest = (uri, data, options) => {
     }
 
     if (typeof cookie === 'object') {
-      cookie = processCookieObject(cookie, uri)
+      cookie = processCookieObject(cookie, uri, anonymousToken)
       headers['Cookie'] = cookieObjToString(cookie)
     }
     let url = ''
@@ -262,7 +256,6 @@ const createRequest = (uri, data, options) => {
         break
 
       case 'xeapi':
-        const xeapiPublicKey = loadXeapiPublicKey()
         if (!xeapiPublicKey) {
           throw new Error('xeapi public key is missing')
         }
@@ -363,8 +356,6 @@ const createRequest = (uri, data, options) => {
       url: url,
       headers: headers,
       data: new URLSearchParams(encryptData).toString(),
-      httpAgent: createHttpAgent(),
-      httpsAgent: createHttpsAgent(),
     }
 
     // 自定义超时
@@ -380,43 +371,10 @@ const createRequest = (uri, data, options) => {
       settings.responseType = 'arraybuffer'
     }
 
-    // 代理处理
-    if (options.proxy) {
-      if (options.proxy.indexOf('pac') > -1) {
-        const agent = new PacProxyAgent(options.proxy)
-        settings.httpAgent = agent
-        settings.httpsAgent = agent
-      } else {
-        try {
-          const purl = new URL(options.proxy)
-          if (purl.hostname) {
-            const isHttps = purl.protocol === 'https:'
-            const agent = tunnel[isHttps ? 'httpsOverHttp' : 'httpOverHttp']({
-              proxy: {
-                host: purl.hostname,
-                port: purl.port || 80,
-                proxyAuth:
-                  purl.username && purl.password
-                    ? purl.username + ':' + purl.password
-                    : '',
-              },
-            })
-            settings.httpsAgent = agent
-            settings.httpAgent = agent
-            settings.proxy = false
-          } else {
-            console.error('代理配置无效,不使用代理')
-          }
-        } catch (e) {
-          console.error('代理URL解析失败:', e.message)
-        }
-      }
-    } else {
-      settings.proxy = false
-    }
+    // HyperPlayer adaptations: 浏览器不支持代理（忽略 options.proxy）
     // console.log(settings.headers);
     axios(settings)
-      .then((res) => {
+      .then(async (res) => {
         const body = res.data
         answer.cookie = (res.headers['set-cookie'] || []).map((x) =>
           x.replace(/\s*Domain=[^(;|$)]+;*/, ''),
@@ -441,8 +399,8 @@ const createRequest = (uri, data, options) => {
             }
             answer.body = encrypt.xeapiResDecrypt(Buffer.from(body))
           } else if (use_e_r) {
-            answer.body = encrypt.eapiResDecrypt(
-              body.toString('hex').toUpperCase(),
+            answer.body = await encrypt.eapiResDecrypt(
+              bytesToHex(body),
               headers['x-aeapi'],
             )
           } else {
@@ -485,3 +443,8 @@ const createRequest = (uri, data, options) => {
 }
 
 module.exports = createRequest
+module.exports.setBrowserHttpTransport = axios.setBrowserHttpTransport
+module.exports.setBrowserStorage = (storage) => {
+  browserStorage = storage
+  anonymousTokenPromise = null
+}

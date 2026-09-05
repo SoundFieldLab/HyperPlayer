@@ -10,6 +10,9 @@ importers:
 
   app:
     dependencies:
+      '@neteasecloudmusicapienhanced/api':
+        specifier: workspace:*
+        version: link:../vendor/netease-cloudmusic-api
       '@tauri-apps/api':
         specifier: ^2.8.0
         version: 2.11.1
