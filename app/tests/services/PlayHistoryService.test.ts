@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { PlayHistoryService } from '../../src/services/PlayHistoryService';
 import { PlaybackStateMachine } from '../../src/domains/player/PlaybackStateMachine';
 import type { PlaybackError } from '../../src/domains/player/types';
@@ -28,14 +28,13 @@ function playTrack(sm: PlaybackStateMachine, track: QueueItem): void {
   sm.dispatch({ type: 'PLAY' });
 }
 
-/** 冲刷微任务链：attach 的记录为 fire-and-forget，断言前需等其落库。 */
-async function flush(): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-}
-
 describe('PlayHistoryService（后端补充规划 #48）', () => {
   beforeEach(async () => {
     // 无共享状态；每用例独立 fake sql
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('init 建表 + record 新曲插入（count=1、source 保留）', async () => {
@@ -78,6 +77,8 @@ describe('PlayHistoryService（后端补充规划 #48）', () => {
   });
 
   it('attach：每曲首次 playing 记录，同曲 pause/resume 不重复', async () => {
+    vi.useFakeTimers(); // 假时钟：记录时间戳严格递增，避免同毫秒并列导致顺序不稳
+    vi.setSystemTime(1000);
     const { service } = makeService();
     await service.init();
     const sm = makeStateMachine();
@@ -87,32 +88,36 @@ describe('PlayHistoryService（后端补充规划 #48）', () => {
     // pause → resume：同曲不重复记录
     sm.dispatch({ type: 'PAUSED' });
     sm.dispatch({ type: 'PLAY' });
-    await flush();
+    await vi.advanceTimersByTimeAsync(1);
     let rows = await service.listRecent();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ track_id: 'a', play_count: 1 });
 
-    // 切曲：新记录
+    // 切曲：新记录（时间前进，顺序确定）
+    vi.setSystemTime(2000);
     playTrack(sm, makeTrack('b', 'local'));
-    await flush();
+    await vi.advanceTimersByTimeAsync(1);
     rows = await service.listRecent();
     expect(rows.map((r) => r.track_id)).toEqual(['b', 'a']);
     expect(rows[0]?.source).toBe('local');
   });
 
   it('attach：error → idle 重置游标后，重播同曲重新记录', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
     const { service } = makeService();
     await service.init();
     const sm = makeStateMachine();
     service.attach(sm);
 
     playTrack(sm, makeTrack('a'));
+    await vi.advanceTimersByTimeAsync(1);
     const error: PlaybackError = { taxonomy: 'NETWORK', message: 'x', autoSkip: true, at: Date.now() };
     sm.dispatch({ type: 'ELEMENT_ERROR', error });
     sm.dispatch({ type: 'NEXT' }); // error → idle
-    await flush(); // 等首次记录落库，避免与新播放的记录查询交错
+    vi.setSystemTime(2000);
     playTrack(sm, makeTrack('a'));
-    await flush();
+    await vi.advanceTimersByTimeAsync(1);
 
     const rows = await service.listRecent();
     expect(rows).toHaveLength(1);

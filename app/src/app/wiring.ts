@@ -57,6 +57,7 @@ import { RingBufferLogger } from '../shared/logger';
 import { FileLogger } from '../shared/fileLogger';
 import { DiagnosticsService } from '../services/DiagnosticsService';
 import { CoverService } from '../services/CoverService';
+import { CloudPlaylistSyncService } from '../services/CloudPlaylistSyncService';
 import { getAppVersion } from '../infra/appInfo';
 import type { QueueItem } from '../domains/player/types';
 
@@ -91,6 +92,7 @@ export interface Services {
   updater: UpdateService;
   diagnostics: DiagnosticsService;
   covers: CoverService;
+  cloudPlaylistSync: CloudPlaylistSyncService;
   player: PlayerController;
 }
 
@@ -364,5 +366,16 @@ export async function initServices(): Promise<Services> {
     appVersion: await getAppVersion(),
   });
 
-  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, notification, autostart, updater, diagnostics, covers, player };
+  // —— 云歌单同步（后端补充规划 #33：远程为权威的本地缓存 + 30 分钟自动刷新）——
+  const cloudPlaylistSync = new CloudPlaylistSyncService({
+    netease,
+    session,
+    sql,
+    taskCenter,
+    logger,
+  });
+  await cloudPlaylistSync.init();
+  cloudPlaylistSync.startAutoSync();
+
+  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, notification, autostart, updater, diagnostics, covers, cloudPlaylistSync, player };
 }
