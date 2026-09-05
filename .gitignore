@@ -1,0 +1,24 @@
+# Dependencies / build artifacts
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Local scratch (read-only reference snapshots; never commit)
+temp/
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Environments / editors
+.env
+.env.*
+.idea/
+.vscode/*
+!.vscode/extensions.json

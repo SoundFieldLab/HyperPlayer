@@ -4,6 +4,17 @@
 每个子目录一个来源，必须携带其原 LICENSE 文件并在根 `THIRD_PARTY_NOTICES.md`
 登记，许可必须与 Apache-2.0 兼容（MIT/BSD/ISC/Zlib 等）。
 
+## HyperSoundEngine-v1.5.1-local
+
+HyperSoundEngine（https://github.com/IceFireIcer/HyperSoundEngine ）**v1.5.1 纯 TS 完整包**，
+IceFireIcer 自有项目，经根 `LICENSE-HSE-AUTHORIZATION.md` 专项授权引入。
+2026-09-05 引入时**删除了 Rust 支线（`HyperSoundEngineRust/`）**，HyperPlayer 仅以纯 TS
+接入：引擎核心（`src/`：dsp/engine/spatial/io/offline/analysis/worklet）、浏览器宿主
+（`src/browser.ts` + `src/integration/HyperSoundEngineHost.ts`）、可选 React 工作台（`ui/`，
+仅作参考实现）、规格与冻结向量（`specs/`，25 份规格 + 72 组向量，作为 DSP 行为锁回归）、
+完整文档（`架构书.md` 等）。构建/测试工具链随包保留，workspace 内独立跑
+`npm test` / `npm run build`。
+
 ## netease-cloudmusic-api
 
 `@neteasecloudmusicapienhanced/api` **4.39.0**（registry tarball 原样展开，
