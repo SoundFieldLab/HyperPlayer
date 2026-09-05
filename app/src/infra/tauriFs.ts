@@ -2,7 +2,7 @@
  * infra tauriFs —— tauri-plugin-fs 薄封装（字节读写/遍历/stat）。
  * 所有原生能力经本层；单测用 fakes/ 替换，不碰 Tauri。
  */
-import { exists, mkdir, readDir, readFile, remove, stat, writeFile } from '@tauri-apps/plugin-fs';
+import { exists, mkdir, readDir, readFile, remove, rename, stat, writeFile } from '@tauri-apps/plugin-fs';
 
 export interface FsEntry {
   name: string;
@@ -23,6 +23,8 @@ export interface TauriFs {
   mkdir(path: string, recursive?: boolean): Promise<void>;
   readDir(path: string): Promise<FsEntry[]>;
   removeFile(path: string): Promise<void>;
+  /** 重命名/移动（日志滚动用）。 */
+  renameFile(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FsStat | null>;
 }
@@ -38,6 +40,7 @@ export function createTauriFs(): TauriFs {
       return entries.map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory ?? false }));
     },
     removeFile: (path) => remove(path),
+    renameFile: (from, to) => rename(from, to),
     exists: (path) => exists(path),
     stat: async (path) => {
       const info = await stat(path);

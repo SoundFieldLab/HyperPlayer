@@ -458,6 +458,12 @@ export function createFakeFs(): TauriFs & {
     removeFile: async (path) => {
       files.delete(path);
     },
+    renameFile: async (from, to) => {
+      const file = files.get(from);
+      if (!file) throw new Error(`fake-fs: no such file ${from}`);
+      files.delete(from);
+      files.set(to, file);
+    },
     exists: async (path) => files.has(path) || dirs.has(path),
     stat: async (path): Promise<FsStat | null> => {
       const file = files.get(path);

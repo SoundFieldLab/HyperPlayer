@@ -53,7 +53,10 @@ import { createTauriUpdater } from '../infra/updater';
 import { useAppStore } from '../stores/store';
 import { useLibraryStore } from '../stores/slices/library';
 import { useDspStore } from '../stores/slices/dsp';
-import { createNullLogger } from '../shared/logger';
+import { RingBufferLogger } from '../shared/logger';
+import { FileLogger } from '../shared/fileLogger';
+import { DiagnosticsService } from '../services/DiagnosticsService';
+import { getAppVersion } from '../infra/appInfo';
 import type { QueueItem } from '../domains/player/types';
 
 export interface Services {
@@ -85,6 +88,7 @@ export interface Services {
   notification: NotificationService;
   autostart: AutostartService;
   updater: UpdateService;
+  diagnostics: DiagnosticsService;
   player: PlayerController;
 }
 
@@ -127,14 +131,19 @@ export async function initServices(): Promise<Services> {
     });
   }
 
+  // —— 日志（后端补充规划 #46：环形缓冲 500 条 + 文件滚动落盘，全部服务共享）——
+  const fileLogger = new FileLogger({ fs, dir: await appDataPath('logs') });
+  await fileLogger.init();
+  const logger = new RingBufferLogger(500, fileLogger);
+
   // —— 网易云协议层 ——
   const request = wireNeteaseApi(http, {
     getAnonymousToken: () => getAnonymousToken(store),
     getXeapiPublicKey: async () => null,
   });
   const api = createNeteaseApi(request);
-  const session = new SessionService({ api, vault, logger: createNullLogger() });
-  const netease = new NeteaseService({ api, session, logger: createNullLogger() });
+  const session = new SessionService({ api, vault, logger });
+  const netease = new NeteaseService({ api, session, logger });
 
   // —— 音频链（规格书：source→HSE→analyser→tap→outputGain→destination）——
   const hse = new HseController();
@@ -151,12 +160,12 @@ export async function initServices(): Promise<Services> {
     audio.attachMediaElement(element);
     return element;
   });
-  const stateMachine = new PlaybackStateMachine({ logger: createNullLogger() });
+  const stateMachine = new PlaybackStateMachine({ logger });
   const queue = new QueueController();
-  const settings = new SettingsService({ store, logger: createNullLogger() });
+  const settings = new SettingsService({ store, logger });
 
   // —— 状态中心统一任务模型（UI-D29） ——
-  const taskCenter = new TaskCenter({ logger: createNullLogger() });
+  const taskCenter = new TaskCenter({ logger });
 
   // —— 缓存 + 曲库 ——
   const cache = new StreamCacheService({
@@ -169,7 +178,7 @@ export async function initServices(): Promise<Services> {
       return session.isLoggedIn && session.getCookie()?.userId === ownerUserId;
     },
     taskCenter,
-    logger: createNullLogger(),
+    logger,
   });
   const library = new LibraryService(sql);
   const scanMachine = new ScanMachine({
@@ -178,7 +187,7 @@ export async function initServices(): Promise<Services> {
     parseMetadata: createMetadataWorkerParser(),
     taskCenter,
     onStateChange: (state) => useLibraryStore.getState().setScanState(state),
-    logger: createNullLogger(),
+    logger,
   });
 
   // —— M4 音效工作台后端（DSP 跨模式全局，UI-D1） ——
@@ -186,18 +195,18 @@ export async function initServices(): Promise<Services> {
     hse,
     sampleRate: audio.ensureContext().sampleRate,
     onStateChange: (state) => useDspStore.getState().setFromService(state),
-    logger: createNullLogger(),
+    logger,
   });
   const albumCompletion = new AlbumCompletionService({
     cache,
     netease,
     session,
     taskCenter,
-    logger: createNullLogger(),
+    logger,
   });
 
   // —— 本地播放历史（后端补充规划 #48：每曲首次 playing 记录，同曲不重复）——
-  const playHistory = new PlayHistoryService({ sql, logger: createNullLogger() });
+  const playHistory = new PlayHistoryService({ sql, logger });
   await playHistory.init();
   playHistory.attach(stateMachine);
 
@@ -262,7 +271,7 @@ export async function initServices(): Promise<Services> {
       settings.scheduleQueuePersist(state); // 队列持久化 2s 防抖（UI-D76）
     },
     onDurationChange: (duration) => useAppStore.getState().setDuration(duration),
-    logger: createNullLogger(),
+    logger,
   });
 
   // —— 全局快捷键（后端补充规划 #7/#8：媒体键回退接线，SMTC v1 缺席）——
@@ -278,7 +287,7 @@ export async function initServices(): Promise<Services> {
     shortcuts: createTauriShortcuts(),
     settings,
     commands: transportCommands,
-    logger: createNullLogger(),
+    logger,
   });
   await shortcut.init();
   settings.subscribe(() => {
@@ -292,14 +301,14 @@ export async function initServices(): Promise<Services> {
     window: trayWindow,
     settings,
     commands: transportCommands,
-    logger: createNullLogger(),
+    logger,
   });
   await tray.init();
 
   const notification = new NotificationService({
     notifications: createTauriNotifications(),
     settings,
-    logger: createNullLogger(),
+    logger,
   });
   // 切歌通知：仅在有歌词变化语义的换曲时触发（track 变更，非暂停恢复）
   let notifiedTrackId: string | null = null;
@@ -320,7 +329,7 @@ export async function initServices(): Promise<Services> {
   const autostart = new AutostartService({
     autostart: createTauriAutostart(),
     settings,
-    logger: createNullLogger(),
+    logger,
   });
   await autostart.init();
   settings.subscribe(() => {
@@ -331,8 +340,17 @@ export async function initServices(): Promise<Services> {
   const updater = new UpdateService({
     updater: createTauriUpdater(),
     taskCenter,
-    logger: createNullLogger(),
+    logger,
   });
 
-  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, notification, autostart, updater, player };
+  // —— 诊断导出（后端补充规划 #46：app 版本 + 脱敏设置 + 全量日志 → $APPDATA/diagnostics）——
+  const diagnostics = new DiagnosticsService({
+    fs,
+    logger: fileLogger,
+    settings,
+    dir: await appDataPath('diagnostics'),
+    appVersion: await getAppVersion(),
+  });
+
+  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, notification, autostart, updater, diagnostics, player };
 }
