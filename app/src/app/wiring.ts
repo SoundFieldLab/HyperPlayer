@@ -45,6 +45,10 @@ import { createTauriShortcuts } from '../infra/shortcuts';
 import { createTauriTray, createTauriWindowControl } from '../infra/tray';
 import { createTauriNotifications } from '../infra/notifications';
 import { createTauriSingleInstance } from '../infra/singleInstance';
+import { AutostartService } from '../services/AutostartService';
+import { UpdateService } from '../services/UpdateService';
+import { createTauriAutostart } from '../infra/autostart';
+import { createTauriUpdater } from '../infra/updater';
 import { useAppStore } from '../stores/store';
 import { useLibraryStore } from '../stores/slices/library';
 import { useDspStore } from '../stores/slices/dsp';
@@ -78,6 +82,8 @@ export interface Services {
   shortcut: ShortcutService;
   tray: TrayService;
   notification: NotificationService;
+  autostart: AutostartService;
+  updater: UpdateService;
   player: PlayerController;
 }
 
@@ -298,5 +304,23 @@ export async function initServices(): Promise<Services> {
     console.info(`single-instance: 二次启动聚焦（args=${payload.args.length}，cwd=${payload.cwd}）`);
   });
 
-  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, notification, player };
+  // —— 开机自启 + 应用更新（后端补充规划 #39/#54）——
+  const autostart = new AutostartService({
+    autostart: createTauriAutostart(),
+    settings,
+    logger: createNullLogger(),
+  });
+  await autostart.init();
+  settings.subscribe(() => {
+    // 设置页自启开关直接走 setAutostart；此处兜底外部对 settings 的直接改写
+    void autostart.init();
+  });
+
+  const updater = new UpdateService({
+    updater: createTauriUpdater(),
+    taskCenter,
+    logger: createNullLogger(),
+  });
+
+  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, notification, autostart, updater, player };
 }

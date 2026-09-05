@@ -54,6 +54,8 @@ export interface AppSettings {
   shortcuts: Partial<Record<ShortcutAction, string>>;
   /** 切歌通知开关（默认关；后端补充规划 #43）。 */
   notifyOnTrackChange: boolean;
+  /** 开机自启（默认关；后端补充规划 #39）。 */
+  autostart: boolean;
 }
 
 export interface PersistedQueue {
@@ -85,6 +87,7 @@ export function createDefaultSettings(): AppSettings {
     perTrackLyricOffset: {},
     shortcuts: {},
     notifyOnTrackChange: false,
+    autostart: false,
   };
 }
 
@@ -204,8 +207,13 @@ export function migrateSettings(stored: AppSettings): AppSettings {
     settings.schemaVersion = 3;
   }
   if (storedVersion < 4) {
-    // v3 → v4：全局快捷键覆盖 + 切歌通知开关（后端补充规划 #8/#43）。
-    settings = { ...settings, shortcuts: settings.shortcuts ?? {}, notifyOnTrackChange: settings.notifyOnTrackChange ?? false };
+    // v3 → v4：全局快捷键覆盖 + 切歌通知开关 + 开机自启（后端补充规划 #8/#43/#39）。
+    settings = {
+      ...settings,
+      shortcuts: settings.shortcuts ?? {},
+      notifyOnTrackChange: settings.notifyOnTrackChange ?? false,
+      autostart: settings.autostart ?? false,
+    };
     settings.schemaVersion = 4;
   }
   return settings;

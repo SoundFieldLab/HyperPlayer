@@ -12,6 +12,8 @@ import type { Shortcuts, ShortcutEvent } from '../shortcuts';
 import type { Tray, TrayMenuItem, WindowControl } from '../tray';
 import type { Notifications } from '../notifications';
 import type { SingleInstance, SecondInstancePayload } from '../singleInstance';
+import type { Autostart } from '../autostart';
+import type { Updater, AppUpdate } from '../updater';
 
 export function createFakeStore(): KeyValueStore {
   const map = new Map<string, unknown>();
@@ -142,6 +144,43 @@ export function createFakeSingleInstance(): SingleInstance & {
     trigger: (payload) => {
       handler?.(payload);
     },
+  };
+}
+
+/** 自启替身：内存开关；enable/disable 可配置失败。 */
+export function createFakeAutostart(): Autostart & {
+  setFailNext(value: boolean): void;
+} {
+  const state = { enabled: false, failNext: false };
+  const act = async (target: boolean): Promise<boolean> => {
+    if (state.failNext) {
+      state.failNext = false;
+      return false;
+    }
+    state.enabled = target;
+    return true;
+  };
+  return {
+    isEnabled: async () => state.enabled,
+    enable: () => act(true),
+    disable: () => act(false),
+    setFailNext: (value) => { state.failNext = value; },
+  };
+}
+
+/** 更新器替身：注入检查结果或错误（AppUpdate 的下载行为由测试自建对象控制）。 */
+export function createFakeUpdater(): Updater & {
+  setResult(result: AppUpdate | null): void;
+  setError(error: Error): void;
+} {
+  const state: { result: AppUpdate | null; error: Error | null } = { result: null, error: null };
+  return {
+    check: async () => {
+      if (state.error) throw state.error;
+      return state.result;
+    },
+    setResult: (result) => { state.result = result; },
+    setError: (error) => { state.error = error; },
   };
 }
 
