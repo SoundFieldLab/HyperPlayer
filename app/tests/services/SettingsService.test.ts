@@ -54,21 +54,22 @@ describe('SettingsService', () => {
     await store.set('app.settings', { schemaVersion: 0, startupPage: 'last-page' });
     const service = new SettingsService({ store, logger: createNullLogger() });
     const settings = await service.load();
-    expect(settings.schemaVersion).toBe(3);
+    expect(settings.schemaVersion).toBe(4);
     expect(settings.startupPage).toBe('last-page'); // 旧值保留
     expect(settings.keepUpNextOnContextSwitch).toBe(true); // 新字段取默认
     expect(settings.onboarding).toEqual({ started: false, completedSteps: [], completedAt: null }); // UI-D51
     const stored = await store.get<{ schemaVersion: number }>('app.settings');
-    expect(stored?.schemaVersion).toBe(3);
+    expect(stored?.schemaVersion).toBe(4);
   });
 
   it('migrateSettings 直接迁移（纯函数）', () => {
     const migrated = migrateSettings({ schemaVersion: 0 } as never);
-    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.schemaVersion).toBe(4);
     expect(migrated.restoreQueue).toBe(true);
     expect(migrated.onboarding.completedSteps).toEqual([]);
     expect(migrated.lyricOffsetMs).toBe(0); // v3：歌词偏移默认
     expect(migrated.perTrackLyricOffset).toEqual({});
+    expect(migrated.shortcuts).toEqual({}); // v4：快捷键覆盖默认
   });
 
   it('歌词偏移：单曲覆盖优先，无覆盖回落全局（后端补充规划 #12）', async () => {

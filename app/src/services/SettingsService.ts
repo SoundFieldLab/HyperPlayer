@@ -9,10 +9,11 @@
 import type { PlayMode, QueueItem } from '../domains/player/types';
 import type { QueueState } from '../domains/player/QueueController';
 import type { KeyValueStore } from '../infra/tauriStore';
+import type { ShortcutAction } from './ShortcutService';
 import type { Logger } from '../shared/logger';
 import { createNullLogger } from '../shared/logger';
 
-export const SETTINGS_SCHEMA_VERSION = 3;
+export const SETTINGS_SCHEMA_VERSION = 4;
 export const QUEUE_PERSIST_DEBOUNCE_MS = 2000;
 
 /** UI-D51：初始化向导进度（中途关闭保存已完成步骤，下次继续）。 */
@@ -49,6 +50,8 @@ export interface AppSettings {
   lyricOffsetMs: number;
   /** 单曲歌词偏移覆盖（track_id → ms；容量守卫由写入方负责）。 */
   perTrackLyricOffset: Record<string, number>;
+  /** 全局快捷键覆盖（空串 = 禁用该动作；后端补充规划 #8，UI-D24/UI-D53）。 */
+  shortcuts: Partial<Record<ShortcutAction, string>>;
 }
 
 export interface PersistedQueue {
@@ -78,6 +81,7 @@ export function createDefaultSettings(): AppSettings {
     onboarding: { started: false, completedSteps: [], completedAt: null },
     lyricOffsetMs: 0,
     perTrackLyricOffset: {},
+    shortcuts: {},
   };
 }
 
@@ -195,6 +199,11 @@ export function migrateSettings(stored: AppSettings): AppSettings {
     // v2 → v3：歌词时间偏移（全局 + 单曲覆盖，后端补充规划 #12）。
     settings = { ...settings, lyricOffsetMs: settings.lyricOffsetMs ?? 0, perTrackLyricOffset: settings.perTrackLyricOffset ?? {} };
     settings.schemaVersion = 3;
+  }
+  if (storedVersion < 4) {
+    // v3 → v4：全局快捷键覆盖（后端补充规划 #8）。
+    settings = { ...settings, shortcuts: settings.shortcuts ?? {} };
+    settings.schemaVersion = 4;
   }
   return settings;
 }

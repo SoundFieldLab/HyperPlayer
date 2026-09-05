@@ -38,6 +38,8 @@ import { DspService } from '../domains/dsp/DspService';
 import { TaskCenter } from '../services/TaskCenter';
 import { AlbumCompletionService } from '../services/AlbumCompletionService';
 import { PlayHistoryService } from '../services/PlayHistoryService';
+import { ShortcutService } from '../services/ShortcutService';
+import { createTauriShortcuts } from '../infra/shortcuts';
 import { useAppStore } from '../stores/store';
 import { useLibraryStore } from '../stores/slices/library';
 import { useDspStore } from '../stores/slices/dsp';
@@ -68,6 +70,7 @@ export interface Services {
   dsp: DspService;
   albumCompletion: AlbumCompletionService;
   playHistory: PlayHistoryService;
+  shortcut: ShortcutService;
   player: PlayerController;
 }
 
@@ -237,5 +240,24 @@ export async function initServices(): Promise<Services> {
     logger: createNullLogger(),
   });
 
-  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, player };
+  // —— 全局快捷键（后端补充规划 #7/#8：媒体键回退接线，SMTC v1 缺席）——
+  const shortcut = new ShortcutService({
+    shortcuts: createTauriShortcuts(),
+    settings,
+    commands: {
+      playPause: async () => {
+        if (stateMachine.snapshot.status === 'playing') await player.pause();
+        else await player.play();
+      },
+      next: () => player.next(),
+      prev: () => player.prev(),
+    },
+    logger: createNullLogger(),
+  });
+  await shortcut.init();
+  settings.subscribe(() => {
+    void shortcut.rebind(); // 快捷键设置变更即时生效
+  });
+
+  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, player };
 }

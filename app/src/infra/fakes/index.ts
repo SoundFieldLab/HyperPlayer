@@ -8,6 +8,7 @@ import type { SqlDatabase } from '../tauriSql';
 import type { HttpResponse, TauriHttp } from '../tauriHttp';
 import type { FsEntry, FsStat, TauriFs } from '../tauriFs';
 import type { Vault } from '../vault';
+import type { Shortcuts, ShortcutEvent } from '../shortcuts';
 
 export function createFakeStore(): KeyValueStore {
   const map = new Map<string, unknown>();
@@ -25,6 +26,31 @@ export function createFakeStore(): KeyValueStore {
 
 export function createFakeCacheStore(): CacheStore {
   return createFakeStore();
+}
+
+/** 全局快捷键替身：内存注册表；register 遇重复键返回 false（模拟占用冲突）。 */
+export function createFakeShortcuts(): Shortcuts & {
+  trigger(shortcut: string, state?: ShortcutEvent['state']): void;
+} {
+  const handlers = new Map<string, (event: ShortcutEvent) => void>();
+  return {
+    register: async (shortcut, handler) => {
+      if (handlers.has(shortcut)) return false;
+      handlers.set(shortcut, handler);
+      return true;
+    },
+    unregister: async (shortcut) => {
+      handlers.delete(shortcut);
+    },
+    unregisterAll: async () => {
+      handlers.clear();
+    },
+    isRegistered: async (shortcut) => handlers.has(shortcut),
+    trigger: (shortcut, state = 'Pressed') => {
+      const handler = handlers.get(shortcut);
+      if (handler) handler({ shortcut, state });
+    },
+  };
 }
 
 export function createFakeVault(): Vault {
