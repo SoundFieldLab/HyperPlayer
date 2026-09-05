@@ -54,19 +54,32 @@ describe('SettingsService', () => {
     await store.set('app.settings', { schemaVersion: 0, startupPage: 'last-page' });
     const service = new SettingsService({ store, logger: createNullLogger() });
     const settings = await service.load();
-    expect(settings.schemaVersion).toBe(2);
+    expect(settings.schemaVersion).toBe(3);
     expect(settings.startupPage).toBe('last-page'); // 旧值保留
     expect(settings.keepUpNextOnContextSwitch).toBe(true); // 新字段取默认
     expect(settings.onboarding).toEqual({ started: false, completedSteps: [], completedAt: null }); // UI-D51
     const stored = await store.get<{ schemaVersion: number }>('app.settings');
-    expect(stored?.schemaVersion).toBe(2);
+    expect(stored?.schemaVersion).toBe(3);
   });
 
   it('migrateSettings 直接迁移（纯函数）', () => {
     const migrated = migrateSettings({ schemaVersion: 0 } as never);
-    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.schemaVersion).toBe(3);
     expect(migrated.restoreQueue).toBe(true);
     expect(migrated.onboarding.completedSteps).toEqual([]);
+    expect(migrated.lyricOffsetMs).toBe(0); // v3：歌词偏移默认
+    expect(migrated.perTrackLyricOffset).toEqual({});
+  });
+
+  it('歌词偏移：单曲覆盖优先，无覆盖回落全局（后端补充规划 #12）', async () => {
+    const store = createFakeStore();
+    const service = new SettingsService({ store, logger: createNullLogger() });
+    await service.load();
+    expect(service.lyricOffsetFor('t1')).toBe(0);
+    await service.update({ lyricOffsetMs: 300, perTrackLyricOffset: { t1: -150 } });
+    expect(service.lyricOffsetFor('t1')).toBe(-150);
+    expect(service.lyricOffsetFor('t2')).toBe(300);
+    expect(service.lyricOffsetFor(null)).toBe(300);
   });
 
   it('向导进度持久化：update onboarding 中途续填（UI-D51）', async () => {

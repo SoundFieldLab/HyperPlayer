@@ -58,17 +58,61 @@ export function parseLrc(text: string): ParsedLyrics {
 
   // 普通 LRC：[mm:ss.xx] 行级（不伪造逐字符节拍，UI-D26）
   const lines: LyricLine[] = [];
+  /** [t:]/[r:] 独立行的辅助轨条目（网易云翻译/罗马音轨，按同时间合并进主行）。 */
+  const aux: Array<{ time: number; kind: 't' | 'r'; text: string }> = [];
+  /** [offset:±ms] 全局时间偏移（LRC 规范：正值 = 时间戳整体增加）。 */
+  let metaOffset = 0;
+
   for (const raw of text.split(/\r?\n/u)) {
     const line = raw.trim();
     if (!line) continue;
+
+    const offsetMatch = /^\[offset:([+-]?\d+)\]\s*$/iu.exec(line);
+    if (offsetMatch) {
+      metaOffset += Number(offsetMatch[1] ?? 0);
+      continue;
+    }
+
+    const auxMatch = /^\[([tTrR]):(\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?)\]([\s\S]*)$/u.exec(line);
+    if (auxMatch) {
+      const time = parseLrcTimeTag(`[${auxMatch[2] ?? ''}]`);
+      if (!Number.isNaN(time)) {
+        aux.push({
+          time: Math.max(0, time + metaOffset),
+          kind: (auxMatch[1] ?? '').toLowerCase() as 't' | 'r',
+          text: (auxMatch[3] ?? '').trim(),
+        });
+      }
+      continue;
+    }
+
     const tags = [...line.matchAll(/\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/gu)].map((m) => m[0]);
     if (tags.length === 0) continue;
     const time = parseLrcTimeTag(tags[0] as string);
     if (Number.isNaN(time)) continue;
-    const rest = line.replace(/\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/gu, '').trim();
-    lines.push({ time, text: rest });
+    const rest = line.replace(/\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/gu, '');
+    // 行内辅助标签：[t:译文] / [r:罗马音]
+    const inlineT = /\[[tT]:([^\]]*)\]/u.exec(rest);
+    const inlineR = /\[[rR]:([^\]]*)\]/u.exec(rest);
+    const entry: LyricLine = {
+      time: Math.max(0, time + metaOffset),
+      text: rest.replace(/\[[tTrR]:[^\]]*\]/gu, '').trim(),
+    };
+    if (inlineT?.[1] !== undefined) entry.translation = inlineT[1];
+    if (inlineR?.[1] !== undefined) entry.roman = inlineR[1];
+    lines.push(entry);
   }
+
   lines.sort((a, b) => a.time - b.time);
+  // 辅助轨合并：与主行同时间的挂 translation/roman；无匹配的辅助行不参与渲染。
+  const byTime = new Map<number, LyricLine>();
+  for (const entry of lines) if (!byTime.has(entry.time)) byTime.set(entry.time, entry);
+  for (const item of aux) {
+    const target = byTime.get(item.time);
+    if (!target) continue;
+    if (item.kind === 't') target.translation = item.text;
+    else target.roman = item.text;
+  }
   return { lines, timingLevel: 'line', format: 'lrc' };
 }
 

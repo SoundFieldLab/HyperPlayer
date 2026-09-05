@@ -41,6 +41,8 @@ export class LyricsTimeline {
   private readonly glyphs: FlatGlyph[] = [];
   private readonly cache: CacheStore;
   private readonly onWordIndex: ((index: number) => void) | undefined;
+  /** 时间轴平移（毫秒，正 = 歌词提前；后端补充规划 #12）。 */
+  private offsetMs = 0;
 
   constructor(deps: LyricsTimelineDeps) {
     this.cache = deps.cache;
@@ -78,9 +80,14 @@ export class LyricsTimeline {
     return this.parsed;
   }
 
+  /** 设置时间轴平移（正 = 歌词提前显示；查询时对播放位置前移，不改动字形数据）。 */
+  setOffsetMs(offsetMs: number): void {
+    this.offsetMs = offsetMs;
+  }
+
   /** 帧级调用：给定播放位置（秒）→ 当前逐字索引（-1 = 无歌词/未开始）。 */
   indexAt(positionSeconds: number): number {
-    const positionMs = positionSeconds * 1000;
+    const positionMs = positionSeconds * 1000 + this.offsetMs;
     if (this.glyphs.length === 0) return -1;
     // 二分：最后一个 start <= positionMs 的字。
     let lo = 0;

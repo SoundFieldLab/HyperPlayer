@@ -12,7 +12,7 @@ import type { KeyValueStore } from '../infra/tauriStore';
 import type { Logger } from '../shared/logger';
 import { createNullLogger } from '../shared/logger';
 
-export const SETTINGS_SCHEMA_VERSION = 2;
+export const SETTINGS_SCHEMA_VERSION = 3;
 export const QUEUE_PERSIST_DEBOUNCE_MS = 2000;
 
 /** UI-D51：初始化向导进度（中途关闭保存已完成步骤，下次继续）。 */
@@ -45,6 +45,10 @@ export interface AppSettings {
   cacheCapacityBytes: number;
   libraryFolders: string[];
   onboarding: OnboardingState;
+  /** 歌词时间偏移（毫秒，正 = 歌词提前；后端补充规划 #12）。 */
+  lyricOffsetMs: number;
+  /** 单曲歌词偏移覆盖（track_id → ms；容量守卫由写入方负责）。 */
+  perTrackLyricOffset: Record<string, number>;
 }
 
 export interface PersistedQueue {
@@ -72,6 +76,8 @@ export function createDefaultSettings(): AppSettings {
     cacheCapacityBytes: 5 * 1024 * 1024 * 1024,
     libraryFolders: [],
     onboarding: { started: false, completedSteps: [], completedAt: null },
+    lyricOffsetMs: 0,
+    perTrackLyricOffset: {},
   };
 }
 
@@ -99,6 +105,14 @@ export class SettingsService {
 
   get snapshot(): AppSettings {
     return this.settings;
+  }
+
+  /** 单曲歌词偏移（毫秒，正 = 提前）：有单曲覆盖用覆盖值，否则回落全局值（后端补充规划 #12）。 */
+  lyricOffsetFor(trackId: string | null | undefined): number {
+    if (trackId && typeof this.settings.perTrackLyricOffset[trackId] === 'number') {
+      return this.settings.perTrackLyricOffset[trackId] as number;
+    }
+    return this.settings.lyricOffsetMs;
   }
 
   async load(): Promise<AppSettings> {
@@ -176,6 +190,11 @@ export function migrateSettings(stored: AppSettings): AppSettings {
     // v1 → v2：初始化向导进度（UI-D51 中途续填）。
     settings = { ...settings, onboarding: settings.onboarding ?? { started: false, completedSteps: [], completedAt: null } };
     settings.schemaVersion = 2;
+  }
+  if (storedVersion < 3) {
+    // v2 → v3：歌词时间偏移（全局 + 单曲覆盖，后端补充规划 #12）。
+    settings = { ...settings, lyricOffsetMs: settings.lyricOffsetMs ?? 0, perTrackLyricOffset: settings.perTrackLyricOffset ?? {} };
+    settings.schemaVersion = 3;
   }
   return settings;
 }

@@ -45,6 +45,37 @@ describe('lyrics 解析（parseLrc / parseLrcTimeTag）', () => {
     expect(parsed.lines[0]?.words?.[0]?.word).toBe('前');
     expect(parsed.lines[0]?.text).toBe('前言');
   });
+
+  it('[t:]/[r:] 独立行辅助轨：同时间合并进主行（后端补充规划 #11）', () => {
+    const parsed = parseLrc(`[00:01.00]第一句
+[t:00:01.00]The first line
+[r:00:01.00]Dai ichi kyō
+[00:03.50]第二句
+[r:00:03.50]Dai ni kyō`);
+    expect(parsed.lines).toHaveLength(2);
+    expect(parsed.lines[0]).toMatchObject({ time: 1000, text: '第一句', translation: 'The first line', roman: 'Dai ichi kyō' });
+    expect(parsed.lines[1]).toMatchObject({ time: 3500, text: '第二句', roman: 'Dai ni kyō' });
+  });
+
+  it('行内 [t:译文][r:罗马音] 标签：文本剥离并挂载（后端补充规划 #11）', () => {
+    const parsed = parseLrc(`[00:01.00]第一句[t:译文一][r:Ro-1]`);
+    expect(parsed.lines).toHaveLength(1);
+    expect(parsed.lines[0]).toMatchObject({ text: '第一句', translation: '译文一', roman: 'Ro-1' });
+  });
+
+  it('[offset:±ms] 全局偏移：时间戳整体平移（LRC 规范）', () => {
+    const parsed = parseLrc(`[offset:-500]
+[00:01.00]第一句
+[00:03.00]第二句`);
+    expect(parsed.lines.map((l) => l.time)).toEqual([500, 2500]);
+  });
+
+  it('无匹配主行的 [t:]/[r:] 辅助行不参与渲染', () => {
+    const parsed = parseLrc(`[00:01.00]第一句
+[t:00:02.00]悬空译文`);
+    expect(parsed.lines).toHaveLength(1);
+    expect(parsed.lines[0]?.translation).toBeUndefined();
+  });
 });
 
 describe('LyricsTimeline', () => {
@@ -68,6 +99,17 @@ describe('LyricsTimeline', () => {
     expect(timeline.level).toBe('line');
     expect(timeline.indexAt(1.5)).toBe(0);
     expect(timeline.indexAt(4.0)).toBe(1);
+  });
+
+  it('setOffsetMs：正偏移 = 歌词提前（indexAt 查询前移，后端补充规划 #12）', async () => {
+    const timeline = new LyricsTimeline({ cache: createFakeCacheStore() });
+    await timeline.load('t1', async () => ({ text: LRC, format: 'lrc' }));
+    timeline.setOffsetMs(500);
+    expect(timeline.indexAt(0.9)).toBe(0); // 原本 1.0s 的行，提前 500ms 命中
+    expect(timeline.indexAt(3.4)).toBe(1); // 原本 3.5s 的行
+    timeline.setOffsetMs(-1000);
+    expect(timeline.indexAt(0.9)).toBe(-1); // 推迟后不命中
+    expect(timeline.indexAt(2.0)).toBe(0);
   });
 
   it('IndexedDB 缓存：二次加载不调 fetcher', async () => {
