@@ -75,12 +75,16 @@ export function createFakeSql(): SqlDatabase {
   };
 
   const parseWhere = (whereClause: string, bindValues: unknown[]): ((row: Record<string, unknown>) => boolean) => {
-    // 支持单个 "col = ?" / "col = value" 条件（服务层用到的子集）。
-    const match = /^(\w+)\s*=\s*(.+)$/u.exec(whereClause.trim());
-    if (!match) return () => true;
-    const [, column, raw] = match;
-    const value = raw === '?' ? bindValues.shift() : normalizeValue((raw ?? '').replace(/^'|'$/gu, ''));
-    return (row) => normalizeValue(row[column as string]) === normalizeValue(value);
+    // 支持 "col = ?" / "col = value"，多个条件用 AND 连接。
+    const clauses = whereClause.split(/\s+AND\s+/iu);
+    const predicates = clauses.map((clause) => {
+      const match = /^(\w+)\s*=\s*(.+)$/u.exec(clause.trim());
+      if (!match) return () => true;
+      const [, column, raw] = match;
+      const value = raw === '?' ? bindValues.shift() : normalizeValue((raw ?? '').replace(/^'|'$/gu, ''));
+      return (row: Record<string, unknown>) => normalizeValue(row[column as string]) === normalizeValue(value);
+    });
+    return (row) => predicates.every((predicate) => predicate(row));
   };
 
   const parseColumns = (columnList: string, table: FakeTable, rows: Array<Record<string, unknown>>): unknown[] => {
@@ -104,6 +108,10 @@ export function createFakeSql(): SqlDatabase {
   return {
     execute: async (sql, bindValues = []): Promise<unknown> => {
       const statement = stripComments(sql);
+      // 事务语句：内存表操作天然原子，BEGIN/COMMIT/ROLLBACK 作为 no-op 接受。
+      if (/^(BEGIN|COMMIT|ROLLBACK)(\s+TRANSACTION)?\s*;?$/iu.test(statement)) {
+        return undefined;
+      }
       const createMatch = /^CREATE TABLE IF NOT EXISTS (\w+)\s*\(([\s\S]+?)\)$/u.exec(statement);
       if (createMatch) {
         const name = createMatch[1] as string;
@@ -126,6 +134,15 @@ export function createFakeSql(): SqlDatabase {
           const placeholder = placeholders[index];
           row[column] = placeholder === '?' ? bindValues.shift() : normalizeValue((placeholder ?? '').replace(/^'|'$/gu, ''));
         });
+        // 模拟 INTEGER PRIMARY KEY AUTOINCREMENT（表定义含 id 列且 INSERT 未提供）
+        const tableDef = tables.get(name);
+        if (tableDef && tableDef.columns.includes('id') && !('id' in row)) {
+          let max = 0;
+          for (const existing of tableDef.rows) {
+            if (typeof existing.id === 'number' && existing.id > max) max = existing.id;
+          }
+          row.id = max + 1;
+        }
         table.rows.push(row);
         return undefined;
       }

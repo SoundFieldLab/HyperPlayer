@@ -37,6 +37,7 @@ const appAllowlist = new Set([
   // Vendored workspace packages (covered by their own NOTICES entries).
   'hypersoundengine',
   '@neteasecloudmusicapienhanced/api',
+  'music-metadata',
 ]);
 
 // Hard-denied anywhere in the workspace (AGPL / LGPL unblock paths / Electron).
