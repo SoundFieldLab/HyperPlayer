@@ -24,12 +24,15 @@ describe("weblog console capture", () => {
     installConsoleCapture({ send });
 
     console.warn("playback stalled", { track: 42 });
-    // 未到批量阈值与时间窗：不发送。
-    expect(send).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(1_500);
+    // warn 即时上报（诊断窗口宝贵，不允许批量延迟）。
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith("warn", "playback stalled {\"track\":42}");
+
+    console.log("plain info line");
+    // info 走批量：未到阈值与时间窗不发送。
+    expect(send).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1_500);
+    expect(send).toHaveBeenCalledWith("info", "plain info line");
   });
 
   it("flushes immediately when the queue reaches the batch limit", () => {

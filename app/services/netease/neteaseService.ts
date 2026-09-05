@@ -88,10 +88,11 @@ function call<T = Record<string, unknown>>(
   name: string,
   query: Record<string, unknown>,
   allowCodes: number[] = [],
+  skipCookie = false,
 ): Promise<T> {
   // 内容域禁用即整体拒绝（D34：模块边界承担禁用，不与播放核心耦合）
   if (!domainEnabled) return Promise.reject(new Error('网易云内容域已在设置中禁用'))
-  return postSidecar(moduleRoute(name), query)
+  return postSidecar(moduleRoute(name), query, skipCookie)
     .then((response) => {
       const body = response.body as { code?: unknown } & Record<string, unknown>
       if (body && typeof body === 'object' && 'code' in body) {
@@ -110,8 +111,8 @@ function call<T = Record<string, unknown>>(
 /** sidecar 传输（D36）：POST JSON，cookie 字符串随 body 传给 vendored 路由注入。
  *  用原生 fetch（CSP 已放行 14321；vendored server 自带 CORS 中间件）——
  *  plugin-http 对本机回环地址存在请求挂死且 AbortSignal 不生效的缺陷（实测）。 */
-async function postSidecar(route: string, query: Record<string, unknown>): Promise<NeteaseResponse> {
-  const cookie = neteaseSession.current()
+async function postSidecar(route: string, query: Record<string, unknown>, skipCookie = false): Promise<NeteaseResponse> {
+  const cookie = skipCookie ? {} : neteaseSession.current()
   const cookieString = Object.entries(cookie).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(';')
   const response = await fetch(`${SIDECAR_BASE}${route}`, {
     method: 'POST',
@@ -177,23 +178,26 @@ export async function neteaseLogout(): Promise<void> {
 }
 
 export async function neteaseStartQrLogin(): Promise<NeteaseLoginStartDto> {
-  // login_qr_key 响应形状：{ data: { code, unikey }, code: 200 }（vendor module 重包一层 data）
-  const body = await call<{ data?: { unikey?: string }; unikey?: string }>('login_qr_key', {})
+  // login_qr_key 响应形状：{ data: { code, unikey }, code: 200 }（vendor module 重包一层 data）。
+  // QR 三端点全部 skipCookie：登录流程必须与现有会话隔离（已登录态下带 MUSIC_U 请求
+  // login/qr/* 行为未定义，实测导致 unikey 状态查询与扫码结果错位）
+  const body = await call<{ data?: { unikey?: string }; unikey?: string }>('login_qr_key', { noCookie: true })
   const loginId = body.data?.unikey ?? body.unikey ?? ''
   if (!loginId) throw new Error('未能获取二维码 key（网易云未返回 unikey，请稍后重试）')
-  // 官方 login_qr_create 端点生成扫码内容与 dataURL（格式权威；曾手搓内容+恒空
-  // 串两种错法都试过）。platform 缺省 pc；qrimg=true 由端点用 qrcode 库直接出图
-  const created = await call<{ data?: { qrimg?: string; qrurl?: string } }>('login_qr_create', { key: loginId, qrimg: true })
+  // 官方 login_qr_create 端点生成扫码内容与 dataURL（格式权威）
+  const created = await call<{ data?: { qrimg?: string; qrurl?: string } }>('login_qr_create', { key: loginId, qrimg: true, noCookie: true }, [], true)
   const qrImageDataUrl = created.data?.qrimg ?? ''
+  // key 指纹日志：对齐「QR 内容里的 codekey」与「轮询 check 的 key」是否一致
+  console.info(`[netease] qr key=${loginId.slice(0, 8)}… qrurl=${String(created.data?.qrurl ?? '').slice(0, 60)}`)
   if (!qrImageDataUrl) throw new Error('未能生成登录二维码（网易云未返回 qrimg）')
   return { loginId, qrImageDataUrl }
 }
 
 export async function neteasePollQrLogin(loginId: string): Promise<NeteaseLoginStateDto> {
   // 轮询 code 800/801/802/803 是状态语义而非错误（vendor 将其列为 SPECIAL_STATUS_CODES）
-  const body = await call<{ code?: number; cookie?: string | string[] }>('login_qr_check', { key: loginId }, [800, 801, 802, 803])
+  const body = await call<{ code?: number; cookie?: string | string[] }>('login_qr_check', { key: loginId, noCookie: true }, [800, 801, 802, 803], true)
   const code = Number(body.code ?? -1)
-  console.info('[netease] qr poll:', code)
+  console.info('[netease] qr poll:', code, 'key=', loginId.slice(0, 8) + '…')
   if (code === 800) return { phase: 'expired' }
   if (code === 802) return { phase: 'scanned' }
   if (code === 803) {

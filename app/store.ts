@@ -16,6 +16,7 @@ import type {
   Unlisten,
 } from "./bridge/contracts";
 import { trackRefOf } from "./bridge/contracts";
+import type { NeteaseLoginPhase } from "./services/netease/dto";
 import { bridge } from "./bridge";
 
 export type ViewId = "home" | "search" | "library" | "discover" | "recent" | "songs" | "albums" | "artists" | "folders" | "playlists" | "album" | "artist" | "playlist" | "account" | "messages" | "settings" | "cache" | "status" | "dsp";
@@ -58,6 +59,8 @@ interface AppState {
   toasts: ToastMessage[];
   /** 网易云登录态（扫码 confirmed 显式分发；neteaseStatusChanged 事件驱动同步） */
   neteaseAuthenticated: boolean;
+  /** 扫码登录流程状态机（全局：页面切换/卸载不中断轮询） */
+  neteaseLogin: NeteaseLoginFlow;
   unlisten: Unlisten | null;
   init(): Promise<void>;
   dispose(): void;
@@ -84,6 +87,8 @@ interface AppState {
   exportDspHse2(): Promise<string>;
   notifyError(error: unknown, fallback: string): void;
   notifyInfo(message: string): void;
+  neteaseStartLogin(): Promise<void>;
+  neteaseResetLogin(): void;
   dismissToast(id: number): void;
   setNeteaseAuthenticated(value: boolean): void;
   enqueueTrack(track: TrackDto, position?: QueueInsertPosition): Promise<void>;
@@ -223,7 +228,55 @@ function acceptedDspResult(result: DspApplyResultDto, currentPlaybackRevision: s
   };
 }
 
+/** 扫码登录全局流程（页面仅渲染，状态机在 store 自驱动，切页不中断） */
+export interface NeteaseLoginFlow {
+  status: "idle" | "loading" | "ready" | "error";
+  loginId: string | null;
+  qrImageDataUrl: string;
+  phase: NeteaseLoginPhase | null;
+  error: string | null;
+}
+
 let toastId = 0;
+let loginPollToken = 0;
+
+const loginSleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+/** 扫码轮询自驱动循环（全局）：waiting/scanned 失败只退避重试、永不终止
+ *  （sidecar 死亡由壳看门狗自愈，重试随之恢复）；800 过期自动重取二维码；
+ *  803 入库验证通过后分发全局登录态。与页面生命周期完全解耦。 */
+async function pollNeteaseLogin(token: number, loginId: string): Promise<void> {
+  let failures = 0;
+  while (token === loginPollToken) {
+    try {
+      const value = await activeBridge.neteasePollQrLogin(loginId);
+      if (token !== loginPollToken) return;
+      failures = 0;
+      const current = useAppStore.getState().neteaseLogin;
+      if (current.loginId !== loginId) return;
+      useAppStore.setState({ neteaseLogin: { ...current, phase: value.phase } });
+      if (value.phase === "confirmed") {
+        useAppStore.setState({ neteaseAuthenticated: true });
+        useAppStore.getState().notifyInfo("网易云登录成功");
+        return;
+      }
+      if (value.phase === "expired") {
+        useAppStore.setState((state) => ({ neteaseLogin: { ...state.neteaseLogin, phase: "expired" } }));
+        await loginSleep(1200);
+        if (token !== loginPollToken) return;
+        await useAppStore.getState().neteaseStartLogin();
+        return;
+      }
+      await loginSleep(2000);
+    } catch (error) {
+      if (token !== loginPollToken) return;
+      failures += 1;
+      console.warn("[netease] qr poll 失败，2.5s 后重试:", String(error).slice(0, 140));
+      await loginSleep(2500);
+      void failures; // 永不终止：sidecar 由壳看门狗自愈，重试随之恢复
+    }
+  }
+}
 let initGeneration = 0;
 let transportGeneration = 0;
 let volumeGeneration = 0;
@@ -268,6 +321,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedTrackIds: [],
   toasts: [],
   neteaseAuthenticated: false,
+  neteaseLogin: { status: "idle", loginId: null, qrImageDataUrl: "", phase: null, error: null },
   unlisten: null,
   async init() {
     const generation = ++initGeneration;
@@ -470,6 +524,24 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   dismissToast(id) { set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) })); },
   setNeteaseAuthenticated(value) { set({ neteaseAuthenticated: value }); },
+  async neteaseStartLogin() {
+    // 新流程取代旧流程：令牌自增使旧轮询循环退出
+    const token = ++loginPollToken;
+    set({ neteaseLogin: { status: "loading", loginId: null, qrImageDataUrl: "", phase: null, error: null } });
+    try {
+      const value = await activeBridge.neteaseStartQrLogin();
+      if (token !== loginPollToken) return;
+      set({ neteaseLogin: { status: "ready", loginId: value.loginId, qrImageDataUrl: value.qrImageDataUrl, phase: "waiting", error: null } });
+      void pollNeteaseLogin(token, value.loginId);
+    } catch (error) {
+      if (token !== loginPollToken) return;
+      set({ neteaseLogin: { status: "error", loginId: null, qrImageDataUrl: "", phase: null, error: errorMessage(error) } });
+    }
+  },
+  neteaseResetLogin() {
+    loginPollToken += 1; // 停掉轮询
+    set({ neteaseLogin: { status: "idle", loginId: null, qrImageDataUrl: "", phase: null, error: null } });
+  },
   async togglePlayback() {
     const previous = get().playback;
     if (!previous?.current) return;

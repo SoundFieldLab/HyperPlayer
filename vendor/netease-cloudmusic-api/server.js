@@ -328,8 +328,11 @@ async function constructServer(moduleDefs) {
           return request(...obj)
         })
         const displayCrypto = usedCrypto || (APP_CONF.encrypt ? 'eapi' : 'api')
+        // 融合适配（HyperPlayer）：请求日志带响应 code——QR 轮询等状态语义端点
+        // （801/802/803）不看 body code 无法诊断，原先只有 200/非200 可见性
+        const bodyCode = moduleResponse.body && typeof moduleResponse.body === 'object' ? moduleResponse.body.code : undefined
         logger.info(
-          `Request Success: [${displayCrypto}] ${decode(req.originalUrl)}`,
+          `Request Success: [${displayCrypto}] ${decode(req.originalUrl)}${bodyCode !== undefined ? ` -> code=${bodyCode}` : ''}`,
         )
 
         // 夹带私货部分：如果开启了通用解锁，并且是获取歌曲URL的接口，则尝试解锁（如果需要的话）ヾ(≧▽≦*)o

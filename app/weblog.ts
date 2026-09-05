@@ -55,7 +55,8 @@ function sanitizeWeb(message: string): string {
 
 function enqueue(level: ConsoleLevel, args: unknown[]): void {
   queue.push({ level, message: sanitizeWeb(formatArgs(args)) });
-  if (queue.length >= MAX_QUEUE) {
+  // error/warn 即时上报（诊断窗口宝贵，不允许批量延迟吞掉）；info/log 走批量
+  if (level === "error" || level === "warn" || queue.length >= MAX_QUEUE) {
     flush();
     return;
   }
@@ -100,6 +101,18 @@ export function installConsoleCapture(options: CaptureOptions = {}): void {
       original(...args);
     };
   }
+  // 全局异常兜底：未捕获 Promise 拒绝与 window.onerror 原来完全进不了日志
+  window.addEventListener("unhandledrejection", (event) => {
+    enqueue("error", ["unhandledrejection:", event.reason instanceof Error ? `${event.reason.name}: ${event.reason.message}` : event.reason]);
+  });
+  window.addEventListener("error", (event) => {
+    if (event.error) enqueue("error", ["window.onerror:", event.error.message ?? String(event.error)]);
+  });
+  // 页面卸载/最小化前冲刷缓冲区（关闭窗口/切页时缓冲日志不再丢失）
+  window.addEventListener("beforeunload", () => flush());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flush();
+  });
 }
 
 async function defaultSend(level: string, message: string): Promise<void> {

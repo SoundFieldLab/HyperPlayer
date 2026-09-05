@@ -421,55 +421,32 @@ function DetailView({ type }: { type: "album" | "artist" | "playlist" }): React.
 }
 
 function AccountView(): React.JSX.Element {
+  const notifyError = useAppStore((state) => state.notifyError);
   const [status, reloadStatus] = useRemote(() => bridge.neteaseStatus(), [], () => false);
   const [account, reloadAccount] = useRemote(() => bridge.neteaseAccount(), [], () => false);
   const neteaseAuthenticated = useAppStore((state) => state.neteaseAuthenticated);
-  const [login, setLogin] = useState<RemoteState<NeteaseLoginStartDto>>({ status: "idle" });
-  const [poll, setPoll] = useState<RemoteState<NeteaseLoginStateDto>>({ status: "idle" });
-  const pollGeneration = useRef(0);
-  async function startLogin(): Promise<void> {
-    pollGeneration.current += 1;
-    setLogin({ status: "loading" }); setPoll({ status: "idle" });
-    try { setLogin(remoteSuccess(await bridge.neteaseStartQrLogin())); }
-    catch (error) { setLogin(remoteFailure(error)); }
-  }
+  // 登录状态机在 store 全局自驱动（切页/卸载不中断轮询），页面只渲染
+  const login = useAppStore((state) => state.neteaseLogin);
+  // confirmed（全局态翻转）时刷新账号页本地数据：立即 + 1.5s 兜底（profile 异步）
+  const confirmed = login.phase === "confirmed";
   useEffect(() => {
-    if (login.status !== "ready") return;
-    const generation = ++pollGeneration.current;
-    let timer = 0;
-    async function run(): Promise<void> {
-      try {
-        if (login.status !== "ready") return;
-        const value = await bridge.neteasePollQrLogin(login.data.loginId);
-        if (generation !== pollGeneration.current) return;
-        setPoll(remoteSuccess(value));
-        // waiting/scanned 持续轮询，失败也只退避重试、**永不终止**——sidecar 死亡
-        // 由壳看门狗自愈，这里重试即随之恢复；终止兜底 = 800 过期自动重取二维码。
-        if (value.phase === "waiting" || value.phase === "scanned") timer = window.setTimeout(run, 2000);
-        if (value.phase === "expired") { timer = window.setTimeout(() => void startLogin(), 1200); return; }
-        if (value.phase === "confirmed") {
-          // cookie 已入库且 user_account 验证通过（服务层日志为准）：显式分发全局
-          // 登录态 + 全局 toast（用户可能不在账号页），并两次刷新账号页本地状态
-          useAppStore.getState().setNeteaseAuthenticated(true);
-          useAppStore.getState().notifyInfo("网易云登录成功");
-          reloadStatus();
-          reloadAccount();
-          timer = window.setTimeout(() => { reloadStatus(); reloadAccount(); }, 1500);
-        }
-      } catch (error) {
-        if (generation !== pollGeneration.current) return;
-        console.warn("[netease] qr poll 失败，2.5s 后重试:", String(error).slice(0, 140));
-        timer = window.setTimeout(run, 2500);
-      }
-    }
-    void run();
-    return () => { pollGeneration.current += 1; window.clearTimeout(timer); };
-  }, [login.status === "ready" ? login.data.loginId : null]);
-  async function logout(): Promise<void> { try { await bridge.neteaseLogout(); reloadStatus(); } catch (error) { setPoll(remoteFailure(error)); } }
+    if (!confirmed) return;
+    reloadStatus();
+    reloadAccount();
+    const timer = window.setTimeout(() => { reloadStatus(); reloadAccount(); }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [confirmed]);
+  async function logout(): Promise<void> {
+    try { await bridge.neteaseLogout(); } catch (error) { notifyError(error, "登出失败"); }
+    useAppStore.getState().neteaseResetLogin();
+    useAppStore.getState().setNeteaseAuthenticated(false);
+    reloadStatus();
+  }
   const actual = status.status === "ready" ? status.data : null;
   const profile = account.status === "ready" ? account.data : null;
-  const phaseText = poll.status === "ready" ? ({ waiting: "等待扫码", scanned: "已扫码，请在手机上确认", confirmed: "登录成功", expired: "二维码已过期", failed: "登录失败" }[poll.data.phase]) : "二维码由网易云登录 command 实时生成";
-  return <Page title="网易云账号" subtitle="凭据仅由 Rust 后端管理"><RemoteNotice state={status} retry={reloadStatus}/>{actual && !actual.enabled && <div className="remote-state unavailable"><Info/><b>网易云内容域已禁用</b><span>可在设置中重新启用。</span></div>}{actual?.authenticated || neteaseAuthenticated ? <div className="account-signed-in">{profile?.user.avatarUrl ? <Cover src={profile.user.avatarUrl} alt="" className="avatar-image"/> : <User/>}<div><h2>{profile?.user.nickname || actual?.displayName || "已登录网易云"}</h2><p>{profile ? `${profile.vip.active ? `VIP${profile.vip.level ?? ""}` : "普通账号"} · 权益校验 ${new Date(profile.vip.verifiedAtMs).toLocaleString()}` : actual?.userId ? `账号 ${actual.userId}` : "正在读取账号权益"}</p></div><button className="button secondary" onClick={() => void logout()}>退出登录</button></div> : actual?.enabled && <div className="account-layout"><section className="login-pane">{login.status === "ready" ? <img className="qr-image" src={login.data.qrImageDataUrl} alt="网易云登录二维码"/> : login.status === "idle" ? <div className="remote-state empty"><Info/><b>尚未生成二维码</b><span>点击下方按钮向后端请求二维码。</span></div> : <RemoteNotice state={login} retry={() => void startLogin()}/>}<h2>使用网易云音乐扫码</h2><p>{phaseText}</p><button className="button primary" onClick={() => void startLogin()} disabled={login.status === "loading"}>{login.status === "ready" ? "刷新二维码" : "获取二维码"}</button>{poll.status === "error" || poll.status === "unavailable" ? <RemoteNotice state={poll}/> : null}</section><section className="account-benefits"><h2>账号能力</h2><div><Heart/><span><b>喜欢与收藏</b><small>以服务端实际返回为准</small></span></div><div><CloudArrowDown/><span><b>权益缓存</b><small>同账号实时权益校验，失败时拒绝播放</small></span></div><div className="privacy-note"><Info/>原始 Cookie 不进入界面。</div></section></div>}</Page>;
+  const phaseText = login.phase ? ({ waiting: "等待扫码", scanned: "已扫码，请在手机上确认", confirmed: "登录成功", expired: "二维码已过期，正在重新获取…", failed: "登录失败" }[login.phase]) : "二维码由网易云登录 command 实时生成";
+  async function startLogin(): Promise<void> { await useAppStore.getState().neteaseStartLogin(); }
+  return <Page title="网易云账号" subtitle="凭据仅由 Rust 后端管理"><RemoteNotice state={status} retry={reloadStatus}/>{actual && !actual.enabled && <div className="remote-state unavailable"><Info/><b>网易云内容域已禁用</b><span>可在设置中重新启用。</span></div>}{actual?.authenticated || neteaseAuthenticated ? <div className="account-signed-in">{profile?.user.avatarUrl ? <Cover src={profile.user.avatarUrl} alt="" className="avatar-image"/> : <User/>}<div><h2>{profile?.user.nickname || actual?.displayName || "已登录网易云"}</h2><p>{profile ? `${profile.vip.active ? `VIP${profile.vip.level ?? ""}` : "普通账号"} · 权益校验 ${new Date(profile.vip.verifiedAtMs).toLocaleString()}` : actual?.userId ? `账号 ${actual.userId}` : "正在读取账号权益"}</p></div><button className="button secondary" onClick={() => void logout()}>退出登录</button></div> : actual?.enabled && <div className="account-layout"><section className="login-pane">{login.status === "ready" ? <img className="qr-image" src={login.qrImageDataUrl} alt="网易云登录二维码"/> : login.status === "idle" ? <div className="remote-state empty"><Info/><b>尚未生成二维码</b><span>点击下方按钮向后端请求二维码。</span></div> : login.status === "error" ? <div className="remote-state error" role="alert"><Info/><b>二维码获取失败</b><span>{login.error}</span><button className="button secondary" onClick={() => void startLogin()}>重试</button></div> : null}<h2>使用网易云音乐扫码</h2><p>{phaseText}</p><button className="button primary" onClick={() => void startLogin()} disabled={login.status === "loading"}>{login.status === "ready" ? "刷新二维码" : "获取二维码"}</button></section><section className="account-benefits"><h2>账号能力</h2><div><Heart/><span><b>喜欢与收藏</b><small>以服务端实际返回为准</small></span></div><div><CloudArrowDown/><span><b>权益缓存</b><small>同账号实时权益校验，失败时拒绝播放</small></span></div><div className="privacy-note"><Info/>原始 Cookie 不进入界面。</div></section></div>}</Page>;
 }
 
 function formatMessageTime(occurredAtMs: number | null): string {
