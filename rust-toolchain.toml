@@ -1,4 +1,0 @@
-# 与 .github/workflows/quality.yml 的 dtolnay/rust-toolchain@1.98.0 一致：
-# 本地所有 cargo 命令自动使用 1.98.0，本地门禁即 CI 门禁（2026-09-03 用户定调）。
-[toolchain]
-channel = "1.98.0"
