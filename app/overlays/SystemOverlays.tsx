@@ -28,7 +28,7 @@ export function CloseConfirmDialog(): React.JSX.Element | null {
   const detail = closeRequest.isPlaying || closeRequest.hasBackgroundTasks
     ? "播放或后台任务仍在进行。你可以最小化到托盘继续运行，或完全退出。"
     : "选择将 HyperPlayer 最小化到托盘，或完全退出。";
-  return <dialog ref={dialogRef} className="close-dialog" aria-labelledby="close-title" aria-describedby="close-detail" onCancel={(event) => { event.preventDefault(); void resolveClose("cancel", false); }}>
+  return <dialog ref={dialogRef} className="close-dialog" style={{ position: "fixed", inset: 0, margin: "auto", height: "fit-content" }} aria-labelledby="close-title" aria-describedby="close-detail" onCancel={(event) => { event.preventDefault(); void resolveClose("cancel", false); }}>
     <form method="dialog"><h2 id="close-title">关闭 HyperPlayer？</h2><p id="close-detail">{detail}</p><label><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)}/>记住我的选择</label><div><button type="button" className="button ghost" onClick={() => void resolveClose("cancel", false)}>取消</button><button type="button" className="button secondary" onClick={() => void resolveClose("minimizeToTray", remember)}>最小化到托盘</button><button type="button" className="button danger" onClick={() => void resolveClose("exit", remember)}>退出</button></div></form>
   </dialog>;
 }

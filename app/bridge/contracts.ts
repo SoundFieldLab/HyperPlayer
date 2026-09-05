@@ -74,6 +74,8 @@ export interface BackendTrackDto {
   durationMs: number | null;
   qualityLabel: string | null;
   playable: boolean;
+  /** 封面 URL（本地曲库/网易云图床；null 时 UI 落占位图） */
+  coverUrl?: string | null;
 }
 
 export interface BackendSettingsDto {

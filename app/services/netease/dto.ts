@@ -15,6 +15,8 @@ export interface NeteaseSongDto {
   durationMs: number | null
   qualityLabel: string | null
   playable: boolean
+  /** 专辑封面（al.picUrl；无则为 null，UI 落占位图）。可选以与 BackendTrackDto 保持结构兼容 */
+  coverUrl?: string | null
   /** 协议响应中的原始 song 字段（映射过程保留；云盘条目自引用便于 adaptTrack） */
   track?: NeteaseSongDto
 }

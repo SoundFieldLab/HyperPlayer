@@ -181,8 +181,12 @@ export async function neteaseStartQrLogin(): Promise<NeteaseLoginStartDto> {
   const body = await call<{ data?: { unikey?: string }; unikey?: string }>('login_qr_key', {})
   const loginId = body.data?.unikey ?? body.unikey ?? ''
   if (!loginId) throw new Error('未能获取二维码 key（网易云未返回 unikey，请稍后重试）')
-  // qrimg 由前端以 canvas 渲染（qrcode shim 无副作用）；此处返回 key 供轮询
-  return { loginId, qrImageDataUrl: '' }
+  // 二维码内容 = 网易云官方扫码页 + unikey；qrcode 库本地生成 dataURL（曾恒返回
+  // 空串导致 <img> 永远裂图）
+  const qrContent = `https://music.163.com/login?codekey=${loginId}`
+  const { default: QRCode } = await import('qrcode')
+  const qrImageDataUrl = await QRCode.toDataURL(qrContent, { width: 220, margin: 1 })
+  return { loginId, qrImageDataUrl }
 }
 
 export async function neteasePollQrLogin(loginId: string): Promise<NeteaseLoginStateDto> {
@@ -315,7 +319,8 @@ export async function neteasePlaylistDetail(id: number): Promise<NeteasePlaylist
       description: playlist.description ? String(playlist.description) : null,
       updateFrequency: null,
     },
-    tracks: (body.songs ?? []).map(mapSong),
+    // 匿名响应曲目在 playlist.tracks（trackIds 同序），登录态部分响应才带顶层 songs
+    tracks: ((playlist.tracks as unknown[] | undefined) ?? body.songs ?? []).map(mapSong),
   }
 }
 
@@ -631,6 +636,7 @@ function mapSong(raw: unknown): NeteaseSongDto {
     durationMs: durationMs > 0 ? durationMs : null,
     qualityLabel: null,
     playable: true,
+    coverUrl: String(album.picUrl ?? album.pic ?? '') || null,
   }
 }
 
@@ -830,6 +836,7 @@ export interface SongDetailResult {
   album: { id: number; name: string; picUrl?: string }
   fee: number
   dt: number
+  coverUrl: string | null
 }
 
 export async function getSongDetail(id: number): Promise<SongDetailResult | null> {
@@ -846,6 +853,7 @@ export async function getSongDetail(id: number): Promise<SongDetailResult | null
     album: { id: Number(album.id ?? 0), name: String(album.name ?? '未知专辑'), picUrl: String(album.picUrl ?? '') || undefined },
     fee: Number(song.fee ?? 0),
     dt: Number(song.dt ?? song.duration ?? 0),
+    coverUrl: String(album.picUrl ?? '') || null,
   }
 }
 

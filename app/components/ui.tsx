@@ -44,26 +44,9 @@ export function formatTime(ms: number): string {
 }
 
 export function Cover({ src, alt, className = "" }: { src: string; alt: string; className?: string }): React.JSX.Element {
-  const [resolved, setResolved] = useState(() => src.startsWith("https://") ? fallbackCover(src) : src);
-  useEffect(() => {
-    if (!src.startsWith("https://")) {
-      setResolved(src);
-      return;
-    }
-    let active = true;
-    let objectUrl: string | null = null;
-    setResolved(fallbackCover(src));
-    void bridge.neteaseImage(src).then((image) => {
-      if (!active) return;
-      objectUrl = URL.createObjectURL(new Blob([new Uint8Array(image.bytes)], { type: image.mimeType }));
-      setResolved(objectUrl);
-    }).catch(() => undefined);
-    return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [src]);
-  return <img className={`cover ${className}`} src={resolved} alt={alt} draggable={false} />;
+  // 封面直用 URL（CSP img-src 已放行图床）：旧实现的 neteaseImage 代理走
+  // plugin-http，对本机/远端均有挂死缺陷且失败后静默停在占位图。
+  return <img className={`cover ${className}`} src={src} alt={alt} draggable={false} loading="lazy" />;
 }
 
 export function SourceMark({ source }: { source: TrackDto["source"] }): React.JSX.Element {

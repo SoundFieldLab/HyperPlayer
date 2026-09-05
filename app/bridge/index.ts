@@ -138,7 +138,7 @@ async function resolveTrackDto(ref: BackendTrackRefDto): Promise<TrackDto> {
     entitlement: "free",
     quality: "标准",
     cache: "none",
-    coverSeed: "",
+    coverSeed: detail.coverUrl ?? "",
   };
 }
 
@@ -154,7 +154,7 @@ export function adaptTrack(track: BackendTrackDto): TrackDto {
     entitlement: track.playable ? "free" : "unavailable",
     quality: quality(track.qualityLabel),
     cache: "none",
-    coverSeed: fallbackCover(String(fallbackIndex)),
+    coverSeed: track.coverUrl ?? fallbackCover(String(fallbackIndex)),
   };
 }
 
