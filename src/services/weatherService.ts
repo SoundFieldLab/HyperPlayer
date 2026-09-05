@@ -843,7 +843,7 @@ export async function fetchWeatherSnapshot(
     if (aqResponse.ok) {
       const aqData = await aqResponse.json()
       const aqi = toNumber(aqData.current?.european_aqi)
-      if (aqi > 0) {
+      if (Number.isFinite(aqi)) {
         airQuality = {
           aqi,
           pm25: toNumber(aqData.current?.pm2_5),
@@ -938,7 +938,12 @@ export async function ensureWeatherSnapshot(
   if (!request || options.forceRefresh) {
     const controller = new AbortController()
     const timeoutId = window.setTimeout(() => controller.abort(), 20_000)
-    request = fetchWeatherSnapshot(settings, controller.signal).finally(() => window.clearTimeout(timeoutId))
+    const callerAbort = () => controller.abort()
+    options.signal?.addEventListener('abort', callerAbort, { once: true })
+    request = fetchWeatherSnapshot(settings, controller.signal).finally(() => {
+      window.clearTimeout(timeoutId)
+      options.signal?.removeEventListener('abort', callerAbort)
+    })
     weatherSnapshotPending.set(cacheKey, request)
     const cleanup = () => {
       if (weatherSnapshotPending.get(cacheKey) === request) weatherSnapshotPending.delete(cacheKey)

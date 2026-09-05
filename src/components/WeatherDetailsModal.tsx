@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTvBack } from '../tv/tvCore'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   AlertTriangle,
   Cloud,
@@ -30,6 +30,10 @@ import { IconSunrise, IconSunset } from './AppleWeatherIcon'
 // 纯函数/常量/类型与纯视觉组件从轻量模块复用（桌面小组件静态依赖它，避免把 leaflet 拉进桌面模式）。
 import { WeatherGlyph, getWeatherVisualTheme, WeatherAtmosphere, WeatherRainGlass, isRainySceneKind, getUvLabel, getWindDirection, WindCompass, WeatherSkyTip, type WeatherDetailsTab } from './weatherVisualTheme'
 import { computeSkyBodies } from '../services/moonPhase'
+import { createAppleWeatherSceneModel } from './weatherScene/weatherSceneModel'
+import HourlyForecastRainGlass from './weatherScene/HourlyForecastRainGlass'
+
+const AppleWeatherScene = lazy(() => import('./weatherScene/AppleWeatherScene'))
 export { WeatherGlyph, getWeatherVisualTheme, WeatherAtmosphere, WeatherRainGlass, isRainySceneKind, type WeatherVisualTheme, type WeatherSceneKind, type WeatherDetailsTab } from './weatherVisualTheme'
 
 interface WeatherDetailsModalProps {
@@ -110,6 +114,31 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
   const [weatherMapOpen, setWeatherMapOpen] = useState(false)
   const [moonOpen, setMoonOpen] = useState(false)
   const [detailCard, setDetailCard] = useState<WeatherCardKind | null>(null)
+  const [appleSceneUnavailable, setAppleSceneUnavailable] = useState(false)
+  const prefersReducedMotion = useReducedMotion()
+  const appleScene = useMemo(() => weather ? createAppleWeatherSceneModel(weather) : null, [weather])
+  const markAppleSceneUnavailable = useCallback(() => setAppleSceneUnavailable(true), [])
+  const secondaryOverlayOpen = weatherMapOpen || moonOpen || detailCard !== null
+  const weatherAnimationActive = open && activeTab === 'weather' && !secondaryOverlayOpen
+  const openDetailCard = useCallback((card: WeatherCardKind) => {
+    setWeatherMapOpen(false)
+    setMoonOpen(false)
+    setDetailCard(card)
+  }, [])
+  const openMoon = useCallback(() => {
+    setWeatherMapOpen(false)
+    setDetailCard(null)
+    setMoonOpen(true)
+  }, [])
+  const openWeatherMap = useCallback(() => {
+    setMoonOpen(false)
+    setDetailCard(null)
+    setWeatherMapOpen(true)
+  }, [])
+
+  useEffect(() => {
+    if (open) setAppleSceneUnavailable(false)
+  }, [open, appleScene?.id])
 
   useEffect(() => {
     if (open) setActiveTab(initialTab)
@@ -259,14 +288,25 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          <WeatherAtmosphere theme={weatherTheme} skyBodies={activeTab === 'weather' && weather ? skyBodies : undefined} />
+          <WeatherAtmosphere theme={weatherTheme} active={!appleScene || appleSceneUnavailable} skyBodies={activeTab === 'weather' && weather ? skyBodies : undefined} />
+          {appleScene && !appleSceneUnavailable && (
+            <Suspense fallback={null}>
+              <AppleWeatherScene
+                scene={appleScene}
+                active={weatherAnimationActive}
+                reducedMotion={Boolean(prefersReducedMotion)}
+                onUnavailable={markAppleSceneUnavailable}
+                className="absolute inset-0 z-[1]"
+              />
+            </Suspense>
+          )}
           {activeTab === 'weather' && weather && skyBodies && <WeatherSkyTip skyBodies={skyBodies} isDay={weather.current.isDay} />}
           <motion.div
             initial={{ y: 18, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 14, opacity: 0 }}
             transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
-            className="absolute inset-0 overflow-y-auto custom-scrollbar"
+            className="absolute inset-0 z-[3] overflow-y-auto custom-scrollbar"
           >
             <div className="relative mx-auto min-h-full w-full max-w-[1560px] px-7 pb-9 pt-7 md:px-12 xl:max-w-[1720px]">
               <div className="absolute right-6 top-6 flex items-center gap-2 md:right-10 md:top-8">
@@ -374,8 +414,9 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                   {/* —— 玻璃卡片网格（列数随窗口自适应） —— */}
                   <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {/* 每小时天气预报（含日出/日落槽位；按住左右拖拽浏览） */}
-                    <section className="weather-glass-panel rounded-[26px] border border-white/10 p-5 md:col-span-2 lg:col-span-3 xl:col-span-4">
-                      <div className="mb-4 flex items-center justify-between gap-3">
+                    <section className="weather-glass-panel relative isolate overflow-hidden rounded-[26px] border border-white/10 p-5 [clip-path:inset(0_round_26px)] md:col-span-2 lg:col-span-3 xl:col-span-4">
+                      <div className="relative z-[1]">
+                        <div className="mb-4 flex items-center justify-between gap-3">
                         <span className="flex items-center gap-2 text-sm font-medium text-white/55"><Clock3 className="h-4 w-4" />每小时天气预报</span>
                         <span className="text-xs text-white/40">{hourlyTip}</span>
                       </div>
@@ -402,6 +443,17 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                           </div>
                         ))}
                       </div>
+                      </div>
+                      {isRainySceneKind(weatherTheme.kind) && appleScene && (
+                        <HourlyForecastRainGlass
+                          kind={weatherTheme.kind}
+                          precipitation={weather.current.precipitation}
+                          seed={appleScene.seed}
+                          active={weatherAnimationActive}
+                          reducedMotion={Boolean(prefersReducedMotion)}
+                          className="absolute inset-0 z-[2]"
+                        />
+                      )}
                     </section>
 
                     {/* 10 日天气预报（左上大卡：3 卡宽 × 4 卡高；行高自动均分，小屏时内部滚动） */}
@@ -437,7 +489,7 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                     </section>
 
                     {/* 右侧 2×2：标准高度的四张卡 */}
-                    <DetailCard icon={Sun} label="紫外线指数" onClick={() => setDetailCard('uv')}>
+                    <DetailCard icon={Sun} label="紫外线指数" onClick={() => openDetailCard('uv')}>
                       <div className="mt-4 text-[30px] font-semibold leading-9">{Math.round(weather.daily[0]?.uvIndexMax || 0)}</div>
                       <div className="text-sm text-white/62">{getUvLabel(weather.daily[0]?.uvIndexMax || 0)}</div>
                       <div className="relative mt-3 h-1.5 rounded-full" style={{ background: 'linear-gradient(90deg,#5ac8fa,#32d74b,#ffd60a,#ff9f0a,#ff453a,#bf5af2)' }}>
@@ -449,7 +501,7 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                       <div className="mt-2.5 text-[13px] text-white/50">白天外出注意防晒。</div>
                     </DetailCard>
 
-                    <DetailCard icon={Wind} label="风" onClick={() => setDetailCard('wind')}>
+                    <DetailCard icon={Wind} label="风" onClick={() => openDetailCard('wind')}>
                       <div className="mt-3 flex items-center justify-between gap-3">
                         <div>
                           <div className="text-[30px] font-semibold leading-9 tabular-nums">{Math.round(weather.current.windSpeed)}<span className="ml-1 text-base font-normal text-white/62">km/h</span></div>
@@ -459,7 +511,7 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                       </div>
                     </DetailCard>
 
-                    <button type="button" onClick={() => setMoonOpen(true)} className="text-left">
+                    <button type="button" onClick={openMoon} className="text-left">
                       <div className="weather-glass-panel flex h-full min-h-[148px] flex-col rounded-[26px] border border-white/10 p-5 transition-transform hover:scale-[1.015]">
                         <div className="flex items-center gap-2 text-sm font-medium text-white/52"><MoonLucide className="h-4 w-4" />月亮</div>
                         <div className="mt-auto flex items-end justify-between gap-2 pt-3">
@@ -473,19 +525,19 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                       </div>
                     </button>
 
-                    <DetailCard icon={Sunrise} label="日出" value={formatTime(weather.daily[0]?.sunrise || '')} detail={`日落 ${formatTime(weather.daily[0]?.sunset || '')}`} onClick={() => setDetailCard('sun')} />
+                    <DetailCard icon={Sunrise} label="日出" value={formatTime(weather.daily[0]?.sunrise || '')} detail={`日落 ${formatTime(weather.daily[0]?.sunset || '')}`} onClick={() => openDetailCard('sun')} />
 
 
                     {/* 其余详情瓷片（点击进入详情弹窗） */}
-                    <DetailCard icon={ThermometerSun} label="体感温度" value={`${Math.round(weather.current.apparentTemperature)}°`} detail={`实际温度 ${Math.round(weather.current.temperature)}°`} onClick={() => setDetailCard('feels')} />
-                    <DetailCard icon={Droplets} label="湿度" value={`${Math.round(weather.current.humidity)}%`} detail="当前相对湿度" onClick={() => setDetailCard('humidity')} />
-                    <DetailCard icon={Eye} label="能见度" value={`${Math.max(0.1, weather.current.visibility / 1000).toFixed(1)} 公里`} detail={weather.current.visibility >= 10000 ? '视野非常好。' : '注意低能见度。'} onClick={() => setDetailCard('visibility')} />
-                    <DetailCard icon={Gauge} label="气压" value={`${Math.round(weather.current.pressure)} 百帕`} detail="地面气压" onClick={() => setDetailCard('pressure')} />
-                    <DetailCard icon={Umbrella} label="降水" value={`${weather.current.precipitation.toFixed(1)} 毫米`} detail={`今日概率 ${Math.round(weather.daily[0]?.precipitationProbability || 0)}%`} onClick={() => setDetailCard('precip')} className="lg:col-span-2 xl:col-span-1" />
-                    <DetailCard icon={Cloud} label="云量" value={`${Math.round(weather.current.cloudCover ?? 0)}%`} detail={getCloudCoverLabel(weather.current.cloudCover ?? 0)} onClick={() => setDetailCard('cloud')} />
-                    <DetailCard icon={Droplets} label="露点温度" value={`${Math.round(currentDewPoint)}°`} detail={getDewPointLabel(currentDewPoint)} onClick={() => setDetailCard('dew')} />
+                    <DetailCard icon={ThermometerSun} label="体感温度" value={`${Math.round(weather.current.apparentTemperature)}°`} detail={`实际温度 ${Math.round(weather.current.temperature)}°`} onClick={() => openDetailCard('feels')} />
+                    <DetailCard icon={Droplets} label="湿度" value={`${Math.round(weather.current.humidity)}%`} detail="当前相对湿度" onClick={() => openDetailCard('humidity')} />
+                    <DetailCard icon={Eye} label="能见度" value={`${Math.max(0.1, weather.current.visibility / 1000).toFixed(1)} 公里`} detail={weather.current.visibility >= 10000 ? '视野非常好。' : '注意低能见度。'} onClick={() => openDetailCard('visibility')} />
+                    <DetailCard icon={Gauge} label="气压" value={`${Math.round(weather.current.pressure)} 百帕`} detail="地面气压" onClick={() => openDetailCard('pressure')} />
+                    <DetailCard icon={Umbrella} label="降水" value={`${weather.current.precipitation.toFixed(1)} 毫米`} detail={`今日概率 ${Math.round(weather.daily[0]?.precipitationProbability || 0)}%`} onClick={() => openDetailCard('precip')} className="lg:col-span-2 xl:col-span-1" />
+                    <DetailCard icon={Cloud} label="云量" value={`${Math.round(weather.current.cloudCover ?? 0)}%`} detail={getCloudCoverLabel(weather.current.cloudCover ?? 0)} onClick={() => openDetailCard('cloud')} />
+                    <DetailCard icon={Droplets} label="露点温度" value={`${Math.round(currentDewPoint)}°`} detail={getDewPointLabel(currentDewPoint)} onClick={() => openDetailCard('dew')} />
                     {weather.airQuality ? (
-                      <DetailCard icon={Leaf} label="空气质量" onClick={() => setDetailCard('aqi')}>
+                      <DetailCard icon={Leaf} label="空气质量" onClick={() => openDetailCard('aqi')}>
                         <div className="mt-auto flex items-baseline gap-2 pt-4">
                           <span className="text-[28px] font-semibold leading-8 tabular-nums">{Math.round(weather.airQuality.aqi)}</span>
                           <span className="text-base font-normal text-white/68">{getAqiLabel(weather.airQuality.aqi)}</span>
@@ -501,7 +553,7 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                       <WeatherMapExperience
                         weather={weather}
                         open={weatherMapOpen}
-                        onOpen={() => setWeatherMapOpen(true)}
+                        onOpen={openWeatherMap}
                         onClose={() => setWeatherMapOpen(false)}
                       />
                     </div>
@@ -518,11 +570,11 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
             </div>
           </motion.div>
           {/* 月相页（月亮卡片点击进入） */}
-          <MoonPhaseExperience weather={weather} open={moonOpen} onOpen={() => setMoonOpen(true)} onClose={() => setMoonOpen(false)} />
+          <MoonPhaseExperience weather={weather} open={moonOpen} onOpen={openMoon} onClose={() => setMoonOpen(false)} />
           {/* 详情卡二级弹窗（苹果式：所有卡片均可点开） */}
           <WeatherCardDetailOverlay card={detailCard} weather={weather} onClose={() => setDetailCard(null)} />
           {/* 雨滴打在玻璃上的效果：盖在内容层之上，模拟整个天气视图是块被雨淋的玻璃 */}
-          {isRainySceneKind(weatherTheme.kind) && <WeatherRainGlass kind={weatherTheme.kind} className="absolute inset-0" />}
+          {isRainySceneKind(weatherTheme.kind) && <WeatherRainGlass kind={weatherTheme.kind} active={weatherAnimationActive} className="absolute inset-0 z-[4]" />}
         </motion.div>
       )}
     </AnimatePresence>,

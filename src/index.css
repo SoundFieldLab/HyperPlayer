@@ -1091,7 +1091,12 @@ input, textarea, [contenteditable="true"] {
 }
 
 
-/* 强制桌面玻璃卡片按圆角建立独立绘制边界，避免 Chromium backdrop-filter 合成层泄出直角轮廓。 */
+.weather-atmosphere-paused,
+.weather-atmosphere-paused * {
+  animation-play-state: paused !important;
+}
+
+
 .desktop-widget-card {
   overflow: hidden;
   isolation: isolate;
@@ -1121,7 +1126,7 @@ input, textarea, [contenteditable="true"] {
 .weather-map-isobar-canvas {
   position: absolute;
   left: 0;
-  top: 50%;
+  top: 0;
   contain: strict;
   pointer-events: none;
   will-change: transform, opacity;

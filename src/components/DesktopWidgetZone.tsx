@@ -4,7 +4,7 @@
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, lazy, Suspense } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   AlertTriangle,
   AlarmClock,
@@ -33,7 +33,9 @@ import {
 // 天气主题纯函数/类型/纯视觉组件走轻量模块（无 leaflet）；模态框本体（含 leaflet 地图）懒加载。
 import { getWeatherVisualTheme, WeatherAtmosphere, WeatherGlyph, WeatherRainGlass, isRainySceneKind, type WeatherDetailsTab } from './weatherVisualTheme'
 import { WeatherSimpleCard } from './WeatherSimpleCard'
+import { createAppleWeatherSceneModel } from './weatherScene/weatherSceneModel'
 const WeatherDetailsModal = lazy(() => import('./WeatherDetailsModal'))
+const AppleWeatherCompactScene = lazy(() => import('./weatherScene/AppleWeatherCompactScene'))
 import DesktopTimeCenter, { formatRemaining } from './DesktopTimeCenter'
 import { useDesktopFocusTimer } from '../hooks/useDesktopFocusTimer'
 import { getCalendarFestivals } from '../utils/calendarFestivals'
@@ -421,6 +423,25 @@ function WeatherWidget({ settings, cardBlurAmount, accentColor, onOverlayOpenCha
   const locationAddress = weather ? getWeatherLocationAddress(weather.location) : locationLabel
   const precipitationChance = Math.round(weather?.daily[0]?.precipitationProbability || weather?.hourly[0]?.precipitationProbability || 0)
   const simpleMode = settings.weatherCardMode === 'simple'
+  const prefersReducedMotion = useReducedMotion()
+  const appleScene = useMemo(() => weather ? createAppleWeatherSceneModel(weather) : null, [weather])
+  const [appleCompactReady, setAppleCompactReady] = useState(false)
+  const [appleCompactUnavailable, setAppleCompactUnavailable] = useState(false)
+  const [appleCompactVisible, setAppleCompactVisible] = useState(true)
+  const compactHostRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    setAppleCompactReady(false)
+    setAppleCompactUnavailable(false)
+  }, [appleScene?.id])
+
+  useEffect(() => {
+    const host = compactHostRef.current
+    if (!host || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(entries => setAppleCompactVisible(entries[0]?.isIntersecting ?? true), { threshold: 0.05, rootMargin: '160px 0px' })
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [])
 
   const openDetails = (tab: WeatherDetailsTab = 'weather') => {
     setDetailsTab(tab)
@@ -441,7 +462,7 @@ function WeatherWidget({ settings, cardBlurAmount, accentColor, onOverlayOpenCha
         tabIndex={0}
         onClick={() => openDetails('weather')}
         onKeyDown={handleCardKeyDown}
-        className="desktop-widget-card relative isolate w-full overflow-hidden rounded-[28px] text-left text-white outline-none transition-transform hover:scale-[1.018] focus-visible:ring-2 focus-visible:ring-white/70 active:scale-[0.99]"
+        className={`desktop-widget-card relative isolate w-full overflow-hidden rounded-[28px] text-left text-white outline-none transition-transform hover:scale-[1.018] focus-visible:ring-2 focus-visible:ring-white/70 active:scale-[0.99] ${simpleMode ? 'min-h-[190px]' : ''}`}
         style={{
           background: weatherTheme?.cardBackground || `linear-gradient(135deg, ${accentColor}66, rgba(8,12,24,0.42))`,
           backgroundClip: 'padding-box',
@@ -453,12 +474,25 @@ function WeatherWidget({ settings, cardBlurAmount, accentColor, onOverlayOpenCha
         containIntrinsicSize: '220px',
         }}
         aria-label={`查看${locationAddress}天气详情`}
+        ref={compactHostRef}
       >
+        {weatherTheme && (!appleCompactReady || appleCompactUnavailable) && <WeatherAtmosphere theme={weatherTheme} active={!appleCompactReady || appleCompactUnavailable} compact />}
+        {appleCompactReady && <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-[2] bg-[linear-gradient(180deg,rgba(5,12,24,0.08),transparent_42%,rgba(4,10,20,0.28))]" />}
+        {weather && appleScene && appleCompactVisible && !appleCompactUnavailable && (
+          <Suspense fallback={null}>
+            <AppleWeatherCompactScene
+              scene={appleScene}
+              active={!showDetails}
+              reducedMotion={Boolean(prefersReducedMotion)}
+              onReady={() => setAppleCompactReady(true)}
+              onUnavailable={() => setAppleCompactUnavailable(true)}
+            />
+          </Suspense>
+        )}
         {simpleMode && weather ? (
-          <WeatherSimpleCard weather={weather} locationLabel={locationLabel} />
+          <WeatherSimpleCard weather={weather} locationLabel={locationLabel} appleSceneReady={appleCompactReady} />
         ) : (
           <>
-        {weatherTheme && <WeatherAtmosphere theme={weatherTheme} compact />}
         <div className="relative z-10 px-5 pb-4 pt-4">
           <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-white/70">
             {settings.weatherLocationMode === 'auto'
@@ -527,7 +561,7 @@ function WeatherWidget({ settings, cardBlurAmount, accentColor, onOverlayOpenCha
           </>
         )}
 
-        {weatherTheme && !simpleMode && isRainySceneKind(weatherTheme.kind) && <WeatherRainGlass kind={weatherTheme.kind} className="absolute inset-0 z-20" />}
+        {weatherTheme && !simpleMode && isRainySceneKind(weatherTheme.kind) && !appleCompactReady && <WeatherRainGlass kind={weatherTheme.kind} active={!showDetails} className="absolute inset-0 z-20" />}
       </div>
 
       {(typhoonRisk || earthquakeRisk) && (

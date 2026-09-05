@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { getAqiLabel, type WeatherSnapshot } from '../services/weatherService'
+import { localDateParts } from '../services/weatherTime'
 import { getUvLabel, getWindDirection, WindCompass } from './weatherVisualTheme'
 
 // 天气详情卡的二级弹窗：点击任意详情卡（紫外线/风/体感/湿度/能见度/气压/降水/日出/云量/露点/空气质量）
@@ -38,11 +39,12 @@ function MiniTrend({ values, labels, color = '#8ec9f5', unit = '', suffix = '' }
   const padTop = 22
   const padBottom = 30
   const finite = values.filter(v => Number.isFinite(v))
-  const max = Math.max(...finite)
-  const min = Math.min(...finite)
+  const safeValues = finite.length > 0 ? values : [0]
+  const max = Math.max(...finite, 0)
+  const min = Math.min(...finite, 0)
   const span = Math.max(0.001, max - min)
-  const pts = values.map((v, i) => {
-    const x = padX + (i / Math.max(1, values.length - 1)) * (w - padX * 2)
+  const pts = safeValues.map((v, i) => {
+    const x = padX + (i / Math.max(1, safeValues.length - 1)) * (w - padX * 2)
     const y = padTop + (1 - (v - min) / span) * (h - padTop - padBottom)
     return [x, y] as const
   })
@@ -76,7 +78,7 @@ function MiniTrend({ values, labels, color = '#8ec9f5', unit = '', suffix = '' }
 }
 
 /** 日照弧线：太阳在当日轨道上的位置 */
-function SunArc({ sunrise, sunset, updatedAt }: { sunrise: string; sunset: string; updatedAt: number }) {
+function SunArc({ sunrise, sunset, updatedAt, timeZone }: { sunrise: string; sunset: string; updatedAt: number; timeZone?: string }) {
   const w = 560
   const h = 190
   const cx = w / 2
@@ -86,12 +88,13 @@ function SunArc({ sunrise, sunset, updatedAt }: { sunrise: string; sunset: strin
   const riseM = toMin(sunrise)
   const setM = toMin(sunset)
   const nowDate = new Date(updatedAt)
-  const nowM = nowDate.getHours() * 60 + nowDate.getMinutes()
-  const progress = Math.min(1, Math.max(0, (nowM - riseM) / Math.max(1, setM - riseM)))
+  const localNow = timeZone ? localDateParts(nowDate, timeZone) : { hour: nowDate.getHours(), minute: nowDate.getMinutes() }
+  const nowMinutes = localNow.hour * 60 + localNow.minute
+  const progress = Math.min(1, Math.max(0, (nowMinutes - riseM) / Math.max(1, setM - riseM)))
   const angle = Math.PI * (1 - progress)
   const sunX = cx - Math.cos(angle) * r * 0.92
   const sunY = baseY - Math.sin(angle) * (r * 0.52)
-  const below = nowM < riseM || nowM > setM
+  const below = nowMinutes < riseM || nowMinutes > setM
   const dayMinutes = Math.max(0, setM - riseM)
   return (
     <div>
@@ -127,14 +130,18 @@ export default function WeatherCardDetailOverlay({ card, weather, onClose }: Car
     <AnimatePresence>
       {card && weather && meta && (
         <motion.div
-          className="fixed inset-0 z-[420] flex items-start justify-center overflow-y-auto bg-slate-950/78 px-6 py-12 text-white backdrop-blur-2xl"
+          className="fixed inset-0 z-[420] flex items-center justify-center overflow-hidden bg-transparent p-4 text-white sm:p-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
         >
           <motion.div
-            className="w-full max-w-[640px] rounded-[32px] border border-white/10 bg-slate-900/55 p-7"
+            className="max-h-[calc(100vh-2rem)] max-h-[calc(100dvh-2rem)] w-full max-w-[640px] overflow-y-auto overscroll-contain rounded-[32px] border border-white/14 bg-slate-900/48 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.35)] backdrop-blur-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-7"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="weather-card-detail-title"
+            data-tv-scope
             initial={{ y: 24, opacity: 0, scale: 0.98 }}
             animate={{ y: 0, opacity: 1, scale: 1 }}
             exit={{ y: 18, opacity: 0, scale: 0.98 }}
@@ -142,9 +149,10 @@ export default function WeatherCardDetailOverlay({ card, weather, onClose }: Car
             onClick={event => event.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <div className="text-lg font-semibold">{meta.title}</div>
+              <div id="weather-card-detail-title" className="text-lg font-semibold">{meta.title}</div>
               <button
                 type="button"
+                autoFocus
                 onClick={onClose}
                 aria-label={`关闭${meta.title}详情`}
                 className="flex h-9 w-9 items-center justify-center rounded-full bg-white/8 text-white/70 transition-colors hover:bg-white/16"
@@ -226,7 +234,7 @@ export default function WeatherCardDetailOverlay({ card, weather, onClose }: Car
                       <div className="text-[30px] font-light tabular-nums">{weather.daily[0].sunset.slice(11, 16)}</div>
                     </div>
                   </div>
-                  <div className="mt-3"><SunArc sunrise={weather.daily[0].sunrise} sunset={weather.daily[0].sunset} updatedAt={weather.updatedAt} /></div>
+                  <div className="mt-3"><SunArc sunrise={weather.daily[0].sunrise} sunset={weather.daily[0].sunset} updatedAt={weather.updatedAt} timeZone={weather.timezone} /></div>
                 </>
               )}
               {card === 'cloud' && (

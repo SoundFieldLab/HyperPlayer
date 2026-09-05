@@ -1,4 +1,5 @@
 // 月相与月球位置的低阶天文近似（Meeus 截断式），展示精度足够（相位分钟级、月出月落 ±15 分钟）。
+import { localDateParts } from './weatherTime'
 
 const SYNODIC = 29.530588853 // 朔望月（天）
 const ReferenceNewMoonJD = 2451550.26 // 2000-01-06 18:14 UTC 新月
@@ -139,14 +140,15 @@ export interface MoonRiseSet {
 }
 
 /** 取当地"今天"的月出月落（以本地 0 点为界往前凑 25 小时窗口，容忍跨日） */
-export function moonRiseSet(date: Date, lat: number, lon: number): MoonRiseSet {
-  const local = new Date(date)
-  local.setHours(0, 0, 0, 0)
+export function moonRiseSet(date: Date, lat: number, lon: number, timeZone?: string): MoonRiseSet {
+  const localParts = localDateParts(date, timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone)
+  const local = new Date(Date.UTC(localParts.year, localParts.month - 1, localParts.day))
   const jd0 = toJD(local)
   const fmt = (jd: number | null): string | null => {
     if (jd === null) return null
-    const d = new Date((jd - 2440587.5) * 86400000)
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    const instant = new Date((jd - 2440587.5) * 86400000)
+    const parts = localDateParts(instant, timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone)
+    return `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`
   }
   let rise = findMoonEvent(jd0, lat, lon, true)
   let set = findMoonEvent(jd0, lat, lon, false)

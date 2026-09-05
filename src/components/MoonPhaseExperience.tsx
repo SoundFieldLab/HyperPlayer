@@ -4,7 +4,7 @@ import { Moon as MoonIcon, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import type { WeatherSnapshot } from '../services/weatherService'
 import { moonInfoAt, moonRiseSet, daysToFullMoon } from '../services/moonPhase'
-import moonUrl from '../assets/weather/moon.webp'
+import { APPLE_MOON_PHASES, getAppleMoonPhaseFrames } from './weatherScene/appleMoonPhases'
 
 // 月亮卡片 + 全屏月相页：真实满月照片 + SVG 相位阴影实时渲染；
 // 刻度尺可在 ±7 天内拖动，月亮与信息随之实时变化（PC 版对应手机端"滑动实时月相"）。
@@ -18,41 +18,13 @@ interface MoonPhaseExperienceProps {
 
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
-/** 相位阴影路径：phase 0 新月 → 0.5 满月 → 1 新月；北半球盈月右侧亮，阴影始终盖住暗面 */
-function moonShadowPath(phase: number): string {
-  const c = 50
-  const r = 49
-  const k = Math.cos(2 * Math.PI * phase)
-  const waxing = phase <= 0.5
-  const rx = Math.max(0.01, r * Math.abs(k))
-  // SVG y 轴向下：T→B sweep=0 走左侧、sweep=1 走右侧；B→T 相反。
-  // 盈月暗面在左：左缘弧 + 明暗界线椭圆（crescent 凸向右 / gibbous 凸向左）
-  if (waxing) {
-    const returnSweep = k > 0 ? 0 : 1
-    return `M ${c} ${c - r} A ${r} ${r} 0 0 0 ${c} ${c + r} A ${rx} ${r} 0 0 ${returnSweep} ${c} ${c - r} Z`
-  }
-  // 亏月暗面在右
-  const returnSweep = k > 0 ? 1 : 0
-  return `M ${c} ${c - r} A ${r} ${r} 0 0 1 ${c} ${c + r} A ${rx} ${r} 0 0 ${returnSweep} ${c} ${c - r} Z`
-}
-
-export function MoonDisc({ phase, className = '', soft = true }: { phase: number; className?: string; soft?: boolean }) {
+/** Apple Weather 原始 28 帧月相，相邻帧交叉淡化以保持时间尺拖动连续。 */
+export function MoonDisc({ phase, className = '' }: { phase: number; className?: string; soft?: boolean }) {
+  const { lower, upper, mix } = getAppleMoonPhaseFrames(phase)
   return (
     <div className={`relative aspect-square ${className}`}>
-      <img src={moonUrl} alt="" className="absolute inset-0 h-full w-full rounded-full object-cover" style={{ filter: 'brightness(1.32) contrast(1.06)' }} draggable={false} />
-      <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full">
-        <defs>
-          <filter id="moon-terminator-blur">
-            <feGaussianBlur stdDeviation={soft ? 1.2 : 0.7} />
-          </filter>
-          <clipPath id="moon-disc-clip">
-            <circle cx="50" cy="50" r="49.4" />
-          </clipPath>
-        </defs>
-        <g clipPath="url(#moon-disc-clip)">
-          <path d={moonShadowPath(phase)} fill="#04060c" opacity="0.92" filter="url(#moon-terminator-blur)" />
-        </g>
-      </svg>
+      <img src={APPLE_MOON_PHASES[lower]} alt="" className="absolute inset-0 h-full w-full object-contain" style={{ opacity: 1 - mix }} draggable={false} />
+      {mix > 0.001 && <img src={APPLE_MOON_PHASES[upper]} alt="" className="absolute inset-0 h-full w-full object-contain" style={{ opacity: mix }} draggable={false} />}
     </div>
   )
 }
@@ -72,8 +44,8 @@ export default function MoonPhaseExperience({ weather, open, onOpen, onClose }: 
   const riseSet = useMemo(() => {
     const loc = weather?.location
     if (!loc || typeof loc.latitude !== 'number' || typeof loc.longitude !== 'number') return null
-    return moonRiseSet(new Date(), loc.latitude, loc.longitude)
-  }, [weather])
+    return moonRiseSet(scrubDate, loc.latitude, loc.longitude, weather?.timezone)
+  }, [scrubDate, weather?.location.latitude, weather?.location.longitude, weather?.timezone])
 
   const scrubLabel = useMemo(() => {
     const d = scrubDate

@@ -751,8 +751,8 @@ function WeatherMapPreview({ weather, onOpen }: Pick<WeatherMapExperienceProps, 
         <div className="flex items-start justify-between gap-5">
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold text-white/72"><MapIcon className="h-4 w-4" />天气地图</div>
-            <div className="mt-2 text-2xl font-semibold tracking-tight">查看专业气象图层</div>
-            <div className="mt-1 text-sm text-white/62">温度、风、湿度、云量、气压与更多模式</div>
+            <div className="mt-2 text-2xl font-semibold tracking-tight">查看天气图层</div>
+            <div className="mt-1 text-sm text-white/62">温度、风、湿度、云量、气压与更多模式 · 图层为预报推算</div>
           </div>
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/18 bg-black/18 transition-transform group-hover:translate-x-1 group-hover:bg-black/28">
             <ChevronRight className="h-5 w-5" />
@@ -968,7 +968,7 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
       minZoom: 2,
       maxZoom: 11,
       zoomControl: false,
-      attributionControl: false,
+      attributionControl: true,
       worldCopyJump: true,
       preferCanvas: true,
       zoomAnimation: false,
@@ -1172,7 +1172,7 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
     if (!selectedPoint || !open) return
     setPointLoading(true)
     const controller = new AbortController()
-    const requestedLayer = selectedPlaceName ? 'temperature' : activeLayerId
+    const requestedLayer = activeLayerId
     const timeoutId = window.setTimeout(() => {
       fetchWeatherMapPointValue(requestedLayer, selectedPoint.lat, selectedPoint.lng, pointForecastHour, controller.signal)
         .then(value => setPointValue(value))

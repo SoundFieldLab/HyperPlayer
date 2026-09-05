@@ -3,6 +3,7 @@ import { Navigation } from 'lucide-react'
 import { getWeatherLabel, getWeatherLocationName, type WeatherSnapshot } from '../services/weatherService'
 import { getWeatherVisualTheme, WeatherGlyph, type WeatherSceneKind } from './weatherVisualTheme'
 import { IconSunrise, IconSunset } from './AppleWeatherIcon'
+import { localMinutesFromWeatherTime } from '../services/weatherTime'
 
 // 苹果桌面小组件风的简约天气卡片（图3 参考）：
 // 左上城市+大温度，右上图标+天气+高低温，底部一排逐小时（含日出/日落槽位），
@@ -13,6 +14,7 @@ const WEEKDAY_CACHE = new Intl.DateTimeFormat('zh-CN', { weekday: 'short' })
 interface WeatherSimpleCardProps {
   weather: WeatherSnapshot
   locationLabel: string
+  appleSceneReady?: boolean
 }
 
 type Daypart = 'day' | 'night' | 'dawn' | 'dusk'
@@ -47,12 +49,11 @@ function simpleGradient(kind: WeatherSceneKind, daypart: Daypart): string {
   return table[kind] ?? table[daypart === 'night' ? 'clear' : 'clear'] ?? SIMPLE_GRADIENTS.day.clear!
 }
 
-export function WeatherSimpleCard({ weather, locationLabel }: WeatherSimpleCardProps) {
+export function WeatherSimpleCard({ weather, locationLabel, appleSceneReady = false }: WeatherSimpleCardProps) {
   const kind = getWeatherVisualTheme(weather.current.weatherCode, weather.current.isDay).kind
   const daypart = useMemo<Daypart>(() => {
     const day0 = weather.daily[0]
-    const now = new Date()
-    const minutesNow = now.getHours() * 60 + now.getMinutes()
+    const minutesNow = localMinutesFromWeatherTime(weather.current.time) ?? 0
     if (day0?.sunrise && day0?.sunset) {
       const [sh, sm] = day0.sunrise.slice(11, 16).split(':').map(Number)
       const [eh, em] = day0.sunset.slice(11, 16).split(':').map(Number)
@@ -97,8 +98,12 @@ export function WeatherSimpleCard({ weather, locationLabel }: WeatherSimpleCardP
   const rainy = RAINY_KINDS.includes(kind)
 
   return (
-    <div className="absolute inset-0 overflow-hidden rounded-[inherit]" style={{ background }} aria-hidden="false">
-      <div className="relative flex h-full flex-col justify-between px-5 pb-3 pt-4">
+    <div
+      className="absolute inset-0 z-10 overflow-hidden rounded-[inherit]"
+      style={{ background: appleSceneReady ? 'transparent' : background }}
+      aria-hidden="false"
+    >
+      <div className="relative z-10 flex h-full flex-col justify-between px-5 pb-3 pt-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-1 text-[13px] font-medium text-white/85">
@@ -128,8 +133,8 @@ export function WeatherSimpleCard({ weather, locationLabel }: WeatherSimpleCardP
           ))}
         </div>
       </div>
-      {/* 简约卡片保持苹果小组件的干净观感，不加淋雨效果；雨天用一层薄雨雾提示 */}
-      {rainy && <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_120%,rgba(160,200,230,0.14),transparent_62%)]" />}
+      {/* Apple compact scene 负责雨线；这里仅保留失败回退时的轻微雨雾。 */}
+      {!appleSceneReady && rainy && <div className="pointer-events-none absolute inset-0 z-[1] bg-[radial-gradient(ellipse_at_50%_120%,rgba(160,200,230,0.14),transparent_62%)]" />}
     </div>
   )
 }

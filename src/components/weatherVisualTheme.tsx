@@ -113,7 +113,7 @@ export function WeatherSkyTip({ skyBodies, isDay }: { skyBodies: SkyBodies; isDa
   )
 }
 
-export function WeatherAtmosphere({ theme, compact = false, skyBodies }: { theme: WeatherVisualTheme; compact?: boolean; skyBodies?: SkyBodies }) {
+export function WeatherAtmosphere({ theme, compact = false, skyBodies, active = true }: { theme: WeatherVisualTheme; compact?: boolean; skyBodies?: SkyBodies; active?: boolean }) {
   const rainCount = compact ? 12 : theme.kind === 'heavy-rain' || theme.kind === 'thunder' ? 56 : 34
   const showsRain = isRainySceneKind(theme.kind)
   const showsClouds = theme.cloudOpacity > 0.2
@@ -139,7 +139,7 @@ export function WeatherAtmosphere({ theme, compact = false, skyBodies }: { theme
   }), [theme.kind])
 
   return (
-    <div aria-hidden="true" className={`pointer-events-none absolute inset-0 overflow-hidden weather-atmosphere weather-atmosphere-${theme.kind}`} style={{ background: compact ? theme.cardBackground : theme.background }}>
+    <div aria-hidden="true" className={`pointer-events-none absolute inset-0 overflow-hidden weather-atmosphere weather-atmosphere-${theme.kind}${active ? '' : ' weather-atmosphere-paused'}`} style={{ background: compact ? theme.cardBackground : theme.background }}>
       {useRealSky && (
         <>
           <div className="weather-sky-motion" style={{ animationDuration: '137s' }}>
@@ -361,7 +361,7 @@ export function WeatherAtmosphere({ theme, compact = false, skyBodies }: { theme
 // 雨滴打在玻璃上的效果：canvas 绘制附着的液滴（高光+暗缘），滑落的雨滴拖出尾迹并
 // 吞并路径上的液滴。由使用方渲染在内容层之上（pointer-events-none），密度按场景
 // 类型与画布面积自适应；prefers-reduced-motion 时只画一帧静态液滴。
-export function WeatherRainGlass({ kind, className = '' }: { kind: WeatherSceneKind; className?: string }) {
+export function WeatherRainGlass({ kind, className = '', active = true }: { kind: WeatherSceneKind; className?: string; active?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
 
   useEffect(() => {
@@ -435,10 +435,14 @@ export function WeatherRainGlass({ kind, className = '' }: { kind: WeatherSceneK
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
     const tick = (now: number) => {
-      raf = requestAnimationFrame(tick)
+      raf = 0
+      if (!active || document.hidden) return
       acc += now - last
       last = now
-      if (acc < 33) return
+      if (acc < 33) {
+        raf = requestAnimationFrame(tick)
+        return
+      }
       acc = 0
       ctx.clearRect(0, 0, width, height)
       for (const d of drops) drawDrop(d.x, d.y, d.r, 0.9)
@@ -455,14 +459,27 @@ export function WeatherRainGlass({ kind, className = '' }: { kind: WeatherSceneK
         if (s.y > height + 24) Object.assign(s, spawnSlider())
         if (drops.length < baseDrops * 0.6) drops.push(spawnDrop())
       }
+      raf = requestAnimationFrame(tick)
     }
+
+    const stop = () => {
+      cancelAnimationFrame(raf)
+      raf = 0
+    }
+    const start = () => {
+      if (reduced || !active || document.hidden || raf) return
+      last = performance.now()
+      raf = requestAnimationFrame(tick)
+    }
+    const handleVisibility = () => document.hidden ? stop() : start()
 
     resize()
     if (reduced) {
       ctx.clearRect(0, 0, width, height)
       for (const d of drops) drawDrop(d.x, d.y, d.r, 0.9)
     } else {
-      raf = requestAnimationFrame(tick)
+      document.addEventListener('visibilitychange', handleVisibility)
+      start()
     }
     const observer = new ResizeObserver(() => {
       resize()
@@ -473,10 +490,11 @@ export function WeatherRainGlass({ kind, className = '' }: { kind: WeatherSceneK
     })
     observer.observe(canvas)
     return () => {
-      cancelAnimationFrame(raf)
+      stop()
+      document.removeEventListener('visibilitychange', handleVisibility)
       observer.disconnect()
     }
-  }, [kind])
+  }, [active, kind])
 
   return <canvas ref={canvasRef} aria-hidden="true" className={`pointer-events-none h-full w-full ${className}`} />
 }
