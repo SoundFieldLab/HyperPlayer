@@ -437,17 +437,16 @@ function AccountView(): React.JSX.Element {
     if (login.status !== "ready") return;
     const generation = ++pollGeneration.current;
     let timer = 0;
-    let consecutiveFailures = 0;
     async function run(): Promise<void> {
       try {
         if (login.status !== "ready") return;
         const value = await bridge.neteasePollQrLogin(login.data.loginId);
         if (generation !== pollGeneration.current) return;
-        consecutiveFailures = 0;
         setPoll(remoteSuccess(value));
-        // waiting/scanned 期间必须持续轮询：一次网络抖动就终止会让扫码确认后
-        // 永远等不到 803（实机「登录没成功」根因）
+        // waiting/scanned 持续轮询，失败也只退避重试、**永不终止**——sidecar 死亡
+        // 由壳看门狗自愈，这里重试即随之恢复；终止兜底 = 800 过期自动重取二维码。
         if (value.phase === "waiting" || value.phase === "scanned") timer = window.setTimeout(run, 2000);
+        if (value.phase === "expired") { timer = window.setTimeout(() => void startLogin(), 1200); return; }
         if (value.phase === "confirmed") {
           // cookie 已入库且 user_account 验证通过（服务层日志为准）：显式分发全局
           // 登录态 + 全局 toast（用户可能不在账号页），并两次刷新账号页本地状态
@@ -459,13 +458,8 @@ function AccountView(): React.JSX.Element {
         }
       } catch (error) {
         if (generation !== pollGeneration.current) return;
-        consecutiveFailures += 1;
-        // 传输抖动（sidecar 重启间隙等）容忍至 5 次，退避重试而非终止轮询
-        if (consecutiveFailures <= 5) {
-          timer = window.setTimeout(run, 2500 * consecutiveFailures);
-          return;
-        }
-        setPoll(remoteFailure(error));
+        console.warn("[netease] qr poll 失败，2.5s 后重试:", String(error).slice(0, 140));
+        timer = window.setTimeout(run, 2500);
       }
     }
     void run();
