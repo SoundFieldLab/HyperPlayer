@@ -7,7 +7,7 @@
     "typecheck": "pnpm --filter @hyperplayer/app typecheck",
     "lint": "pnpm --filter @hyperplayer/app lint && pnpm license-check",
     "test": "pnpm --filter @hyperplayer/app test && pnpm --filter hypersoundengine test",
-    "build": "pnpm --filter hypersoundengine build:types && pnpm --filter hypersoundengine build:core && pnpm --filter hypersoundengine build:worklet && pnpm --filter @hyperplayer/app build",
+    "build": "pnpm --filter hypersoundengine build:types && pnpm --filter hypersoundengine build:core && pnpm --filter hypersoundengine build:worklet && node scripts/copy-hse-worklet.mjs && pnpm --filter @hyperplayer/app build",
     "license-check": "node scripts/license-check.mjs"
   }
 }
