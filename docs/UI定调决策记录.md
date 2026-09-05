@@ -956,5 +956,14 @@ HyperPlayer 是供重度音乐用户长期使用的 Windows 桌面产品，不�
 - [ ] UI-D86：分析 worklet tap 落地 + Canvas2D fallback + vGPU 主窗口渲染与 device-loss 验收
 - [ ] UI-D49 后续验收：Logo 的单色、高对比、任务栏和托盘小尺寸版本
 - [ ] UI-D89：DSP 工作台（M4）基于 HSE 真实清单的完整布局与控件设计
-- [ ] UI-D85：SMTC 若无现成 Tauri 插件则 v1 缺席并记录（M6 调研）
+- [x] UI-D85：SMTC 调研已落地——官方插件集无 media-session，**v1 缺席并记录**；媒体键经全局快捷键回退（UI-D108）
 - [ ] WebView2 实测：半透明 chrome 滚动性能（UI-D95）、blur 参数、弹簧手感（UI-D96）校准
+
+### B1 系统集成层决策登记（2026-09-05，=M6 后端批次）
+
+- **UI-D108 · 媒体键接线**：SMTC 缺席下，媒体键（MediaPlayPause/TrackNext/TrackPrevious）经 global-shortcut 注册为全局快捷键接 PlayerController（Windows 生效；macOS 媒体键支持弱可接受）。这是 UI-D24"媒体键交给系统/SMTC"在 SMTC 缺席时的回退语义，不劫持文本编辑组合。
+- **UI-D109 · 快捷键自定义**：settings.shortcuts 覆盖默认绑定（空串=禁用）；应用内同键多动作与系统占用均记入冲突清单；设置变更即时生效。
+- **UI-D110 · Stronghold 密码**：首启生成 32 字节随机强密码存 store（hyperplayer.json）并复用；Rust 侧官方 Builder::with_argon2 派生。dev 默认密码（`hyperplayer-vault-default-password`）已彻底移除。安全性等价"单机文件权限"（密码与 vault 同目录），不引入自定义 Rust。
+- **UI-D111 · 托盘行为**：TrayService 按 UI-D77 落地（菜单五项 + 关闭拦截）；closeBehavior=minimize 时关窗 = 隐藏到托盘，quit 放行；托盘"完全退出"= destroy（不触发 closeRequested）。
+- **UI-D112 · 通知默认关**：切歌通知默认关闭（settings.notifyOnTrackChange=false），用户显式开启后才发送；系统不支持/未授权静默跳过。
+- **UI-D113 · 最近播放语义**：本地 play_history 表按 track_id 去重（重播刷新时间戳并累计次数），上限 500 截断；"最近播放"= 每曲首次进入 playing 记录（同曲暂停恢复不重复；错误/idle 后重播重新记录）。
