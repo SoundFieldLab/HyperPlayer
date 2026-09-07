@@ -55,7 +55,8 @@ interface WeatherHazardsPanelProps {
   weather: WeatherSnapshot | null
   hazards: HazardSnapshot | null
   loading: boolean
-  error?: string
+  errors?: { typhoons: string; earthquakes: string }
+  transportError?: string
   onRefresh: () => void
 }
 
@@ -213,15 +214,6 @@ function TyphoonTrackChart({ typhoon, weather }: { typhoon: TyphoonInfo; weather
   const [weatherLayerError, setWeatherLayerError] = useState('')
   const [hoveredPoint, setHoveredPoint] = useState<{ point: DisplayTrackPoint; x: number; y: number } | null>(null)
   const [baseLayer, setBaseLayer] = useState<HazardMapBaseLayer>('topographic')
-  const mapFrameRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    const frame = mapFrameRef.current
-    if (!frame) return
-    const preventPageScroll = (event: WheelEvent) => event.preventDefault()
-    frame.addEventListener('wheel', preventPageScroll, { passive: false })
-    return () => frame.removeEventListener('wheel', preventPageScroll)
-  }, [])
 
   const points = useMemo<DisplayTrackPoint[]>(() => {
     const actual = typhoon.track.slice(-72).map(point => ({ ...point, forecast: false as const }))
@@ -334,7 +326,7 @@ function TyphoonTrackChart({ typhoon, weather }: { typhoon: TyphoonInfo; weather
         {weatherLayerLoading && <span className="ml-auto flex items-center gap-1.5 text-[11px] text-cyan-100/55"><RefreshCw className="h-3 w-3 animate-spin" />加载图层</span>}
         {weatherLayerError && <span className="ml-auto text-[11px] text-rose-200/70">{weatherLayerError}</span>}
       </div>
-      <div ref={mapFrameRef} className={`relative aspect-[960/500] overflow-hidden rounded-[20px] border border-white/10 bg-[#16324b] ${navigation.isDragging ? 'cursor-grabbing' : 'cursor-grab'}`} style={{ touchAction: 'none', overscrollBehavior: 'none' }} onMouseLeave={() => setHoveredPoint(null)} onWheel={navigation.onWheel} onPointerDown={navigation.onPointerDown} onPointerMove={navigation.onPointerMove} onPointerUp={navigation.onPointerUp} onPointerCancel={navigation.onPointerCancel}>
+      <div className={`relative aspect-[960/500] overflow-hidden rounded-[20px] border border-white/10 bg-[#16324b] ${navigation.isDragging ? 'cursor-grabbing' : 'cursor-grab'}`} style={{ touchAction: 'pan-y pinch-zoom' }} onPointerLeave={event => { setHoveredPoint(null); navigation.onPointerLeave(event) }} onLostPointerCapture={navigation.onLostPointerCapture} onWheel={navigation.onWheel} onPointerDown={navigation.onPointerDown} onPointerMove={navigation.onPointerMove} onPointerUp={navigation.onPointerUp} onPointerCancel={navigation.onPointerCancel}>
         <HazardMapTiles viewport={viewport} dim={baseLayer === 'satellite' ? .045 : (layers.clouds || layers.precipitation ? .08 : .12)} baseLayer={baseLayer} />
         <HazardMapNavigationControls navigation={navigation} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} />
         <svg viewBox={`0 0 ${HAZARD_MAP_WIDTH} ${HAZARD_MAP_HEIGHT}`} className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
@@ -393,8 +385,10 @@ function TyphoonTrackChart({ typhoon, weather }: { typhoon: TyphoonInfo; weather
   )
 }
 
-function TyphoonPanel({ weather, hazards, loading, error, onRefresh }: Omit<WeatherHazardsPanelProps, 'tab'>) {
+function TyphoonPanel({ weather, hazards, loading, errors, transportError, onRefresh }: Omit<WeatherHazardsPanelProps, 'tab'>) {
   const typhoons = hazards?.typhoons?.items || []
+  const error = errors?.typhoons || transportError || ''
+  const sourceLoaded = hazards?.typhoons !== null && hazards?.typhoons !== undefined
   const risk = weather ? getTyphoonLocationRisk(hazards, weather.location.latitude, weather.location.longitude) : null
   const [selectedId, setSelectedId] = useState('')
   useEffect(() => {
@@ -409,8 +403,9 @@ function TyphoonPanel({ weather, hazards, loading, error, onRefresh }: Omit<Weat
         <div><h3 className="text-2xl font-semibold">西北太平洋活跃台风</h3><p className="mt-1 text-sm text-white/48">实时位置与中央气象台 BABJ 预报路径</p></div>
         <button type="button" onClick={onRefresh} disabled={loading} className="flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-4 py-2 text-sm text-white/70 hover:bg-white/14 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />刷新</button>
       </div>
-      {loading && !hazards ? <div className="flex min-h-[360px] items-center justify-center text-white/55"><RefreshCw className="mr-2 h-5 w-5 animate-spin" />正在连接中央气象台…</div>
-        : error && typhoons.length === 0 ? <div className="rounded-[26px] border border-rose-300/20 bg-rose-950/20 p-6 text-rose-100/75">{error}</div>
+      {!sourceLoaded && loading ? <div className="flex min-h-[360px] items-center justify-center text-white/55"><RefreshCw className="mr-2 h-5 w-5 animate-spin" />正在连接中央气象台…</div>
+        : !sourceLoaded ? <div className="rounded-[26px] border border-white/10 bg-white/[0.04] p-8 text-center text-white/58">台风数据尚未加载，正在准备连接数据源。</div>
+          : error && typhoons.length === 0 ? <div className="rounded-[26px] border border-rose-300/20 bg-rose-950/20 p-6 text-rose-100/75">{error}</div>
           : typhoons.length === 0 ? <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-10 text-center"><ShieldAlert className="mx-auto h-9 w-9 text-emerald-200/70" /><div className="mt-4 font-medium">当前没有中央气象台标记为活跃的台风</div><div className="mt-2 text-sm text-white/45">数据会随桌面天气自动更新，也可以点击右上角刷新。</div></div>
             : <>
               <div className="grid gap-3 md:grid-cols-2">{typhoons.map(typhoon => {
@@ -439,7 +434,9 @@ function TyphoonPanel({ weather, hazards, loading, error, onRefresh }: Omit<Weat
   )
 }
 
-function EarthquakePanel({ weather, hazards, loading, error, onRefresh }: Omit<WeatherHazardsPanelProps, 'tab'>) {
+function EarthquakePanel({ weather, hazards, loading, errors, transportError, onRefresh }: Omit<WeatherHazardsPanelProps, 'tab'>) {
+  const error = errors?.earthquakes || transportError || ''
+  const sourceLoaded = hazards?.earthquakes !== null && hazards?.earthquakes !== undefined
   const risk = weather ? getEarthquakeLocationRisk(hazards, weather.location.latitude, weather.location.longitude) : null
   const nearby = weather ? getNearbyEarthquakes(hazards, weather.location.latitude, weather.location.longitude) : []
   const fallback = hazards?.earthquakes?.items.slice(0, 20).map(event => ({ event, distanceKm: Number.NaN, timestamp: Date.parse(event.time) })) || []
@@ -460,8 +457,10 @@ function EarthquakePanel({ weather, hazards, loading, error, onRefresh }: Omit<W
         <button type="button" onClick={onRefresh} disabled={loading} className="flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-4 py-2 text-sm text-white/70 hover:bg-white/14 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />刷新</button>
       </div>
       <div className="rounded-[24px] border border-amber-300/18 bg-amber-950/15 px-5 py-4 text-sm leading-6 text-amber-100/72"><RadioTower className="mr-2 inline h-4 w-4" />本板块使用{hazards?.earthquakes?.source || '中国地震台网中心公开地震目录'}生成位置提醒，不等同于面向终端设备的到秒地震预警。发生明显震感时请立即避险并遵循当地官方信息。</div>
-      {loading && !hazards ? <div className="flex min-h-[360px] items-center justify-center text-white/55"><RefreshCw className="mr-2 h-5 w-5 animate-spin" />正在获取地震目录…</div>
-        : error && events.length === 0 ? <div className="rounded-[26px] border border-rose-300/20 bg-rose-950/20 p-6 text-rose-100/75">{error}</div>
+      {!sourceLoaded && loading ? <div className="flex min-h-[360px] items-center justify-center text-white/55"><RefreshCw className="mr-2 h-5 w-5 animate-spin" />正在获取地震目录…</div>
+        : !sourceLoaded ? <div className="rounded-[26px] border border-white/10 bg-white/[0.04] p-8 text-center text-white/58">地震目录尚未加载，正在准备连接数据源。</div>
+          : error && events.length === 0 ? <div className="rounded-[26px] border border-rose-300/20 bg-rose-950/20 p-6 text-rose-100/75">{error}</div>
+            : events.length === 0 ? <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-10 text-center"><Activity className="mx-auto h-9 w-9 text-cyan-200/70" /><div className="mt-4 font-medium">当前目录暂无地震事件</div><div className="mt-2 text-sm text-white/45">数据源已连接，可点击刷新获取最新目录。</div></div>
           : <>
             <div className="space-y-3">{events.map(({ event, distanceKm: eventDistance }) => {
               const magnitudeColor = event.magnitude >= 6 ? '#fda4af' : event.magnitude >= 5 ? '#fdba74' : event.magnitude >= 4 ? '#fde68a' : '#a5f3fc'

@@ -85,9 +85,11 @@ export interface EarthquakeLocationRisk {
 
 const API_BASE = 'http://localhost:3001/api'
 const MEMORY_CACHE_TTL = 2 * 60 * 1000
+const REQUEST_TIMEOUT_MS = 35_000
 let cachedSnapshot: HazardSnapshot | null = null
 let cachedAt = 0
 let pendingSnapshot: Promise<HazardSnapshot> | null = null
+let requestGeneration = 0
 
 const normalizeSnapshot = (payload: any): HazardSnapshot => ({
   updatedAt: Number(payload?.updatedAt) || Date.now(),
@@ -121,9 +123,11 @@ export async function ensureHazardSnapshot(options: { forceRefresh?: boolean; si
   if (!forceRefresh && cachedSnapshot && Date.now() - cachedAt < MEMORY_CACHE_TTL) return cachedSnapshot
   if (!forceRefresh && pendingSnapshot) return waitForSignal(pendingSnapshot, signal)
 
+  const generation = ++requestGeneration
   const request = (async () => {
     const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), 18_000)
+    let timedOut = false
+    const timeout = globalThis.setTimeout(() => { timedOut = true; controller.abort() }, REQUEST_TIMEOUT_MS)
     try {
       const response = await fetch(`${API_BASE}/hazards/snapshot${forceRefresh ? '?refresh=1' : ''}`, {
         signal: controller.signal,
@@ -132,11 +136,21 @@ export async function ensureHazardSnapshot(options: { forceRefresh?: boolean; si
       const payload = await response.json().catch(() => ({}))
       if (!response.ok && !payload?.success) throw new Error(payload?.error || '灾害信息暂时不可用')
       const normalized = normalizeSnapshot(payload)
-      cachedSnapshot = normalized
-      cachedAt = Date.now()
-      return normalized
+      const merged: HazardSnapshot = {
+        ...normalized,
+        typhoons: normalized.typhoons || cachedSnapshot?.typhoons || null,
+        earthquakes: normalized.earthquakes || cachedSnapshot?.earthquakes || null,
+      }
+      if (generation === requestGeneration) {
+        cachedSnapshot = merged
+        cachedAt = Date.now()
+      }
+      return merged
+    } catch (error) {
+      if (timedOut) throw new Error('灾害信息请求超时，请稍后重试')
+      throw error
     } finally {
-      window.clearTimeout(timeout)
+      globalThis.clearTimeout(timeout)
     }
   })()
 

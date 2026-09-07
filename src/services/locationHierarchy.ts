@@ -86,3 +86,46 @@ export const getDistricts = (
   if (!cityCode || countryCode !== 'CN') return []
   return Object.entries(chinaAreas[cityCode] || {}).map(([code, name]) => ({ code, name }))
 }
+
+export interface ChinaAreaSearchResult {
+  provinceCode: string
+  province: string
+  cityCode: string
+  city: string
+  districtCode: string
+  district: string
+}
+
+const normalizeSearchText = (value: string) => value
+  .trim()
+  .toLocaleLowerCase('zh-CN')
+  .replace(/\s+/g, '')
+  .replace(/(?:特别行政区|省|市|区|县|旗|盟|州)$/u, '')
+
+/** 在本地行政区数据中快速查找省、市、区县，避免输入阶段依赖外部地理编码服务。 */
+export const searchChinaAreas = (query: string, limit = 12): ChinaAreaSearchResult[] => {
+  const keyword = normalizeSearchText(query)
+  if (!keyword) return []
+  const matches: ChinaAreaSearchResult[] = []
+  for (const [provinceCode, province] of Object.entries(chinaAreas['86'] || {})) {
+    const provinceKey = normalizeSearchText(province)
+    if (provinceKey.includes(keyword)) matches.push({ provinceCode, province, cityCode: '', city: '', districtCode: '', district: '' })
+    for (const [cityCode, city] of Object.entries(chinaAreas[provinceCode] || {})) {
+      const cityKey = normalizeSearchText(city)
+      if (cityKey.includes(keyword)) matches.push({ provinceCode, province, cityCode, city, districtCode: '', district: '' })
+      for (const [districtCode, district] of Object.entries(chinaAreas[cityCode] || {})) {
+        if (normalizeSearchText(district).includes(keyword)) matches.push({ provinceCode, province, cityCode, city, districtCode, district })
+        if (matches.length >= limit * 3) break
+      }
+      if (matches.length >= limit * 3) break
+    }
+    if (matches.length >= limit * 3) break
+  }
+  const seen = new Set<string>()
+  return matches.filter(item => {
+    const key = [item.provinceCode, item.cityCode, item.districtCode].join(':')
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(0, limit)
+}

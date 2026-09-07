@@ -4,6 +4,7 @@ import { useTvBack } from '../tv/tvCore'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   AlertTriangle,
+  ChevronRight,
   Cloud,
   Clock3,
   Droplets,
@@ -19,7 +20,7 @@ import {
   RefreshCw,
   Moon as MoonLucide,
 } from 'lucide-react'
-import { getWeatherLabel, getWeatherLocationAddress, getWeatherLocationName, getAqiLabel, getCloudCoverLabel, getDewPointLabel, WeatherSnapshot, type WeatherHour } from '../services/weatherService'
+import { getWeatherLabel, getWeatherLocationAddress, getWeatherLocationName, getAqiDescriptor, getAqiLabel, getCloudCoverLabel, getDewPointLabel, WeatherSnapshot, type WeatherHour } from '../services/weatherService'
 import { moonInfoAt } from '../services/moonPhase'
 import type { HazardSnapshot } from '../services/hazardService'
 import WeatherHazardsPanel, { type WeatherHazardTab } from './WeatherHazardsPanel'
@@ -32,6 +33,7 @@ import { WeatherGlyph, getWeatherVisualTheme, WeatherAtmosphere, WeatherRainGlas
 import { computeSkyBodies } from '../services/moonPhase'
 import { createAppleWeatherSceneModel } from './weatherScene/weatherSceneModel'
 import HourlyForecastRainGlass from './weatherScene/HourlyForecastRainGlass'
+import WeatherDayDetail from './WeatherDayDetail'
 
 const AppleWeatherScene = lazy(() => import('./weatherScene/AppleWeatherScene'))
 export { WeatherGlyph, getWeatherVisualTheme, WeatherAtmosphere, WeatherRainGlass, isRainySceneKind, type WeatherVisualTheme, type WeatherSceneKind, type WeatherDetailsTab } from './weatherVisualTheme'
@@ -44,9 +46,11 @@ interface WeatherDetailsModalProps {
   loading: boolean
   hazards: HazardSnapshot | null
   hazardLoading: boolean
-  hazardError?: string
+  hazardErrors?: { typhoons: string; earthquakes: string }
+  hazardTransportError?: string
   initialTab?: WeatherDetailsTab
   onHazardRefresh: () => void
+  onHazardEnsure: () => void
 }
 
 const formatTime = (value: string) => value ? value.slice(11, 16) : '--:--'
@@ -109,16 +113,26 @@ function MoonDiscSmall({ phase }: { phase: number }) {
   return <MoonDisc phase={phase} className="w-[52px] shrink-0" soft={false} />
 }
 
-export default function WeatherDetailsModal({ open, weather, onClose, onRefresh, loading, hazards, hazardLoading, hazardError = '', initialTab = 'weather', onHazardRefresh }: WeatherDetailsModalProps) {
+export default function WeatherDetailsModal({ open, weather, onClose, onRefresh, loading, hazards, hazardLoading, hazardErrors, hazardTransportError = '', initialTab = 'weather', onHazardRefresh, onHazardEnsure }: WeatherDetailsModalProps) {
   const [activeTab, setActiveTab] = useState<WeatherDetailsTab>(initialTab)
   const [weatherMapOpen, setWeatherMapOpen] = useState(false)
   const [moonOpen, setMoonOpen] = useState(false)
   const [detailCard, setDetailCard] = useState<WeatherCardKind | null>(null)
+  const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null)
   const [appleSceneUnavailable, setAppleSceneUnavailable] = useState(false)
+  const [appleSceneReady, setAppleSceneReady] = useState(false)
   const prefersReducedMotion = useReducedMotion()
   const appleScene = useMemo(() => weather ? createAppleWeatherSceneModel(weather) : null, [weather])
-  const markAppleSceneUnavailable = useCallback(() => setAppleSceneUnavailable(true), [])
-  const secondaryOverlayOpen = weatherMapOpen || moonOpen || detailCard !== null
+  const sceneId = appleScene?.id || ''
+  const sceneIdRef = useRef(sceneId)
+  sceneIdRef.current = sceneId
+  const markAppleSceneUnavailable = useCallback(() => {
+    if (sceneIdRef.current === sceneId) setAppleSceneUnavailable(true)
+  }, [sceneId])
+  const markAppleSceneReady = useCallback(() => {
+    if (sceneIdRef.current === sceneId) setAppleSceneReady(true)
+  }, [sceneId])
+  const secondaryOverlayOpen = weatherMapOpen || moonOpen || detailCard !== null || selectedDayIndex !== null
   const weatherAnimationActive = open && activeTab === 'weather' && !secondaryOverlayOpen
   const openDetailCard = useCallback((card: WeatherCardKind) => {
     setWeatherMapOpen(false)
@@ -137,7 +151,10 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
   }, [])
 
   useEffect(() => {
-    if (open) setAppleSceneUnavailable(false)
+    if (open) {
+      setAppleSceneUnavailable(false)
+      setAppleSceneReady(false)
+    }
   }, [open, appleScene?.id])
 
   useEffect(() => {
@@ -145,12 +162,17 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
     else { setWeatherMapOpen(false); setMoonOpen(false); setDetailCard(null) }
   }, [initialTab, open])
 
+  useEffect(() => {
+    if (open && activeTab !== 'weather' && !hazards) onHazardEnsure()
+  }, [activeTab, hazards, onHazardEnsure, open])
+
   // TV 遥控器 BACK：先收地图/月亮/详情子层，再关弹窗（与 ESC 语义一致；带 open 守卫，
   // 本组件经 DesktopWidgetZone 常驻挂载，无守卫会吞掉全场景 BACK 键）
   useTvBack(() => {
     if (!open) return false
     if (weatherMapOpen) setWeatherMapOpen(false)
     else if (moonOpen) setMoonOpen(false)
+    else if (selectedDayIndex !== null) setSelectedDayIndex(null)
     else if (detailCard) setDetailCard(null)
     else onClose()
     return true
@@ -288,15 +310,17 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          <WeatherAtmosphere theme={weatherTheme} active={!appleScene || appleSceneUnavailable} skyBodies={activeTab === 'weather' && weather ? skyBodies : undefined} />
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ background: weatherTheme.background }} />
+          {(!appleScene || appleSceneUnavailable) && <WeatherAtmosphere theme={weatherTheme} active skyBodies={activeTab === 'weather' && weather ? skyBodies : undefined} />}
           {appleScene && !appleSceneUnavailable && (
             <Suspense fallback={null}>
               <AppleWeatherScene
                 scene={appleScene}
                 active={weatherAnimationActive}
                 reducedMotion={Boolean(prefersReducedMotion)}
+                onReady={markAppleSceneReady}
                 onUnavailable={markAppleSceneUnavailable}
-                className="absolute inset-0 z-[1]"
+                className={`absolute inset-0 z-[1] transition-opacity duration-300 ${appleSceneReady ? 'opacity-100' : 'opacity-0'}`}
               />
             </Suspense>
           )}
@@ -306,7 +330,7 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 14, opacity: 0 }}
             transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
-            className="absolute inset-0 z-[3] overflow-y-auto custom-scrollbar"
+            className="absolute inset-0 z-[3] overflow-y-auto wf-no-scrollbar"
           >
             <div className="relative mx-auto min-h-full w-full max-w-[1560px] px-7 pb-9 pt-7 md:px-12 xl:max-w-[1720px]">
               <div className="absolute right-6 top-6 flex items-center gap-2 md:right-10 md:top-8">
@@ -348,7 +372,8 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                     weather={weather}
                     hazards={hazards}
                     loading={hazardLoading}
-                    error={hazardError}
+                    errors={hazardErrors}
+                    transportError={hazardTransportError}
                     onRefresh={onHazardRefresh}
                   />
                 </>
@@ -459,7 +484,7 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                     {/* 10 日天气预报（左上大卡：3 卡宽 × 4 卡高；行高自动均分，小屏时内部滚动） */}
                     <section className="weather-glass-panel flex flex-col overflow-hidden rounded-[26px] border border-white/10 p-4 md:col-span-2 lg:col-span-1 lg:row-span-2 lg:max-h-[320px] xl:col-span-2 xl:row-span-4 xl:max-h-none">
                       <div className="mb-1 flex shrink-0 items-center gap-2 text-sm font-medium text-white/55"><Sun className="h-4 w-4" />10 日天气预报</div>
-                      <div className="flex min-h-0 flex-1 flex-col divide-y divide-white/8 overflow-y-auto custom-scrollbar">
+                      <div className="flex min-h-0 flex-1 flex-col divide-y divide-white/8 overflow-y-auto wf-no-scrollbar">
                         {weather.daily.map((day, index) => {
                           const range = Math.max(1, day.temperatureMax - day.temperatureMin)
                           const overallMin = Math.min(...weather.daily.map(item => item.temperatureMin))
@@ -468,7 +493,7 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                           const left = ((day.temperatureMin - overallMin) / overallRange) * 100
                           const width = Math.max(12, (range / overallRange) * 100)
                           return (
-                            <div key={day.date} className="grid flex-1 grid-cols-[52px_34px_38px_1fr_38px] items-center gap-2 py-1">
+                            <button type="button" onClick={() => setSelectedDayIndex(index)} aria-label={`查看${formatWeekday(day.date, index)}详细预报`} key={day.date} className="grid flex-1 grid-cols-[52px_34px_38px_1fr_38px_16px] items-center gap-2 rounded-lg py-1 text-left transition-colors hover:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/65">
                               <span className="text-sm font-medium">{formatWeekday(day.date, index)}</span>
                               <div className="flex flex-col items-center">
                                 <WeatherGlyph code={day.weatherCode} className="h-5 w-5" />
@@ -482,7 +507,8 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                                 />
                               </div>
                               <span className="text-[13px] tabular-nums">{Math.round(day.temperatureMax)}°</span>
-                            </div>
+                              <ChevronRight className="h-3.5 w-3.5 text-white/25" />
+                            </button>
                           )
                         })}
                       </div>
@@ -540,7 +566,7 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
                       <DetailCard icon={Leaf} label="空气质量" onClick={() => openDetailCard('aqi')}>
                         <div className="mt-auto flex items-baseline gap-2 pt-4">
                           <span className="text-[28px] font-semibold leading-8 tabular-nums">{Math.round(weather.airQuality.aqi)}</span>
-                          <span className="text-base font-normal text-white/68">{getAqiLabel(weather.airQuality.aqi)}</span>
+                          <span className="text-base font-semibold" style={{ color: getAqiDescriptor(weather.airQuality.aqi).color }}>{getAqiLabel(weather.airQuality.aqi)}</span>
                         </div>
                         <div className="mt-1.5 text-[13px] text-white/50">PM2.5 {Math.round(weather.airQuality.pm25)} · PM10 {Math.round(weather.airQuality.pm10)} μg/m³</div>
                       </DetailCard>
@@ -573,6 +599,7 @@ export default function WeatherDetailsModal({ open, weather, onClose, onRefresh,
           <MoonPhaseExperience weather={weather} open={moonOpen} onOpen={openMoon} onClose={() => setMoonOpen(false)} />
           {/* 详情卡二级弹窗（苹果式：所有卡片均可点开） */}
           <WeatherCardDetailOverlay card={detailCard} weather={weather} onClose={() => setDetailCard(null)} />
+          {weather && selectedDayIndex !== null && <WeatherDayDetail open dayIndex={selectedDayIndex} weather={weather} onClose={() => setSelectedDayIndex(null)} onSelectDay={setSelectedDayIndex} />}
           {/* 雨滴打在玻璃上的效果：盖在内容层之上，模拟整个天气视图是块被雨淋的玻璃 */}
           {isRainySceneKind(weatherTheme.kind) && <WeatherRainGlass kind={weatherTheme.kind} active={weatherAnimationActive} className="absolute inset-0 z-[4]" />}
         </motion.div>

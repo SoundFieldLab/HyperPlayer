@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { getAqiLabel, type WeatherSnapshot } from '../services/weatherService'
+import { getAqiDescriptor, getAqiLabel, type WeatherSnapshot } from '../services/weatherService'
 import { localDateParts } from '../services/weatherTime'
 import { getUvLabel, getWindDirection, WindCompass } from './weatherVisualTheme'
 
@@ -255,7 +255,7 @@ export default function WeatherCardDetailOverlay({ card, weather, onClose }: Car
                 <>
                   <div className="flex items-baseline gap-3">
                     <span className="text-[44px] font-light leading-none tabular-nums">{Math.round(weather.airQuality?.aqi ?? 0)}</span>
-                    <span className="text-lg text-white/75">{getAqiLabel(weather.airQuality?.aqi ?? 0)}</span>
+                    <span className="text-lg font-semibold" style={{ color: getAqiDescriptor(weather.airQuality?.aqi ?? Number.NaN).color }}>{getAqiLabel(weather.airQuality?.aqi ?? Number.NaN)}</span>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                     <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
@@ -272,7 +272,7 @@ export default function WeatherCardDetailOverlay({ card, weather, onClose }: Car
                       <MiniTrend
                         values={weather.airQuality!.hourlyAqi.map(item => Math.round(item.aqi))}
                         labels={weather.airQuality!.hourlyAqi.map((item, index) => index === 0 ? '现在' : `${item.time.slice(11, 13)}时`)}
-                        color="#4ade80"
+                        color={getAqiDescriptor(weather.airQuality?.aqi ?? Number.NaN).color}
                         unit="AQI 指数"
                       />
                     </div>

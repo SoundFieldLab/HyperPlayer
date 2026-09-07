@@ -39,15 +39,31 @@ import { resolveCoordinatesLocation, type WeatherSnapshot } from '../services/we
 import {
   fetchWeatherMapPointValue,
   formatWeatherMapValue,
+  getWeatherGridFramePair,
   getWeatherMapColor,
+  interpolateWeatherGridFrame,
+  loadWeatherGrid,
+  sampleWeatherGridScalar,
+  sampleWeatherGridWindVector,
   sampleWeatherMapField,
   sampleWeatherMapWindVector,
   WEATHER_MAP_LAYER_BY_ID,
   WEATHER_MAP_LAYERS,
+  type WeatherGrid,
+  type WeatherGridField,
+  type WeatherGridFrame,
+  type WeatherGridFramePair,
   type WeatherMapLayerDefinition,
   type WeatherMapLayerId,
   type WeatherMapPointValue,
 } from '../services/weatherMapService'
+import {
+  smoothWeatherContourPath,
+  stitchWeatherContourSegments,
+  weatherContourPathLength,
+  weatherContourPointAt,
+  advanceWeatherMapPlayback,
+} from '../services/weatherMapRendering'
 
 interface WeatherMapExperienceProps {
   weather: WeatherSnapshot
@@ -94,6 +110,29 @@ const latitudeToTilePixel = (latitude: number, zoom: number, tileSize: number) =
   const limitedLatitude = Math.max(-85.05112878, Math.min(85.05112878, latitude))
   const radians = limitedLatitude * Math.PI / 180
   return (1 - Math.log(Math.tan(radians) + 1 / Math.cos(radians)) / Math.PI) / 2 * Math.pow(2, zoom) * tileSize
+}
+
+const WEATHER_GRID_FIELD_BY_LAYER: Partial<Record<WeatherMapLayerId, WeatherGridField>> = {
+  wind: 'wind_speed_10m',
+  temperature: 'temperature_2m',
+  humidity: 'relative_humidity_2m',
+  cloud: 'cloud_cover',
+  pressure: 'surface_pressure',
+  radar: 'precipitation',
+}
+
+const isInsideWeatherGrid = (frame: WeatherGridFrame, latitude: number, longitude: number) => {
+  const longitudeSpan = ((frame.bounds.east - frame.bounds.west) % 360 + 360) % 360
+  const longitudeOffset = ((longitude - frame.bounds.west) % 360 + 360) % 360
+  return latitude >= frame.bounds.south && latitude <= frame.bounds.north && longitudeOffset <= longitudeSpan
+}
+
+const sampleGridLayerValue = (layerId: WeatherMapLayerId, frame: WeatherGridFrame, latitude: number, longitude: number) => {
+  const field = WEATHER_GRID_FIELD_BY_LAYER[layerId]
+  if (!field || !isInsideWeatherGrid(frame, latitude, longitude)) return null
+  const value = sampleWeatherGridScalar(frame, field, latitude, longitude)
+  if (layerId === 'radar') return value <= 0 ? 0 : Math.max(0, Math.min(70, 10 * Math.log10(200 * Math.pow(value, 1.6))))
+  return value
 }
 
 class WeatherReferenceGridLayer extends L.GridLayer {
@@ -165,11 +204,13 @@ const cacheWeatherFieldTile = (key: string, image: ImageData) => {
 class WeatherFieldGridLayer extends L.GridLayer {
   readonly layerId: WeatherMapLayerId
   readonly hourOffset: number
+  readonly frame: WeatherGridFrame | null
 
-  constructor(layerId: WeatherMapLayerId, hourOffset: number, options?: GridLayerOptions) {
+  constructor(layerId: WeatherMapLayerId, hourOffset: number, frame: WeatherGridFrame | null, options?: GridLayerOptions) {
     super(options)
     this.layerId = layerId
     this.hourOffset = hourOffset
+    this.frame = frame
   }
 
   // Keep this method synchronous (one declared argument). Leaflet uses the
@@ -193,7 +234,10 @@ class WeatherFieldGridLayer extends L.GridLayer {
     const sampleContext = sampleCanvas.getContext('2d')
     if (!sampleContext) return canvas
 
-    const cacheKey = `${this.layerId}:${this.hourOffset}:${coords.z}:${coords.x}:${coords.y}`
+    const frameKey = this.frame
+      ? `${this.frame.timestamp}:${this.frame.bounds.north.toFixed(2)}:${this.frame.bounds.south.toFixed(2)}:${this.frame.bounds.east.toFixed(2)}:${this.frame.bounds.west.toFixed(2)}`
+      : `estimate:${this.hourOffset}`
+    const cacheKey = `${this.layerId}:${frameKey}:${coords.z}:${coords.x}:${coords.y}`
     const cached = weatherFieldTileCache.get(cacheKey)
     if (cached) {
       sampleContext.putImageData(cached, 0, 0)
@@ -204,8 +248,10 @@ class WeatherFieldGridLayer extends L.GridLayer {
           const tileY = coords.y + y / (sampleSize - 1)
           const longitude = tileXToLongitude(tileX, coords.z)
           const latitude = tileYToLatitude(tileY, coords.z)
-          const value = sampleWeatherMapField(this.layerId, latitude, longitude, this.hourOffset)
-          sampleContext.fillStyle = getWeatherMapColor(this.layerId, value, 1)
+          const realValue = this.frame ? sampleGridLayerValue(this.layerId, this.frame, latitude, longitude) : null
+          const value = realValue ?? sampleWeatherMapField(this.layerId, latitude, longitude, this.hourOffset)
+          const alpha = this.layerId === 'radar' && value <= 0 ? 0 : 1
+          sampleContext.fillStyle = getWeatherMapColor(this.layerId, value, alpha)
           sampleContext.fillRect(x, y, 1, 1)
         }
       }
@@ -241,6 +287,7 @@ class WeatherWindParticleLayer extends L.Layer {
   private lastFrameTime = 0
   private lastVectorHour = Number.NaN
   private hourOffset = 0
+  private frame: WeatherGridFrame | null = null
   private moving = false
   private width = 0
   private height = 0
@@ -281,9 +328,16 @@ class WeatherWindParticleLayer extends L.Layer {
     return this
   }
 
+  setFrame(frame: WeatherGridFrame | null): this {
+    if (this.frame === frame) return this
+    this.frame = frame
+    this.scheduleVectorField()
+    return this
+  }
+
   setHourOffset(value: number): this {
     this.hourOffset = value
-    if (Math.abs(value - this.lastVectorHour) >= 0.45) this.scheduleVectorField()
+    if (!this.frame && Math.abs(value - this.lastVectorHour) >= 0.45) this.scheduleVectorField()
     return this
   }
 
@@ -319,7 +373,7 @@ class WeatherWindParticleLayer extends L.Layer {
     const size = map.getSize()
     this.width = Math.max(1, size.x)
     this.height = Math.max(1, size.y)
-    const pixelRatio = 1
+    const pixelRatio = Math.min(1.5, window.devicePixelRatio || 1)
     canvas.width = Math.round(this.width * pixelRatio)
     canvas.height = Math.round(this.height * pixelRatio)
     canvas.style.width = `${this.width}px`
@@ -368,7 +422,9 @@ class WeatherWindParticleLayer extends L.Layer {
       for (let column = 0; column < this.columns; column += 1) {
         const x = column / Math.max(1, this.columns - 1) * this.width
         const latLng = map.containerPointToLatLng([x, y])
-        const vector = sampleWeatherMapWindVector(latLng.lat, latLng.lng, this.hourOffset)
+        const vector = this.frame && isInsideWeatherGrid(this.frame, latLng.lat, latLng.lng)
+          ? sampleWeatherGridWindVector(this.frame, latLng.lat, latLng.lng)
+          : sampleWeatherMapWindVector(latLng.lat, latLng.lng, this.hourOffset)
         grid.push({ u: vector.u, v: vector.v, speed: vector.speed })
       }
     }
@@ -416,6 +472,7 @@ class WeatherWindParticleLayer extends L.Layer {
       return
     }
     const frameInterval = this.reducedMotion ? 120 : 32
+    const elapsedSeconds = this.lastFrameTime > 0 ? Math.min(.08, Math.max(.012, (timestamp - this.lastFrameTime) / 1000)) : frameInterval / 1000
     if (timestamp - this.lastFrameTime < frameInterval) {
       this.animationFrame = window.requestAnimationFrame(this.animate)
       return
@@ -436,7 +493,8 @@ class WeatherWindParticleLayer extends L.Layer {
         return
       }
       const speedRatio = Math.min(1, field.speed / 72)
-      const distance = .55 + speedRatio * 2.05
+      const displayPixelsPerSecond = 18 + field.speed * 1.55
+      const distance = displayPixelsPerSecond * elapsedSeconds
       const nextX = particle.x + field.u / magnitude * distance
       const nextY = particle.y - field.v / magnitude * distance
       context.beginPath()
@@ -476,6 +534,7 @@ class WeatherIsobarLayer extends L.Layer {
   private drawTimer = 0
   private hourOffset = 0
   private lastDrawHour = Number.NaN
+  private frame: WeatherGridFrame | null = null
   private moving = false
   private width = 0
   private height = 0
@@ -503,9 +562,16 @@ class WeatherIsobarLayer extends L.Layer {
     return this
   }
 
+  setFrame(frame: WeatherGridFrame | null): this {
+    if (this.frame === frame) return this
+    this.frame = frame
+    this.scheduleDraw()
+    return this
+  }
+
   setHourOffset(value: number): this {
     this.hourOffset = value
-    if (Math.abs(value - this.lastDrawHour) >= .75) this.scheduleDraw()
+    if (!this.frame && Math.abs(value - this.lastDrawHour) >= .75) this.scheduleDraw()
     return this
   }
 
@@ -563,7 +629,9 @@ class WeatherIsobarLayer extends L.Layer {
       for (let column = 0; column < columns; column += 1) {
         const x = column / Math.max(1, columns - 1) * this.width
         const latLng = map.containerPointToLatLng([x, y])
-        const value = sampleWeatherMapField('pressure', latLng.lat, latLng.lng, this.hourOffset)
+        const value = this.frame && isInsideWeatherGrid(this.frame, latLng.lat, latLng.lng)
+          ? sampleWeatherGridScalar(this.frame, 'surface_pressure', latLng.lat, latLng.lng)
+          : sampleWeatherMapField('pressure', latLng.lat, latLng.lng, this.hourOffset)
         rowValues.push(value)
         minimum = Math.min(minimum, value)
         maximum = Math.max(maximum, value)
@@ -607,11 +675,13 @@ class WeatherIsobarLayer extends L.Layer {
       }
     }
 
-    const strokeSegments = () => {
+    const contourPaths = stitchWeatherContourSegments(segments)
+      .map(path => ({ ...path, points: smoothWeatherContourPath(path.points, path.closed, 2) }))
+      .filter(path => weatherContourPathLength(path.points) >= 46)
+    const strokePaths = () => {
       context.beginPath()
-      segments.forEach(segment => {
-        context.moveTo(segment.from.x, segment.from.y)
-        context.lineTo(segment.to.x, segment.to.y)
+      contourPaths.forEach(path => {
+        path.points.forEach((point, index) => index === 0 ? context.moveTo(point.x, point.y) : context.lineTo(point.x, point.y))
       })
       context.stroke()
     }
@@ -619,52 +689,48 @@ class WeatherIsobarLayer extends L.Layer {
     context.lineCap = 'round'
     context.lineJoin = 'round'
     context.lineWidth = 3
-    context.strokeStyle = 'rgba(15,23,42,.34)'
-    strokeSegments()
-    context.lineWidth = 1.25
-    context.strokeStyle = 'rgba(255,255,255,.94)'
-    strokeSegments()
+    context.strokeStyle = 'rgba(15,23,42,.28)'
+    strokePaths()
+    context.lineWidth = 1.15
+    context.strokeStyle = 'rgba(255,255,255,.9)'
+    strokePaths()
     context.restore()
 
     const occupied: IsobarPoint[] = []
-    const visibleLevels = Array.from(new Set(segments.map(segment => segment.level)))
+    const visibleLevels = Array.from(new Set(contourPaths.map(path => path.level)))
     context.font = '600 10px Inter, system-ui, sans-serif'
     context.textAlign = 'center'
     context.textBaseline = 'middle'
     visibleLevels.forEach((level, levelIndex) => {
-      const levelSegments = segments.filter(segment => segment.level === level)
-      if (levelSegments.length === 0) return
-      const targets = this.width > 1100 ? [.28, .68] : [.5]
+      const levelPaths = contourPaths.filter(path => path.level === level)
+      if (levelPaths.length === 0) return
+      const targets = this.width > 1100 ? [.3, .7] : [.5]
       targets.forEach((target, targetIndex) => {
-        let best: IsobarSegment | null = null
+        let best: { point: IsobarPoint; angle: number } | null = null
         let bestScore = Number.POSITIVE_INFINITY
-        for (const [index, segment] of levelSegments.entries()) {
-          const midpoint = { x: (segment.from.x + segment.to.x) / 2, y: (segment.from.y + segment.to.y) / 2 }
+        for (const [index, path] of levelPaths.entries()) {
+          const candidate = weatherContourPointAt(path.points, Math.max(.18, Math.min(.82, target)))
+          const midpoint = candidate.point
           if (midpoint.y < 38 || midpoint.y > this.height - 80) continue
           const score = Math.abs(midpoint.x / this.width - target) + Math.abs(midpoint.y / this.height - ((levelIndex * .17 + targetIndex * .31) % .72 + .14)) * .35 + index * .00001
-          if (score < bestScore && occupied.every(point => Math.hypot(point.x - midpoint.x, point.y - midpoint.y) > 82)) {
-            best = segment
+          if (score < bestScore && occupied.every(point => Math.hypot(point.x - midpoint.x, point.y - midpoint.y) > 92)) {
+            best = candidate
             bestScore = score
           }
         }
         if (!best) return
-        const midpoint = { x: (best.from.x + best.to.x) / 2, y: (best.from.y + best.to.y) / 2 }
+        const midpoint = best.point
         occupied.push(midpoint)
         const label = String(level)
         const labelWidth = context.measureText(label).width + 12
-        const labelHeight = 17
-        const radius = 8
-        context.fillStyle = 'rgba(255,255,255,.94)'
-        context.beginPath()
-        context.moveTo(midpoint.x - labelWidth / 2 + radius, midpoint.y - labelHeight / 2)
-        context.arcTo(midpoint.x + labelWidth / 2, midpoint.y - labelHeight / 2, midpoint.x + labelWidth / 2, midpoint.y + labelHeight / 2, radius)
-        context.arcTo(midpoint.x + labelWidth / 2, midpoint.y + labelHeight / 2, midpoint.x - labelWidth / 2, midpoint.y + labelHeight / 2, radius)
-        context.arcTo(midpoint.x - labelWidth / 2, midpoint.y + labelHeight / 2, midpoint.x - labelWidth / 2, midpoint.y - labelHeight / 2, radius)
-        context.arcTo(midpoint.x - labelWidth / 2, midpoint.y - labelHeight / 2, midpoint.x + labelWidth / 2, midpoint.y - labelHeight / 2, radius)
-        context.closePath()
-        context.fill()
+        context.save()
+        context.translate(midpoint.x, midpoint.y)
+        context.rotate(best.angle)
+        context.fillStyle = 'rgba(255,255,255,.9)'
+        context.fillRect(-labelWidth / 2, -8, labelWidth, 16)
         context.fillStyle = '#334155'
-        context.fillText(label, midpoint.x, midpoint.y + .5)
+        context.fillText(label, 0, .5)
+        context.restore()
       })
     })
     this.lastDrawHour = this.hourOffset
@@ -694,20 +760,23 @@ const getTimeCaption = (hourOffset: number) => {
 }
 
 function WeatherMapLegend({ layer, compact = false }: { layer: WeatherMapLayerDefinition; compact?: boolean }) {
-  const gradient = `linear-gradient(to top, ${layer.colors.map(stop => stop.color).join(', ')})`
-  const ticks = [layer.max, layer.min + (layer.max - layer.min) * .75, layer.min + (layer.max - layer.min) * .5, layer.min + (layer.max - layer.min) * .25, layer.min]
+  const colorStops = layer.colors.map(stop => `${stop.color} ${Math.max(0, Math.min(100, (stop.value - layer.min) / (layer.max - layer.min) * 100))}%`).join(', ')
+  const gradient = `linear-gradient(to top, ${colorStops})`
+  const ticks = [...layer.colors].reverse()
   return (
     <div className={compact ? 'flex items-center gap-2' : 'flex items-stretch gap-2'}>
       {compact ? (
         <>
-          <div className="h-2 w-28 rounded-full" style={{ background: `linear-gradient(to right, ${layer.colors.map(stop => stop.color).join(', ')})` }} />
+          <div className="h-2 w-28 rounded-full" style={{ background: `linear-gradient(to right, ${colorStops})` }} />
           <span className="text-[10px] text-white/55">{layer.unit}</span>
         </>
       ) : (
         <>
-          <div className="flex h-[300px] flex-col justify-between py-1 text-right text-sm font-semibold text-white drop-shadow-md">
-            {ticks.map((tick, index) => <span key={index}>{Math.round(tick)}</span>)}
-            <span>{layer.unit}</span>
+          <div className="relative h-[300px] min-w-11 text-sm font-semibold text-white drop-shadow-md">
+            {ticks.map(tick => (
+              <span key={tick.value} className="absolute right-0 -translate-y-1/2" style={{ top: `${100 - (tick.value - layer.min) / (layer.max - layer.min) * 100}%` }}>{Math.round(tick.value)}</span>
+            ))}
+            {layer.unit !== '°C' && <span className="absolute bottom-0 right-0 translate-y-5 text-[11px]">{layer.unit}</span>}
           </div>
           <div className="h-[300px] w-5 rounded-full border border-white/15 shadow-lg" style={{ background: gradient }} />
         </>
@@ -732,7 +801,7 @@ function WeatherMapPreview({ weather, onOpen }: Pick<WeatherMapExperienceProps, 
     >
       <div className="weather-map-preview-base absolute inset-0" />
       <div className="weather-map-preview-field absolute inset-0" />
-      <svg className="absolute inset-0 h-full w-full opacity-70" viewBox="0 0 1000 260" preserveAspectRatio="none" aria-hidden="true">
+      <svg className="absolute inset-0 h-full w-full opacity-70" viewBox="0 0 1000 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
         <g fill="none" stroke="rgba(28,47,60,.5)" strokeWidth="2">
           <path d="M-40 65 C90 20 150 92 270 58 S470 22 550 70 S760 112 1040 42" />
           <path d="M15 250 C130 172 215 226 314 164 S480 140 585 205 S810 246 1012 150" />
@@ -793,8 +862,8 @@ function LayerButton({ layer, active, onClick }: { layer: WeatherMapLayerDefinit
 
 interface WeatherFieldLayerPair {
   layerId: WeatherMapLayerId | null
-  currentHour: number
-  nextHour: number
+  currentFrameKey: number
+  nextFrameKey: number
   current: WeatherFieldGridLayer | null
   next: WeatherFieldGridLayer | null
 }
@@ -817,8 +886,8 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
   const isobarLayerRef = useRef<WeatherIsobarLayer | null>(null)
   const fieldLayersRef = useRef<WeatherFieldLayerPair>({
     layerId: null,
-    currentHour: -1,
-    nextHour: -1,
+    currentFrameKey: -1,
+    nextFrameKey: -1,
     current: null,
     next: null,
   })
@@ -827,10 +896,15 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
   const hourOffsetRef = useRef(0)
   const locationRef = useRef({ latitude: weather.location.latitude, longitude: weather.location.longitude })
   const timezoneRef = useRef(weather.timezone)
+  const weatherGridRef = useRef<WeatherGrid | null>(null)
+  const gridRequestRef = useRef<AbortController | null>(null)
+  const gridRequestIdRef = useRef(0)
+  const [gridStatus, setGridStatus] = useState<'loading' | 'forecast' | 'estimate'>('loading')
   const [activeLayerId, setActiveLayerId] = useState<WeatherMapLayerId>('temperature')
   const [layerPanelOpen, setLayerPanelOpen] = useState(false)
   const [hourOffset, setHourOffset] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [playbackSpeed, setPlaybackSpeed] = useState<0.5 | 1 | 2>(1)
   const [windWaves, setWindWaves] = useState(false)
   const [isobars, setIsobars] = useState(false)
   const [selectedPoint, setSelectedPoint] = useState<LatLng | null>(null)
@@ -867,13 +941,13 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
     const pair = fieldLayersRef.current
     if (map && pair.current && map.hasLayer(pair.current)) map.removeLayer(pair.current)
     if (map && pair.next && map.hasLayer(pair.next)) map.removeLayer(pair.next)
-    fieldLayersRef.current = { layerId: null, currentHour: -1, nextHour: -1, current: null, next: null }
+    fieldLayersRef.current = { layerId: null, currentFrameKey: -1, nextFrameKey: -1, current: null, next: null }
   }, [])
 
-  const createFieldLayer = useCallback((layerId: WeatherMapLayerId, forecastHour: number, opacity: number) => {
+  const createFieldLayer = useCallback((layerId: WeatherMapLayerId, forecastHour: number, frame: WeatherGridFrame | null, opacity: number) => {
     const map = mapRef.current
     if (!map) return null
-    const layer = new WeatherFieldGridLayer(layerId, forecastHour, {
+    const layer = new WeatherFieldGridLayer(layerId, forecastHour, frame, {
       tileSize: 256,
       opacity,
       pane: 'weatherMapFieldPane',
@@ -891,42 +965,48 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
     if (!map) return
     const layerId = activeLayerIdRef.current
     const bounded = Math.max(0, Math.min(48, value))
+    const grid = weatherGridRef.current
+    const framePair: WeatherGridFramePair | null = grid
+      ? getWeatherGridFramePair(grid, Date.now() + bounded * 60 * 60 * 1000)
+      : null
     const currentHour = Math.min(48, Math.floor(bounded))
     const nextHour = Math.min(48, currentHour + 1)
+    const currentFrameKey = framePair?.current.timestamp ?? currentHour
+    const nextFrameKey = framePair?.next.timestamp ?? nextHour
     const baseOpacity = getWeatherFieldOpacity(layerId)
     let pair = fieldLayersRef.current
 
-    if (force || pair.layerId !== layerId || pair.currentHour !== currentHour) {
+    if (force || pair.layerId !== layerId || pair.currentFrameKey !== currentFrameKey) {
       const canPromote = !force
         && pair.layerId === layerId
-        && pair.nextHour === currentHour
+        && pair.nextFrameKey === currentFrameKey
         && pair.next !== null
 
       if (canPromote) {
         if (pair.current && map.hasLayer(pair.current)) map.removeLayer(pair.current)
         pair.current = pair.next
-        pair.currentHour = currentHour
+        pair.currentFrameKey = currentFrameKey
         pair.next = null
-        pair.nextHour = nextHour
+        pair.nextFrameKey = nextFrameKey
       } else {
         clearFieldLayers()
         pair = fieldLayersRef.current
         pair.layerId = layerId
-        pair.currentHour = currentHour
-        pair.nextHour = nextHour
-        pair.current = createFieldLayer(layerId, currentHour, baseOpacity)
+        pair.currentFrameKey = currentFrameKey
+        pair.nextFrameKey = nextFrameKey
+        pair.current = createFieldLayer(layerId, currentHour, framePair?.current || null, baseOpacity)
       }
 
       pair.layerId = layerId
-      if (nextHour !== currentHour && !pair.next) {
-        pair.nextHour = nextHour
-        pair.next = createFieldLayer(layerId, nextHour, 0)
+      if (nextFrameKey !== currentFrameKey && !pair.next) {
+        pair.nextFrameKey = nextFrameKey
+        pair.next = createFieldLayer(layerId, nextHour, framePair?.next || null, 0)
       }
       fieldLayersRef.current = pair
     }
 
     pair = fieldLayersRef.current
-    const fraction = nextHour === currentHour ? 0 : bounded - currentHour
+    const fraction = framePair?.ratio ?? (nextHour === currentHour ? 0 : bounded - currentHour)
     // Source-over blending two semi-transparent layers with simple linear opacity
     // makes the combined field more transparent around every half-hour, which looks
     // like a flash. Keep the total alpha constant while interpolating frame colors.
@@ -954,8 +1034,13 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
     const bounded = Math.max(0, Math.min(48, value))
     hourOffsetRef.current = bounded
     syncFieldLayers(bounded)
-    windLayerRef.current?.setHourOffset(bounded)
-    isobarLayerRef.current?.setHourOffset(bounded)
+    const grid = weatherGridRef.current
+    const realFrame = grid ? (() => {
+      const pair = getWeatherGridFramePair(grid, Date.now() + bounded * 60 * 60 * 1000)
+      return pair.current === pair.next ? pair.current : interpolateWeatherGridFrame(pair.current, pair.next, pair.ratio)
+    })() : null
+    windLayerRef.current?.setFrame(realFrame).setHourOffset(bounded)
+    isobarLayerRef.current?.setFrame(realFrame).setHourOffset(bounded)
     updateTimelineDom(bounded)
   }, [syncFieldLayers, updateTimelineDom])
 
@@ -1079,6 +1164,40 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
 
     map.on('click', event => selectMapPoint(event.latlng, null))
     map.on('move zoom resize', updatePopupPosition)
+    const refreshWeatherGrid = () => {
+      const bounds = map.getBounds()
+      const center = map.getCenter()
+      const latitudeSpan = Math.min(70, Math.max(2, bounds.getNorth() - bounds.getSouth()))
+      const longitudeSpan = Math.min(160, Math.max(3, bounds.getEast() - bounds.getWest()))
+      const gridBounds = {
+        north: Math.min(85, center.lat + latitudeSpan * .58),
+        south: Math.max(-85, center.lat - latitudeSpan * .58),
+        east: center.lng + longitudeSpan * .58,
+        west: center.lng - longitudeSpan * .58,
+      }
+      const requestId = ++gridRequestIdRef.current
+      gridRequestRef.current?.abort()
+      const controller = new AbortController()
+      gridRequestRef.current = controller
+      setGridStatus('loading')
+      loadWeatherGrid(gridBounds, controller.signal)
+        .then(grid => {
+          if (controller.signal.aborted || requestId !== gridRequestIdRef.current) return
+          weatherGridRef.current = grid
+          setGridStatus('forecast')
+          clearFieldLayers()
+          applyHourOffset(hourOffsetRef.current)
+        })
+        .catch(error => {
+          if (controller.signal.aborted || requestId !== gridRequestIdRef.current) return
+          console.warn('[WeatherMap] Failed to load viewport grid:', error)
+          weatherGridRef.current = null
+          setGridStatus('estimate')
+          applyHourOffset(hourOffsetRef.current)
+        })
+    }
+    map.on('moveend', refreshWeatherGrid)
+    refreshWeatherGrid()
     const container = map.getContainer()
     L.DomEvent.disableScrollPropagation(container)
     const invalidateSizeTimer = window.setTimeout(() => {
@@ -1088,7 +1207,10 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
 
     return () => {
       placeLookupControllerRef.current?.abort()
-      placeLookupControllerRef.current = null
+      gridRequestRef.current?.abort()
+      gridRequestIdRef.current += 1
+      weatherGridRef.current = null
+      gridRequestRef.current = null
       window.clearTimeout(invalidateSizeTimer)
       window.cancelAnimationFrame(popupFrameRef.current)
       popupFrameRef.current = 0
@@ -1149,7 +1271,12 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
     if (!map || !open) return
     const shouldShow = activeLayerId === 'wind' || windWaves
     if (shouldShow && !windLayerRef.current) {
-      windLayerRef.current = new WeatherWindParticleLayer().setHourOffset(hourOffsetRef.current).addTo(map)
+      const grid = weatherGridRef.current
+      const frame = grid ? (() => {
+        const pair = getWeatherGridFramePair(grid, Date.now() + hourOffsetRef.current * 60 * 60 * 1000)
+        return pair.current === pair.next ? pair.current : interpolateWeatherGridFrame(pair.current, pair.next, pair.ratio)
+      })() : null
+      windLayerRef.current = new WeatherWindParticleLayer().setFrame(frame).setHourOffset(hourOffsetRef.current).addTo(map)
     } else if (!shouldShow && windLayerRef.current) {
       map.removeLayer(windLayerRef.current)
       windLayerRef.current = null
@@ -1160,7 +1287,12 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
     const map = mapRef.current
     if (!map || !open) return
     if (isobars && !isobarLayerRef.current) {
-      isobarLayerRef.current = new WeatherIsobarLayer().setHourOffset(hourOffsetRef.current).addTo(map)
+      const grid = weatherGridRef.current
+      const frame = grid ? (() => {
+        const pair = getWeatherGridFramePair(grid, Date.now() + hourOffsetRef.current * 60 * 60 * 1000)
+        return pair.current === pair.next ? pair.current : interpolateWeatherGridFrame(pair.current, pair.next, pair.ratio)
+      })() : null
+      isobarLayerRef.current = new WeatherIsobarLayer().setFrame(frame).setHourOffset(hourOffsetRef.current).addTo(map)
     } else if (!isobars && isobarLayerRef.current) {
       map.removeLayer(isobarLayerRef.current)
       isobarLayerRef.current = null
@@ -1197,12 +1329,15 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
     const animateTimeline = (now: number) => {
       const elapsed = Math.min(80, Math.max(0, now - previous))
       previous = now
-      let next = hourOffsetRef.current + elapsed / 1000
-      if (next >= 48) next %= 48
+      const next = advanceWeatherMapPlayback(hourOffsetRef.current, elapsed, playbackSpeed)
       applyHourOffset(next)
-      if (now - lastUiUpdate >= 180) {
+      if (now - lastUiUpdate >= 100 || next >= 48) {
         lastUiUpdate = now
         setHourOffset(next)
+      }
+      if (next >= 48) {
+        setPlaying(false)
+        return
       }
       animationFrame = window.requestAnimationFrame(animateTimeline)
     }
@@ -1211,7 +1346,7 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
       window.cancelAnimationFrame(animationFrame)
       setHourOffset(hourOffsetRef.current)
     }
-  }, [applyHourOffset, open, playing])
+  }, [applyHourOffset, open, playbackSpeed, playing])
 
   useEffect(() => {
     if (!open) {
@@ -1290,6 +1425,27 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
                       <LayerButton key={layer.id} layer={layer} active={layer.id === activeLayerId} onClick={() => { setActiveLayerId(layer.id); setLayerPanelOpen(false) }} />
                     ))}
                   </div>
+                  <div className="mt-3 border-t border-slate-200/70 pt-3">
+                    <div className="mb-2 text-[10px] font-semibold uppercase text-slate-500">动画图层</div>
+                    <div className="space-y-2 rounded-2xl bg-slate-100/75 p-3">
+                      <label className="flex cursor-pointer items-center justify-between gap-3 text-xs font-medium text-slate-700">
+                        <span>风 / 海浪</span>
+                        <input type="checkbox" checked={windWaves} onChange={event => setWindWaves(event.target.checked)} className="weather-map-toggle" />
+                      </label>
+                      <label className="flex cursor-pointer items-center justify-between gap-3 text-xs font-medium text-slate-700">
+                        <span>等压线</span>
+                        <input type="checkbox" checked={isobars} onChange={event => setIsobars(event.target.checked)} className="weather-map-toggle" />
+                      </label>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <span className="text-xs font-medium text-slate-700">播放速度</span>
+                      <div className="flex items-center gap-1" aria-label="天气动画播放速度">
+                        {([0.5, 1, 2] as const).map(speed => (
+                          <button key={speed} type="button" onClick={() => setPlaybackSpeed(speed)} aria-pressed={playbackSpeed === speed} className={`h-7 min-w-10 rounded-lg px-2 text-[10px] font-semibold tabular-nums transition-colors ${playbackSpeed === speed ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}>{speed}×</button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1299,17 +1455,7 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
             <button type="button" onClick={onClose} title="关闭天气地图" aria-label="关闭天气地图" className="weather-map-round-control"><X className="h-5 w-5" /></button>
           </div>
 
-          <div className="absolute bottom-24 right-4 z-[546] flex flex-col items-end gap-2 md:bottom-6 md:right-6">
-            <div className="w-[148px] space-y-2 rounded-2xl border border-white/45 bg-white/88 p-2.5 shadow-lg backdrop-blur-xl">
-              <label className="flex cursor-pointer items-center justify-between gap-3 text-xs font-medium text-slate-700">
-                <span>风 / 海浪</span>
-                <input type="checkbox" checked={windWaves} onChange={event => setWindWaves(event.target.checked)} className="weather-map-toggle" />
-              </label>
-              <label className="flex cursor-pointer items-center justify-between gap-3 text-xs font-medium text-slate-700">
-                <span>等压线</span>
-                <input type="checkbox" checked={isobars} onChange={event => setIsobars(event.target.checked)} className="weather-map-toggle" />
-              </label>
-            </div>
+          <div className="absolute bottom-24 right-4 z-[546] flex items-end md:bottom-6 md:right-6">
             <div className="flex gap-2">
               <button type="button" onClick={centerOnWeather} title="定位到当前位置" aria-label="定位到当前位置" className="weather-map-round-control weather-map-round-control-compact"><Crosshair className="h-[18px] w-[18px]" /></button>
               <button type="button" onClick={() => mapRef.current?.zoomIn()} title="放大" aria-label="放大地图" className="weather-map-round-control weather-map-round-control-compact"><Plus className="h-5 w-5" /></button>
@@ -1323,7 +1469,13 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
 
           <div className="absolute left-1/2 top-5 z-[540] -translate-x-1/2 rounded-full border border-white/30 bg-white/82 px-5 py-2 text-center shadow-lg backdrop-blur-xl">
             <div className="flex items-center gap-2 text-sm font-semibold"><Layers3 className="h-4 w-4" />{activeLayer.label}</div>
-            <div className="mt-0.5 text-[10px] text-slate-500">{activeLayer.description}</div>
+            <div className="mt-0.5 flex items-center justify-center gap-1.5 text-[10px] text-slate-500">
+              <span>{activeLayer.description}</span>
+              <span>·</span>
+              <span className={gridStatus === 'forecast' ? 'text-emerald-700' : gridStatus === 'loading' ? 'text-blue-700' : 'text-amber-700'}>
+                {gridStatus === 'forecast' ? '真实预报网格' : gridStatus === 'loading' ? '加载预报网格' : '本地估算'}
+              </span>
+            </div>
           </div>
 
           {selectedPoint && popupPosition && (
@@ -1361,9 +1513,14 @@ function WeatherMapModal({ weather, open, onClose }: Pick<WeatherMapExperiencePr
 
           <div className="absolute bottom-4 left-1/2 z-[545] w-[calc(100vw-24px)] -translate-x-1/2 md:bottom-5 md:w-[min(52vw,690px)] md:min-w-[500px]">
             <div className="rounded-[18px] border border-white/40 bg-white/80 px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,.16)] backdrop-blur-2xl">
-              <div className="mb-0.5 flex items-center justify-between px-1 text-[10px] font-medium text-slate-600">
+              <div className="mb-1 flex items-center justify-between px-1 text-[10px] font-medium text-slate-600">
                 <span ref={timelineTimeLabelRef}>{timeLabel} · {getTimeCaption(hourOffset)}</span>
                 <span className="tabular-nums">未来 48 小时</span>
+              </div>
+              <div className="weather-map-timeline-scale ml-[42px] mr-[58px] grid grid-cols-9 text-[9px] tabular-nums text-slate-500">
+                {[0, 6, 12, 18, 24, 30, 36, 42, 48].map((value, index) => (
+                  <span key={value} className={index === 0 ? 'text-left' : index === 8 ? 'text-right' : 'text-center'}>{value === 0 ? '现在' : value === 24 ? '明天' : value === 48 ? '后天' : `+${value}h`}</span>
+                ))}
               </div>
               <div className="flex items-center gap-2.5">
                 <button

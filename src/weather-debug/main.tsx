@@ -130,9 +130,11 @@ function DebugApp() {
         loading={false}
         hazards={null}
         hazardLoading={false}
-        hazardError=""
+        hazardErrors={{ typhoons: '', earthquakes: '' }}
+        hazardTransportError=""
         initialTab="weather"
         onHazardRefresh={() => undefined}
+        onHazardEnsure={() => undefined}
       />
     </main>
   )

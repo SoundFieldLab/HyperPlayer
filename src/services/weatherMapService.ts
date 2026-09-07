@@ -47,27 +47,47 @@ export interface WeatherMapPointValue {
 export const WEATHER_MAP_LAYERS: WeatherMapLayerDefinition[] = [
   {
     id: 'wind', label: '风', shortLabel: '风速', unit: 'km/h', min: 0, max: 80,
-    colors: [{ value: 0, color: '#4f88d7' }, { value: 15, color: '#43b7a5' }, { value: 30, color: '#d7cb55' }, { value: 50, color: '#e1773f' }, { value: 80, color: '#7b2f74' }],
+    colors: [
+      { value: 0, color: '#5b67c8' }, { value: 5, color: '#4b86cf' }, { value: 10, color: '#35a7c6' },
+      { value: 20, color: '#42bd8b' }, { value: 30, color: '#b8cf4a' }, { value: 40, color: '#f1c53c' },
+      { value: 55, color: '#ef7b38' }, { value: 70, color: '#d74655' }, { value: 80, color: '#8f3a86' },
+    ],
     description: '10 米风速与风向',
   },
   {
     id: 'temperature', label: '温度', shortLabel: '温度', unit: '°C', min: -30, max: 45,
-    colors: [{ value: -30, color: '#4a1b8f' }, { value: -15, color: '#315ec4' }, { value: 0, color: '#42a9b8' }, { value: 10, color: '#75ae64' }, { value: 25, color: '#d8c64f' }, { value: 35, color: '#dc793a' }, { value: 45, color: '#a7372d' }],
+    colors: [
+      { value: -30, color: '#7132a8' }, { value: -20, color: '#4651bd' }, { value: -10, color: '#347bd0' },
+      { value: 0, color: '#39a9c4' }, { value: 10, color: '#5fbd91' }, { value: 20, color: '#b8cf57' },
+      { value: 30, color: '#f2c645' }, { value: 40, color: '#ec7140' }, { value: 45, color: '#b9364a' },
+    ],
     description: '地面 2 米气温',
   },
   {
     id: 'humidity', label: '相对湿度', shortLabel: '湿度', unit: '%', min: 0, max: 100,
-    colors: [{ value: 0, color: '#b07a3d' }, { value: 35, color: '#d2bd62' }, { value: 60, color: '#70ad88' }, { value: 80, color: '#3d8eb0' }, { value: 100, color: '#385394' }],
+    colors: [
+      { value: 0, color: '#7c5f43' }, { value: 20, color: '#b08a4b' }, { value: 40, color: '#c9bd65' },
+      { value: 60, color: '#74b88e' }, { value: 75, color: '#40a8ad' }, { value: 90, color: '#3977aa' },
+      { value: 100, color: '#3e4f88' },
+    ],
     description: '2 米相对湿度',
   },
   {
     id: 'cloud', label: '云量', shortLabel: '云量', unit: '%', min: 0, max: 100,
-    colors: [{ value: 0, color: '#7697c2' }, { value: 35, color: '#aeb9c3' }, { value: 70, color: '#d9dcdf' }, { value: 100, color: '#ffffff' }],
+    colors: [
+      { value: 0, color: '#6f8fae' }, { value: 15, color: '#879fb4' }, { value: 35, color: '#a8b5bf' },
+      { value: 55, color: '#c4cbd0' }, { value: 75, color: '#dce0e3' }, { value: 90, color: '#eef0f2' },
+      { value: 100, color: '#ffffff' },
+    ],
     description: '总云量覆盖率',
   },
   {
     id: 'pressure', label: '压强', shortLabel: '气压', unit: 'hPa', min: 960, max: 1040,
-    colors: [{ value: 960, color: '#5b3b8c' }, { value: 985, color: '#3f74b6' }, { value: 1005, color: '#58a77c' }, { value: 1020, color: '#d0bb4d' }, { value: 1040, color: '#d7693f' }],
+    colors: [
+      { value: 960, color: '#59449a' }, { value: 980, color: '#496bb1' }, { value: 995, color: '#408fae' },
+      { value: 1005, color: '#55a590' }, { value: 1015, color: '#96b66a' }, { value: 1025, color: '#c9bd59' },
+      { value: 1040, color: '#ce7552' },
+    ],
     description: '地面气压',
   },
   {
@@ -205,6 +225,55 @@ export interface WeatherMapWindVector {
   v: number
   /** Meteorological direction in degrees (where the wind comes from). */
   direction: number
+}
+
+export interface WeatherGridBounds {
+  north: number
+  south: number
+  east: number
+  west: number
+}
+
+export const WEATHER_GRID_FIELDS = [
+  'temperature_2m',
+  'relative_humidity_2m',
+  'cloud_cover',
+  'surface_pressure',
+  'wind_speed_10m',
+  'wind_direction_10m',
+  'wind_gusts_10m',
+  'precipitation',
+] as const
+
+export type WeatherGridField = typeof WEATHER_GRID_FIELDS[number]
+
+export interface WeatherGridFrame {
+  time: string
+  timestamp: number
+  width: number
+  height: number
+  bounds: WeatherGridBounds
+  values: Record<WeatherGridField, Float32Array>
+}
+
+export interface WeatherGrid {
+  bounds: WeatherGridBounds
+  width: number
+  height: number
+  latitudes: Float32Array
+  longitudes: Float32Array
+  frames: WeatherGridFrame[]
+  fetchedAt: number
+}
+
+export interface WeatherGridFramePair {
+  current: WeatherGridFrame
+  next: WeatherGridFrame
+  ratio: number
+}
+
+export interface WeatherGridWindVector extends WeatherMapWindVector {
+  gust: number
 }
 
 /**
@@ -453,6 +522,281 @@ export async function fetchWeatherMapPointValue(
       secondary: '网络数据不可用，显示本地场景估计',
     }
   }
+}
+
+const WEATHER_GRID_MAX_WIDTH = 8
+const WEATHER_GRID_MAX_HEIGHT = 6
+const WEATHER_GRID_HOURS = 49
+const WEATHER_GRID_CACHE_AGE = 10 * 60 * 1000
+const WEATHER_GRID_CACHE_CAPACITY = 12
+const weatherGridCache = new Map<string, WeatherGrid>()
+const weatherGridRequestCache = new Map<string, Promise<WeatherGrid>>()
+
+type GridForecastPayload = ForecastPayload & {
+  latitude?: number
+  longitude?: number
+}
+
+const normalizeLongitude = (longitude: number) => {
+  const normalized = ((longitude + 180) % 360 + 360) % 360 - 180
+  return normalized === -180 && longitude > 0 ? 180 : normalized
+}
+
+const longitudeSpan = (bounds: WeatherGridBounds) => {
+  const raw = bounds.east - bounds.west
+  return raw >= 0 ? Math.min(raw, 360) : ((raw % 360) + 360) % 360
+}
+
+const validateGridBounds = (bounds: WeatherGridBounds): WeatherGridBounds => {
+  const values = [bounds.north, bounds.south, bounds.east, bounds.west]
+  if (!values.every(Number.isFinite)) throw new Error('天气网格范围必须是有限数值')
+  if (bounds.north <= bounds.south) throw new Error('天气网格北界必须大于南界')
+  if (bounds.north > 90 || bounds.south < -90) throw new Error('天气网格纬度必须位于 -90 到 90 度之间')
+  const span = longitudeSpan(bounds)
+  if (span <= 0 || span >= 360) throw new Error('天气网格经度跨度必须大于 0 且小于 360 度')
+  return { north: bounds.north, south: bounds.south, east: bounds.east, west: bounds.west }
+}
+
+const chooseGridSize = (bounds: WeatherGridBounds) => {
+  const latitudeSpan = bounds.north - bounds.south
+  const adjustedLongitudeSpan = longitudeSpan(bounds) * Math.max(0.15, Math.cos((bounds.north + bounds.south) / 2 * Math.PI / 180))
+  const aspect = adjustedLongitudeSpan / latitudeSpan
+  if (aspect >= WEATHER_GRID_MAX_WIDTH / WEATHER_GRID_MAX_HEIGHT) {
+    return { width: WEATHER_GRID_MAX_WIDTH, height: Math.max(2, Math.min(WEATHER_GRID_MAX_HEIGHT, Math.round(WEATHER_GRID_MAX_WIDTH / aspect))) }
+  }
+  return { width: Math.max(2, Math.min(WEATHER_GRID_MAX_WIDTH, Math.round(WEATHER_GRID_MAX_HEIGHT * aspect))), height: WEATHER_GRID_MAX_HEIGHT }
+}
+
+const createGridCoordinates = (bounds: WeatherGridBounds, width: number, height: number) => {
+  const latitudes = new Float32Array(width * height)
+  const longitudes = new Float32Array(width * height)
+  const span = longitudeSpan(bounds)
+  for (let y = 0; y < height; y += 1) {
+    const latitude = bounds.south + (bounds.north - bounds.south) * y / (height - 1)
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x
+      latitudes[index] = latitude
+      longitudes[index] = normalizeLongitude(bounds.west + span * x / (width - 1))
+    }
+  }
+  return { latitudes, longitudes }
+}
+
+const gridKey = (bounds: WeatherGridBounds, width: number, height: number) => [
+  bounds.north, bounds.south, bounds.east, bounds.west,
+].map(value => value.toFixed(4)).concat(`${width}x${height}`).join(':')
+
+const getCachedWeatherGrid = (key: string, now: number) => {
+  const cached = weatherGridCache.get(key)
+  if (!cached) return undefined
+  if (now - cached.fetchedAt >= WEATHER_GRID_CACHE_AGE) {
+    weatherGridCache.delete(key)
+    return undefined
+  }
+  weatherGridCache.delete(key)
+  weatherGridCache.set(key, cached)
+  return cached
+}
+
+const cacheWeatherGrid = (key: string, grid: WeatherGrid) => {
+  const now = Date.now()
+  for (const [cachedKey, cached] of weatherGridCache) {
+    if (now - cached.fetchedAt >= WEATHER_GRID_CACHE_AGE) weatherGridCache.delete(cachedKey)
+  }
+  weatherGridCache.delete(key)
+  weatherGridCache.set(key, grid)
+  while (weatherGridCache.size > WEATHER_GRID_CACHE_CAPACITY) {
+    const oldestKey = weatherGridCache.keys().next().value
+    if (oldestKey === undefined) break
+    weatherGridCache.delete(oldestKey)
+  }
+}
+
+const parseGridTime = (time: string) => {
+  const timestamp = Date.parse(time.endsWith('Z') ? time : `${time}Z`)
+  if (!Number.isFinite(timestamp)) throw new Error(`天气网格包含无效时间: ${time}`)
+  return timestamp
+}
+
+const parseWeatherGrid = (
+  payload: GridForecastPayload | GridForecastPayload[],
+  bounds: WeatherGridBounds,
+  width: number,
+  height: number,
+  latitudes: Float32Array,
+  longitudes: Float32Array,
+): WeatherGrid => {
+  const locations = Array.isArray(payload) ? payload : [payload]
+  const pointCount = width * height
+  if (locations.length !== pointCount) {
+    throw new Error(`天气网格响应坐标数不匹配: 预期 ${pointCount}，实际 ${locations.length}`)
+  }
+  const times = locations[0]?.hourly?.time
+  if (!Array.isArray(times) || times.length < WEATHER_GRID_HOURS) throw new Error('天气网格响应缺少未来 49 小时时间序列')
+  const frameCount = WEATHER_GRID_HOURS
+  const frames = Array.from({ length: frameCount }, (_, frameIndex): WeatherGridFrame => ({
+    time: times[frameIndex],
+    timestamp: parseGridTime(times[frameIndex]),
+    width,
+    height,
+    bounds,
+    values: Object.fromEntries(WEATHER_GRID_FIELDS.map(field => [field, new Float32Array(pointCount)])) as Record<WeatherGridField, Float32Array>,
+  }))
+
+  locations.forEach((location, pointIndex) => {
+    const locationTimes = location.hourly?.time
+    if (!Array.isArray(locationTimes) || locationTimes.length < frameCount) throw new Error(`天气网格坐标 ${pointIndex + 1} 缺少时间序列`)
+    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      if (locationTimes[frameIndex] !== times[frameIndex]) throw new Error('天气网格各坐标时间序列不一致')
+      for (const field of WEATHER_GRID_FIELDS) {
+        const rawValue = location.hourly?.[field]?.[frameIndex]
+        const value = rawValue === null || rawValue === '' || rawValue === undefined ? Number.NaN : Number(rawValue)
+        if (!Number.isFinite(value)) throw new Error(`天气网格字段 ${field} 在坐标 ${pointIndex + 1}、时次 ${frameIndex + 1} 无效`)
+        frames[frameIndex].values[field][pointIndex] = value
+      }
+    }
+  })
+
+  return { bounds, width, height, latitudes, longitudes, frames, fetchedAt: Date.now() }
+}
+
+/** Loads a bounded real forecast grid. Failed requests reject and never return estimated data. */
+export async function loadWeatherGrid(bounds: WeatherGridBounds, signal?: AbortSignal): Promise<WeatherGrid> {
+  const normalizedBounds = validateGridBounds(bounds)
+  const { width, height } = chooseGridSize(normalizedBounds)
+  const key = gridKey(normalizedBounds, width, height)
+  const cached = getCachedWeatherGrid(key, Date.now())
+  if (cached) return cached
+  const pending = weatherGridRequestCache.get(key)
+  if (pending) return pending
+
+  const { latitudes, longitudes } = createGridCoordinates(normalizedBounds, width, height)
+  const url = new URL('https://api.open-meteo.com/v1/forecast')
+  url.searchParams.set('latitude', Array.from(latitudes).join(','))
+  url.searchParams.set('longitude', Array.from(longitudes).join(','))
+  url.searchParams.set('hourly', WEATHER_GRID_FIELDS.join(','))
+  url.searchParams.set('forecast_hours', String(WEATHER_GRID_HOURS))
+  url.searchParams.set('timezone', 'UTC')
+
+  const request = fetch(url.toString(), { signal })
+    .then(async response => {
+      if (!response.ok) throw new Error(`天气网格请求失败 (${response.status})`)
+      try {
+        return await response.json() as GridForecastPayload | GridForecastPayload[]
+      } catch {
+        throw new Error('天气网格响应不是有效 JSON')
+      }
+    })
+    .then(payload => parseWeatherGrid(payload, normalizedBounds, width, height, latitudes, longitudes))
+    .then(grid => {
+      cacheWeatherGrid(key, grid)
+      return grid
+    })
+    .catch(error => {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(`无法加载天气网格: ${detail}`)
+    })
+    .finally(() => weatherGridRequestCache.delete(key))
+  weatherGridRequestCache.set(key, request)
+  return request
+}
+
+const sampleGridArray = (frame: WeatherGridFrame, values: Float32Array, latitude: number, longitude: number) => {
+  if (values.length !== frame.width * frame.height) throw new Error('天气网格帧数据尺寸不匹配')
+  const latitudeRatio = clamp((latitude - frame.bounds.south) / (frame.bounds.north - frame.bounds.south), 0, 1)
+  const span = longitudeSpan(frame.bounds)
+  const rawLongitudeOffset = ((longitude - frame.bounds.west) % 360 + 360) % 360
+  const longitudeOffset = rawLongitudeOffset > span && 360 - rawLongitudeOffset < rawLongitudeOffset - span ? 0 : rawLongitudeOffset
+  const longitudeRatio = clamp(longitudeOffset / span, 0, 1)
+  const gridX = longitudeRatio * (frame.width - 1)
+  const gridY = latitudeRatio * (frame.height - 1)
+  const x0 = Math.floor(gridX)
+  const y0 = Math.floor(gridY)
+  const x1 = Math.min(frame.width - 1, x0 + 1)
+  const y1 = Math.min(frame.height - 1, y0 + 1)
+  const tx = gridX - x0
+  const ty = gridY - y0
+  const top = values[y0 * frame.width + x0] * (1 - tx) + values[y0 * frame.width + x1] * tx
+  const bottom = values[y1 * frame.width + x0] * (1 - tx) + values[y1 * frame.width + x1] * tx
+  return top * (1 - ty) + bottom * ty
+}
+
+export function sampleWeatherGridScalar(frame: WeatherGridFrame, field: WeatherGridField, latitude: number, longitude: number) {
+  return sampleGridArray(frame, frame.values[field], latitude, longitude)
+}
+
+export function weatherDirectionToWindVector(speed: number, direction: number): WeatherMapWindVector {
+  const radians = direction * Math.PI / 180
+  return {
+    speed,
+    u: -speed * Math.sin(radians),
+    v: -speed * Math.cos(radians),
+    direction: ((direction % 360) + 360) % 360,
+  }
+}
+
+export function sampleWeatherGridWindVector(frame: WeatherGridFrame, latitude: number, longitude: number): WeatherGridWindVector {
+  const pointCount = frame.width * frame.height
+  const u = new Float32Array(pointCount)
+  const v = new Float32Array(pointCount)
+  for (let index = 0; index < pointCount; index += 1) {
+    const vector = weatherDirectionToWindVector(frame.values.wind_speed_10m[index], frame.values.wind_direction_10m[index])
+    u[index] = vector.u
+    v[index] = vector.v
+  }
+  const sampledU = sampleGridArray(frame, u, latitude, longitude)
+  const sampledV = sampleGridArray(frame, v, latitude, longitude)
+  const speed = Math.hypot(sampledU, sampledV)
+  const direction = speed === 0 ? 0 : (Math.atan2(-sampledU, -sampledV) * 180 / Math.PI + 360) % 360
+  return {
+    speed,
+    u: sampledU,
+    v: sampledV,
+    direction,
+    gust: sampleWeatherGridScalar(frame, 'wind_gusts_10m', latitude, longitude),
+  }
+}
+
+export function getWeatherGridFramePair(grid: WeatherGrid, targetTime: number | string | Date): WeatherGridFramePair {
+  if (!grid.frames.length) throw new Error('天气网格不包含任何帧')
+  const timestamp = targetTime instanceof Date ? targetTime.getTime() : typeof targetTime === 'string' ? parseGridTime(targetTime) : targetTime
+  if (!Number.isFinite(timestamp)) throw new Error('天气网格目标时间无效')
+  if (timestamp <= grid.frames[0].timestamp) return { current: grid.frames[0], next: grid.frames[0], ratio: 0 }
+  const last = grid.frames[grid.frames.length - 1]
+  if (timestamp >= last.timestamp) return { current: last, next: last, ratio: 0 }
+  const nextIndex = grid.frames.findIndex(frame => frame.timestamp >= timestamp)
+  const current = grid.frames[nextIndex - 1]
+  const next = grid.frames[nextIndex]
+  return { current, next, ratio: (timestamp - current.timestamp) / (next.timestamp - current.timestamp) }
+}
+
+export function interpolateWeatherGridFrame(current: WeatherGridFrame, next: WeatherGridFrame, ratio: number): WeatherGridFrame {
+  if (current.width !== next.width || current.height !== next.height) throw new Error('无法插值尺寸不同的天气网格帧')
+  const amount = clamp(ratio, 0, 1)
+  const pointCount = current.width * current.height
+  const values = Object.fromEntries(WEATHER_GRID_FIELDS.map(field => [field, new Float32Array(pointCount)])) as Record<WeatherGridField, Float32Array>
+  for (const field of WEATHER_GRID_FIELDS) {
+    if (field === 'wind_direction_10m') continue
+    for (let index = 0; index < pointCount; index += 1) {
+      values[field][index] = current.values[field][index] * (1 - amount) + next.values[field][index] * amount
+    }
+  }
+  for (let index = 0; index < pointCount; index += 1) {
+    const from = weatherDirectionToWindVector(current.values.wind_speed_10m[index], current.values.wind_direction_10m[index])
+    const to = weatherDirectionToWindVector(next.values.wind_speed_10m[index], next.values.wind_direction_10m[index])
+    const u = from.u * (1 - amount) + to.u * amount
+    const v = from.v * (1 - amount) + to.v * amount
+    values.wind_speed_10m[index] = Math.hypot(u, v)
+    values.wind_direction_10m[index] = Math.hypot(u, v) === 0 ? current.values.wind_direction_10m[index] : (Math.atan2(-u, -v) * 180 / Math.PI + 360) % 360
+  }
+  const timestamp = current.timestamp + (next.timestamp - current.timestamp) * amount
+  return { time: new Date(timestamp).toISOString(), timestamp, width: current.width, height: current.height, bounds: current.bounds, values }
+}
+
+export function interpolateWeatherGridAt(grid: WeatherGrid, targetTime: number | string | Date): WeatherGridFrame {
+  const pair = getWeatherGridFramePair(grid, targetTime)
+  return pair.current === pair.next ? pair.current : interpolateWeatherGridFrame(pair.current, pair.next, pair.ratio)
 }
 
 export function formatWeatherMapValue(layer: WeatherMapLayerDefinition, value: number) {

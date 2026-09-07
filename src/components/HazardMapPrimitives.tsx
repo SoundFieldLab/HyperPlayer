@@ -124,11 +124,14 @@ export function createHazardMapViewport(bounds: HazardMapBounds, options: Hazard
 export interface HazardMapNavigation {
   viewport: HazardMapViewport
   isDragging: boolean
+  wheelZoomEnabled: boolean
   onWheel: (event: ReactWheelEvent<HTMLDivElement>) => void
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void
   onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void
   onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void
   onPointerCancel: (event: ReactPointerEvent<HTMLDivElement>) => void
+  onPointerLeave: (event: ReactPointerEvent<HTMLDivElement>) => void
+  onLostPointerCapture: (event: ReactPointerEvent<HTMLDivElement>) => void
   zoomIn: () => void
   zoomOut: () => void
   reset: () => void
@@ -138,7 +141,8 @@ export function useHazardMapNavigation(bounds: HazardMapBounds | null): HazardMa
   const fitViewport = useMemo(() => bounds ? createHazardMapViewport(bounds) : null, [bounds?.minLongitude, bounds?.maxLongitude, bounds?.minLatitude, bounds?.maxLatitude])
   const [view, setView] = useState<{ zoom: number; center: HazardMapCenter } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
-  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; centerWorldX: number; centerWorldY: number; zoom: number } | null>(null)
+  const [wheelZoomEnabled, setWheelZoomEnabled] = useState(false)
+  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; centerWorldX: number; centerWorldY: number; zoom: number; moved: boolean } | null>(null)
 
   useEffect(() => {
     if (!fitViewport) {
@@ -147,6 +151,8 @@ export function useHazardMapNavigation(bounds: HazardMapBounds | null): HazardMa
     }
     setView({ zoom: fitViewport.zoom, center: fitViewport.center })
     setIsDragging(false)
+    setWheelZoomEnabled(false)
+    dragRef.current = null
   }, [fitViewport?.fitZoom, fitViewport?.center.longitude, fitViewport?.center.latitude])
 
   const viewport = useMemo(() => {
@@ -160,7 +166,7 @@ export function useHazardMapNavigation(bounds: HazardMapBounds | null): HazardMa
   }
 
   const onWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!viewport) return
+    if (!viewport || !wheelZoomEnabled) return
     event.preventDefault()
     event.stopPropagation()
     event.nativeEvent.stopImmediatePropagation?.()
@@ -187,15 +193,31 @@ export function useHazardMapNavigation(bounds: HazardMapBounds | null): HazardMa
       centerWorldX: worldX(viewport.center.longitude, viewport.zoom),
       centerWorldY: worldY(viewport.center.latitude, viewport.zoom),
       zoom: viewport.zoom,
+      moved: false,
     }
-    event.currentTarget.setPointerCapture(event.pointerId)
-    setIsDragging(true)
   }
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     const rect = event.currentTarget.getBoundingClientRect()
+    const outside = event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom
+    if (outside) {
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture?.(event.pointerId)
+      dragRef.current = null
+      setIsDragging(false)
+      setWheelZoomEnabled(false)
+      return
+    }
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY)
+    if (!drag.moved) {
+      if (distance < 6) return
+      drag.moved = true
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+      setIsDragging(true)
+      setWheelZoomEnabled(true)
+    }
+    event.preventDefault()
     const scaleX = HAZARD_MAP_WIDTH / Math.max(1, rect.width)
     const scaleY = HAZARD_MAP_HEIGHT / Math.max(1, rect.height)
     setView({
@@ -208,7 +230,24 @@ export function useHazardMapNavigation(bounds: HazardMapBounds | null): HazardMa
   }
 
   const stopDragging = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (!drag.moved) setWheelZoomEnabled(true)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture?.(event.pointerId)
+    dragRef.current = null
+    setIsDragging(false)
+  }
+
+  const onPointerLeave = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (drag && event.currentTarget.hasPointerCapture?.(drag.pointerId)) event.currentTarget.releasePointerCapture?.(drag.pointerId)
+    dragRef.current = null
+    setIsDragging(false)
+    setWheelZoomEnabled(false)
+  }
+
+  const onLostPointerCapture = () => {
+    dragRef.current = null
     setIsDragging(false)
   }
 
@@ -221,6 +260,9 @@ export function useHazardMapNavigation(bounds: HazardMapBounds | null): HazardMa
     onPointerMove,
     onPointerUp: stopDragging,
     onPointerCancel: stopDragging,
+    onPointerLeave,
+    onLostPointerCapture,
+    wheelZoomEnabled,
     zoomIn: () => setZoom(viewport.zoom + 1),
     zoomOut: () => setZoom(viewport.zoom - 1),
     reset: () => fitViewport && setView({ zoom: fitViewport.zoom, center: fitViewport.center }),
@@ -414,12 +456,14 @@ export function EarthquakeSourceMap({ event, currentLocation }: {
   return (
     <div
       className={`relative aspect-[960/500] overflow-hidden rounded-[22px] border border-white/10 bg-[#17314a] ${navigation.isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
-      style={{ touchAction: 'none' }}
+      style={{ touchAction: 'pan-y pinch-zoom' }}
       onWheel={navigation.onWheel}
       onPointerDown={navigation.onPointerDown}
       onPointerMove={navigation.onPointerMove}
       onPointerUp={navigation.onPointerUp}
       onPointerCancel={navigation.onPointerCancel}
+      onPointerLeave={navigation.onPointerLeave}
+      onLostPointerCapture={navigation.onLostPointerCapture}
     >
       <HazardMapTiles viewport={viewport} dim={baseLayer === 'satellite' ? 0.045 : 0.08} baseLayer={baseLayer} />
       <HazardMapNavigationControls navigation={navigation} baseLayer={baseLayer} onBaseLayerChange={setBaseLayer} />
@@ -438,7 +482,7 @@ export function EarthquakeSourceMap({ event, currentLocation }: {
         <text x={clamp(epicenterX + 16, 18, HAZARD_MAP_WIDTH - 220)} y={clamp(epicenterY - 15, 28, HAZARD_MAP_HEIGHT - 20)} fill="white" fontSize="15" fontWeight="700" style={{ paintOrder: 'stroke', stroke: 'rgba(2,6,23,.82)', strokeWidth: 5 }}>震中 M{event.magnitude.toFixed(1)}</text>
         {showsCurrent && <g transform={`translate(${currentX} ${currentY})`}><circle r="15" fill="rgba(34,211,238,.24)" /><circle r="6" fill="#cffafe" stroke="#0e7490" strokeWidth="2" /><text x="17" y="5" fill="white" fontSize="14" fontWeight="600" style={{ paintOrder: 'stroke', stroke: 'rgba(2,6,23,.8)', strokeWidth: 4 }}>当前位置</text></g>}
       </svg>
-      <div className="pointer-events-none absolute bottom-2 left-3 rounded-full bg-slate-950/62 px-2.5 py-1 text-[9px] text-white/62 backdrop-blur-md">{baseLayer === 'satellite' ? '卫星影像 · ' : ''}滚轮缩放 · 按住拖动</div>
+      <div className="pointer-events-none absolute bottom-2 left-3 rounded-full bg-slate-950/62 px-2.5 py-1 text-[9px] text-white/62 backdrop-blur-md">{baseLayer === 'satellite' ? '卫星影像 · ' : ''}{navigation.wheelZoomEnabled ? '滚轮缩放已启用，移出地图后关闭' : '点击或拖动地图后启用滚轮缩放'}</div>
     </div>
   )
 }

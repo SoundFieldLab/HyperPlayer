@@ -81,7 +81,8 @@ async function loadTyphoons({ force = false } = {}) {
       { referer },
     )
     const list = parseJsonpObject(listText)?.typhoonList
-    const activeRows = (Array.isArray(list) ? list : [])
+    if (!Array.isArray(list)) throw new Error('中央气象台台风列表格式异常')
+    const activeRows = list
       .filter(row => Array.isArray(row) && String(row[7] || '').toLowerCase() === 'start')
       .slice(0, 8)
 
@@ -136,7 +137,8 @@ async function fetchEarthquakesFromCeic() {
     referer: 'https://www.ceic.ac.cn/',
   })
   const rows = JSON.parse(text)
-  const items = (Array.isArray(rows) ? rows : []).map(row => ({
+  if (!Array.isArray(rows)) throw new Error('中国地震台网目录格式异常')
+  const items = rows.map(row => ({
     id: String(row?.id || ''),
     time: String(row?.time || ''),
     latitude: Number(row?.latitude),
@@ -244,10 +246,10 @@ export function registerHazardRoutes(app) {
       loadEarthquakes({ force }),
     ])
     const result = {
-      success: typhoons.status === 'fulfilled' || earthquakes.status === 'fulfilled',
+      success: typhoons.status === 'fulfilled' || earthquakes.status === 'fulfilled' || Boolean(typhoonCache || earthquakeCache),
       updatedAt: Date.now(),
-      typhoons: typhoons.status === 'fulfilled' ? typhoons.value : null,
-      earthquakes: earthquakes.status === 'fulfilled' ? earthquakes.value : null,
+      typhoons: typhoons.status === 'fulfilled' ? typhoons.value : typhoonCache ? { ...typhoonCache, stale: true } : null,
+      earthquakes: earthquakes.status === 'fulfilled' ? earthquakes.value : earthquakeCache ? { ...earthquakeCache, stale: true } : null,
       errors: {
         typhoons: typhoons.status === 'rejected' ? String(typhoons.reason?.message || typhoons.reason || '') : '',
         earthquakes: earthquakes.status === 'rejected' ? String(earthquakes.reason?.message || earthquakes.reason || '') : '',

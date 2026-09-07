@@ -1,4 +1,5 @@
 import type { DesktopCustomizationSettings } from './desktopCustomization'
+import { searchChinaAreas } from './locationHierarchy'
 
 export interface WeatherLocation {
   name: string
@@ -22,11 +23,14 @@ export interface WeatherLocationSearchResult {
   name: string
   countryCode: string
   country: string
+  provinceCode: string
   province: string
+  cityCode: string
   city: string
+  districtCode: string
   district: string
-  latitude: number
-  longitude: number
+  latitude: number | null
+  longitude: number | null
 }
 
 export interface WeatherAlert {
@@ -45,7 +49,16 @@ export interface WeatherAirQuality {
   hourlyAqi: Array<{ time: string; aqi: number }>
 }
 
-export const getAqiLabel = (aqi: number) => aqi < 20 ? '优' : aqi < 40 ? '良' : aqi < 60 ? '中等' : aqi < 80 ? '较差' : aqi <= 100 ? '很差' : '严重污染'
+export const getAqiDescriptor = (aqi: number) => {
+  if (!Number.isFinite(aqi)) return { label: '暂无数据', color: '#94a3b8' }
+  if (aqi < 20) return { label: '优', color: '#22c55e' }
+  if (aqi < 40) return { label: '良', color: '#eab308' }
+  if (aqi < 60) return { label: '中等', color: '#f97316' }
+  if (aqi < 80) return { label: '较差', color: '#ef4444' }
+  if (aqi <= 100) return { label: '很差', color: '#a855f7' }
+  return { label: '极差', color: '#881337' }
+}
+export const getAqiLabel = (aqi: number) => getAqiDescriptor(aqi).label
 export const getCloudCoverLabel = (value: number) => value < 10 ? '晴朗无云' : value < 35 ? '少云' : value < 70 ? '多云' : '阴天'
 export const getDewPointLabel = (value: number) => value < 10 ? '空气干燥' : value < 16 ? '体感舒适' : value < 21 ? '略感潮湿' : '潮湿闷热'
 
@@ -113,6 +126,9 @@ export interface WeatherSnapshot {
 const WEATHER_CACHE_PREFIX = 'desktopWeatherSnapshot:'
 const weatherSnapshotPending = new Map<string, Promise<WeatherSnapshot>>()
 const WEATHER_CACHE_MAX_AGE = 15 * 60 * 1000
+const LOCATION_SEARCH_CACHE_MAX_AGE = 5 * 60 * 1000
+const locationSearchCache = new Map<string, { expiresAt: number; results: WeatherLocationSearchResult[] }>()
+const locationSearchPending = new Map<string, Promise<WeatherLocationSearchResult[]>>()
 
 export const WEATHER_LABELS: Record<number, string> = {
   0: '晴朗',
@@ -173,6 +189,31 @@ const firstText = (...values: unknown[]) => {
   return ''
 }
 
+const ADMINISTRATIVE_SUFFIX_ONLY = /^(?:省|市|区|县|旗|盟|州|特别行政区)$/
+
+export const normalizeAdministrativeName = (value: unknown) => {
+  const text = String(value || '').trim()
+  if (!text || ADMINISTRATIVE_SUFFIX_ONLY.test(text)) return ''
+  return text.replace(/^(?:省|市|区|县)(?=[^省市区县旗盟州])/u, '')
+}
+
+const normalizeLocationParts = <T extends Partial<WeatherLocation>>(location: T): T => {
+  const province = normalizeAdministrativeName(location.province)
+  const city = normalizeAdministrativeName(location.city)
+  const district = normalizeAdministrativeName(location.district)
+  const name = normalizeAdministrativeName(location.name)
+  const hasInvalidAdministrativePart = [location.province, location.city, location.district]
+    .some(value => ADMINISTRATIVE_SUFFIX_ONLY.test(String(value || '').trim()))
+  return {
+    ...location,
+    name: name || district || city || province,
+    province,
+    city: normalizePlaceName(city) === normalizePlaceName(province) ? '' : city,
+    district: normalizePlaceName(district) === normalizePlaceName(city) ? '' : district,
+    formattedAddress: hasInvalidAdministrativePart ? '' : normalizeAdministrativeName(location.formattedAddress),
+  }
+}
+
 const makeRegionLabel = (...values: unknown[]) => Array.from(new Set(values
   .map(value => String(value || '').trim())
   .filter(Boolean)
@@ -186,18 +227,51 @@ const uniqueLocationParts = (...values: unknown[]) => Array.from(new Set(values
 const makeLocationSearchLabel = (country: string, province: string, city: string, district: string, name: string) =>
   uniqueLocationParts(country, province, city, district || name).join(' · ')
 
-export const searchWeatherLocations = async (
-  query: string,
-  signal?: AbortSignal,
-): Promise<WeatherLocationSearchResult[]> => {
-  const keyword = query.trim()
-  if (keyword.length < 2) return []
+const waitForSearch = <T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> => {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      value => { signal.removeEventListener('abort', onAbort); resolve(value) },
+      error => { signal.removeEventListener('abort', onAbort); reject(error) },
+    )
+  })
+}
 
+const searchRemoteWeatherLocations = async (keyword: string): Promise<WeatherLocationSearchResult[]> => {
   const openMeteoUrl = new URL('https://geocoding-api.open-meteo.com/v1/search')
   openMeteoUrl.searchParams.set('name', keyword)
   openMeteoUrl.searchParams.set('count', '12')
   openMeteoUrl.searchParams.set('language', 'zh')
   openMeteoUrl.searchParams.set('format', 'json')
+  try {
+    const response = await fetch(openMeteoUrl.toString(), { headers: { Accept: 'application/json' } })
+    if (response.ok) {
+      const data = await response.json()
+      const results: WeatherLocationSearchResult[] = []
+      for (const item of Array.isArray(data.results) ? data.results : []) {
+        const latitude = Number(item.latitude)
+        const longitude = Number(item.longitude)
+        if (!isValidCoordinate(latitude, longitude)) continue
+        const name = normalizeAdministrativeName(item.name)
+        const country = firstText(item.country)
+        const countryCode = firstText(item.country_code).toUpperCase()
+        const province = normalizeAdministrativeName(item.admin1)
+        const city = normalizeAdministrativeName(firstText(item.admin2, item.admin3))
+        const district = normalizePlaceName(name) !== normalizePlaceName(city)
+          && normalizePlaceName(name) !== normalizePlaceName(province) ? name : normalizeAdministrativeName(firstText(item.admin3, item.admin4))
+        results.push({
+          id: `open-meteo:${latitude}:${longitude}`,
+          label: makeLocationSearchLabel(country, province, city, district, name),
+          name, countryCode, country, provinceCode: '', province, cityCode: '', city,
+          districtCode: '', district, latitude, longitude,
+        })
+      }
+      if (results.length > 0) return results
+    }
+  } catch { /* 继续使用备用地理编码服务 */ }
 
   const nominatimUrl = new URL('https://nominatim.openstreetmap.org/search')
   nominatimUrl.searchParams.set('format', 'jsonv2')
@@ -205,102 +279,136 @@ export const searchWeatherLocations = async (
   nominatimUrl.searchParams.set('limit', '10')
   nominatimUrl.searchParams.set('addressdetails', '1')
   nominatimUrl.searchParams.set('accept-language', 'zh-CN')
-
-  const [openMeteoResponse, nominatimResponse] = await Promise.allSettled([
-    fetch(openMeteoUrl.toString(), { signal, headers: { Accept: 'application/json' } }),
-    fetch(nominatimUrl.toString(), { signal, headers: { Accept: 'application/json' } }),
-  ])
-
-  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  const response = await fetch(nominatimUrl.toString(), { headers: { Accept: 'application/json' } })
+  if (!response.ok) return []
+  const data = await response.json()
   const results: WeatherLocationSearchResult[] = []
-
-  if (openMeteoResponse.status === 'fulfilled' && openMeteoResponse.value.ok) {
-    const data = await openMeteoResponse.value.json()
-    for (const item of Array.isArray(data.results) ? data.results : []) {
-      const latitude = Number(item.latitude)
-      const longitude = Number(item.longitude)
-      if (!isValidCoordinate(latitude, longitude)) continue
-      const name = firstText(item.name)
-      const country = firstText(item.country)
-      const countryCode = firstText(item.country_code).toUpperCase()
-      const province = firstText(item.admin1)
-      const city = firstText(item.admin2, item.admin3)
-      const district = normalizePlaceName(name) !== normalizePlaceName(city)
-        && normalizePlaceName(name) !== normalizePlaceName(province) ? name : firstText(item.admin3, item.admin4)
-      results.push({
-        id: `open-meteo:${latitude}:${longitude}`,
-        label: makeLocationSearchLabel(country, province, city, district, name),
-        name, countryCode, country, province, city, district, latitude, longitude,
-      })
-    }
+  for (const item of Array.isArray(data) ? data : []) {
+    const latitude = Number(item.lat)
+    const longitude = Number(item.lon)
+    if (!isValidCoordinate(latitude, longitude)) continue
+    const address = item.address || {}
+    const name = normalizeAdministrativeName(firstText(item.name, address.county, address.city, address.town, keyword))
+    const country = firstText(address.country)
+    const countryCode = firstText(address.country_code).toUpperCase()
+    const province = normalizeAdministrativeName(firstText(address.province, address.state, address.region))
+    const city = normalizeAdministrativeName(firstText(address.city, address.municipality, address.prefecture, address.town))
+    let district = normalizeAdministrativeName(firstText(address.city_district, address.county, address.borough))
+    if (!district && normalizePlaceName(name) !== normalizePlaceName(city) && normalizePlaceName(name) !== normalizePlaceName(province)) district = name
+    results.push({
+      id: `nominatim:${item.place_id || ''}:${latitude}:${longitude}`,
+      label: makeLocationSearchLabel(country, province, city, district, name),
+      name, countryCode, country, provinceCode: '', province, cityCode: '', city,
+      districtCode: '', district, latitude, longitude,
+    })
   }
+  return results
+}
 
-  if (nominatimResponse.status === 'fulfilled' && nominatimResponse.value.ok) {
-    const data = await nominatimResponse.value.json()
-    for (const item of Array.isArray(data) ? data : []) {
-      const latitude = Number(item.lat)
-      const longitude = Number(item.lon)
-      if (!isValidCoordinate(latitude, longitude)) continue
-      const address = item.address || {}
-      const name = firstText(item.name, address.county, address.city, address.town, keyword)
-      const country = firstText(address.country)
-      const countryCode = firstText(address.country_code).toUpperCase()
-      const province = firstText(address.province, address.state, address.region)
-      const city = firstText(address.city, address.municipality, address.prefecture, address.town)
-      let district = firstText(address.city_district, address.county, address.borough)
-      if (!district && normalizePlaceName(name) !== normalizePlaceName(city) && normalizePlaceName(name) !== normalizePlaceName(province)) district = name
-      results.push({
-        id: `nominatim:${item.place_id || ''}:${latitude}:${longitude}`,
-        label: makeLocationSearchLabel(country, province, city, district, name),
-        name, countryCode, country, province, city, district, latitude, longitude,
-      })
-    }
+export const searchWeatherLocations = async (
+  query: string,
+  signal?: AbortSignal,
+): Promise<WeatherLocationSearchResult[]> => {
+  const keyword = query.trim()
+  if (keyword.length < 2) return []
+
+  const localResults: WeatherLocationSearchResult[] = searchChinaAreas(keyword).map(area => ({
+    id: `china:${area.districtCode || area.cityCode || area.provinceCode}`,
+    label: makeLocationSearchLabel('中国', area.province, area.city, area.district, area.district || area.city || area.province),
+    name: area.district || area.city || area.province,
+    countryCode: 'CN',
+    country: '中国',
+    provinceCode: area.provinceCode,
+    province: area.province,
+    cityCode: area.cityCode,
+    city: area.city,
+    districtCode: area.districtCode,
+    district: area.district,
+    latitude: null,
+    longitude: null,
+  }))
+  if (localResults.length > 0) return localResults
+
+  const cacheKey = keyword.toLocaleLowerCase('zh-CN').replace(/\s+/g, '')
+  const cached = locationSearchCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.results
+  let request = locationSearchPending.get(cacheKey)
+  if (!request) {
+    request = searchRemoteWeatherLocations(keyword).finally(() => locationSearchPending.delete(cacheKey))
+    locationSearchPending.set(cacheKey, request)
   }
-
+  const results = await waitForSearch(request, signal)
   const seen = new Set<string>()
-  return results.filter(result => {
-    const key = `${result.label}:${result.latitude.toFixed(3)}:${result.longitude.toFixed(3)}`
+  const uniqueResults = results.filter(result => {
+    const key = `${result.label}:${result.latitude?.toFixed(3) || ''}:${result.longitude?.toFixed(3) || ''}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
   }).slice(0, 12)
+  locationSearchCache.set(cacheKey, { expiresAt: Date.now() + LOCATION_SEARCH_CACHE_MAX_AGE, results: uniqueResults })
+  return uniqueResults
 }
+
+export const resolveWeatherLocationSearchResult = async (
+  result: WeatherLocationSearchResult,
+  signal?: AbortSignal,
+): Promise<WeatherLocationSearchResult> => {
+  if (result.latitude !== null && result.longitude !== null) return result
+  const areaCode = result.districtCode || result.cityCode || result.provinceCode
+  if (!areaCode) throw new Error('所选地区缺少可用坐标')
+  const response = await fetch(`https://geo.datav.aliyun.com/areas_v3/bound/${encodeURIComponent(areaCode)}.json`, { signal })
+  if (!response.ok) throw new Error('暂时无法获取所选地区坐标')
+  const data = await response.json()
+  const center = Array.isArray(data.features) ? data.features[0]?.properties?.center : null
+  const longitude = Number(center?.[0])
+  const latitude = Number(center?.[1])
+  if (!isValidCoordinate(latitude, longitude)) throw new Error('所选地区没有返回有效坐标')
+  return { ...result, latitude, longitude }
+}
+
 export const getWeatherLocationName = (
   location: Partial<WeatherLocation>,
-) => firstText(
-  location.street,
-  location.township,
-  location.neighbourhood,
-  location.district,
-  location.city,
-  location.name,
-  location.province,
-  location.region,
-  location.country,
-  '当前位置',
-)
+) => {
+  const normalized = normalizeLocationParts(location)
+  return firstText(
+    normalized.street,
+    normalized.township,
+    normalized.neighbourhood,
+    normalized.district,
+    normalized.city,
+    normalized.name,
+    normalized.province,
+    normalized.region,
+    normalized.country,
+    '当前位置',
+  )
+}
 
 export const getWeatherLocationAddress = (
   location: Partial<WeatherLocation>,
-) => firstText(
-  location.formattedAddress,
-  uniqueLocationParts(location.province, location.city, location.district, location.township, location.street, location.neighbourhood).join(''),
-  uniqueLocationParts(location.region, location.district, location.township, location.street).join(''),
-  location.name,
-  '当前位置',
-)
+) => {
+  const normalized = normalizeLocationParts(location)
+  return firstText(
+    normalized.formattedAddress,
+    uniqueLocationParts(normalized.province, normalized.city, normalized.district, normalized.township, normalized.street, normalized.neighbourhood).join(''),
+    uniqueLocationParts(normalized.region, normalized.district, normalized.township, normalized.street).join(''),
+    normalized.name,
+    '当前位置',
+  )
+}
 
 export const getWeatherLocationCompactName = (
   location: Partial<WeatherLocation>,
 ) => {
-  const formattedAddress = String(location.formattedAddress || '').trim()
+  const normalized = normalizeLocationParts(location)
+  const formattedAddress = String(normalized.formattedAddress || '').trim()
   if (formattedAddress) {
     const administrativeParts = uniqueLocationParts(
-      location.country,
-      location.province,
-      location.city,
-      location.district,
-      location.township,
+      normalized.country,
+      normalized.province,
+      normalized.city,
+      normalized.district,
+      normalized.township,
     ).sort((left, right) => right.length - left.length)
     let compact = formattedAddress
     let changed = true
@@ -313,20 +421,20 @@ export const getWeatherLocationCompactName = (
         }
       }
     }
-    compact = compact
+    compact = normalizeAdministrativeName(compact
       .replace(/^[，,、；;：:\s-]+/, '')
       .replace(/^(?:[^省市区县旗盟州]{1,20}(?:街道|镇|乡))/, '')
       .replace(/^[，,、；;：:\s-]+/, '')
-      .trim()
+      .trim())
     if (compact && compact !== formattedAddress) return compact
   }
   return firstText(
-    location.neighbourhood,
-    location.street,
-    location.name,
-    location.township,
-    location.district,
-    location.city,
+    normalized.neighbourhood,
+    normalized.street,
+    normalized.name,
+    normalized.township,
+    normalized.district,
+    normalized.city,
     '当前位置',
   )
 }
@@ -413,9 +521,9 @@ export const getCachedWeather = (settings: DesktopCustomizationSettings, allowSt
     if (!raw) return null
     const snapshot = JSON.parse(raw) as WeatherSnapshot
     if (!allowStale && Date.now() - snapshot.updatedAt > WEATHER_CACHE_MAX_AGE) return null
-    const location = snapshot.location as Partial<WeatherLocation>
+    const location = normalizeLocationParts(snapshot.location as Partial<WeatherLocation>) as WeatherLocation
     if (settings.weatherLocationMode === 'auto' && location.name === '当前位置' && !location.province && !location.city && !location.district) return null
-    return snapshot
+    return { ...snapshot, location }
   } catch {
     return null
   }
