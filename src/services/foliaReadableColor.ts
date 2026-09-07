@@ -49,6 +49,18 @@ export function relativeLuminance(rgb: RgbColor): number {
   return 0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b)
 }
 
+/** WCAG 对比度（1-21）；任一颜色无法解析时返回 null。 */
+export function contrastRatio(foreground: string, background: string): number | null {
+  const foregroundRgb = parseHexColor(foreground)
+  const backgroundRgb = parseHexColor(background)
+  if (!foregroundRgb || !backgroundRgb) return null
+  const foregroundLuminance = relativeLuminance(foregroundRgb)
+  const backgroundLuminance = relativeLuminance(backgroundRgb)
+  const lighter = Math.max(foregroundLuminance, backgroundLuminance)
+  const darker = Math.min(foregroundLuminance, backgroundLuminance)
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
 /** 在 sRGB 空间按 t(0-1) 把 a 向 b 混合 */
 export function mixHex(a: string, b: string, t: number): string {
   const ca = parseHexColor(a)
@@ -85,6 +97,38 @@ export function mixHexLinear(a: string, b: string, t: number): string {
     g: linearToSrgb(la.g + (lb.g - la.g) * clamped),
     b: linearToSrgb(la.b + (lb.b - la.b) * clamped),
   })
+}
+
+/**
+ * 根据实际背景把前景色向黑或白做最小幅度混合，使其达到指定 WCAG 对比度。
+ * 默认阈值 4.5（普通文本 AA）；若输入无效则原样返回，背景无法支持阈值时返回最佳黑/白色。
+ */
+export function resolveReadableForegroundColor(
+  foreground: string,
+  background: string,
+  minimumContrast = 4.5,
+): string {
+  const currentContrast = contrastRatio(foreground, background)
+  if (currentContrast === null) return foreground
+
+  const targetContrast = Math.max(1, Math.min(21, minimumContrast))
+  if (currentContrast >= targetContrast) return foreground
+
+  const blackContrast = contrastRatio('#000000', background) ?? 1
+  const whiteContrast = contrastRatio('#ffffff', background) ?? 1
+  const endpoint = whiteContrast >= blackContrast ? '#ffffff' : '#000000'
+  if (Math.max(blackContrast, whiteContrast) < targetContrast) return endpoint
+
+  let low = 0
+  let high = 1
+  for (let iteration = 0; iteration < 24; iteration += 1) {
+    const midpoint = (low + high) / 2
+    const candidate = mixHexLinear(foreground, endpoint, midpoint)
+    const candidateContrast = contrastRatio(candidate, background) ?? 1
+    if (candidateContrast >= targetContrast) high = midpoint
+    else low = midpoint
+  }
+  return mixHexLinear(foreground, endpoint, high)
 }
 
 export interface ReadableColorOptions {

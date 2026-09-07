@@ -20,6 +20,7 @@ interface ImmersiveControlsProps {
   playerTheme?: 'light' | 'dark'
   isPureMusic?: boolean // 新增：是否为纯音乐
   stemControl?: TrackStemControlModel
+  coverColor: string
 }
 
 export default function ImmersiveControls({
@@ -36,6 +37,7 @@ export default function ImmersiveControls({
   playerTheme = 'dark',
   isPureMusic = false, // 默认非纯音乐
   stemControl,
+  coverColor,
 }: ImmersiveControlsProps) {
   const [isVisible, setIsVisible] = useState(true)
   const [isHovered, setIsHovered] = useState(false)
@@ -45,24 +47,6 @@ export default function ImmersiveControls({
   const effectiveHovered = (tvMode && !remoteCursorMode) || isHovered
   // TV 紧凑布局：按钮/间距更小、更适配遥控器排版（手机遥控器连上时用 PC 式布局）
   const tvCompact = tvMode && !remoteCursorMode
-
-  const [accentColor, setAccentColor] = useState(() => {
-    const saved = localStorage.getItem('accentColor')
-    return saved || '#3B82F6'
-  })
-  
-  // 监听主题色变化
-  useEffect(() => {
-    const handleAccentColorChange = (e: CustomEvent) => {
-      setAccentColor(e.detail)
-    }
-    
-    window.addEventListener('accentColorChanged', handleAccentColorChange as EventListener)
-    
-    return () => {
-      window.removeEventListener('accentColorChanged', handleAccentColorChange as EventListener)
-    }
-  }, [])
 
   useEffect(() => {
     // 当鼠标离开后3秒自动隐藏（TV 模式常驻，不自动隐藏）
@@ -108,7 +92,7 @@ export default function ImmersiveControls({
 
   return (
     <div
-      className="fixed top-[34px] right-0 z-40"
+      className="fixed right-3 top-[34px] z-40"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       style={{ width: tvCompact ? '104px' : '120px', height: tvCompact ? `${158 + featureButtonCount * 38}px` : `${214 + featureButtonCount * 50}px` }}
@@ -129,6 +113,7 @@ export default function ImmersiveControls({
         whileHover={{ scale: 1.1, x: -2 }}
         whileTap={{ scale: 0.9 }}
         onClick={onHomeClick}
+        aria-label="返回来源模式"
         className={`absolute top-0 right-6 ${btnPad} rounded-full backdrop-blur-md border transition-colors ${
           playerTheme === 'dark'
             ? 'bg-black/40 hover:bg-black/60 border-white/20'
@@ -157,17 +142,17 @@ export default function ImmersiveControls({
           style={{
             top: translationButtonTop,
             backgroundColor: translationEnabled
-              ? accentColor
+              ? coverColor
               : playerTheme === 'dark' 
                 ? 'rgba(0,0,0,0.4)' 
                 : 'rgba(255,255,255,0.5)',
             borderColor: translationEnabled
-              ? `${accentColor}66`
+              ? `${coverColor}66`
               : playerTheme === 'dark'
                 ? 'rgba(255,255,255,0.2)'
                 : 'rgba(0,0,0,0.2)',
             boxShadow: translationEnabled
-              ? `0 0 20px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
+              ? `0 0 20px ${coverColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
               : '0 4px 12px rgba(0,0,0,0.15)',
           }}
         >
@@ -208,17 +193,17 @@ export default function ImmersiveControls({
           style={{
             top: romanButtonTop,
             backgroundColor: romanEnabled
-              ? accentColor
+              ? coverColor
               : playerTheme === 'dark'
                 ? 'rgba(0,0,0,0.4)'
                 : 'rgba(255,255,255,0.5)',
             borderColor: romanEnabled
-              ? `${accentColor}66`
+              ? `${coverColor}66`
               : playerTheme === 'dark'
                 ? 'rgba(255,255,255,0.2)'
                 : 'rgba(0,0,0,0.2)',
             boxShadow: romanEnabled
-              ? `0 0 20px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
+              ? `0 0 20px ${coverColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
               : '0 4px 12px rgba(0,0,0,0.15)',
           }}
         >
@@ -259,17 +244,17 @@ export default function ImmersiveControls({
         style={{
           top: mvButtonTop,
           backgroundColor: mvBackgroundEnabled
-            ? accentColor
+            ? coverColor
             : playerTheme === 'dark'
               ? 'rgba(0,0,0,0.4)'
               : 'rgba(255,255,255,0.5)',
           borderColor: mvBackgroundEnabled
-            ? `${accentColor}66`
+            ? `${coverColor}66`
             : playerTheme === 'dark'
               ? 'rgba(255,255,255,0.2)'
               : 'rgba(0,0,0,0.2)',
           boxShadow: mvBackgroundEnabled
-            ? `0 0 20px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
+            ? `0 0 20px ${coverColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
             : '0 4px 12px rgba(0,0,0,0.15)',
         }}
       >
@@ -306,7 +291,7 @@ export default function ImmersiveControls({
         >
           <StemMixerPopover
             control={stemControl}
-            accentColor={accentColor}
+            accentColor={coverColor}
             theme={playerTheme}
             variant="immersive"
             placement="left"

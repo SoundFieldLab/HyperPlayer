@@ -54,7 +54,8 @@ interface TraditionalPlaylistDetailProps {
   ownUserName?: string
   ownUserAvatar?: string
   ownUserId?: string
-  /** 点击创建者 → 打开其个人中心 */
+  /** 当前歌单是否为本人创建；本人歌单不显示收藏入口 */
+  isOwner?: boolean
   onOpenUserProfile?: (platform: MusicPlatform, userId: string, nickname?: string, avatarUrl?: string) => void
 }
 
@@ -70,11 +71,16 @@ const formatDuration = (milliseconds = 0) => {
 }
 const songKey = (song: Song) => `${song.platform}:${song.appleId || song.mid || song.id || song.name}`
 const coverOf = (song?: Song | null) => song?.album?.picUrl ? getProxiedImageUrl(song.album.picUrl) : ''
+const DetailCover = ({ src, alt, className }: { src?: string; alt: string; className: string }) => {
+  const [failed, setFailed] = useState(false)
+  if (!src || failed) return <span aria-label={`${alt}占位`} className={`${className} flex items-center justify-center bg-black/10`}><Headphones className="h-1/3 w-1/3 opacity-40" /></span>
+  return <img src={src} alt={alt} className={className} onError={() => setFailed(true)} />
+}
 
 function TraditionalPlaylistDetail({
   playlist, songs, loading, error = '', onRetry, currentSong, playerTheme, accentColor, onClose, onSongSelect,
   onOpenArtist, onOpenAlbum, onPlayNext, onAddToFavorites, onRemoveFromFavorites, onAddToPlaylist, onRemoveFromPlaylist,
-  onViewComments, onCopyInfo, userPlaylists = [], ownUserName, ownUserAvatar, ownUserId, onOpenUserProfile,
+  onViewComments, onCopyInfo, userPlaylists = [], ownUserName, ownUserAvatar, ownUserId, isOwner = false, onOpenUserProfile,
 }: TraditionalPlaylistDetailProps) {
   const [menu, setMenu] = useState<{ show: boolean; x: number; y: number; song: Song | null }>({ show: false, x: 0, y: 0, song: null })
   const [collected, setCollected] = useState(Boolean(playlist?.isCollected))
@@ -85,7 +91,7 @@ function TraditionalPlaylistDetail({
   const playlistId = String(playlist?.id || playlist?.dirId || '')
   const canRemoveAppleTracks = platform === 'apple' && !playlist?.isLike && playlistId !== APPLE_LIBRARY_ID && !playlistId.startsWith('pl.')
   const canShare = getPlatformCapabilities(platform).sharePlaylist && (platform !== 'apple' || playlistId.startsWith('pl.'))
-  const canSubscribePlaylist = getPlatformCapabilities(platform).subscribePlaylist
+  const canSubscribePlaylist = getPlatformCapabilities(platform).subscribePlaylist && !isOwner && !playlist?.isLike
   const totalDuration = useMemo(() => songs.reduce((sum, song) => sum + (song.duration || 0), 0), [songs])
   const coverUrl = playlist?.coverImgUrl || playlist?.coverUrl || coverOf(songs[0])
   // 创建者：收藏歌单显示真实创建者；自建/我喜欢无 creator 时回退当前登录用户
@@ -191,7 +197,7 @@ function TraditionalPlaylistDetail({
           {/* 头部：封面 + 信息（QQ 音乐版式） */}
           <section className="flex flex-col gap-6 sm:flex-row">
             <div className="relative shrink-0">
-              <img src={coverUrl} alt="" loading="lazy" className="h-44 w-44 rounded-2xl object-cover shadow-2xl" />
+              <DetailCover src={coverUrl} alt={`${playlist?.name || '歌单'} 封面`} className="h-44 w-44 rounded-2xl object-cover shadow-2xl" />
               {/* 耳机角标 = 歌单被播放次数；「我喜欢」不显示（QQ/网易云的我喜欢均无该数据） */}
               {!playlist?.isLike && (playlist?.playCount || 0) > 0 && (
                 <span className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white backdrop-blur"><Headphones className="h-3 w-3" />{formatPlayCount(playlist?.playCount || 0)}</span>
@@ -241,7 +247,7 @@ function TraditionalPlaylistDetail({
                     >
                       <span className="flex min-w-0 items-center gap-3">
                         <span className="relative shrink-0">
-                          <img src={coverOf(song)} alt="" loading="lazy" className="h-10 w-10 rounded-lg object-cover" />
+                          <DetailCover src={coverOf(song)} alt={`${song.name} 封面`} className="h-10 w-10 rounded-lg object-cover" />
                           <span className="absolute inset-0 hidden items-center justify-center rounded-lg bg-black/40 group-hover:flex"><Play className="h-4 w-4 fill-current text-white" /></span>
                         </span>
                         <span className="min-w-0">

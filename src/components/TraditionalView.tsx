@@ -2,11 +2,11 @@
 // - 所有内容（搜索/音乐库/歌单/歌手/专辑/评论/个人中心）都在中间栏直接展示，不用弹窗；
 // - 平台切换为可拖拽药丸（与简约模式一致）；模式切换走全局顶部下拉条；
 // - 右栏：资料卡 + 正在播放（真实频谱）+ 歌词 + 播放列表（覆盖到底部，可滚动）。
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } from '../services/platformSync'
 import { AnimatePresence, animate, motion, useMotionValue } from 'framer-motion'
 import {
-  Captions, ChevronLeft, ChevronRight, Disc3, Heart, History, Home, Library, ListMusic, LogIn, Music2,
+  Captions, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Disc3, Heart, History, Home, Library, ListMusic, LogIn, Music2,
   Pause, Play, Plus, Repeat, Repeat1, Search, Settings, Shuffle, SkipBack, SkipForward, SlidersHorizontal,
   Sparkles, Volume2, Waves, Check,
 } from 'lucide-react'
@@ -17,12 +17,13 @@ import type { Song, LyricLine } from '../services/musicApi'
 import { getProxiedImageUrl, getUserFollows, getUserFolloweds, getQQFollows, getQQFans, getQQUserProfile, subscribeQQUser, subscribeNeteaseUser } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
 import { getVisiblePlatforms, getPlatformCapabilities, getPlatformCookie, getPlatformFavoriteLabels, platformLabel, PLATFORM_ORDER_EVENT, PLATFORM_VISIBILITY_EVENT } from '../services/platforms'
-import { fetchExploreHome, fetchExplorePlaylist, type ExplorePayload, type ExplorePlaylist } from '../services/exploreApi'
+import { isPlaylistOwner, isSpecialPlaylist } from '../services/playlistOwnership'
+import { fetchExploreHome, fetchExplorePlaylist, fetchExploreChart, type ExplorePayload, type ExplorePlaylist, type ExploreChart } from '../services/exploreApi'
 import { createPlaylist, deletePlaylist, getUserPlaylists, invalidateUserPlaylistsCache, removeSongFromPlaylist, subscribePlaylist, updatePlaylist } from '../services/playlistService'
 import { createApplePlaylist, deleteApplePlaylist, updateApplePlaylist, getLastAppleMutationResult, getAppleCatalogPlaylistTracks, getAppleFavoriteSongs, getAppleLibraryPlaylists, getAppleLibrarySongs, getApplePlaylistTracks, getAppleRecentPlayed, appleLibraryTrackToSong, appleSongToSong, removeAppleTracksFromPlaylist, APPLE_FAVORITES_ID, APPLE_LIBRARY_ID } from '../services/appleCatalog'
 import { sodaMediaToSong } from '../services/sodaService'
 import { fetchSpotifyLiked, fetchSpotifyRecentlyPlayed, spotifyTrackToSong } from '../services/spotifyService'
-import { useAudioAnalyzer, useAudioAnalyzerSnapshot, type AudioAnalyzerStore } from '../hooks/useAudioAnalyzer'
+import { useAudioAnalyzerSnapshot, type AudioAnalyzerStore } from '../hooks/useAudioAnalyzer'
 import { useTvBack, useTvMode, useRemoteCursorMode } from '../tv/tvCore'
 import { isPerfModeEnhanced } from '../tv/perfMode'
 import ModeSelectionPanel, { MODE_SELECTION_CLOSE_MS } from './ModeSelectionPanel'
@@ -37,6 +38,7 @@ import PlaylistContextMenu from './PlaylistContextMenu'
 import { MirroredGlobalSettings, PlatformOrderEditor, makeSkin } from './MirroredGlobalSettings'
 import { GLOBAL_SETTINGS_GROUPS, isEntryVisible, useGlobalSettings, type GlobalSettingsGroupId, type MirrorActionId } from '../services/globalSettingsRegistry'
 import { preloadOnIdle } from '../utils/lazyPreload'
+import { resolveReadableForegroundColor } from '../services/foliaReadableColor'
 import type { PlaybackTimeStore } from '../audio/playbackTimeStore'
 import type { PlaybackOrigin, SongSelectHandler, ViewMode } from '../types/playbackNavigation'
 
@@ -51,22 +53,27 @@ const warmSettingsChunks = () => preloadOnIdle([
 ])
 
 type TraditionalPreferences = {
-  density: 'comfortable' | 'compact'
-  showRecommendations: boolean
   showWaveform: boolean
   background: 'aurora' | 'plain' | 'cover'
   backgroundBlur: number
   backgroundDim: boolean
-  sidebarWidth: 'narrow' | 'wide'
 }
 
 const PREF_KEY = 'waveforge:traditional-preferences:v2'
 const defaultPreferences: TraditionalPreferences = {
-  density: 'comfortable', showRecommendations: true, showWaveform: true, background: 'aurora', backgroundBlur: 0, backgroundDim: false, sidebarWidth: 'wide',
+  showWaveform: true, background: 'aurora', backgroundBlur: 0, backgroundDim: false,
 }
 
 const readPreferences = (): TraditionalPreferences => {
-  try { return { ...defaultPreferences, ...JSON.parse(localStorage.getItem(PREF_KEY) || '{}') } } catch { return defaultPreferences }
+  try {
+    const stored = JSON.parse(localStorage.getItem(PREF_KEY) || '{}')
+    return {
+      showWaveform: typeof stored.showWaveform === 'boolean' ? stored.showWaveform : defaultPreferences.showWaveform,
+      background: stored.background === 'plain' || stored.background === 'cover' || stored.background === 'aurora' ? stored.background : defaultPreferences.background,
+      backgroundBlur: typeof stored.backgroundBlur === 'number' ? stored.backgroundBlur : defaultPreferences.backgroundBlur,
+      backgroundDim: typeof stored.backgroundDim === 'boolean' ? stored.backgroundDim : defaultPreferences.backgroundDim,
+    }
+  } catch { return defaultPreferences }
 }
 
 interface TraditionalViewProps {
@@ -76,13 +83,16 @@ interface TraditionalViewProps {
   queue: Song[]
   currentIndex: number
   isPlaying: boolean
+  live?: boolean
   /** 播放时间不再经 App 每秒下传（会击穿 memo 整树重渲染）：改由内部叶子组件订阅 */
   playbackTimeStore: PlaybackTimeStore
   duration: number
   /** 当前播放歌曲的主题色（跟随歌曲变化，未播放时回退平台色） */
   dominantColor?: string
-  /** 播放引擎的频谱分析节点：右栏「正在播放」频谱直接采样（与播放页波形同源） */
-  analyserNode?: AnalyserNode | null
+  /** 播放引擎共享的分析器 store：右栏只订阅，不创建第二套分析循环。 */
+  analyzerStore: AudioAnalyzerStore
+  /** 打开当前播放器，不触发视图模式切换。 */
+  onOpenPlayer: (origin?: PlaybackOrigin) => void
   lyrics: LyricLine[]
   volume: number
   playerTheme: 'light' | 'dark'
@@ -146,6 +156,11 @@ const PLATFORM_ACCENTS: Record<MusicPlatform, string> = {
 const platformShortName = (platform: MusicPlatform) => ({ netease: '网易云', qq: 'QQ音乐', apple: 'Apple', spotify: 'Spotify', kugou: '酷狗', soda: '汽水' })[platform]
 const songKey = (song: Song) => `${song.platform}:${song.id || song.mid || song.name}`
 const coverOf = (song?: Song | null) => song?.album?.picUrl ? getProxiedImageUrl(song.album.picUrl) : ''
+const CoverImage = ({ src, alt, className }: { src?: string; alt: string; className: string }) => {
+  const [failed, setFailed] = useState(false)
+  if (!src || failed) return <span aria-label={`${alt}占位`} className={`${className} flex items-center justify-center bg-black/10`}><Music2 className="h-1/3 w-1/3 opacity-40" /></span>
+  return <img src={src} alt={alt} className={className} onError={() => setFailed(true)} />
+}
 const formatTime = (value: number) => {
   const total = Math.max(0, Math.floor(value || 0))
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
@@ -181,17 +196,33 @@ const TraditionalProgressRow = memo(function TraditionalProgressRow({
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
     onSeek(ratio * duration)
   }
+  const ariaValueText = `${formatTime(t)} / ${formatTime(duration)}`
   return (
     <div className="mt-3">
       <div
         ref={barRef}
         role="slider"
+        tabIndex={0}
         aria-label="播放进度"
         aria-valuemin={0}
         aria-valuemax={Math.round(duration || 0)}
         aria-valuenow={Math.round(t)}
+        aria-valuetext={ariaValueText}
         className="group relative h-4 w-full cursor-pointer touch-none select-none"
-        onPointerDown={event => { draggingRef.current = true; event.currentTarget.setPointerCapture(event.pointerId); seekFromPointer(event.clientX) }}
+        onKeyDown={event => {
+          if (!duration) return
+          const step = event.shiftKey ? 10 : 5
+          if (event.key === 'Home') { event.preventDefault(); onSeek(0) }
+          else if (event.key === 'End') { event.preventDefault(); onSeek(duration) }
+          else if (event.key === 'PageUp' || event.key === 'PageDown') {
+            event.preventDefault()
+            onSeek(Math.max(0, Math.min(duration, t + (event.key === 'PageUp' ? 30 : -30))))
+          } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            event.preventDefault()
+            onSeek(Math.max(0, Math.min(duration, t + (event.key === 'ArrowRight' ? step : -step))))
+          }
+        }}
+        onPointerDown={event => { if (!duration) return; draggingRef.current = true; event.currentTarget.setPointerCapture(event.pointerId); seekFromPointer(event.clientX) }}
         onPointerMove={event => { if (draggingRef.current) seekFromPointer(event.clientX) }}
         onPointerUp={event => { draggingRef.current = false; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}
         onPointerCancel={event => { draggingRef.current = false; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}
@@ -200,7 +231,7 @@ const TraditionalProgressRow = memo(function TraditionalProgressRow({
           <div className="h-full rounded-full" style={{ width: `${pct}%`, background: songTheme }} />
         </div>
       </div>
-      <div className={`mt-1 flex justify-between text-[10px] ${mutedText}`}>
+      <div className={`mt-1 flex justify-between px-0.5 text-xs tabular-nums ${mutedText}`}>
         <span>{formatTime(currentTime)}</span>
         <span>{formatTime(duration)}</span>
       </div>
@@ -208,59 +239,165 @@ const TraditionalProgressRow = memo(function TraditionalProgressRow({
   )
 })
 
-// 频谱叶子组件：直接订阅音频分析器 store（与播放页波形同源，30fps），
-// 传统视图本体不因此重渲染。取 24 段对数频谱插值出 18 根柱渲染。
+// 右栏卡片专用频谱：共享分析器只提供目标值，Canvas 在自己的 rAF 中平滑绘制，
+// 避免 React 以 30Hz 重建柱形并叠加 CSS height transition 造成掉帧观感。
 const TraditionalSpectrum = memo(function TraditionalSpectrum({
   analyzerStore,
   isPlaying,
   songTheme,
+  isDark,
 }: {
   analyzerStore: AudioAnalyzerStore
   isPlaying: boolean
   songTheme: string
+  isDark: boolean
 }) {
   const { spectrum } = useAudioAnalyzerSnapshot(analyzerStore)
-  const BARS = 18
-  return (
-    <div className="relative mt-4 flex h-12 items-end justify-center gap-[3px] overflow-hidden rounded-xl" style={{ background: `${songTheme}12` }}>
-      {/* 底部辉光 */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6" style={{ background: `linear-gradient(to top, ${songTheme}30, transparent)` }} />
-      {Array.from({ length: BARS }, (_, index) => {
-        const pos = spectrum.length > 1 ? (index / (BARS - 1)) * (spectrum.length - 1) : 0
-        const left = Math.floor(pos)
-        const right = Math.min(spectrum.length - 1, left + 1)
-        const value = (spectrum[left] || 0) * (1 - (pos - left)) + (spectrum[right] || 0) * (pos - left)
-        const h = Math.max(8, Math.min(100, value * 100))
-        return (
-          <span
-            key={index}
-            className="relative z-10 w-[6px] rounded-full"
-            style={{
-              height: `${h}%`,
-              background: `linear-gradient(to top, ${songTheme}55, ${songTheme})`,
-              boxShadow: isPlaying ? `0 0 8px ${songTheme}66` : 'none',
-              opacity: isPlaying ? .95 : .35,
-              transition: 'height 90ms ease-out, opacity 200ms',
-            }}
-          />
-        )
-      })}
-    </div>
-  )
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const latestSpectrumRef = useRef<Float32Array>(new Float32Array(24))
+  const playingRef = useRef(isPlaying)
+  const levelsRef = useRef<Float32Array>(new Float32Array(24))
+
+  useEffect(() => {
+    latestSpectrumRef.current = Float32Array.from(spectrum)
+  }, [spectrum])
+  useEffect(() => {
+    playingRef.current = isPlaying
+  }, [isPlaying])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const context = canvas.getContext('2d')
+    if (!context) return
+    let frame = 0
+    let disposed = false
+    let reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    let hidden = document.visibilityState === 'hidden'
+    let width = 1
+    let height = 1
+    let lastTime = 0
+    let lastDraw = 0
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect()
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      width = Math.max(1, rect.width)
+      height = Math.max(1, rect.height)
+      canvas.width = Math.round(width * dpr)
+      canvas.height = Math.round(height * dpr)
+      context.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize)
+    observer?.observe(canvas)
+    resize()
+    const drawRoundedBar = (x: number, y: number, barWidth: number, barHeight: number) => {
+      if (typeof context.roundRect === 'function') context.roundRect(x, y, barWidth, barHeight, Math.min(3, barWidth / 2))
+      else context.rect(x, y, barWidth, barHeight)
+    }
+    const draw = (now: number) => {
+      if (disposed) return
+      if (hidden) { frame = 0; return }
+      const frameBudget = reducedMotion ? 250 : 1000 / 60
+      if (now - lastDraw < frameBudget) { frame = requestAnimationFrame(draw); return }
+      lastDraw = now
+      const delta = Math.min(80, Math.max(0, now - (lastTime || now)))
+      lastTime = now
+      const target = latestSpectrumRef.current
+      const levels = levelsRef.current
+      const count = levels.length
+      for (let index = 0; index < count; index += 1) {
+        const sourceIndex = count > 1 ? (index / (count - 1)) * Math.max(0, target.length - 1) : 0
+        const left = Math.floor(sourceIndex)
+        const right = Math.min(target.length - 1, left + 1)
+        const fraction = sourceIndex - left
+        const raw = (target[left] || 0) * (1 - fraction) + (target[right] || 0) * fraction
+        const gated = raw < .025 ? 0 : Math.min(1, (raw - .025) / .8)
+        const shaped = Math.pow(gated, .72) * (0.86 + (index / Math.max(1, count - 1)) * .2)
+        const responseMs = reducedMotion ? 260 : shaped >= levels[index] ? 48 : 180
+        const alpha = 1 - Math.exp(-delta / responseMs)
+        levels[index] += (shaped - levels[index]) * alpha
+        if (!playingRef.current) levels[index] *= Math.max(0, 1 - delta / 90)
+      }
+      context.clearRect(0, 0, width, height)
+      const plate = isDark ? 'rgba(5, 7, 14, .62)' : 'rgba(255, 255, 255, .72)'
+      context.fillStyle = plate
+      context.fillRect(0, 0, width, height)
+      const baseline = height - 8
+      context.strokeStyle = isDark ? 'rgba(255,255,255,.18)' : 'rgba(15,23,42,.18)'
+      context.lineWidth = 1
+      context.beginPath()
+      context.moveTo(10, baseline + .5)
+      context.lineTo(width - 10, baseline + .5)
+      context.stroke()
+      const gap = Math.max(2, width / 120)
+      const barWidth = Math.max(2, (width - gap * (count - 1) - 20) / count)
+      const gradient = context.createLinearGradient(0, baseline, 0, 8)
+      gradient.addColorStop(0, isDark ? 'rgba(255,255,255,.35)' : 'rgba(15,23,42,.35)')
+      gradient.addColorStop(.45, songTheme)
+      gradient.addColorStop(1, isDark ? '#ffffff' : '#111827')
+      context.fillStyle = gradient
+      let maxLevel = 0
+      for (let index = 0; index < count; index += 1) {
+        const level = Math.min(.94, Math.max(0, levels[index]))
+        maxLevel = Math.max(maxLevel, level)
+        const barHeight = Math.max(2, level * (height - 18))
+        const x = 10 + index * (barWidth + gap)
+        context.globalAlpha = .5 + level * .5
+        context.beginPath()
+        drawRoundedBar(x, baseline - barHeight, barWidth, barHeight)
+        context.fill()
+      }
+      context.globalAlpha = 1
+      if (playingRef.current || maxLevel > .005) frame = requestAnimationFrame(draw)
+      else frame = 0
+    }
+    const resumeDraw = () => {
+      if (!disposed && !hidden && frame === 0) frame = requestAnimationFrame(draw)
+    }
+    const onVisibilityChange = () => {
+      hidden = document.visibilityState === 'hidden'
+      if (!hidden) resumeDraw()
+    }
+    const motionMedia = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+    const onMotionChange = () => {
+      reducedMotion = Boolean(motionMedia?.matches)
+      resumeDraw()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    motionMedia?.addEventListener?.('change', onMotionChange)
+    frame = requestAnimationFrame(draw)
+    return () => {
+      disposed = true
+      if (frame) cancelAnimationFrame(frame)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      motionMedia?.removeEventListener?.('change', onMotionChange)
+      observer?.disconnect()
+    }
+  }, [isDark, isPlaying, songTheme])
+
+  return <div data-testid="traditional-spectrum" className="relative mt-4 h-28 min-h-28 overflow-hidden rounded-xl border" style={{ borderColor: isDark ? 'rgba(255,255,255,.15)' : 'rgba(15,23,42,.15)' }}><canvas ref={canvasRef} className="block h-full w-full" aria-label="正在播放音频可视化" /></div>
 })
 
-// 传统模式右栏专用竖排同步歌词：不复用播放页 LyricsDisplay，播放页歌词不受影响。
-// 竖写（writing-mode: vertical-rl）+ 字号随容器高度自适应，保证整行完整显示不裁切；
-// 排版：当前行居中大字、下一行在左侧淡色小字，行距/字距按竖排阅读节奏设定。
+const JAPANESE_KANA_RE = /[\u3040-\u30ff\u31f0-\u31ff]/g
+const LATIN_RE = /[A-Za-z]/g
+const isJapaneseLyric = (line: LyricLine | null, text: string) => {
+  const metadata = String((line as (LyricLine & { language?: string; lang?: string }) | null)?.language || (line as (LyricLine & { language?: string; lang?: string }) | null)?.lang || line?.alternateTexts?.[0]?.language || line?.alternateTexts?.[0]?.lang || '').toLowerCase()
+  if (/^(ja|jp)(-|$)|japanese|日本語/.test(metadata)) return true
+  const kanaCount = text.match(JAPANESE_KANA_RE)?.length || 0
+  const meaningfulCount = text.match(/[A-Za-z\u3040-\u30ff\u3400-\u9fff]/g)?.length || 0
+  return kanaCount >= 2 && kanaCount / Math.max(1, meaningfulCount) >= .12
+}
+
+// 日文采用传统竖排；拉丁为主及无语言元数据的纯汉字保持水平，确保英文可读。
 const TraditionalVerticalLyrics = memo(function TraditionalVerticalLyrics({
   playbackTimeStore,
   lyrics,
-  accentColor,
+  readableAccentColor,
   mutedText,
 }: {
   playbackTimeStore: PlaybackTimeStore
   lyrics: LyricLine[]
-  accentColor: string
+  readableAccentColor: string
   mutedText: string
 }) {
   const currentTime = useSyncExternalStore(
@@ -269,18 +406,24 @@ const TraditionalVerticalLyrics = memo(function TraditionalVerticalLyrics({
     playbackTimeStore.getSnapshot,
   ).currentTime
   const boxRef = useRef<HTMLDivElement>(null)
-  const [boxHeight, setBoxHeight] = useState(0)
+  const [boxSize, setBoxSize] = useState({ width: 0, height: 0 })
   useEffect(() => {
     const el = boxRef.current
     if (!el) return
-    const observer = new ResizeObserver(entries => {
-      for (const entry of entries) setBoxHeight(entry.contentRect.height)
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
+    const measure = () => {
+      const rect = el.getBoundingClientRect()
+      setBoxSize({ width: rect.width, height: rect.height })
+    }
+    measure()
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(measure)
+      observer.observe(el)
+      return () => observer.disconnect()
+    }
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
   }, [])
 
-  // 定位当前行：最后一个 time <= currentTime 的行
   let currentIndex = -1
   for (let i = 0; i < lyrics.length; i += 1) {
     const line = lyrics[i]
@@ -291,40 +434,43 @@ const TraditionalVerticalLyrics = memo(function TraditionalVerticalLyrics({
   const nextLine = currentIndex >= 0 && currentIndex + 1 < lyrics.length ? lyrics[currentIndex + 1] : null
   const currentText = currentLine?.text?.trim() || ''
   const nextText = nextLine?.text?.trim() || ''
-
-  // 字号自适应：竖排一行高度 ≈ 字数 × 字号 × (1 + 字距)，反推字号并钳制在合理区间
+  const vertical = isJapaneseLyric(currentLine, currentText)
   const charCount = Math.max(1, Array.from(currentText).length)
-  const fitSize = boxHeight > 0 ? Math.floor((boxHeight * 0.86) / (charCount * 1.18)) : 20
-  const fontSize = Math.max(14, Math.min(34, fitSize))
+  const horizontalSize = boxSize.width > 0 ? Math.floor(Math.min(32, Math.max(14, Math.sqrt((boxSize.width * Math.max(24, boxSize.height)) / (charCount * 1.2))))) : 20
+  const fitSize = boxSize.height > 0 ? Math.floor((boxSize.height * .86) / (charCount * 1.18)) : 20
+  const fontSize = vertical ? Math.max(14, Math.min(34, fitSize)) : horizontalSize
+  const horizontalLines = Math.max(1, Math.min(4, Math.ceil((charCount * fontSize * .62) / Math.max(80, boxSize.width * .88))))
 
   return (
-    <div ref={boxRef} className="flex min-h-0 w-full flex-1 items-center justify-center gap-5 overflow-hidden px-2">
+    <div ref={boxRef} data-testid="traditional-lyrics" data-layout={vertical ? 'vertical' : 'horizontal'} className={`flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden px-3 ${vertical ? 'gap-5' : 'flex-col gap-3 text-center'}`}>
       {!currentText ? (
         <p className={`text-xs ${mutedText}`}>暂无同步歌词</p>
       ) : (
         <>
-          {/* 当前行：竖写大字，主题色强调 */}
           <motion.p
             key={`cur:${currentIndex}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: .35, ease: 'easeOut' }}
-            className="max-h-full font-medium"
+            className={vertical ? 'max-h-full font-medium' : 'w-full break-words [overflow-wrap:anywhere] font-medium leading-tight'}
             style={{
-              writingMode: 'vertical-rl',
+              writingMode: vertical ? 'vertical-rl' : 'horizontal-tb',
               fontSize,
-              letterSpacing: '0.18em',
-              color: accentColor,
-              textShadow: `0 0 18px ${accentColor}55`,
+              lineHeight: vertical ? undefined : 1.18,
+              display: vertical ? undefined : '-webkit-box',
+              WebkitBoxOrient: vertical ? undefined : 'vertical',
+              WebkitLineClamp: vertical ? undefined : horizontalLines,
+              letterSpacing: vertical ? '.18em' : '0',
+              color: readableAccentColor,
+              textShadow: `0 0 18px ${readableAccentColor}55`,
             }}
           >
             {currentText}
           </motion.p>
-          {/* 下一行：竖写小字淡色，形成竖排阅读节奏 */}
           {nextText && (
             <p
-              className={`max-h-full ${mutedText}`}
-              style={{ writingMode: 'vertical-rl', fontSize: Math.max(11, Math.round(fontSize * 0.55)), letterSpacing: '0.14em', opacity: .55 }}
+              className={`${vertical ? 'max-h-full' : 'w-full break-words leading-relaxed'} ${mutedText}`}
+              style={{ writingMode: vertical ? 'vertical-rl' : 'horizontal-tb', fontSize: vertical ? Math.max(11, Math.round(fontSize * .55)) : 13, letterSpacing: vertical ? '.14em' : '0', opacity: .55 }}
             >
               {nextText}
             </p>
@@ -349,7 +495,7 @@ type TraditionalPage =
   | { name: 'album'; id: string; platform: MusicPlatform }
 
 function TraditionalView({
-  onSongSelect, restorePlaybackOrigin, currentSong, queue, isPlaying, playbackTimeStore, duration, lyrics, volume, playerTheme, dominantColor, analyserNode,
+  onSongSelect, restorePlaybackOrigin, currentSong, queue, isPlaying, live = false, playbackTimeStore, duration, lyrics, volume, playerTheme, dominantColor, analyzerStore, onOpenPlayer,
   neteaseLoggedIn, neteaseUsername, neteaseAvatar, neteaseUserId,
   qqLoggedIn, qqUsername, qqAvatar, qqUserId,
   appleLoggedIn, appleUsername, appleAvatar,
@@ -362,6 +508,7 @@ function TraditionalView({
   onPlayNext, onAddToFavorites, onRemoveFromFavorites, onAddToPlaylist, onCopyInfo,
 }: TraditionalViewProps) {
   const [platform, setPlatform] = useState<MusicPlatform>(() => readSyncedPlatform(getVisiblePlatforms(), 'traditionalPlatform'))
+  const canUseRecent = getPlatformCapabilities(platform).recentPlayed
   const favoriteLabels = getPlatformFavoriteLabels(platform)
   const [visiblePlatforms, setVisiblePlatforms] = useState<MusicPlatform[]>(() => getVisiblePlatforms())
   // 平台顺序 / 显隐是全软件共享的（简约模式账号页、各模式设置里都能改）：订阅事件保持顶部药丸实时同步
@@ -387,16 +534,35 @@ function TraditionalView({
   useEffect(() => warmSettingsChunks(), [])
   const [payload, setPayload] = useState<ExplorePayload | null>(null)
   const [loading, setLoading] = useState(true)
+  const [homeError, setHomeError] = useState('')
+  const homeRequestRef = useRef(0)
   const [playlistLoading, setPlaylistLoading] = useState(false)
   const [playlistError, setPlaylistError] = useState('')
   const playlistRequestRef = useRef(0)
+  const playlistAbortRef = useRef<AbortController | null>(null)
   const [userPlaylists, setUserPlaylists] = useState<any[]>([])
   const [preferences, setPreferences] = useState<TraditionalPreferences>(readPreferences)
+  const pendingPreferencesRef = useRef<TraditionalPreferences | null>(null)
+  const preferencesPersistTimerRef = useRef<number | null>(null)
   const [songMenu, setSongMenu] = useState<{ show: boolean; x: number; y: number; song: Song | null }>({ show: false, x: 0, y: 0, song: null })
   const [playlistMenu, setPlaylistMenu] = useState<{ show: boolean; x: number; y: number; playlist: any | null }>({ show: false, x: 0, y: 0, playlist: null })
   const [playlistSubscribed, setPlaylistSubscribed] = useState(false)
   const [showModePanel, setShowModePanel] = useState(false)
   const [playlistTab, setPlaylistTab] = useState<'mine' | 'collected'>('mine')
+  const playlistScrollRef = useRef<HTMLDivElement>(null)
+  const playlistScrollPositionsRef = useRef<Record<string, number>>({})
+  const playlistScrollKey = `${platform}:${playlistTab}`
+  const switchPlaylistTab = useCallback((nextTab: 'mine' | 'collected') => {
+    playlistScrollPositionsRef.current[`${platform}:${playlistTab}`] = playlistScrollRef.current?.scrollTop || 0
+    setPlaylistTab(nextTab)
+  }, [platform, playlistTab])
+  useLayoutEffect(() => {
+    const container = playlistScrollRef.current
+    if (container) container.scrollTop = playlistScrollPositionsRef.current[playlistScrollKey] || 0
+    return () => {
+      playlistScrollPositionsRef.current[playlistScrollKey] = playlistScrollRef.current?.scrollTop || 0
+    }
+  }, [playlistScrollKey])
   const [creatingPlaylist, setCreatingPlaylist] = useState(false)
   const [newPlaylistName, setNewPlaylistName] = useState('')
   const [creatingPlaylistBusy, setCreatingPlaylistBusy] = useState(false)
@@ -423,16 +589,32 @@ function TraditionalView({
     if (e.key === 'ArrowLeft') { e.preventDefault(); cyclePlatform(-1) }
     else if (e.key === 'ArrowRight') { e.preventDefault(); cyclePlatform(1) }
   }
-  // 右栏频谱：直接采样播放引擎 analyser（与播放页波形同源），不再走桌面频谱事件总线
-  const analyzerStore = useAudioAnalyzer(analyserNode ?? null, !tvMode && preferences.showWaveform)
+  // 右栏只订阅 App 传入的共享 analyzer store，不创建额外采样循环。
   // 右栏：播放列表 / 同步歌词 共用一张卡片，点击切换；未播放时无歌词，只显示播放列表
   const [rightTab, setRightTab] = useState<'playlist' | 'lyrics'>('playlist')
   // 音量弹层（代替常驻滑条）
   const [volumeOpen, setVolumeOpen] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const toolsHideTimerRef = useRef<number | null>(null)
+  const clearToolsHideTimer = useCallback(() => {
+    if (toolsHideTimerRef.current !== null) window.clearTimeout(toolsHideTimerRef.current)
+    toolsHideTimerRef.current = null
+  }, [])
+  const scheduleToolsHide = useCallback(() => {
+    clearToolsHideTimer()
+    toolsHideTimerRef.current = window.setTimeout(() => setToolsOpen(false), 5000)
+  }, [clearToolsHideTimer])
+  useEffect(() => clearToolsHideTimer, [clearToolsHideTimer])
+  const runToolAction = useCallback((action: () => void) => {
+    clearToolsHideTimer()
+    setToolsOpen(false)
+    action()
+  }, [clearToolsHideTimer])
   // 音质弹窗
   const [showQuality, setShowQuality] = useState(false)
   // 桌面歌词开关（与主进程广播同步，网易云「词」按钮同语义）
   const [desktopLyricsOn, setDesktopLyricsOn] = useState(false)
+  const desktopLyricsAvailable = Boolean(!window.electron?.isShim && window.electron?.desktopLyrics?.getSettings && window.electron?.desktopLyrics?.setEnabled)
   useEffect(() => {
     let active = true
     window.electron?.desktopLyrics?.getSettings?.().then(settings => { if (active) setDesktopLyricsOn(Boolean(settings?.enabled)) }).catch(() => undefined)
@@ -445,6 +627,16 @@ function TraditionalView({
   const historyIndexRef = useRef(0)
   historyIndexRef.current = historyIndex
   const currentPage = history[historyIndex] || history[0] || { name: 'home' }
+  const currentPlaybackOrigin = useMemo<PlaybackOrigin>(() => {
+    const base = { mode: 'traditional' as const, platform }
+    if (currentPage.name === 'search') return { ...base, surface: 'traditional-search' }
+    if (currentPage.name === 'recent') return { ...base, surface: 'traditional-recent' }
+    if (currentPage.name === 'library') return { ...base, surface: 'traditional-library' }
+    if (currentPage.name === 'playlist') return { ...base, surface: 'traditional-playlist', playlist: currentPage.playlist, songs: currentPage.songs }
+    if (currentPage.name === 'artist') return { ...base, surface: 'traditional-artist', platform: currentPage.platform, artistId: currentPage.id }
+    if (currentPage.name === 'album') return { ...base, surface: 'traditional-album', platform: currentPage.platform, albumId: currentPage.id }
+    return { ...base, surface: 'mode-root' }
+  }, [currentPage, platform])
   const mainRef = useRef<HTMLElement>(null)
 
   // 页面历史导航：左上角 后退/前进 箭头
@@ -486,6 +678,10 @@ function TraditionalView({
   // 正在播放/歌词卡片的主题色跟随当前歌曲（dominantColor），未播放时用平台色
   const songTheme = currentSong && dominantColor ? dominantColor : accent
   const isDark = playerTheme === 'dark'
+  const lyricBackground = isDark ? '#17151d' : '#f4f1f6'
+  const readableSongTheme = resolveReadableForegroundColor(songTheme, lyricBackground, 4.5)
+  const controlAccent = resolveReadableForegroundColor(songTheme, lyricBackground, 3)
+  const playIconColor = resolveReadableForegroundColor('#ffffff', songTheme, 4.5)
   const text = isDark ? 'text-white' : 'text-slate-900'
   const muted = isDark ? 'text-white/50' : 'text-slate-500'
   const surface = isDark ? 'bg-white/[0.055] border-white/10' : 'bg-white/75 border-black/10'
@@ -494,14 +690,29 @@ function TraditionalView({
     if (!visiblePlatforms.includes(platform)) setPlatform(visiblePlatforms[0] || 'netease')
   }, [platform, visiblePlatforms])
 
-  useEffect(() => {
-    let cancelled = false
+  const loadHome = useCallback(async () => {
+    const requestId = ++homeRequestRef.current
     setLoading(true)
+    setHomeError('')
+    try {
+      const next = await fetchExploreHome(platform)
+      if (requestId === homeRequestRef.current) setPayload(next)
+    } catch (error) {
+      if (requestId === homeRequestRef.current) {
+        setPayload(null)
+        setHomeError(error instanceof Error ? error.message : '首页加载失败，请重试')
+      }
+    } finally {
+      if (requestId === homeRequestRef.current) setLoading(false)
+    }
+  }, [platform])
+
+  useEffect(() => {
     setPayload(null)
-    void fetchExploreHome(platform).then(next => { if (!cancelled) setPayload(next) }).catch(() => { if (!cancelled) setPayload(null) }).finally(() => { if (!cancelled) setLoading(false) })
+    void loadHome()
     syncPlatformAcrossViews(platform)
-    return () => { cancelled = true }
-  }, [platform, authRevision])
+    return () => { homeRequestRef.current += 1 }
+  }, [platform, authRevision, loadHome])
 
   useEffect(() => {
     let cancelled = false
@@ -515,7 +726,7 @@ function TraditionalView({
       if (!appleLoggedIn) { setUserPlaylists([]); return }
       void Promise.all([getAppleLibraryPlaylists(200), getAppleLibrarySongs(500), getAppleFavoriteSongs(5000)]).then(([playlists, tracks, favoriteTracks]) => {
         if (cancelled) return
-        const mapped = playlists.map(item => ({ ...item, coverImgUrl: item.artworkUrl || '', platform: 'apple' as const, isLike: false }))
+        const mapped = playlists.map(item => ({ ...item, coverImgUrl: item.artworkUrl || '', platform: 'apple' as const, isLike: false, ownedByMe: item.ownedByMe }))
         const librarySongs = tracks.map(appleLibraryTrackToSong)
         const favoriteSongs = favoriteTracks.map(track => appleSongToSong(track))
         setUserPlaylists([
@@ -553,11 +764,40 @@ function TraditionalView({
     if (!currentSong && rightTab === 'lyrics') setRightTab('playlist')
   }, [currentSong, rightTab])
 
-  const savePreferences = useCallback((patch: Partial<TraditionalPreferences>) => {
-    setPreferences(prev => { const next = { ...prev, ...patch }; localStorage.setItem(PREF_KEY, JSON.stringify(next)); window.dispatchEvent(new CustomEvent('traditionalPreferencesChanged', { detail: next })); return next })
+  const flushPreferences = useCallback(() => {
+    if (preferencesPersistTimerRef.current !== null) window.clearTimeout(preferencesPersistTimerRef.current)
+    preferencesPersistTimerRef.current = null
+    const next = pendingPreferencesRef.current
+    if (!next) return
+    pendingPreferencesRef.current = null
+    localStorage.setItem(PREF_KEY, JSON.stringify(next))
+    window.dispatchEvent(new CustomEvent('traditionalPreferencesChanged', { detail: next }))
   }, [])
+  const savePreferences = useCallback((patch: Partial<TraditionalPreferences>) => {
+    setPreferences(prev => {
+      const next = { ...prev, ...patch }
+      pendingPreferencesRef.current = next
+      if (preferencesPersistTimerRef.current !== null) window.clearTimeout(preferencesPersistTimerRef.current)
+      preferencesPersistTimerRef.current = window.setTimeout(flushPreferences, 120)
+      return next
+    })
+  }, [flushPreferences])
+  useEffect(() => flushPreferences, [flushPreferences])
 
+  const invalidatePlaylistRequest = useCallback(() => {
+    playlistRequestRef.current += 1
+    playlistAbortRef.current?.abort()
+    playlistAbortRef.current = null
+    setPlaylistLoading(false)
+  }, [])
+  useEffect(() => {
+    if (currentPage.name !== 'playlist') invalidatePlaylistRequest()
+  }, [currentPage.name, invalidatePlaylistRequest])
+  useEffect(() => () => invalidatePlaylistRequest(), [invalidatePlaylistRequest])
   const openPlaylist = useCallback(async (playlist: ExplorePlaylist | any, replaceCurrent = false) => {
+    playlistAbortRef.current?.abort()
+    const controller = new AbortController()
+    playlistAbortRef.current = controller
     const requestId = ++playlistRequestRef.current
     const targetHistoryIndex = replaceCurrent ? historyIndexRef.current : historyIndexRef.current + 1
     setPlaylistLoading(true)
@@ -594,12 +834,16 @@ function TraditionalView({
         applyPlaylist(playlist, songs)
         return
       }
-      const result = await fetchExplorePlaylist({ ...playlist, platform: playlist.platform || platform })
+      const result = await fetchExplorePlaylist({ ...playlist, platform: playlist.platform || platform }, controller.signal)
       applyPlaylist(result.playlist || playlist, result.songs || [])
     } catch (error) {
+      if (controller.signal.aborted) return
       if (requestId === playlistRequestRef.current) setPlaylistError(error instanceof Error ? error.message : '歌单加载失败，请重试')
     } finally {
-      if (requestId === playlistRequestRef.current) setPlaylistLoading(false)
+      if (requestId === playlistRequestRef.current && playlistAbortRef.current === controller) {
+        playlistAbortRef.current = null
+        setPlaylistLoading(false)
+      }
     }
   }, [platform, navigate])
 
@@ -608,7 +852,7 @@ function TraditionalView({
     const originPlatform = restorePlaybackOrigin.platform || platform
     if (originPlatform !== platform) setPlatform(originPlatform)
     if (restorePlaybackOrigin.surface === 'traditional-playlist' && restorePlaybackOrigin.playlist) {
-      void openPlaylist(restorePlaybackOrigin.playlist as ExplorePlaylist)
+      void openPlaylist({ ...(restorePlaybackOrigin.playlist as ExplorePlaylist), platform: originPlatform })
     } else if (restorePlaybackOrigin.surface === 'traditional-search') navigate({ name: 'search' })
     else if (restorePlaybackOrigin.surface === 'traditional-recent') navigate({ name: 'recent' })
     else if (restorePlaybackOrigin.surface === 'traditional-library') navigate({ name: 'library' })
@@ -640,16 +884,7 @@ function TraditionalView({
   }, [navigate])
   const openCommentsFor = useCallback((song: Song) => { if (song) navigate({ name: 'comments', song }) }, [navigate])
 
-  const ownsPlaylist = useCallback((playlist: any): boolean => {
-    if (!playlist || playlist.isLike || playlist.isCollected || playlist.subscribed) return false
-    const target = (playlist.platform || platform) as MusicPlatform
-    const id = String(playlist.id || '')
-    if (target === 'apple') return /^p\./i.test(id)
-    if (target === 'spotify') return playlist.ownedByMe === true || String(playlist.owner || '') === String(spotifyUserId || '')
-    const ownerId = String(playlist.userId || '')
-    const currentUserId = target === 'netease' ? neteaseUserId : target === 'qq' ? qqUserId : ''
-    return Boolean(ownerId && currentUserId && ownerId === String(currentUserId))
-  }, [neteaseUserId, platform, qqUserId, spotifyUserId])
+  const ownsPlaylist = useCallback((playlist: any): boolean => isPlaylistOwner(playlist, { neteaseUserId, qqUserId, spotifyUserId, kugouUserId, sodaUserId }), [kugouUserId, neteaseUserId, qqUserId, sodaUserId, spotifyUserId])
 
   const handleRemoveFromCurrentPlaylist = useCallback(async (song: Song, playlistId: string) => {
     if (currentPage.name !== 'playlist' || !ownsPlaylist(currentPage.playlist)) return
@@ -702,7 +937,7 @@ function TraditionalView({
     setUserPlaylists([
       ...(favoriteSongs.length ? [{ id: APPLE_FAVORITES_ID, name: '喜爱歌曲', coverImgUrl: favoriteSongs[0]?.album.picUrl || '', trackCount: favoriteSongs.length, platform: 'apple' as const, isLike: true }] : []),
       ...(librarySongs.length ? [{ id: APPLE_LIBRARY_ID, name: '我的音乐库', coverImgUrl: librarySongs[0]?.album.picUrl || '', trackCount: librarySongs.length, platform: 'apple' as const }] : []),
-      ...playlists.map(item => ({ ...item, coverImgUrl: item.artworkUrl || '', platform: 'apple' as const, isLike: false })),
+      ...playlists.map(item => ({ ...item, coverImgUrl: item.artworkUrl || '', platform: 'apple' as const, isLike: false, ownedByMe: item.ownedByMe })),
     ])
   }, [])
 
@@ -789,8 +1024,8 @@ function TraditionalView({
 
   const recommendationSongs = useMemo(() => {
     const list = [...(payload?.dailySongs || []), ...(payload?.radioSongs || []), ...(payload?.newSongs || [])]
-    return list.filter((song, index, arr) => arr.findIndex(other => songKey(other) === songKey(song)) === index).slice(0, preferences.density === 'compact' ? 8 : 12)
-  }, [payload, preferences.density])
+    return list.filter((song, index, arr) => arr.findIndex(other => songKey(other) === songKey(song)) === index).slice(0, 12)
+  }, [payload])
   const heroSongs = recommendationSongs.slice(0, 4)
   const minePlaylists = userPlaylists.filter(item => !item.isLike && !item.isCollected && !item.subscribed)
   const collectedPlaylists = userPlaylists.filter(item => !item.isLike && (Boolean(item.isCollected) || Boolean(item.subscribed)))
@@ -853,7 +1088,7 @@ function TraditionalView({
   const bgBase = preferences.background === 'plain'
     ? (isDark ? '#090d16' : '#f3f4f6')
     : preferences.background === 'cover' && currentSong
-      ? `linear-gradient(135deg, rgba(8,12,22,.96), rgba(8,12,22,.78)), url(${coverOf(currentSong)}) center/cover`
+      ? `linear-gradient(135deg, rgba(${isDark ? '8,12,22' : '255,255,255'},${isDark ? '.96' : '.72'}), rgba(${isDark ? '8,12,22' : '255,255,255'},${isDark ? '.78' : '.48'})), url(${coverOf(currentSong)}) center/cover`
       : (isDark ? 'radial-gradient(circle at 88% 0%, rgba(236,72,153,.22), transparent 34%), radial-gradient(circle at 32% 24%, rgba(59,130,246,.16), transparent 36%), #090d16' : 'radial-gradient(circle at 88% 0%, rgba(236,72,153,.16), transparent 34%), #f2f4f8')
   // TV 弱 GPU：全屏 filter blur 是栅格化大头，TV 上把背景模糊钳到 4px（桌面保持用户设置）
   const bgBlur = tvMode ? Math.min(preferences.backgroundBlur, 4) : preferences.backgroundBlur
@@ -865,7 +1100,7 @@ function TraditionalView({
     <div className={`relative h-full overflow-hidden ${text}`}>
       {/* 背景层：可独立模糊/暗化，不影响前景内容 */}
       <div className={`pointer-events-none absolute inset-0 transition-[filter] ${tvMode ? 'duration-100' : 'duration-300'}`} style={bgStyle} />
-      {preferences.backgroundDim && <div className="pointer-events-none absolute inset-0 bg-black/25" />}
+      {preferences.backgroundDim && <div className={`pointer-events-none absolute inset-0 ${isDark ? 'bg-black/25' : 'bg-white/12'}`} />}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/15" />
 
       {/* 顶栏加高（h-20）+ 内容下沉：隐藏 Windows 标题栏的拖拽区占顶部 32px，控件整体下移避免「一半在标题栏上」 */}
@@ -908,7 +1143,7 @@ function TraditionalView({
           <button type="button" onClick={() => navigate({ name: 'home' })} aria-label="前往发现" className="rounded-xl p-2 hover:bg-white/10"><Home className="h-4 w-4" /></button>
           <button type="button" onClick={openLibrary} aria-label="打开音乐库" className="rounded-xl p-2 hover:bg-white/10"><Library className="h-4 w-4" /></button>
           <button type="button" onClick={openLikedSongs} aria-label={favoriteLabels.collection} className="rounded-xl p-2 hover:bg-white/10"><Heart className="h-4 w-4" /></button>
-          <button type="button" onClick={() => navigate({ name: 'recent' })} aria-label="打开最近播放" className="rounded-xl p-2 hover:bg-white/10"><History className="h-4 w-4" /></button>
+          {canUseRecent && <button type="button" onClick={() => navigate({ name: 'recent' })} aria-label="打开最近播放" className="rounded-xl p-2 hover:bg-white/10"><History className="h-4 w-4" /></button>}
           <button type="button" onClick={() => navigate({ name: 'search' })} aria-label="打开搜索" className="rounded-xl p-2 hover:bg-white/10"><Search className="h-4 w-4" /></button>
           <button type="button" onClick={() => loggedIn ? navigate({ name: 'profile' }) : onLoginClick(platform)} aria-label="打开个人中心" className="rounded-xl p-2 hover:bg-white/10"><Music2 className="h-4 w-4" /></button>
           <button type="button" onClick={() => navigate({ name: 'settings' })} aria-label="打开设置" className="rounded-xl p-2 hover:bg-white/10"><Settings className="h-4 w-4" /></button>
@@ -921,12 +1156,21 @@ function TraditionalView({
         </div>
       </header>
 
-      <AnimatePresence>{showModePanel && <ModeSelectionPanel currentMode="traditional" onClose={() => setShowModePanel(false)} onSelect={switchMode} />}</AnimatePresence>
+      <div id="traditional-mode-selection-panel">
+        <AnimatePresence>{showModePanel && <ModeSelectionPanel currentMode="traditional" onClose={() => setShowModePanel(false)} onSelect={switchMode} />}</AnimatePresence>
+      </div>
 
       {/* 顶部悬停触发条：与简约/探索一致的全局模式下拉入口 */}
       <div
         className="absolute left-1/2 top-0 z-40 h-8 w-32 -translate-x-1/2"
         aria-label="顶部悬停切换模式区域"
+        aria-expanded={showModePanel}
+        aria-controls="traditional-mode-selection-panel"
+        tabIndex={0}
+        role="button"
+        onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowModePanel(true) } }}
+        onFocus={() => setTopBarActive(true)}
+        onBlur={() => setTopBarActive(false)}
         onMouseEnter={() => setTopBarActive(true)}
         onMouseLeave={() => setTopBarActive(false)}
         onClick={() => { if (!showModePanel) setShowModePanel(true) }}
@@ -950,21 +1194,22 @@ function TraditionalView({
         </AnimatePresence>
       </div>
 
-      <div className={`relative z-10 grid h-[calc(100%_-_5rem)] min-h-0 grid-cols-1 lg:grid-cols-[176px_minmax(0,1fr)] 2xl:grid-cols-[220px_minmax(0,1fr)_320px] ${currentSong ? 'pb-16 2xl:pb-0' : ''}`}>
+      <div className={`traditional-layout relative z-10 grid h-[calc(100%_-_5rem)] min-h-0 grid-cols-1 lg:grid-cols-[clamp(168px,14vw,196px)_minmax(0,1fr)] ${currentSong ? 'pb-16 min-[1180px]:pb-0' : ''}`}>
         {/* 左栏：导航 + 我的歌单 / 收藏歌单 */}
         <aside className={`hidden min-h-0 flex-col border-r px-3 py-5 lg:flex ${isDark ? 'border-white/10' : 'border-black/10'}`}>
           <nav className="space-y-1">
             <button type="button" onClick={() => navigate({ name: 'home' })} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm" style={{ background: currentPage.name === 'home' ? `${accent}2e` : undefined, color: currentPage.name === 'home' ? accent : undefined }}><Home className="h-4 w-4" />发现</button>
             <button type="button" onClick={openLibrary} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${currentPage.name === 'library' ? '' : muted} hover:bg-white/10`} style={currentPage.name === 'library' ? { color: accent } : undefined}><Library className="h-4 w-4" />音乐库</button>
             <button type="button" onClick={openLikedSongs} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${muted} hover:bg-white/10`}><Heart className="h-4 w-4" />{favoriteLabels.collection}</button>
-            <button type="button" onClick={() => navigate({ name: 'recent' })} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${currentPage.name === 'recent' ? '' : muted} hover:bg-white/10`} style={currentPage.name === 'recent' ? { color: accent } : undefined}><History className="h-4 w-4" />最近播放</button>
+            {canUseRecent && <button type="button" onClick={() => navigate({ name: 'recent' })} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${currentPage.name === 'recent' ? '' : muted} hover:bg-white/10`} style={currentPage.name === 'recent' ? { color: accent } : undefined}><History className="h-4 w-4" />最近播放</button>}
             <button type="button" onClick={() => navigate({ name: 'search' })} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${currentPage.name === 'search' ? '' : muted} hover:bg-white/10`} style={currentPage.name === 'search' ? { color: accent } : undefined}><Search className="h-4 w-4" />搜索</button>
+            <button type="button" onClick={() => loggedIn ? navigate({ name: 'profile' }) : onLoginClick(platform)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${currentPage.name === 'profile' ? '' : muted} hover:bg-white/10`} style={currentPage.name === 'profile' ? { color: accent } : undefined}><Music2 className="h-4 w-4" />个人中心</button>
             <button type="button" onClick={() => navigate({ name: 'settings' })} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${currentPage.name === 'settings' ? '' : muted} hover:bg-white/10`} style={currentPage.name === 'settings' ? { color: accent } : undefined}><Settings className="h-4 w-4" />设置</button>
           </nav>
           <div className="mt-7 flex items-center gap-2 px-1">
-            <button type="button" onClick={() => setPlaylistTab('mine')} className={`rounded-full px-2.5 py-1 text-xs transition ${playlistTab === 'mine' ? 'font-medium' : muted}`} style={playlistTab === 'mine' ? { color: accent } : undefined}>我的歌单</button>
+            <button type="button" onClick={() => switchPlaylistTab('mine')} className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs transition ${playlistTab === 'mine' ? 'font-medium' : muted}`} style={playlistTab === 'mine' ? { color: accent } : undefined}>我的歌单</button>
             <span className={`text-xs ${muted}`}>/</span>
-            <button type="button" onClick={() => setPlaylistTab('collected')} className={`rounded-full px-2.5 py-1 text-xs transition ${playlistTab === 'collected' ? 'font-medium' : muted}`} style={playlistTab === 'collected' ? { color: accent } : undefined}>收藏</button>
+            <button type="button" onClick={() => switchPlaylistTab('collected')} className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs transition ${playlistTab === 'collected' ? 'font-medium' : muted}`} style={playlistTab === 'collected' ? { color: accent } : undefined}>收藏</button>
             {getPlatformCapabilities(platform).createPlaylist && (
               <button type="button" onClick={() => { if (!loggedIn) { onLoginClick(platform); return } setCreatingPlaylist(value => !value) }} className="ml-auto rounded p-1 hover:bg-white/10" aria-label="创建歌单"><Plus className="h-3.5 w-3.5" /></button>
             )}
@@ -983,10 +1228,10 @@ function TraditionalView({
               <button type="button" onClick={() => void handleCreatePlaylist()} disabled={creatingPlaylistBusy || !newPlaylistName.trim()} className="rounded-lg p-1.5 text-white disabled:opacity-40" style={{ background: accent }} aria-label="确认创建"><Check className="h-3.5 w-3.5" /></button>
             </div>
           )}
-          <div className="mt-2 flex-1 space-y-1 overflow-y-auto">
+          <div ref={playlistScrollRef} data-testid="traditional-playlist-scroll" className="mt-2 flex-1 space-y-1 overflow-y-auto">
             {displayPlaylist.map((playlist: any) => (
               <button type="button" key={`${playlist.platform || platform}:${playlist.id || playlist.dirId}`} onClick={() => openPlaylist(playlist)} onContextMenu={event => { event.preventDefault(); setPlaylistSubscribed(Boolean(playlist.isCollected || playlist.subscribed)); setPlaylistMenu({ show: true, x: event.clientX, y: event.clientY, playlist }) }} className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition hover:bg-white/10`}>
-                {playlist.coverImgUrl || playlist.coverUrl ? <img src={playlist.coverImgUrl || playlist.coverUrl} alt="" className="h-9 w-9 rounded-lg object-cover" /> : <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg" style={{ background: `${accent}22` }}><ListMusic className="h-4 w-4 opacity-35" /></span>}
+                {playlist.coverImgUrl || playlist.coverUrl ? <img src={playlist.coverImgUrl || playlist.coverUrl} alt={`${playlist.name} 封面`} className="h-9 w-9 rounded-lg object-cover" /> : <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg" style={{ background: `${accent}22` }}><ListMusic className="h-4 w-4 opacity-35" /></span>}
                 <span className="min-w-0 flex-1 truncate text-xs">{playlist.name}</span>
               </button>
             ))}
@@ -1007,7 +1252,7 @@ function TraditionalView({
           ) : currentPage.name === 'profile' ? (
             <TraditionalProfile platform={platform} accent={accent} isDark={isDark} loggedIn={loggedIn} username={username} avatar={avatar} selfUserId={platform === 'netease' ? (neteaseUserId || '') : platform === 'qq' ? (qqUserId || '') : ''} targetUserId={currentPage.userId} targetNickname={currentPage.nickname} targetAvatar={currentPage.avatarUrl} userPlaylists={userPlaylists} onBack={goBack} onOpenPlaylist={openPlaylist} onOpenLiked={openLikedSongs} onOpenUserProfile={(userId, nickname, avatarUrl) => navigate({ name: 'profile', userId, nickname, avatarUrl })} onOpenArtist={openArtistDetail} onLoginClick={() => onLoginClick(platform)} />
           ) : currentPage.name === 'playlist' ? (
-            <TraditionalPlaylistDetail playlist={currentPage.playlist} songs={currentPage.songs} loading={playlistLoading} error={playlistError} onRetry={() => void openPlaylist(currentPage.playlist, true)} currentSong={currentSong} playerTheme={playerTheme} accentColor={accent} onClose={goBack} onSongSelect={(song, songs) => onSongSelect(song, songs, { mode: 'traditional', surface: 'traditional-playlist', platform: song.platform || platform, playlist: currentPage.playlist, songs })} onOpenArtist={openArtistDetail} onOpenAlbum={openAlbumDetail} onPlayNext={onPlayNext} onAddToFavorites={onAddToFavorites} onRemoveFromFavorites={onRemoveFromFavorites} onAddToPlaylist={onAddToPlaylist} onRemoveFromPlaylist={ownsPlaylist(currentPage.playlist) && getPlatformCapabilities((currentPage.playlist?.platform || platform) as MusicPlatform).removeTracksFromPlaylist ? handleRemoveFromCurrentPlaylist : undefined} onViewComments={openCommentsFor} onCopyInfo={onCopyInfo} userPlaylists={userPlaylists} ownUserName={loggedIn ? username : ''} ownUserAvatar={avatar} ownUserId={platform === 'netease' ? (neteaseUserId || '') : platform === 'qq' ? (qqUserId || '') : ''} onOpenUserProfile={(targetPlatform, userId, nickname, avatarUrl) => { if (targetPlatform === platform) navigate({ name: 'profile', userId, nickname, avatarUrl }) }} />
+            <TraditionalPlaylistDetail playlist={currentPage.playlist} songs={currentPage.songs} loading={playlistLoading} error={playlistError} onRetry={() => void openPlaylist(currentPage.playlist, true)} currentSong={currentSong} playerTheme={playerTheme} accentColor={accent} onClose={goBack} isOwner={ownsPlaylist(currentPage.playlist)} onSongSelect={(song, songs) => onSongSelect(song, songs, { mode: 'traditional', surface: 'traditional-playlist', platform: song.platform || platform, playlist: currentPage.playlist, songs })} onOpenArtist={openArtistDetail} onOpenAlbum={openAlbumDetail} onPlayNext={onPlayNext} onAddToFavorites={onAddToFavorites} onRemoveFromFavorites={onRemoveFromFavorites} onAddToPlaylist={onAddToPlaylist} onRemoveFromPlaylist={ownsPlaylist(currentPage.playlist) && getPlatformCapabilities((currentPage.playlist?.platform || platform) as MusicPlatform).removeTracksFromPlaylist ? handleRemoveFromCurrentPlaylist : undefined} onViewComments={openCommentsFor} onCopyInfo={onCopyInfo} userPlaylists={userPlaylists} ownUserName={loggedIn ? username : ''} ownUserAvatar={avatar} ownUserId={platform === 'netease' ? (neteaseUserId || '') : platform === 'qq' ? (qqUserId || '') : ''} onOpenUserProfile={(targetPlatform, userId, nickname, avatarUrl) => { if (targetPlatform === platform) navigate({ name: 'profile', userId, nickname, avatarUrl }) }} />
           ) : currentPage.name === 'comments' ? (
             <TraditionalComments song={currentPage.song} accent={accent} isDark={isDark} onClose={goBack} />
           ) : currentPage.name === 'artist' ? (
@@ -1017,7 +1262,7 @@ function TraditionalView({
           ) : (
             <HomeContent
               platform={platform} accent={accent} isDark={isDark} muted={muted} surface={surface}
-              loading={loading} loggedIn={loggedIn} username={username} payload={payload}
+              loading={loading} error={homeError} onRetry={() => { void loadHome() }} loggedIn={loggedIn} username={username} payload={payload}
               recommendationSongs={recommendationSongs} heroSongs={heroSongs} preferences={preferences}
               onSongSelect={(song, songs, origin) => onSongSelect(song, songs, origin)}
               onSongMenu={setSongMenu} onPlaylistMenu={setPlaylistMenu} onOpenPlaylist={openPlaylist}
@@ -1026,15 +1271,15 @@ function TraditionalView({
         </main>
 
         {/* 右栏：资料卡 + 正在播放（真实频谱）+ 歌词 + 播放列表（覆盖到底部可滚动） */}
-        <aside className={`hidden min-h-0 flex-col border-l 2xl:flex ${isDark ? 'border-white/10' : 'border-black/10'}`}>
+        <aside className={`hidden min-h-0 flex-col overflow-hidden border-l min-[1180px]:flex ${isDark ? 'border-white/10' : 'border-black/10'}`}>
           <div className="shrink-0 px-4 pt-4">
             <button type="button" onClick={() => loggedIn ? navigate({ name: 'profile' }) : onLoginClick(platform)} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition hover:bg-white/10 ${surface}`}>
-              {avatar ? <img src={avatar} alt="" className="h-10 w-10 rounded-full object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-full text-white" style={{ background: accent }}><Music2 className="h-5 w-5" /></div>}
-              <span className="min-w-0"><span className="block truncate text-sm font-medium">{loggedIn ? username || '我的账户' : '游客模式'}</span><span className={`mt-0.5 block text-xs ${muted}`}>{loggedIn ? `${platformLabel(platform)} · 个人音乐库` : '登录后同步收藏与歌单'}</span></span>
+              {avatar ? <img src={avatar} alt={`${loggedIn ? username || '用户' : '游客'}头像`} className="h-10 w-10 rounded-full object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-full text-white" style={{ background: accent }}><Music2 className="h-5 w-5" /></div>}
+              <span className="min-w-0" title={loggedIn ? username || '我的账户' : '游客模式'}><span className="block truncate text-sm font-medium">{loggedIn ? username || '我的账户' : '游客模式'}</span><span className={`mt-0.5 block text-xs ${muted}`}>{loggedIn ? `${platformLabel(platform)} · 个人音乐库` : '登录后同步收藏与歌单'}</span></span>
             </button>
           </div>
 
-          <div className="shrink-0 px-4 pt-4">
+          <div className="traditional-now-playing shrink-0 px-4 pt-4">
             <section className={`rounded-2xl border p-4 ${surface}`}>
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-semibold">正在播放</h2>
@@ -1045,21 +1290,31 @@ function TraditionalView({
               {currentSong ? (
                 <>
                   {/* 点击歌曲信息进入播放页（传统模式选歌原地播放，播放页入口在此） */}
-                  <button type="button" onClick={() => switchMode('minimal')} title="进入播放页" className="flex w-full gap-3 rounded-xl text-left transition hover:bg-white/5">
-                    <img src={coverOf(currentSong)} alt="" className="h-16 w-16 rounded-xl object-cover shadow-lg" />
-                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{currentSong.name}</span><span className={`mt-1 block truncate text-xs ${muted}`}>{currentSong.artists?.map(a => a.name).join(' / ')}</span><span className={`mt-1 block truncate text-[10px] ${muted}`}>{currentSong.album?.name || '未知专辑'}</span></span>
+                  <button type="button" onClick={() => onOpenPlayer(currentPlaybackOrigin)} title="进入播放页" className="flex w-full items-center gap-4 rounded-xl text-left transition hover:bg-white/5">
+                    <CoverImage src={coverOf(currentSong)} alt={`${currentSong.name} 封面`} className="h-[76px] w-[76px] shrink-0 rounded-xl object-cover shadow-lg" />
+                    <span className="min-w-0 flex-1"><span className="block truncate text-[15px] font-medium">{currentSong.name}</span><span className={`mt-1.5 block truncate text-xs ${muted}`}>{currentSong.artists?.map(a => a.name).join(' / ')}</span><span className={`mt-1 block truncate text-[10px] ${muted}`}>{currentSong.album?.name || '未知专辑'}</span></span>
                   </button>
                   {preferences.showWaveform && (
-                    <TraditionalSpectrum analyzerStore={analyzerStore} isPlaying={isPlaying} songTheme={songTheme} />
+                    <TraditionalSpectrum analyzerStore={analyzerStore} isPlaying={isPlaying} songTheme={songTheme} isDark={isDark} />
                   )}
-                  <TraditionalProgressRow playbackTimeStore={playbackTimeStore} duration={duration} onSeek={onSeek} songTheme={songTheme} mutedText={muted} />
-                  <div className="mt-3 flex items-center justify-center gap-5">
-                    <button type="button" onClick={onPrevious} aria-label="上一首"><SkipBack className="h-4 w-4" /></button>
-                    <button type="button" onClick={onPlayPause} className="flex h-11 w-11 items-center justify-center rounded-full text-white" style={{ background: songTheme }}>{isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}</button>
-                    <button type="button" onClick={onNext} aria-label="下一首"><SkipForward className="h-4 w-4" /></button>
-                    {/* 音量按钮：点击弹出音量条 */}
+                  {live ? (
+                    <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-[#fa2d48]"><span className="h-2 w-2 rounded-full bg-[#fa2d48]" />正在直播</div>
+                  ) : (
+                    <TraditionalProgressRow playbackTimeStore={playbackTimeStore} duration={duration} onSeek={onSeek} songTheme={controlAccent} mutedText={muted} />
+                  )}
+                  <div className="mt-4 flex items-center justify-center gap-5">
+                    {!live && (
+                      <div className="flex items-center gap-0.5" onMouseEnter={clearToolsHideTimer} onMouseLeave={scheduleToolsHide}>
+                        <button type="button" onClick={() => { clearToolsHideTimer(); setToolsOpen(value => !value) }} aria-label={toolsOpen ? '收起播放工具' : '展开播放工具'} className="rounded-full p-1.5 transition hover:bg-white/10">
+                          {toolsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+                        </button>
+                        <button type="button" onClick={onPrevious} aria-label="上一首"><SkipBack className="h-4 w-4" /></button>
+                      </div>
+                    )}
+                    <button type="button" onClick={onPlayPause} aria-label={isPlaying ? '暂停' : '播放'} className="flex h-11 w-11 items-center justify-center rounded-full" style={{ background: songTheme, color: playIconColor }}>{isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}</button>
+                    {!live && <button type="button" onClick={onNext} aria-label="下一首"><SkipForward className="h-4 w-4" /></button>}
                     <div className="relative">
-                      <button type="button" onClick={() => setVolumeOpen(value => !value)} aria-label="音量" className={`rounded-full p-2 transition ${volumeOpen ? 'bg-white/15' : 'hover:bg-white/10'}`} style={{ color: volumeOpen ? songTheme : undefined }}><Volume2 className="h-4 w-4" /></button>
+                      <button type="button" onClick={() => setVolumeOpen(value => !value)} aria-label="音量" className={`rounded-full p-2 transition ${volumeOpen ? 'bg-white/15' : 'hover:bg-white/10'}`} style={{ color: volumeOpen ? controlAccent : undefined }}><Volume2 className="h-4 w-4" /></button>
                       <AnimatePresence>
                         {volumeOpen && (
                           <motion.div initial={{ opacity: 0, y: 6, scale: .96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 6, scale: .96 }} transition={{ duration: .14 }} className={`absolute bottom-full right-0 z-30 mb-2 flex w-32 flex-col items-center gap-1 rounded-xl border p-3 shadow-xl backdrop-blur-xl ${surface}`}>
@@ -1071,32 +1326,43 @@ function TraditionalView({
                       </AnimatePresence>
                     </div>
                   </div>
-                  {/* 播控工具行：播放模式 / 音效 / 音质 / 桌面歌词（对齐网易云底栏右侧能力） */}
-                  <div className={`mt-2 flex items-center justify-center gap-1 ${muted}`}>
-                    <button type="button" onClick={onPlayModeChange} title={playMode === 'shuffle' ? '随机播放' : playMode === 'repeat' ? '单曲循环' : '顺序播放'} aria-label="播放模式" className="rounded-xl p-2 transition hover:bg-white/10">
-                      {playMode === 'shuffle' ? <Shuffle className="h-4 w-4" style={{ color: songTheme }} /> : playMode === 'repeat' ? <Repeat1 className="h-4 w-4" style={{ color: songTheme }} /> : <Repeat className="h-4 w-4" />}
-                    </button>
-                    {onOpenMixingStudio && <button type="button" onClick={onOpenMixingStudio} title="音效 / 调音室" aria-label="音效" className="rounded-xl p-2 transition hover:bg-white/10"><SlidersHorizontal className="h-4 w-4" /></button>}
-                    <button type="button" onClick={() => setShowQuality(true)} title="播放音质" aria-label="播放音质" className="rounded-xl p-2 transition hover:bg-white/10"><Disc3 className="h-4 w-4" /></button>
-                    <button type="button" onClick={() => window.electron?.desktopLyrics?.setEnabled?.(!desktopLyricsOn)} title="桌面歌词" aria-label="桌面歌词" className="rounded-xl p-2 transition hover:bg-white/10" style={desktopLyricsOn ? { color: songTheme } : undefined}><Captions className="h-4 w-4" /></button>
-                  </div>
+                  <AnimatePresence>
+                    {toolsOpen && !live && (
+                      <motion.div
+                        data-testid="traditional-tools-pill"
+                        initial={{ opacity: 0, y: -4, scale: .96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: .96 }}
+                        onFocus={clearToolsHideTimer}
+                        onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) scheduleToolsHide() }}
+                        onMouseEnter={clearToolsHideTimer} onMouseLeave={scheduleToolsHide}
+                        className={`mx-auto mt-2 flex w-fit items-center gap-0.5 rounded-full border px-1 py-0.5 ${muted}`}
+                        style={{ borderColor: isDark ? 'rgba(255,255,255,.12)' : 'rgba(15,23,42,.12)', background: isDark ? 'rgba(255,255,255,.055)' : 'rgba(255,255,255,.7)' }}
+                      >
+                        <button type="button" onClick={() => runToolAction(() => onPlayModeChange?.())} title={playMode === 'shuffle' ? '随机播放' : playMode === 'repeat' ? '单曲循环' : '顺序播放'} aria-label="播放模式" className="rounded-full p-2 transition hover:bg-white/10">
+                          {playMode === 'shuffle' ? <Shuffle className="h-4 w-4" style={{ color: songTheme }} /> : playMode === 'repeat' ? <Repeat1 className="h-4 w-4" style={{ color: songTheme }} /> : <Repeat className="h-4 w-4" />}
+                        </button>
+                        {onOpenMixingStudio && <button type="button" onClick={() => runToolAction(onOpenMixingStudio)} title="音效 / 调音室" aria-label="音效" className="rounded-full p-2 transition hover:bg-white/10"><SlidersHorizontal className="h-4 w-4" /></button>}
+                        <button type="button" onClick={() => runToolAction(() => setShowQuality(true))} title="播放音质" aria-label="播放音质" className="rounded-full p-2 transition hover:bg-white/10"><Disc3 className="h-4 w-4" /></button>
+                        {desktopLyricsAvailable && <button type="button" onClick={() => runToolAction(() => { void window.electron?.desktopLyrics?.setEnabled?.(!desktopLyricsOn) })} title="桌面歌词" aria-label="桌面歌词" className="rounded-full p-2 transition hover:bg-white/10" style={desktopLyricsOn ? { color: songTheme } : undefined}><Captions className="h-4 w-4" /></button>}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </>
               ) : <div className="py-7 text-center"><Music2 className="mx-auto h-8 w-8 opacity-30" /><p className={`mt-2 text-xs ${muted}`}>选择一首歌曲开始播放</p><button type="button" onClick={() => navigate({ name: 'search' })} className="mt-3 rounded-full px-3 py-1.5 text-xs text-white" style={{ background: accent }}>去搜索</button></div>}
             </section>
           </div>
 
           {/* 播放列表 / 同步歌词 共用一张卡片 */}
-          <div className="min-h-0 flex-1 px-4 pb-4 pt-4">
+          <div className="min-h-0 flex-1 overflow-y-auto traditional-scroll px-4 pb-4 pt-2">
             <section className={`flex h-full min-h-0 flex-col rounded-2xl border p-3 ${surface}`}>
               <div className="mb-2 flex shrink-0 items-center gap-1 rounded-xl border p-0.5" style={{ borderColor: isDark ? 'rgba(255,255,255,.1)' : 'rgba(15,23,42,.1)' }}>
-                <button type="button" onClick={() => setRightTab('playlist')} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1 text-xs transition" style={rightTab === 'playlist' ? { background: `${songTheme}26`, color: songTheme } : undefined}><ListMusic className="h-3.5 w-3.5" />播放列表{currentSong ? <span className={`ml-0.5 text-[9px] ${muted}`}>{queuedSongs.length}</span> : null}</button>
-                {currentSong && <button type="button" onClick={() => setRightTab('lyrics')} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1 text-xs transition" style={rightTab === 'lyrics' ? { background: `${songTheme}26`, color: songTheme } : undefined}><Waves className="h-3.5 w-3.5" />同步歌词</button>}
+                <button type="button" onClick={() => setRightTab('playlist')} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1 text-xs transition" style={rightTab === 'playlist' ? { background: `color-mix(in srgb, ${songTheme} 15%, transparent)`, color: controlAccent } : undefined}><ListMusic className="h-3.5 w-3.5" />播放列表{currentSong ? <span className={`ml-0.5 text-[9px] ${muted}`}>{queuedSongs.length}</span> : null}</button>
+                {currentSong && <button type="button" onClick={() => setRightTab('lyrics')} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1 text-xs transition" style={rightTab === 'lyrics' ? { background: `color-mix(in srgb, ${songTheme} 15%, transparent)`, color: controlAccent } : undefined}><Waves className="h-3.5 w-3.5" />同步歌词</button>}
               </div>
               {rightTab === 'lyrics' && currentSong ? (
-                <TraditionalVerticalLyrics playbackTimeStore={playbackTimeStore} lyrics={lyrics} accentColor={songTheme} mutedText={muted} />
+                <TraditionalVerticalLyrics playbackTimeStore={playbackTimeStore} lyrics={lyrics} readableAccentColor={readableSongTheme} mutedText={muted} />
               ) : (
-                <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
-                  {queuedSongs.map((song, index) => { const active = currentSong && songKey(song) === songKey(currentSong); return <button type="button" key={`${songKey(song)}:${index}`} onClick={() => onSongSelect(song, queuedSongs, { mode: 'traditional', surface: 'mode-root', platform: song.platform || platform })} className={`flex w-full items-center gap-2 rounded-xl px-1.5 py-1.5 text-left transition ${active ? 'bg-white/10' : 'hover:bg-white/8'}`}><span className={`w-4 text-center text-[10px] ${muted}`}>{active && isPlaying ? <Waves className="h-3.5 w-3.5" style={{ color: songTheme }} /> : index + 1}</span><img src={coverOf(song)} alt="" loading="lazy" className="h-8 w-8 rounded-lg object-cover" /><span className="min-w-0 flex-1"><span className="block truncate text-xs">{song.name}</span><span className={`block truncate text-[10px] ${muted}`}>{song.artists?.map(a => a.name).join(' / ')}</span></span></button> })}
+                <div className="min-h-0 flex-1 space-y-1 overflow-y-auto traditional-scroll">
+                  {queuedSongs.map((song, index) => { const active = currentSong && songKey(song) === songKey(currentSong); return <button type="button" key={`${songKey(song)}:${index}`} onClick={() => onSongSelect(song, queuedSongs, currentPlaybackOrigin)} className={`flex w-full items-center gap-2 rounded-xl px-1.5 py-1.5 text-left transition ${active ? 'bg-white/10' : 'hover:bg-white/8'}`}><span className={`w-4 text-center text-[10px] ${muted}`}>{active && isPlaying ? <Waves className="h-3.5 w-3.5" style={{ color: songTheme }} /> : index + 1}</span><CoverImage src={coverOf(song)} alt={`${song.name} 封面`} className="h-8 w-8 rounded-lg object-cover" /><span className="min-w-0 flex-1"><span className="block truncate text-xs">{song.name}</span><span className={`block truncate text-[10px] ${muted}`}>{song.artists?.map(a => a.name).join(' / ')}</span></span></button> })}
                   {queuedSongs.length === 0 && <p className={`px-2 py-5 text-center text-xs ${muted}`}>播放列表为空</p>}
                 </div>
               )}
@@ -1106,14 +1372,14 @@ function TraditionalView({
       </div>
 
       {currentSong && (
-        <div className={`absolute inset-x-3 bottom-3 z-30 flex items-center gap-3 rounded-2xl border px-3 py-2 shadow-2xl backdrop-blur-xl 2xl:hidden ${surface}`}>
-          {coverOf(currentSong) ? <img src={coverOf(currentSong)} alt="" className="h-10 w-10 rounded-lg object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-lg" style={{ background: `${songTheme}22` }}><Music2 className="h-4 w-4" /></div>}
-          <button type="button" onClick={() => switchMode('minimal')} className="min-w-0 flex-1 text-left" title="进入播放页">
+        <div className={`absolute inset-x-3 bottom-3 z-30 flex items-center gap-3 rounded-2xl border px-3 py-2 shadow-2xl backdrop-blur-xl min-[1180px]:hidden ${surface}`}>
+          {coverOf(currentSong) ? <img src={coverOf(currentSong)} alt={`${currentSong.name} 封面`} className="h-10 w-10 rounded-lg object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${songTheme} 13%, transparent)` }}><Music2 className="h-4 w-4" /></div>}
+          <button type="button" onClick={() => onOpenPlayer(currentPlaybackOrigin)} className="min-w-0 flex-1 text-left" title="进入播放页">
             <span className="block truncate text-sm font-medium">{currentSong.name}</span>
             <span className={`block truncate text-xs ${muted}`}>{currentSong.artists?.map(artist => artist.name).join(' / ')}</span>
           </button>
           <button type="button" onClick={onPrevious} aria-label="上一首" className="rounded-full p-2 hover:bg-white/10"><SkipBack className="h-4 w-4" /></button>
-          <button type="button" onClick={onPlayPause} aria-label={isPlaying ? '暂停' : '播放'} className="flex h-10 w-10 items-center justify-center rounded-full text-white" style={{ background: songTheme }}>{isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}</button>
+          <button type="button" onClick={onPlayPause} aria-label={isPlaying ? '暂停' : '播放'} className="flex h-10 w-10 items-center justify-center rounded-full" style={{ background: songTheme, color: playIconColor }}>{isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}</button>
           <button type="button" onClick={onNext} aria-label="下一首" className="rounded-full p-2 hover:bg-white/10"><SkipForward className="h-4 w-4" /></button>
           <button type="button" onClick={() => setVolumeOpen(value => !value)} aria-label="音量" className="rounded-full p-2 hover:bg-white/10"><Volume2 className="h-4 w-4" /></button>
           {volumeOpen && <input aria-label="紧凑音量滑块" type="range" min={0} max={1} step={.01} value={volume} onChange={event => onVolumeChange(Number(event.target.value))} className="w-24" style={{ accentColor: songTheme }} />}
@@ -1132,49 +1398,78 @@ function TraditionalView({
               : `https://music.163.com/#/playlist?id=${playlistId}`
         void navigator.clipboard?.writeText(url)
         window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '歌单链接已复制', type: 'success' } }))
-      }} isOwner={(() => {
-        const playlist = playlistMenu.playlist
-        if (!playlist || playlist.isLike || playlist.isCollected || playlist.subscribed) return false
-        const target = (playlist.platform || platform) as MusicPlatform
-        const id = String(playlist.id || '')
-        if (target === 'apple') return /^p\./i.test(id)
-        if (target === 'spotify') return playlist.ownedByMe === true || String(playlist.owner || '') === String(spotifyUserId || '')
-        const ownerId = String(playlist.userId || '')
-        const currentUserId = target === 'netease' ? neteaseUserId : target === 'qq' ? qqUserId : ''
-        return Boolean(ownerId && currentUserId && ownerId === String(currentUserId))
-      })()} isSubscribed={playlistSubscribed || Boolean(playlistMenu.playlist?.isCollected || playlistMenu.playlist?.subscribed)} isSpecialPlaylist={Boolean(playlistMenu.playlist?.isLike || [APPLE_LIBRARY_ID, APPLE_FAVORITES_ID].includes(String(playlistMenu.playlist?.id || '')))} canEdit={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).updatePlaylist} canDelete={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).deletePlaylist} canSubscribe={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).subscribePlaylist} canShare={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).sharePlaylist && ((playlistMenu.playlist?.platform || platform) !== 'apple' || String(playlistMenu.playlist?.id || '').startsWith('pl.'))} />
+      }} isOwner={isPlaylistOwner(playlistMenu.playlist, { neteaseUserId, qqUserId, spotifyUserId, kugouUserId, sodaUserId })} isSubscribed={playlistSubscribed || Boolean(playlistMenu.playlist?.isCollected || playlistMenu.playlist?.subscribed)} isSpecialPlaylist={isSpecialPlaylist(playlistMenu.playlist)} canEdit={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).updatePlaylist} canDelete={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).deletePlaylist} canSubscribe={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).subscribePlaylist && !isSpecialPlaylist(playlistMenu.playlist)} canShare={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).sharePlaylist && ((playlistMenu.playlist?.platform || platform) !== 'apple' || String(playlistMenu.playlist?.id || '').startsWith('pl.'))} />
       <EditPlaylistModal show={showEditPlaylist} onClose={() => setShowEditPlaylist(false)} onSubmit={data => { void handleEditPlaylist(data) }} playlist={playlistMenu.playlist} loading={playlistMutationBusy} />
       <DeletePlaylistModal show={showDeletePlaylist} onClose={() => setShowDeletePlaylist(false)} onConfirm={() => { void handleDeletePlaylist() }} playlistName={playlistMenu.playlist?.name || ''} loading={playlistMutationBusy} />
       <AudioQualitySettingsModal show={showQuality} onClose={() => setShowQuality(false)} playerTheme={playerTheme} neteaseVip={neteaseVip} qqVip={qqVip} neteaseLoggedIn={neteaseLoggedIn} qqLoggedIn={qqLoggedIn} />
-      <style>{`@keyframes traditionalWave { from { transform: scaleY(.45); opacity: .45; } to { transform: scaleY(1.05); opacity: 1; } }`}</style>
+      <style>{`
+        .traditional-scroll { scrollbar-width: thin; scrollbar-color: ${isDark ? 'rgba(255,255,255,.28) transparent' : 'rgba(15,23,42,.25) transparent'}; }
+        .traditional-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .traditional-scroll::-webkit-scrollbar-thumb { background: ${isDark ? 'rgba(255,255,255,.28)' : 'rgba(15,23,42,.25)'}; border-radius: 999px; }
+        .traditional-scroll::-webkit-scrollbar-track { background: transparent; }
+        @keyframes traditionalWave { from { transform: scaleY(.45); opacity: .45; } to { transform: scaleY(1.05); opacity: 1; } }
+        @media (min-width: 1180px) {
+          .traditional-layout { grid-template-columns: clamp(168px, 14vw, 196px) minmax(520px, 1fr) clamp(276px, 23vw, 320px); }
+        }
+        @media (min-width: 1180px) and (max-height: 760px) {
+          .traditional-now-playing { max-height: 58%; overflow-y: auto; }
+        }
+      `}</style>
     </div>
   )
 }
 
 // 首页内容：发现（排行榜 + 新歌 + 推荐歌单）
-function HomeContent({ platform, accent, muted, surface, loggedIn, username, payload, heroSongs, preferences, onSongSelect, onSongMenu, onPlaylistMenu, onOpenPlaylist }: {
-  platform: MusicPlatform; accent: string; isDark: boolean; muted: string; surface: string; loading: boolean; loggedIn: boolean; username: string; payload: ExplorePayload | null; recommendationSongs: Song[]; heroSongs: Song[]; preferences: TraditionalPreferences; onSongSelect: SongSelectHandler; onSongMenu: (menu: { show: boolean; x: number; y: number; song: Song | null }) => void; onPlaylistMenu: (menu: { show: boolean; x: number; y: number; playlist: any | null }) => void; onOpenPlaylist: (playlist: any) => void;
+function HomeContent({ platform, accent, muted, surface, loggedIn, username, payload, heroSongs, loading, error, onRetry, onSongSelect, onSongMenu, onPlaylistMenu, onOpenPlaylist }: {
+  platform: MusicPlatform; accent: string; isDark: boolean; muted: string; surface: string; loading: boolean; error: string; onRetry: () => void; loggedIn: boolean; username: string; payload: ExplorePayload | null; recommendationSongs: Song[]; heroSongs: Song[]; preferences: TraditionalPreferences; onSongSelect: SongSelectHandler; onSongMenu: (menu: { show: boolean; x: number; y: number; song: Song | null }) => void; onPlaylistMenu: (menu: { show: boolean; x: number; y: number; playlist: any | null }) => void; onOpenPlaylist: (playlist: any) => void;
 }) {
+
   // 发现页 = 探索向内容：排行榜 + 新歌 + 推荐歌单（个性化推荐在音乐库）
   const charts = (payload?.charts || []).slice(0, 4)
   const newSongs = (payload?.newSongs || []).slice(0, 8)
-  const chartSongToSong = (chart: any, s: any): Song => ({ id: s.id || 0, mid: s.mid, name: s.name || '', artists: [{ name: s.artist || '' }], album: { name: '', picUrl: s.coverUrl || chart.coverUrl || '' }, duration: 0, platform: chart.platform || platform })
-  return <><div className="mb-6"><p className={`text-xs uppercase tracking-[.2em] ${muted}`}>{platformLabel(platform)}</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">{username ? `欢迎回来，${username}` : '在音乐里，遇见更好的自己'}</h1><p className={`mt-2 text-sm ${muted}`}>{loggedIn ? '探索新歌与排行榜，个性推荐在音乐库' : '登录后解锁个性化推荐，游客也可以直接开始播放'}</p></div>
-  <section className="relative mb-8 grid min-h-[190px] grid-cols-[minmax(0,1fr)_180px] overflow-hidden rounded-3xl border p-6" style={{ borderColor: `${accent}55`, background: `linear-gradient(125deg, ${accent}28, rgba(255,255,255,.05))` }}><div className="relative z-10 flex flex-col justify-between"><div><span className="rounded-full border px-2.5 py-1 text-[10px]" style={{ borderColor: `${accent}66`, color: accent }}>TRADITIONAL MODE</span><h2 className="mt-4 max-w-lg text-2xl font-semibold">发现好音乐，从排行榜开始</h2><p className={`mt-2 max-w-md text-sm ${muted}`}>新歌速递、热门榜单、精选歌单——探索永远不缺新意。</p></div><button type="button" onClick={() => heroSongs[0] && onSongSelect(heroSongs[0], heroSongs, { mode: 'traditional', surface: 'mode-root', platform })} className="mt-4 flex w-fit items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-white" style={{ background: accent }}><Play className="h-4 w-4" />播放推荐</button></div><div className="relative flex items-center justify-center"><div className="absolute h-36 w-36 rounded-full blur-3xl" style={{ background: accent, opacity: .3 }} />{heroSongs[0] ? <img src={coverOf(heroSongs[0])} alt="" className="relative h-32 w-32 rotate-3 rounded-2xl object-cover shadow-2xl" /> : <Sparkles className="relative h-16 w-16 opacity-50" />}</div></section>
+  const playlists = (payload?.playlists || []).slice(0, 8)
+  const hasContent = charts.length > 0 || newSongs.length > 0 || playlists.length > 0
+  const chartSongToSong = useCallback((chart: any, s: any): Song => ({ id: Number(s.id) || 0, mid: s.mid, name: s.name || '', artists: [{ name: s.artist || '' }], album: { name: '', picUrl: s.coverUrl || chart.coverUrl || '' }, duration: 0, platform: chart.platform || platform }), [platform])
+  const [chartLoadingId, setChartLoadingId] = useState<string | null>(null)
+  const playChartSong = useCallback(async (chart: ExploreChart, index: number) => {
+    const preview = chart.songs.map(song => chartSongToSong(chart, song))
+    const previewSong = preview[index]
+    if (chart.platform !== 'netease' && previewSong && (previewSong.mid || previewSong.id)) {
+      onSongSelect(previewSong, preview, { mode: 'traditional', surface: 'mode-root', platform: chart.platform })
+      return
+    }
+    setChartLoadingId(chart.id)
+    try {
+      const detail = await fetchExploreChart(chart)
+      const songs = detail.songs || []
+      const selected = songs[index] || songs[0]
+      if (selected) onSongSelect(selected, songs, { mode: 'traditional', surface: 'mode-root', platform: selected.platform || chart.platform })
+      else window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '该榜单暂时没有可播放歌曲', type: 'info' } }))
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('showToast', { detail: { message: error instanceof Error ? error.message : '榜单歌曲加载失败，请重试', type: 'error' } }))
+    } finally {
+      setChartLoadingId(null)
+    }
+  }, [chartSongToSong, onSongSelect])
+  if (loading) return <div className={`py-20 text-center text-sm ${muted}`}>正在加载首页内容…</div>
+  if (error) return <div className={`py-20 text-center text-sm ${muted}`} role="alert"><p>{error}</p><button type="button" onClick={onRetry} className="mt-3 rounded-full px-3 py-1.5 text-xs text-white" style={{ background: accent }}>重试</button></div>
+  if (!hasContent) return <div className={`py-20 text-center text-sm ${muted}`}><Music2 className="mx-auto mb-2 h-8 w-8 opacity-40" /><p>{loggedIn ? '暂时没有可用的推荐内容' : '登录后可获得个性化推荐，当前暂无公开内容'}</p></div>
 
-  {preferences.showRecommendations && charts.length > 0 && <section className="mb-8"><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-semibold">排行榜</h2><span className={`text-xs ${muted}`}>热门榜单实时更新</span></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+  return <><div className="mb-4 min-w-0"><h1 className="truncate text-3xl font-semibold tracking-tight" title={username ? `欢迎回来，${username}` : undefined}>{username ? `欢迎回来，${username}` : '在音乐里，遇见更好的自己'}</h1><p className={`mt-1.5 text-sm ${muted}`}>{loggedIn ? '探索新歌与排行榜，个性推荐在音乐库' : '登录后解锁个性化推荐，游客也可以直接开始播放'}</p></div>
+  <section data-testid="traditional-home-hero" className="relative mb-8 grid min-h-[190px] grid-cols-1 gap-5 overflow-hidden rounded-3xl border p-4 sm:grid-cols-[minmax(0,1fr)_160px] sm:p-6 lg:grid-cols-[minmax(0,1fr)_180px]" style={{ borderColor: `${accent}55`, background: `linear-gradient(125deg, ${accent}28, rgba(255,255,255,.05))` }}><div className="relative z-10 flex flex-col justify-between"><div><span className="rounded-full border px-2.5 py-1 text-[10px]" style={{ borderColor: `${accent}66`, color: accent }}>TRADITIONAL MODE</span><h2 className="mt-4 max-w-lg text-2xl font-semibold">发现好音乐，从排行榜开始</h2><p className={`mt-2 max-w-md text-sm ${muted}`}>新歌速递、热门榜单、精选歌单——探索永远不缺新意。</p></div><button type="button" disabled={!heroSongs[0]} onClick={() => heroSongs[0] && onSongSelect(heroSongs[0], heroSongs, { mode: 'traditional', surface: 'mode-root', platform })} className="mt-4 flex w-fit items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40" style={{ background: accent }} aria-label={heroSongs[0] ? '播放推荐' : '暂无可播放的推荐歌曲'}><Play className="h-4 w-4" />播放推荐</button></div><div className="relative flex items-center justify-center"><div className="absolute h-36 w-36 rounded-full blur-3xl" style={{ background: accent, opacity: .3 }} />{heroSongs[0] ? <img src={coverOf(heroSongs[0])} alt="" className="relative h-32 w-32 rotate-3 rounded-2xl object-cover shadow-2xl" /> : <Sparkles className="relative h-16 w-16 opacity-50" />}</div></section>
+
+  {charts.length > 0 && <section className="mb-8"><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-semibold">排行榜</h2><span className={`text-xs ${muted}`}>热门榜单实时更新</span></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
     {charts.map(chart => {
-      const chartSongs = (chart.songs || []).map(s => chartSongToSong(chart, s))
       return (
         <div key={`${chart.id}:${chart.name}`} className={`overflow-hidden rounded-2xl border transition hover:-translate-y-1 ${surface}`}>
-          <button type="button" onClick={() => chartSongs[0] && onSongSelect(chartSongs[0], chartSongs, { mode: 'traditional', surface: 'mode-root', platform: chart.platform || platform })} className="group relative block w-full text-left">
-            <img src={chart.coverUrl || ''} alt="" loading="lazy" className="aspect-square w-full object-cover" />
+          <button type="button" disabled={chartLoadingId === chart.id} onClick={() => void playChartSong(chart, 0)} className="group relative block w-full text-left">
+            {chart.coverUrl ? <img src={chart.coverUrl} alt={`${chart.name} 封面`} loading="lazy" className="aspect-square w-full object-cover" onError={event => { event.currentTarget.style.display = 'none' }} /> : <span aria-label={`${chart.name} 封面占位`} className="flex aspect-square w-full items-center justify-center bg-black/10"><Music2 className="h-8 w-8 opacity-40" /></span>}
             <span className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 transition group-hover:opacity-100"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-900"><Play className="h-4 w-4 fill-current" /></span></span>
             <span className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white backdrop-blur">{chart.name}</span>
           </button>
           <div className="space-y-1 p-2">
             {chart.songs.slice(0, 3).map((s, index) => (
-              <button key={`${s.id || s.mid || s.name}:${index}`} type="button" onClick={() => chartSongs[index] && onSongSelect(chartSongs[index], chartSongs, { mode: 'traditional', surface: 'mode-root', platform: chart.platform || platform })} className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left text-xs transition hover:bg-white/10">
+              <button key={`${s.id || s.mid || s.name}:${index}`} type="button" onClick={() => void playChartSong(chart, index)} className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left text-xs transition hover:bg-white/10">
                 <span className={`w-4 text-center ${index === 0 ? 'font-bold' : muted}`} style={index === 0 ? { color: accent } : undefined}>{index + 1}</span>
                 <span className="min-w-0 flex-1 truncate">{s.name}</span>
               </button>
@@ -1185,9 +1480,9 @@ function HomeContent({ platform, accent, muted, surface, loggedIn, username, pay
     })}
   </div></section>}
 
-  {newSongs.length > 0 && <section className="mb-8"><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-semibold">新歌速递</h2><span className={`text-xs ${muted}`}>{newSongs.length} 首新歌</span></div><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{newSongs.map(song => <button type="button" key={songKey(song)} onClick={() => onSongSelect(song, newSongs, { mode: 'traditional', surface: 'mode-root', platform: song.platform })} onContextMenu={event => { event.preventDefault(); onSongMenu({ show: true, x: event.clientX, y: event.clientY, song }) }} className={`group overflow-hidden rounded-2xl border p-2 text-left transition hover:-translate-y-1 ${surface}`}><div className="relative aspect-square overflow-hidden rounded-xl"><img src={coverOf(song)} alt="" loading="lazy" className="h-full w-full object-cover transition duration-300 group-hover:scale-105" /><span className="absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-900 opacity-0 shadow-lg transition group-hover:opacity-100"><Play className="h-4 w-4 fill-current" /></span></div><div className="mt-2 truncate text-sm">{song.name}</div><div className={`truncate text-xs ${muted}`}>{song.artists?.map(a => a.name).join(' / ')}</div></button>)}</div></section>}
+  {newSongs.length > 0 && <section className="mb-8"><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-semibold">新歌速递</h2><span className={`text-xs ${muted}`}>{newSongs.length} 首新歌</span></div><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{newSongs.map(song => <button type="button" key={songKey(song)} onClick={() => onSongSelect(song, newSongs, { mode: 'traditional', surface: 'mode-root', platform: song.platform })} onContextMenu={event => { event.preventDefault(); onSongMenu({ show: true, x: event.clientX, y: event.clientY, song }) }} className={`group overflow-hidden rounded-2xl border p-2 text-left transition hover:-translate-y-1 ${surface}`}><div className="relative aspect-square overflow-hidden rounded-xl"><CoverImage src={coverOf(song)} alt={`${song.name} 封面`} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" /><span className="absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-900 opacity-0 shadow-lg transition group-hover:opacity-100"><Play className="h-4 w-4 fill-current" /></span></div><div className="mt-2 truncate text-sm">{song.name}</div><div className={`truncate text-xs ${muted}`}>{song.artists?.map(a => a.name).join(' / ')}</div></button>)}</div></section>}
 
-  {preferences.showRecommendations && <section><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-semibold">推荐歌单</h2><span className={`text-xs ${muted}`}>右键歌单可收藏或分享</span></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{(payload?.playlists || []).slice(0, 8).map(playlist => <button type="button" key={`${playlist.platform}:${playlist.id}`} onClick={() => onOpenPlaylist(playlist)} onContextMenu={event => { event.preventDefault(); onPlaylistMenu({ show: true, x: event.clientX, y: event.clientY, playlist }) }} className={`overflow-hidden rounded-2xl border p-2 text-left transition hover:-translate-y-1 ${surface}`}><img src={playlist.coverUrl} alt="" loading="lazy" className="aspect-square w-full rounded-xl object-cover" /><div className="mt-2 truncate text-sm">{playlist.name}</div><div className={`text-xs ${muted}`}>{playlist.trackCount ? `${playlist.trackCount} 首` : '精选歌单'}</div></button>)}</div></section>}
+  <section><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-semibold">推荐歌单</h2><span className={`text-xs ${muted}`}>右键歌单可收藏或分享</span></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{(payload?.playlists || []).slice(0, 8).map(playlist => <button type="button" key={`${playlist.platform}:${playlist.id}`} onClick={() => onOpenPlaylist(playlist)} onContextMenu={event => { event.preventDefault(); onPlaylistMenu({ show: true, x: event.clientX, y: event.clientY, playlist }) }} className={`overflow-hidden rounded-2xl border p-2 text-left transition hover:-translate-y-1 ${surface}`}><CoverImage src={playlist.coverUrl} alt={`${playlist.name} 封面`} className="aspect-square w-full rounded-xl object-cover" /><div className="mt-2 truncate text-sm">{playlist.name}</div><div className={`text-xs ${muted}`}>{playlist.trackCount ? `${playlist.trackCount} 首` : '精选歌单'}</div></button>)}</div></section>
   </>}
 
 type TraditionalProfileSocialItem = {
@@ -1326,7 +1621,7 @@ function TraditionalProfile({ platform, accent, isDark, loggedIn, username, avat
     }
   }
 
-  const ownCreated = userPlaylists.filter(item => !item.isLike && !item.isCollected)
+  const ownCreated = userPlaylists.filter(item => isPlaylistOwner(item, { neteaseUserId: selfUserId, qqUserId: selfUserId }) || (!item.isLike && !item.isCollected && !item.subscribed))
   const otherCreated = (otherPlaylists || []).filter(item => !item.isLike)
   const createdPlaylists = isSelf ? ownCreated : otherCreated
   const likedPlaylist = (isSelf ? userPlaylists : (otherPlaylists || [])).find(item => item.isLike)
@@ -1645,6 +1940,12 @@ function TraditionalSettingsPage({ preferences, playerTheme, onChange, onOpenQua
   const [activeTab, setActiveTab] = useState<TraditionalSettingsTabId>('general')
   const [showCacheClear, setShowCacheClear] = useState(false)
   const [showRemoteSettings, setShowRemoteSettings] = useState(false)
+  const settingsTabsRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const active = settingsTabsRef.current?.querySelector<HTMLElement>('[aria-current="page"]')
+    active?.scrollIntoView?.({ block: 'nearest', inline: 'center' })
+  }, [activeTab])
 
   // 当前环境下没有可见条目的分组，对应标签隐藏（如 Web / TV 下的「桌面集成」「网络」）
   const visibleTabs = useMemo(() => SETTINGS_TABS.filter(tab => {
@@ -1671,14 +1972,17 @@ function TraditionalSettingsPage({ preferences, playerTheme, onChange, onOpenQua
       </div>
 
       {/* 顶部标签栏 */}
-      <div className={`-mx-1 flex gap-0.5 overflow-x-auto border-b px-1 ${dark ? 'border-white/10' : 'border-black/10'}`} style={{ scrollbarWidth: 'none' }}>
+              <div ref={settingsTabsRef} className={`traditional-settings-tabs relative -mx-1 flex gap-0.5 overflow-x-auto border-b px-1 ${dark ? 'border-white/10' : 'border-black/10'}`} style={{ scrollbarWidth: 'none' }}>
+                <button type="button" aria-label="向左滚动设置标签" onClick={() => settingsTabsRef.current?.scrollBy({ left: -180, behavior: 'smooth' })} className="sticky left-0 z-10 shrink-0 bg-inherit px-1"><ChevronLeft className="h-4 w-4" /></button>
         {visibleTabs.map(tab => {
           const active = tab.id === activeTab
           return (
             <button
               key={tab.id}
               type="button"
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => { setActiveTab(tab.id); requestAnimationFrame(() => settingsTabsRef.current?.querySelector<HTMLElement>(`[data-settings-tab="${tab.id}"]`)?.scrollIntoView?.({ block: 'nearest', inline: 'center' })) }}
+              aria-current={active ? 'page' : undefined}
+              data-settings-tab={tab.id}
               className="relative flex-shrink-0 px-3.5 py-2.5 text-[13px] transition-colors"
               style={{ color: active ? accent : dark ? 'rgba(255,255,255,.55)' : 'rgba(15,23,42,.55)', fontWeight: active ? 600 : 400 }}
             >
@@ -1694,14 +1998,13 @@ function TraditionalSettingsPage({ preferences, playerTheme, onChange, onOpenQua
             </button>
           )
         })}
+                <button type="button" aria-label="向右滚动设置标签" onClick={() => settingsTabsRef.current?.scrollBy({ left: 180, behavior: 'smooth' })} className="sticky right-0 z-10 shrink-0 bg-inherit px-1"><ChevronRight className="h-4 w-4" /></button>
       </div>
-
-      {/* 内容区：全宽滚动 */}
       <div className="min-h-0 flex-1 overflow-y-auto pb-10 pr-1 pt-4">
         {activeTab === 'traditional' ? (
           <TraditionalCustomTab preferences={preferences} skin={skin} onChange={onChange} />
         ) : (
-          <MirroredGlobalSettings key={activeTab} skin={skin} variant="classic" groupId={activeTab} onOpenModal={handleOpenModal} />
+          <MirroredGlobalSettings skin={skin} variant="classic" groupId={activeTab} onOpenModal={handleOpenModal} />
         )}
       </div>
 
@@ -1718,10 +2021,7 @@ function TraditionalSettingsPage({ preferences, playerTheme, onChange, onOpenQua
 function TraditionalCustomTab({ preferences, skin, onChange }: { preferences: TraditionalPreferences; skin: ReturnType<typeof makeSkin>; onChange: (patch: Partial<TraditionalPreferences>) => void }) {
   return (
     <div>
-      <CustomSection title="布局" description="传统模式自身的排版密度" skin={skin}>
-        <CustomChoice skin={skin} label="内容密度" value={preferences.density} options={[['comfortable', '舒适'], ['compact', '紧凑']]} onChange={value => onChange({ density: value as TraditionalPreferences['density'] })} />
-        <CustomChoice skin={skin} label="侧栏宽度" value={preferences.sidebarWidth} options={[['wide', '宽松'], ['narrow', '紧凑']]} onChange={value => onChange({ sidebarWidth: value as TraditionalPreferences['sidebarWidth'] })} />
-        <CustomCheck skin={skin} label="显示推荐内容" description="发现页展示推荐歌单与榜单" value={preferences.showRecommendations} onChange={value => onChange({ showRecommendations: value })} />
+      <CustomSection title="播放卡片" description="传统模式正在播放卡片的显示内容" skin={skin}>
         <CustomCheck skin={skin} label="显示播放频谱" description="右栏「正在播放」展示实时频谱" value={preferences.showWaveform} onChange={value => onChange({ showWaveform: value })} />
       </CustomSection>
       <CustomSection title="背景氛围" description="传统模式自身的背景效果" skin={skin}>
@@ -1742,7 +2042,7 @@ function CustomSection({ title, description, skin, children }: { title: string; 
     <section className="mb-2">
       <h3 className="text-[15px] font-semibold" style={{ color: skin.text }}>{title}</h3>
       {description && <p className="mt-0.5 text-[11px]" style={{ color: skin.muted }}>{description}</p>}
-      <div className="mt-3 grid gap-x-4 gap-y-0.5 border-t pt-3" style={{ borderColor: skin.cardBorder, gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+      <div className="mt-3 grid min-w-0 gap-x-4 gap-y-0.5 border-t pt-3" style={{ borderColor: skin.cardBorder, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 1fr))' }}>
         {children}
       </div>
     </section>
@@ -1804,6 +2104,7 @@ function CustomSlider({ label, value, min, max, step, unit, onChange, skin }: { 
       </div>
       <input
         type="range"
+        aria-label={label}
         min={min}
         max={max}
         step={step}

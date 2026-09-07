@@ -5,7 +5,7 @@ import { Play, Sparkles } from 'lucide-react'
 import type { Song } from '../services/musicApi'
 import { getProxiedImageUrl } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
-import { platformLabel } from '../services/platforms'
+import { platformLabel, getPlatformCapabilities } from '../services/platforms'
 import type { ExplorePayload } from '../services/exploreApi'
 import type { PlaybackOrigin } from '../types/playbackNavigation'
 
@@ -40,17 +40,18 @@ function TraditionalLibrary({
 }: TraditionalLibraryProps) {
   const muted = isDark ? 'text-white/50' : 'text-slate-500'
   const surface = isDark ? 'bg-white/[0.055] border-white/10' : 'bg-white/75 border-black/10'
-  // 音乐库 = 个性化（每日推荐 + 私人电台）；新歌/排行榜/推荐歌单属于「发现」
+  const capabilities = getPlatformCapabilities(platform)
+  const personalized = Boolean(payload?.personalized && capabilities.dailyRecommend)
   const sections = [
-    { key: 'daily', label: '每日推荐', songs: payload?.dailySongs || [] },
-    { key: 'radio', label: '私人电台', songs: payload?.radioSongs || [] },
+    { key: 'daily', label: personalized ? '每日推荐' : '热门推荐', songs: payload?.dailySongs || [] },
+    { key: 'radio', label: '私人电台', songs: capabilities.radio ? (payload?.radioSongs || []) : [] },
   ].filter(section => section.songs.length > 0)
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="mb-5 flex items-center gap-3">
         
-        <div><h1 className="text-xl font-semibold">音乐库</h1><p className={`text-xs ${muted}`}>{platformLabel(platform)}{loggedIn && username ? ` · ${username}` : ''} · 个性化推荐</p></div>
+        <div><h1 className="text-xl font-semibold">音乐库</h1><p className={`text-xs ${muted}`}>{platformLabel(platform)}{loggedIn && username ? ` · ${username}` : ''} · {personalized ? '个性化推荐' : '热门推荐'}</p></div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -59,7 +60,7 @@ function TraditionalLibrary({
           <div className="relative z-10 flex items-center justify-between gap-4">
             <div>
               <span className="rounded-full border px-2.5 py-1 text-[10px]" style={{ borderColor: `${accent}66`, color: accent }}>PERSONALIZED</span>
-              <h2 className="mt-3 text-2xl font-semibold">{loggedIn ? `${username} 的专属音乐库` : '为你量身推荐'}</h2>
+              <h2 className="mt-3 text-2xl font-semibold">{personalized ? (loggedIn ? `${username} 的专属音乐库` : '为你量身推荐') : '热门音乐推荐'}</h2>
               <p className={`mt-2 max-w-md text-sm ${muted}`}>每日推荐、私人电台与最新发行，都为你整理在这里。</p>
               {recommendationSongs[0] && <button type="button" onClick={() => onSongSelect(recommendationSongs[0], recommendationSongs, { mode: 'traditional', surface: 'traditional-library', platform })} className="mt-4 flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium text-white" style={{ background: accent }}><Play className="h-4 w-4 fill-current" />播放推荐</button>}
             </div>

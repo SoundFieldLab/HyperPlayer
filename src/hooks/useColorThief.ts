@@ -1,9 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { indexedDBCache } from '../services/indexedDBCache'
 
 interface ColorPalette {
   dominantColor: string | null
   palette: string[]
+}
+
+export type ColorExtractionStatus = 'idle' | 'loading' | 'ready' | 'error'
+export interface CoverColorResult extends ColorPalette {
+  status: ColorExtractionStatus
 }
 
 interface CoverSource {
@@ -25,12 +30,12 @@ async function loadCoverAsObjectUrl(imageUrl: string): Promise<CoverSource> {
   const proxyUrl = `http://localhost:3001/api/proxy-image?url=${encodeURIComponent(imageUrl)}`
   try {
     const response = await fetch(proxyUrl)
-    if (!response.ok) return { url: proxyUrl, isObjectUrl: false }
+    if (!response.ok) return { url: imageUrl, isObjectUrl: false }
     const blob = await response.blob()
     await indexedDBCache.cacheCover(imageUrl, blob)
     return { url: URL.createObjectURL(blob), isObjectUrl: true }
   } catch {
-    return { url: proxyUrl, isObjectUrl: false }
+    return { url: imageUrl, isObjectUrl: false }
   }
 }
 
@@ -75,14 +80,13 @@ function setCachedColorThief(imageUrl: string, palette: ColorPalette): void {
 /** 对已解码的封面图做 50×50 降采样，返回主色与色板（与原有提取算法逐位一致）。 */
 function computeColorThiefPalette(image: HTMLImageElement): ColorPalette {
   const canvas = document.createElement('canvas')
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return { dominantColor: null, palette: [] }
-  canvas.width = 50
-  canvas.height = 50
-  ctx.drawImage(image, 0, 0, 50, 50)
-  const data = ctx.getImageData(0, 0, 50, 50).data
-  // 采样完成后立即释放 Canvas，避免残留占用内存
-  releaseCanvas(canvas)
+  try {
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('Canvas 2D context is unavailable')
+    canvas.width = 50
+    canvas.height = 50
+    ctx.drawImage(image, 0, 0, 50, 50)
+    const data = ctx.getImageData(0, 0, 50, 50).data
   let red = 0
   let green = 0
   let blue = 0
@@ -131,11 +135,14 @@ function computeColorThiefPalette(image: HTMLImageElement): ColorPalette {
     if (selected.length >= 4) break
   }
 
-  return {
-    dominantColor: color,
-    palette: selected.length > 0
-      ? selected.map(item => `rgb(${item.red}, ${item.green}, ${item.blue})`)
-      : [color],
+    return {
+      dominantColor: color,
+      palette: selected.length > 0
+        ? selected.map(item => `rgb(${item.red}, ${item.green}, ${item.blue})`)
+        : [color],
+    }
+  } finally {
+    releaseCanvas(canvas)
   }
 }
 
@@ -155,24 +162,27 @@ function computeColorThiefForUrl(imageUrl: string): Promise<ColorPalette> {
     try {
       source = await loadCoverAsObjectUrl(imageUrl)
       const loadedSource = source
-      const result = await new Promise<ColorPalette>((resolve) => {
+      const result = await new Promise<ColorPalette>((resolve, reject) => {
         const img = new Image()
         img.crossOrigin = 'Anonymous'
         const finish = () => {
-          // 释放解码后的封面图与对象 URL
           img.onload = null
           img.onerror = null
           img.src = ''
           if (loadedSource.isObjectUrl) URL.revokeObjectURL(loadedSource.url)
         }
         img.onload = () => {
-          const palette = computeColorThiefPalette(img)
-          finish()
-          resolve(palette)
+          try {
+            resolve(computeColorThiefPalette(img))
+          } catch (error) {
+            reject(error)
+          } finally {
+            finish()
+          }
         }
         img.onerror = () => {
           finish()
-          resolve({ dominantColor: null, palette: [] })
+          reject(new Error('Cover image failed to load'))
         }
         img.src = loadedSource.url
       })
@@ -181,7 +191,7 @@ function computeColorThiefForUrl(imageUrl: string): Promise<ColorPalette> {
     } catch (error) {
       console.error('提取颜色失败:', error)
       if (source?.isObjectUrl) URL.revokeObjectURL(source.url)
-      return { dominantColor: null, palette: [] }
+      throw error
     } finally {
       colorThiefInFlight.delete(imageUrl)
     }
@@ -191,39 +201,45 @@ function computeColorThiefForUrl(imageUrl: string): Promise<ColorPalette> {
   return task
 }
 
-export function useColorThief(imageUrl: string): ColorPalette {
-  const [dominantColor, setDominantColor] = useState<string | null>(null)
-  const [palette, setPalette] = useState<string[]>([])
+export function useColorThief(imageUrl: string): CoverColorResult {
+  const [result, setResult] = useState<CoverColorResult & { imageUrl: string }>({
+    imageUrl,
+    status: imageUrl ? 'loading' : 'idle',
+    dominantColor: null,
+    palette: [],
+  })
+  const requestIdRef = useRef(0)
 
   useEffect(() => {
-    let cancelled = false
+    const requestId = ++requestIdRef.current
+    setResult({ imageUrl, status: imageUrl ? 'loading' : 'idle', dominantColor: null, palette: [] })
 
     if (!imageUrl) {
-      setDominantColor(null)
-      setPalette([])
       return
     }
 
     // 内存缓存命中：直接返回结果，不再重复下载封面 / 写 IndexedDB / 采样
     const cached = getCachedColorThief(imageUrl)
     if (cached) {
-      setDominantColor(cached.dominantColor)
-      setPalette(cached.palette)
+      setResult({ imageUrl, status: 'ready', ...cached })
       return
     }
 
-    void computeColorThiefForUrl(imageUrl).then(result => {
-      if (cancelled) return
-      setDominantColor(result.dominantColor)
-      setPalette(result.palette)
+    void computeColorThiefForUrl(imageUrl).then(palette => {
+      if (requestIdRef.current !== requestId) return
+      setResult({ imageUrl, status: 'ready', ...palette })
+    }).catch(() => {
+      if (requestIdRef.current !== requestId) return
+      setResult({ imageUrl, status: 'error', dominantColor: null, palette: [] })
     })
 
     return () => {
-      cancelled = true
+      if (requestIdRef.current === requestId) requestIdRef.current += 1
     }
   }, [imageUrl])
 
-  return { dominantColor, palette }
+  if (result.imageUrl !== imageUrl) return { status: imageUrl ? 'loading' : 'idle', dominantColor: null, palette: [] }
+  return { status: result.status, dominantColor: result.dominantColor, palette: result.palette }
 }
 
 // 独立的颜色提取函数，用于异步提取（与 hook 共享按 URL 的内存缓存，命中直接返回）
@@ -231,6 +247,10 @@ export async function extractDominantColor(imageUrl: string): Promise<string | n
   if (!imageUrl) return null
   const cached = getCachedColorThief(imageUrl)
   if (cached) return cached.dominantColor
-  const result = await computeColorThiefForUrl(imageUrl)
-  return result.dominantColor
+  try {
+    const result = await computeColorThiefForUrl(imageUrl)
+    return result.dominantColor
+  } catch {
+    return null
+  }
 }
