@@ -4,6 +4,7 @@ import { Check, ChevronRight, Crown, Headphones, Music2, X } from 'lucide-react'
 import {
   loadAudioQualitySettings,
   saveAudioQualitySettings,
+  type AppleAudioQualityPreference,
   type AudioQualityPreference,
   type AudioQualitySettings,
 } from '../services/audioQualitySettings'
@@ -20,13 +21,17 @@ interface AudioQualitySettingsModalProps {
   spotifyLoggedIn?: boolean
   kugouLoggedIn?: boolean
   sodaLoggedIn?: boolean
+  appleLoggedIn?: boolean
 }
 
+type QualityValue = AudioQualityPreference | AppleAudioQualityPreference
+
 type QualityOption = {
-  value: AudioQualityPreference
+  value: QualityValue
   label: string
   description: string
   requiresVip?: boolean
+  disabled?: boolean
 }
 
 const NETEASE_OPTIONS: QualityOption[] = [
@@ -52,6 +57,14 @@ const GENERIC_OPTIONS: QualityOption[] = [
   { value: 'lossless', label: '无损音质', description: '优先请求无损音质', requiresVip: true },
 ]
 
+const APPLE_OPTIONS: QualityOption[] = [
+  { value: 'auto', label: '自动', description: '优先使用当前设备和账号实际可播放的最佳 Apple Music 音频' },
+  { value: 'aac', label: '高品质 AAC', description: '使用 Apple 网页播放当前稳定支持的 AAC HLS 音频' },
+  { value: 'lossless', label: '无损音频', description: '当前网页 Widevine 播放链路尚未检测到可用的 Apple Lossless 资产', disabled: true },
+  { value: 'hi-res-lossless', label: '高解析度无损', description: '需要 Apple 提供兼容资产和当前设备具备对应解码能力', disabled: true },
+  { value: 'atmos', label: '杜比全景声与空间音频', description: '曲目标签不等于可播放流；检测到兼容 Atmos 资产后才会开放', disabled: true },
+]
+
 function QualityOptionButton({
   option,
   selected,
@@ -71,8 +84,9 @@ function QualityOptionButton({
   return (
     <button
       type="button"
+      disabled={option.disabled}
       onClick={onClick}
-      className={`w-full rounded-xl p-4 border text-left transition-all ${playerTheme === 'dark' ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'}`}
+      className={`w-full rounded-xl p-4 border text-left transition-all disabled:cursor-not-allowed disabled:opacity-45 ${playerTheme === 'dark' ? 'bg-white/5 hover:bg-white/10' : 'bg-black/5 hover:bg-black/10'}`}
       style={{ borderColor: border, backgroundColor: selected ? `${accentColor}18` : undefined }}
     >
       <div className="flex items-start gap-3">
@@ -102,6 +116,7 @@ export default function AudioQualitySettingsModal({
   spotifyLoggedIn = false,
   kugouLoggedIn = false,
   sodaLoggedIn = false,
+  appleLoggedIn = false,
 }: AudioQualitySettingsModalProps) {
   // TV 遥控器 BACK：关闭音质设置弹窗
   useTvBack(() => {
@@ -133,7 +148,7 @@ export default function AudioQualitySettingsModal({
     return () => window.removeEventListener('accentColorChanged', handleAccentColor)
   }, [])
 
-  const update = (platform: keyof AudioQualitySettings, value: AudioQualityPreference) => {
+  const update = (platform: keyof AudioQualitySettings, value: QualityValue) => {
     const next = saveAudioQualitySettings({ [platform]: value })
     setSettings(next)
   }
@@ -207,10 +222,11 @@ export default function AudioQualitySettingsModal({
               </div>
               {renderPlatform('qq', 'QQ音乐', <span className="font-bold text-sm">QQ</span>, QQ_OPTIONS, qqVip, qqLoggedIn)}
               {renderPlatform('netease', '网易云音乐', <Music2 className="w-5 h-5" />, NETEASE_OPTIONS, neteaseVip, neteaseLoggedIn)}
+              {renderPlatform('apple', 'Apple Music', <span className="font-bold text-sm">AM</span>, APPLE_OPTIONS, appleLoggedIn, appleLoggedIn)}
               {renderPlatform('spotify', 'Spotify', <span className="font-bold text-sm">S</span>, GENERIC_OPTIONS, false, spotifyLoggedIn)}
               {renderPlatform('kugou', '酷狗音乐', <span className="font-bold text-sm">狗</span>, GENERIC_OPTIONS, false, kugouLoggedIn)}
               {renderPlatform('soda', '汽水音乐', <span className="font-bold text-sm">汽</span>, GENERIC_OPTIONS, false, sodaLoggedIn)}
-              <p className={`${textTertiary} text-xs leading-relaxed`}>设置会立即保存，并作用于播放、下一首预加载及新的播放链接缓存。正在播放的歌曲会在下次加载该歌曲时应用新音质。Spotify/酷狗/汽水自身直源受限时，播放自动降级到网易云/QQ 载体，音质随载体平台设置。</p>
+              <p className={`${textTertiary} text-xs leading-relaxed`}>设置会立即保存，并作用于播放、下一首预加载及新的播放链接缓存。Apple Music 的无损与空间音频只会在实际播放资产和当前设备均支持时开放；曲目支持标签不会被当作本次播放音质。Spotify/酷狗/汽水自身直源受限时，播放自动降级到网易云/QQ 载体。</p>
             </div>
           </motion.div>
         </>

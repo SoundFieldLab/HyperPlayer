@@ -94,8 +94,15 @@ class StemRuntime {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS
     this.cacheMaxBytes = options.cacheMaxBytes ?? DEFAULT_CACHE_MAX_BYTES
+    this.spawn = options.spawn || spawn
+    this.workerInterpreterArgs = options.workerInterpreterArgs || ['-u']
     this.queue = []
     this.active = null
+    this.worker = null
+    this.workerReady = null
+    this.workerBuffer = ''
+    this.workerPending = new Map()
+    this.sequence = 0
     this.closed = false
     fs.mkdirSync(this.tempDir, { recursive: true })
   }
@@ -122,11 +129,38 @@ class StemRuntime {
     const cacheKey = this._cacheKey(normalized)
     const cached = this._readCache(cacheKey)
     if (cached) return { ...cached, cached: true, requestId: normalized.requestId }
+    const [result] = await this._enqueue({ requests: [normalized], cacheKeys: [cacheKey], requestId: normalized.requestId }, control)
+    return result
+  }
+
+  async separatePair(request = {}, control = {}) {
+    if (this.closed) throw new Error('Stem runtime is shut down')
+    const status = this.getStatus()
+    if (!status.available) return null
+    const requestId = typeof request.requestId === 'string' && request.requestId ? request.requestId : crypto.randomUUID()
+    const source = this._validateRequest({ ...request.source, requestId: `${requestId}:source` })
+    const target = this._validateRequest({ ...request.target, requestId: `${requestId}:target` })
+    const requests = [source, target]
+    const cacheKeys = requests.map(item => this._cacheKey(item))
+    const results = requests.map((item, index) => {
+      const cached = this._readCache(cacheKeys[index])
+      return cached ? { ...cached, cached: true, requestId: item.requestId } : null
+    })
+    const missingIndexes = results.map((result, index) => result ? -1 : index).filter(index => index >= 0)
+    if (!missingIndexes.length) return { requestId, source: results[0], target: results[1] }
+    const missingRequests = missingIndexes.map(index => requests[index])
+    const missingCacheKeys = missingIndexes.map(index => cacheKeys[index])
+    const generated = await this._enqueue({ requests: missingRequests, cacheKeys: missingCacheKeys, requestId }, control)
+    missingIndexes.forEach((index, generatedIndex) => { results[index] = generated[generatedIndex] })
+    return { requestId, source: results[0], target: results[1] }
+  }
+
+  _enqueue(jobInput, control = {}) {
     return new Promise((resolve, reject) => {
-      const job = { request: normalized, cacheKey, resolve, reject, child: null, settled: false }
+      const job = { ...jobInput, resolve, reject, settled: false }
       this.queue.push(job)
       if (control.signal) {
-        const abort = () => this.cancel(normalized.requestId)
+        const abort = () => this.cancel(job.requestId)
         job.abortSignal = control.signal
         job.abortListener = abort
         if (control.signal.aborted) abort()
@@ -138,15 +172,15 @@ class StemRuntime {
 
   cancel(requestId) {
     if (typeof requestId !== 'string' || !requestId) return false
-    const queuedIndex = this.queue.findIndex(job => job.request.requestId === requestId)
+    const queuedIndex = this.queue.findIndex(job => job.requestId === requestId || job.requests.some(request => request.requestId === requestId))
     if (queuedIndex >= 0) {
       const [job] = this.queue.splice(queuedIndex, 1)
       this._settle(job, new Error('Stem separation cancelled'))
       return true
     }
-    if (this.active?.request.requestId === requestId) {
+    if (this.active && (this.active.requestId === requestId || this.active.requests.some(request => request.requestId === requestId))) {
       this.active.cancelled = true
-      this.active.child?.kill()
+      this.worker?.kill()
       return true
     }
     return false
@@ -156,7 +190,7 @@ class StemRuntime {
     for (const job of this.queue.splice(0)) this._settle(job, new Error('Stem cache cleared'))
     if (this.active) {
       this.active.cancelled = true
-      this.active.child?.kill()
+      this.worker?.kill()
       const deadline = Date.now() + 3000
       while (this.active && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20))
     }
@@ -195,10 +229,15 @@ class StemRuntime {
   shutdown() {
     this.closed = true
     for (const job of this.queue.splice(0)) this._settle(job, new Error('Stem runtime shut down'))
-    if (this.active) {
-      this.active.cancelled = true
-      this.active.child?.kill()
+    if (this.active) this.active.cancelled = true
+    if (this.worker) {
+      try { this.worker.stdin.write(`${JSON.stringify({ type: 'shutdown', id: 'shutdown' })}\n`) } catch { /* Worker already exited. */ }
+      this.worker.stdin.end()
+      this.worker.kill()
     }
+    this.worker = null
+    this.workerReady = null
+    this._rejectWorkerPending(new Error('Stem runtime shut down'))
   }
 
   _validateRequest(request) {
@@ -290,80 +329,147 @@ class StemRuntime {
   async _run(job) {
     this.cleanupCache()
     const runDir = fs.mkdtempSync(path.join(this.tempDir, 'run-'))
-    const outputDir = path.join(runDir, 'output')
-    const configPath = path.join(runDir, 'config.json')
-    fs.mkdirSync(outputDir)
-    fs.writeFileSync(configPath, JSON.stringify({
-      inputPath: job.request.inputPath,
-      modelPath: this.paths.modelPath,
-      outputDir,
-      mode: job.request.mode,
-      duration: job.request.duration,
-      startTime: job.request.startTime,
-      ffmpegPath: this.paths.ffmpegPath,
-    }))
-    try {
-      const result = await this._spawnRunner(job, configPath)
-      if (job.cancelled) throw new Error('Stem separation cancelled')
-      const destination = path.join(this.cacheDir, job.cacheKey)
-      fs.rmSync(destination, { recursive: true, force: true })
-      fs.renameSync(outputDir, destination)
-      const files = Object.fromEntries(STEM_NAMES.map(name => [name, path.join(destination, `${name}.wav`)]))
-      const manifest = {
-        ...result,
-        cacheKey: job.cacheKey,
-        cached: false,
-        requestId: job.request.requestId,
-        files,
-        manifestPath: path.join(destination, 'manifest.json'),
+    const configs = job.requests.map((request, index) => {
+      const outputDir = path.join(runDir, `output-${index}`)
+      fs.mkdirSync(outputDir)
+      return {
+        inputPath: request.inputPath,
+        modelPath: this.paths.modelPath,
+        outputDir,
+        mode: request.mode,
+        duration: request.duration,
+        startTime: request.startTime,
+        ffmpegPath: this.paths.ffmpegPath,
       }
-      fs.writeFileSync(manifest.manifestPath, JSON.stringify(manifest, null, 2))
-      this.cleanupCache()
-      return manifest
+    })
+    try {
+      const payload = configs.length === 1
+        ? { type: 'separate', config: configs[0] }
+        : { type: 'separate_pair', configs }
+      let rawResults
+      try {
+        rawResults = await this._workerRequest(payload, job)
+      } catch (error) {
+        if (job.cancelled) throw new Error('Stem separation cancelled')
+        throw error
+      }
+      if (job.cancelled) throw new Error('Stem separation cancelled')
+      const results = Array.isArray(rawResults) ? rawResults : [rawResults]
+      return results.map((result, index) => this._publishResult(
+        result,
+        configs[index].outputDir,
+        job.cacheKeys[index],
+        job.requests[index],
+      ))
     } finally {
       fs.rmSync(runDir, { recursive: true, force: true })
     }
   }
 
-  _spawnRunner(job, configPath) {
+  _publishResult(result, outputDir, cacheKey, request) {
+    if (!result?.validation?.lengthsMatch || !result?.validation?.finite) {
+      throw new Error('HTDemucs runner returned an invalid manifest')
+    }
+    const destination = path.join(this.cacheDir, cacheKey)
+    fs.rmSync(destination, { recursive: true, force: true })
+    fs.renameSync(outputDir, destination)
+    const files = Object.fromEntries(STEM_NAMES.map(name => [name, path.join(destination, `${name}.wav`)]))
+    const manifest = {
+      ...result,
+      cacheKey,
+      cached: false,
+      requestId: request.requestId,
+      files,
+      manifestPath: path.join(destination, 'manifest.json'),
+    }
+    fs.writeFileSync(manifest.manifestPath, JSON.stringify(manifest, null, 2))
+    this.cleanupCache()
+    return manifest
+  }
+
+  async _ensureWorker() {
+    if (this.worker && this.workerReady) return this.workerReady
+    if (this.closed) throw new Error('Stem runtime is shut down')
+    this.paths = resolvePaths(this.options)
+    if (!this.paths.modelPath || !this.paths.pythonPath || !this.paths.runnerPath) {
+      throw new Error('HTDemucs runtime is unavailable')
+    }
+    const child = this.spawn(this.paths.pythonPath, [...this.workerInterpreterArgs, this.paths.runnerPath, '--serve', '--model', this.paths.modelPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONNOUSERSITE: '1' },
+    })
+    this.worker = child
+    this.workerBuffer = ''
+    let readyResolve
+    let readyReject
+    this.workerReady = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject })
+    child.stdout.on('data', data => this._handleWorkerData(data, readyResolve, readyReject))
+    child.stderr.on('data', data => { this.lastWorkerError = data.toString().trim() })
+    child.once('error', error => this._workerExited(error, readyReject))
+    child.once('exit', code => this._workerExited(new Error(`HTDemucs worker exited (${code}): ${this.lastWorkerError || 'no error output'}`), readyReject))
+    return this.workerReady
+  }
+
+  _handleWorkerData(data, readyResolve, readyReject) {
+    this.workerBuffer += data.toString()
+    const lines = this.workerBuffer.split(/\r?\n/)
+    this.workerBuffer = lines.pop() || ''
+    for (const line of lines) {
+      if (!line.trim()) continue
+      let message
+      try { message = JSON.parse(line) } catch { continue }
+      if (message.type === 'ready') {
+        readyResolve(message)
+        continue
+      }
+      if (message.type === 'fatal') {
+        readyReject(new Error(message.error || 'HTDemucs worker failed to initialize'))
+        continue
+      }
+      const pending = this.workerPending.get(message.id)
+      if (!pending) continue
+      this.workerPending.delete(message.id)
+      clearTimeout(pending.timer)
+      if (message.type === 'error') pending.reject(new Error(message.error || 'HTDemucs worker error'))
+      else pending.resolve(message.result)
+    }
+  }
+
+  _workerExited(error, readyReject) {
+    readyReject?.(error)
+    this.worker = null
+    this.workerReady = null
+    this._rejectWorkerPending(error)
+  }
+
+  _rejectWorkerPending(error) {
+    for (const pending of this.workerPending.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(error)
+    }
+    this.workerPending.clear()
+  }
+
+  async _workerRequest(payload, job) {
+    await this._ensureWorker()
+    const id = `stem-${++this.sequence}`
     return new Promise((resolve, reject) => {
-      let stdout = ''
-      let stderr = ''
-      let timedOut = false
-      const child = spawn(this.paths.pythonPath, [this.paths.runnerPath, configPath], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-        env: { ...process.env, PYTHONNOUSERSITE: '1' },
-      })
-      job.child = child
       const timer = setTimeout(() => {
-        timedOut = true
-        child.kill()
+        this.workerPending.delete(id)
+        reject(new Error(`Stem separation timed out after ${this.timeoutMs}ms`))
+        this.worker?.kill()
       }, this.timeoutMs)
       timer.unref?.()
-      child.stdout.on('data', data => { stdout += data.toString() })
-      child.stderr.on('data', data => { stderr += data.toString() })
-      child.once('error', error => {
+      this.workerPending.set(id, { resolve, reject, timer })
+      try {
+        this.worker.stdin.write(`${JSON.stringify({ ...payload, id })}\n`)
+      } catch (error) {
         clearTimeout(timer)
+        this.workerPending.delete(id)
         reject(error)
-      })
-      child.once('exit', code => {
-        clearTimeout(timer)
-        job.child = null
-        if (job.cancelled) return reject(new Error('Stem separation cancelled'))
-        if (timedOut) return reject(new Error(`Stem separation timed out after ${this.timeoutMs}ms`))
-        if (code !== 0) return reject(new Error(`HTDemucs runner failed (${code}): ${stderr.trim() || 'no error output'}`))
-        try {
-          const line = stdout.trim().split(/\r?\n/).filter(Boolean).pop()
-          const manifest = JSON.parse(line)
-          if (!manifest.validation?.lengthsMatch || !manifest.validation?.finite) {
-            throw new Error('HTDemucs runner returned an invalid manifest')
-          }
-          resolve(manifest)
-        } catch (error) {
-          reject(new Error(`Invalid HTDemucs runner output: ${error.message}`))
-        }
-      })
+      }
+      if (job.cancelled) this.worker?.kill()
     })
   }
 }
@@ -378,6 +484,7 @@ function getStemRuntime(options = {}) {
 function setupStemIPC(ipcMain, options = {}) {
   const runtime = getStemRuntime(options)
   ipcMain.handle('stem:separate', (_event, request) => runtime.separate(request))
+  ipcMain.handle('stem:separatePair', (_event, request) => runtime.separatePair(request))
   ipcMain.handle('stem:status', () => runtime.getStatus())
   ipcMain.handle('stem:cancel', (_event, requestId) => runtime.cancel(requestId))
   ipcMain.handle('stem:clearCache', () => runtime.clearCache())

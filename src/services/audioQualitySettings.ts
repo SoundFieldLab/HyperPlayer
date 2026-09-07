@@ -1,5 +1,6 @@
 import type { MusicPlatform } from './platforms'
-﻿export type AudioQualityPreference =
+
+export type AudioQualityPreference =
   | 'auto'
   | 'standard'
   | 'high'
@@ -7,12 +8,20 @@ import type { MusicPlatform } from './platforms'
   | 'lossless'
   | 'hi-res'
 
+export type AppleAudioQualityPreference =
+  | 'auto'
+  | 'aac'
+  | 'lossless'
+  | 'hi-res-lossless'
+  | 'atmos'
+
 export interface AudioQualitySettings {
   netease: AudioQualityPreference
   qq: AudioQualityPreference
   spotify: AudioQualityPreference
   kugou: AudioQualityPreference
   soda: AudioQualityPreference
+  apple: AppleAudioQualityPreference
 }
 
 export const AUDIO_QUALITY_SETTINGS_KEY = 'audioQualitySettings'
@@ -24,6 +33,7 @@ export const DEFAULT_AUDIO_QUALITY_SETTINGS: AudioQualitySettings = {
   spotify: 'auto',
   kugou: 'auto',
   soda: 'auto',
+  apple: 'auto',
 }
 
 const QUALITY_VALUES: AudioQualityPreference[] = [
@@ -35,8 +45,20 @@ const QUALITY_VALUES: AudioQualityPreference[] = [
   'hi-res',
 ]
 
+const APPLE_QUALITY_VALUES: AppleAudioQualityPreference[] = [
+  'auto',
+  'aac',
+  'lossless',
+  'hi-res-lossless',
+  'atmos',
+]
+
 const isQualityPreference = (value: unknown): value is AudioQualityPreference => (
   typeof value === 'string' && QUALITY_VALUES.includes(value as AudioQualityPreference)
+)
+
+const isAppleQualityPreference = (value: unknown): value is AppleAudioQualityPreference => (
+  typeof value === 'string' && APPLE_QUALITY_VALUES.includes(value as AppleAudioQualityPreference)
 )
 
 export function loadAudioQualitySettings(): AudioQualitySettings {
@@ -50,6 +72,7 @@ export function loadAudioQualitySettings(): AudioQualitySettings {
       spotify: isQualityPreference(parsed.spotify) ? parsed.spotify : DEFAULT_AUDIO_QUALITY_SETTINGS.spotify,
       kugou: isQualityPreference(parsed.kugou) ? parsed.kugou : DEFAULT_AUDIO_QUALITY_SETTINGS.kugou,
       soda: isQualityPreference(parsed.soda) ? parsed.soda : DEFAULT_AUDIO_QUALITY_SETTINGS.soda,
+      apple: isAppleQualityPreference(parsed.apple) ? parsed.apple : DEFAULT_AUDIO_QUALITY_SETTINGS.apple,
     }
   } catch {
     return { ...DEFAULT_AUDIO_QUALITY_SETTINGS }
@@ -66,6 +89,7 @@ export function saveAudioQualitySettings(patch: Partial<AudioQualitySettings>): 
   if (!isQualityPreference(next.spotify)) next.spotify = DEFAULT_AUDIO_QUALITY_SETTINGS.spotify
   if (!isQualityPreference(next.kugou)) next.kugou = DEFAULT_AUDIO_QUALITY_SETTINGS.kugou
   if (!isQualityPreference(next.soda)) next.soda = DEFAULT_AUDIO_QUALITY_SETTINGS.soda
+  if (!isAppleQualityPreference(next.apple)) next.apple = DEFAULT_AUDIO_QUALITY_SETTINGS.apple
 
   if (typeof localStorage !== 'undefined') {
     localStorage.setItem(AUDIO_QUALITY_SETTINGS_KEY, JSON.stringify(next))
@@ -74,10 +98,9 @@ export function saveAudioQualitySettings(patch: Partial<AudioQualitySettings>): 
   return next
 }
 
-export function getAudioQualityPreference(platform: MusicPlatform): AudioQualityPreference {
-  // Apple 无独立音质（播放走载体平台）；spotify 未登录也走载体，返回中性默认
+export function getAudioQualityPreference(platform: MusicPlatform): AudioQualityPreference | AppleAudioQualityPreference {
   const settings = loadAudioQualitySettings()
-  if (platform === 'apple') return settings.netease
+  if (platform === 'apple') return settings.apple
   if (platform === 'spotify') return settings.spotify
   if (platform === 'kugou') return settings.kugou
   if (platform === 'soda') return settings.soda
@@ -91,12 +114,8 @@ export function getPlatformVipState(platform: MusicPlatform): boolean {
   return localStorage.getItem(platform === 'netease' ? 'netease_vip' : 'qq_vip') === 'true'
 }
 
-/**
- * 返回会传给本地 API 的设置快照。服务端仍会按实际接口返回结果逐级降级，
- * 这里的 VIP 状态只用于选择合理的候选顺序，避免反复请求明显不可用的音质。
- */
 export function getAudioQualityRequest(platform: MusicPlatform): {
-  preference: AudioQualityPreference
+  preference: AudioQualityPreference | AppleAudioQualityPreference
   isVip: boolean
 } {
   return {

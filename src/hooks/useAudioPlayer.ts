@@ -21,6 +21,7 @@ import { GaplessIntegration } from '../services/gaplessIntegration'
 import { createSeamlessJoinController, type SeamlessJoinController } from '../services/gapless/seamlessJoinController'
 import { runGaplessDeckFade } from '../services/gapless/gaplessTransition'
 import { GAPLESS_SEAMLESS_WARMUP_SECONDS } from '../services/gapless/gaplessConstants'
+import { getProxiedAudioUrl } from '../services/musicApi'
 import type { GaplessSettings } from '../services/gapless/gaplessConstants'
 import type {
   PlaybackEngineState,
@@ -453,7 +454,9 @@ export function useAudioPlayer(
       const secondGain = context.createGain()
       const analyser = context.createAnalyser()
       analyser.fftSize = 1024
-      analyser.smoothingTimeConstant = 0.72
+      analyser.minDecibels = -90
+      analyser.maxDecibels = -8
+      analyser.smoothingTimeConstant = 0.58
       // 最终输出增益节点：AirPlay 投送时置 0 静音本机输出；采集点在 analyser 之后
       //（取完整混音），不受本节点影响，投送给音箱的仍是完整声音
       const outputGain = context.createGain()
@@ -468,9 +471,13 @@ export function useAudioPlayer(
       const leftAnalyser = context.createAnalyser()
       const rightAnalyser = context.createAnalyser()
       leftAnalyser.fftSize = 1024
-      leftAnalyser.smoothingTimeConstant = 0.72
+      leftAnalyser.minDecibels = -90
+      leftAnalyser.maxDecibels = -8
+      leftAnalyser.smoothingTimeConstant = 0.58
       rightAnalyser.fftSize = 1024
-      rightAnalyser.smoothingTimeConstant = 0.72
+      rightAnalyser.minDecibels = -90
+      rightAnalyser.maxDecibels = -8
+      rightAnalyser.smoothingTimeConstant = 0.58
       const silentL = context.createGain()
       const silentR = context.createGain()
       silentL.gain.value = 0
@@ -1587,6 +1594,8 @@ export function useAudioPlayer(
     const preparationKey = [
       current.trackKey,
       next.trackKey,
+      current.url,
+      next.url,
       settings.enableBeatMatching,
       settings.skipSilence,
       settings.minDuration,
@@ -1746,10 +1755,11 @@ export function useAudioPlayer(
         debugLog('   DJ FX:', plan.djEffects)
       }
       
-      // Try smart rendering if confidence is high and renderer available
+      // The planner is the single source of truth for smart-render eligibility.
       let retryableFailure: string | null = null
-      if ((plan.strategy === 'smart-rendered' || plan.strategy === 'smart-rendered-v2') && plan.confidence >= 0.5 && transitionRendererRef.current) {
-        debugLog('🎨 [AutoMix] 尝试智能渲染（置信度 >= 0.5）...')
+      const requiresSmartRender = plan.strategy === 'smart-rendered' || plan.strategy === 'smart-rendered-v2'
+      if (requiresSmartRender && transitionRendererRef.current) {
+        debugLog('🎨 [AutoMix] 尝试智能渲染...')
         try {
           await transitionRendererRef.current.preRender({
             sourceUrl: current.url,
@@ -1777,10 +1787,10 @@ export function useAudioPlayer(
           // 同时进入 REPREPARE 重试，成功后本次组合升级回智能过渡
           retryableFailure = renderReason
         }
-      } else if ((plan.strategy === 'smart-rendered' || plan.strategy === 'smart-rendered-v2') && plan.confidence < 0.5) {
-        debugLog('⚠️ [AutoMix] 置信度不足（< 0.5），回退到节拍交叉淡化')
-        plan.strategy = 'beat-crossfade'
-        plan.fallbackReason = 'Confidence below smart-render threshold; using beat-aligned crossfade'
+      } else if (requiresSmartRender) {
+        debugLog('⚠️ [AutoMix] 智能渲染器不可用，回退到普通交叉淡化')
+        plan.strategy = 'fixed-crossfade'
+        plan.fallbackReason = 'Smart renderer unavailable; using crossfade'
       }
       
       debugLog('🎯 [AutoMix] 最终过渡策略:', plan.strategy)
@@ -2256,6 +2266,7 @@ export function useAudioPlayer(
 
     return () => {
       preparationAbortRef.current?.abort()
+      cancelScheduledTransition('audio player unmounted', false, false)
       // 卸载时销毁可能挂载的 Apple HLS 实例，释放 MSE 与 EME 会话
       detachAppleHls(primary)
       detachAppleHls(secondary)
@@ -2482,7 +2493,7 @@ export function useAudioPlayer(
         failed()
       }).then(ready, failed)
     } else {
-      standby.src = track.url
+      standby.src = track.appleHls ? track.url : getProxiedAudioUrl(track.url)
       standby.preload = 'auto'
       standby.addEventListener('canplay', ready, { once: true })
       standby.addEventListener('error', failed, { once: true })
@@ -2698,7 +2709,7 @@ export function useAudioPlayer(
       void bridgeVolume(volumeRef.current)
     }
     // 乐观首发，随后由 bridge 轮询回填（200ms 轮询 + 播放面 0.3s 采样）
-    emit({ currentTime: 0, duration: finiteDuration(externalDurationRef.current), isPlaying: true })
+    emit({ currentTime: 0, duration: finiteDuration(externalDurationRef.current), isPlaying: true, live: false })
     externalUnsubscribeRef.current = onBridgeStateChange((s) => {
       if (!externalActiveRef.current || !s.ready) return
       const duration = s.duration > 0 ? s.duration : externalDurationRef.current
@@ -2708,6 +2719,7 @@ export function useAudioPlayer(
         // 缓冲/seek 等瞬态（loading=1 seeking=6 waiting=8）按「播放中」呈现，
         // 避免 UI 播放按钮在起播/拖动后 1 秒闪回暂停态
         isPlaying: s.playing || [1, 6, 8].includes(Number(s.status)),
+        live: false,
       })
       if (s.playing) externalEndedFiredRef.current = false
       // 基础交叉"出"半边：进入结尾淡出窗口 → MusicKit 音量线性降到 0
@@ -2739,6 +2751,7 @@ export function useAudioPlayer(
     externalUnsubscribeRef.current = null
     externalEndedFiredRef.current = false
     externalFadeActiveRef.current = false
+    emit({ live: false })
     // 注意：externalEndedWithFadeRef 不清——供 loadAndPlay/enable 做淡入头
     // 停掉播放面声音（best-effort；切到非 Apple 歌时避免 WebView2 继续出声）
     void bridgeStopPlayback()

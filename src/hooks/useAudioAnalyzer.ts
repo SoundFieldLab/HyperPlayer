@@ -1,8 +1,8 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import {
   buildLogBandEdges,
-  applyAttackDecay,
-  spectrumDbMap,
+  applyTimedAttackRelease,
+  mapAnalyserByteEnergy,
   SPECTRUM_MIN_FREQ,
   SPECTRUM_MAX_FREQ,
 } from '../utils/spectrum'
@@ -177,6 +177,7 @@ export function useAudioAnalyzer(
         if (disposed) return
         if (!shouldRunAudioAnalyzer(document.visibilityState, store.hasListeners(), store.hasBackgroundConsumers())) return
         if (now - lastUpdateTime >= updateInterval) {
+          const deltaMs = lastUpdateTime > 0 ? now - lastUpdateTime : updateInterval
           lastUpdateTime = now
 
           // bridge bins（可能非 64 长）→ 固定 64 bin（取峰值重采样，0..1）
@@ -212,12 +213,12 @@ export function useAudioAnalyzer(
             lastBeatTime = now
           } else beatPulse *= 0.72
 
-          // 24 段对数频谱（20Hz~12kHz），dB 映射 + attack/decay 平滑（与本地管线一致）
+          // 24 段对数频谱使用固定 byte 标尺，保留绝对强弱并按真实时间平滑。
           const spectrum = new Float32Array(ANALYZER_SPECTRUM_BANDS)
           for (let k = 0; k < ANALYZER_SPECTRUM_BANDS; k += 1) {
-            spectrum[k] = spectrumDbMap(bandEnergy(bins, EXT_BAND_EDGES[k], EXT_BAND_EDGES[k + 1]))
+            spectrum[k] = mapAnalyserByteEnergy(bandEnergy(bins, EXT_BAND_EDGES[k], EXT_BAND_EDGES[k + 1]))
           }
-          const smoothed = applyAttackDecay(smoothedSpectrum, spectrum, 0.12, 0.34)
+          const smoothed = applyTimedAttackRelease(smoothedSpectrum, spectrum, deltaMs, 48, 210)
           smoothedSpectrum.set(smoothed)
 
           // loopback 为混音单声道：L/R 用同一份能量（DG-LAB 立体声映射退化为同相）
@@ -356,6 +357,7 @@ export function useAudioAnalyzer(
       // backgroundThrottling 关闭后 rAF 在后台仍全速空转。
       if ((document.visibilityState === 'hidden' && !store.hasBackgroundConsumers()) || !store.hasListeners()) return
       if (now - lastUpdateTime >= updateInterval) {
+        const deltaMs = lastUpdateTime > 0 ? now - lastUpdateTime : updateInterval
         lastUpdateTime = now
         analyser.getByteFrequencyData(data)
 
@@ -364,9 +366,7 @@ export function useAudioAnalyzer(
         const rawHigh = measureBand(2600, 12000)
         const rawOverall = rawBass * 0.38 + rawMid * 0.42 + rawHigh * 0.2
         const nyquist = analyser.context.sampleRate / 2
-        // 24 段对数频谱（20Hz~12kHz）：供 3D 频谱河等按频段取能；
-        // 每段取均值+峰值混合后做 dB 映射（-72dB 地板 / -12dB 天花板），
-        // 再逐频段 attack/decay 平滑——低频下探到 20Hz、动态更细腻、回落更自然
+        // 24 段对数频谱使用固定 byte 标尺，保留绝对响度变化；平滑由真实采样间隔决定。
         const spectrum = new Float32Array(ANALYZER_SPECTRUM_BANDS)
         for (let k = 0; k < ANALYZER_SPECTRUM_BANDS; k += 1) {
           const f0 = bandEdges[k]
@@ -380,9 +380,9 @@ export function useAudioAnalyzer(
             sum += v
             if (v > peak) peak = v
           }
-          spectrum[k] = spectrumDbMap((sum / Math.max(1, end - start)) * 0.62 + peak * 0.38)
+          spectrum[k] = mapAnalyserByteEnergy((sum / Math.max(1, end - start)) * 0.62 + peak * 0.38)
         }
-        const smoothed = applyAttackDecay(smoothedSpectrum, spectrum, 0.12, 0.34)
+        const smoothed = applyTimedAttackRelease(smoothedSpectrum, spectrum, deltaMs, 48, 210)
         smoothedSpectrum.set(smoothed)
         const fluxStart = Math.max(1, Math.floor(45 / nyquist * data.length))
         const fluxEnd = Math.min(data.length, Math.ceil(10000 / nyquist * data.length))

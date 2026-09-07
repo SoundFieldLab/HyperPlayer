@@ -4,9 +4,20 @@
  */
 import { debugLog } from '../utils/debugLog'
 import { isTvModeActive } from '../platform'
+import { refreshSongUrlOnce } from './musicApi'
 import type { BeatFeatureFrame, SectionMarker, TrackAnalysis } from '../audio/types'
 
-/** MV 网格调试日志（automix-backend.log 的 [renderer:MvAlign]），人工核对对齐质量用 */
+function parseRefreshIdentity(trackKey: string): { id: string; platform: 'qq' | 'netease' } | null {
+  const match = /^(qq|netease)-(.+)$/.exec(trackKey.trim())
+  return match ? { platform: match[1] as 'qq' | 'netease', id: match[2] } : null
+}
+
+function isHttp403(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('AUDIO_DOWNLOAD_HTTP_403') || message.includes('HTTP 403')
+}
+
+
 const mvGridLog = (msg: string): void => {
   // eslint-disable-next-line no-console
   console.log('[MvAlign]', msg)
@@ -897,8 +908,25 @@ class AutoMixAnalysisService {
             audioPath = await window.electron.audioDownload.prepare(input.url, input.trackKey)
             debugLog('✅ [AutoMix] 音频文件已缓存:', audioPath)
           } catch (error) {
-            console.warn('⚠️ [AutoMix] 音频下载失败:', error)
-            return null
+            const identity = parseRefreshIdentity(input.trackKey)
+            if (identity && isHttp403(error)) {
+              const refreshedUrl = await refreshSongUrlOnce(identity.id, identity.platform, input.url).catch(() => null)
+              if (refreshedUrl && refreshedUrl !== input.url) {
+                try {
+                  audioPath = await window.electron.audioDownload.prepare(refreshedUrl, input.trackKey)
+                  debugLog('✅ [AutoMix] 刷新签名后音频已缓存:', audioPath)
+                } catch (retryError) {
+                  console.warn('⚠️ [AutoMix] 刷新签名后音频下载仍失败:', retryError)
+                  return null
+                }
+              } else {
+                console.warn('⚠️ [AutoMix] 音频下载被 403 冷却，跳过重复请求')
+                return null
+              }
+            } else {
+              console.warn('⚠️ [AutoMix] 音频下载失败:', error)
+              return null
+            }
           }
         } else {
           console.warn('⚠️ [AutoMix] Electron 音频下载服务不可用')
@@ -1004,15 +1032,30 @@ class AutoMixAnalysisService {
    * 同一首歌只解码一次。
    */
   private async analyzeInBrowser(input: TrackAnalysisInput): Promise<TrackAnalysis> {
+    let audioPath: string | null = null
     try {
-      const localPath = await window.electron?.audioDownload?.prepare?.(input.url, input.trackKey)
-      const mediaUrl = localPath ? await window.electron?.audioDownload?.getMediaUrl?.(localPath) : undefined
+      audioPath = await window.electron?.audioDownload?.prepare?.(input.url, input.trackKey) || null
+      const mediaUrl = audioPath ? await window.electron?.audioDownload?.getMediaUrl?.(audioPath) : undefined
       if (mediaUrl) {
-        debugLog('🎧 [AutoMix] 浏览器解码本地文件（可支持 m4a/aac）:', localPath)
+        debugLog('🎧 [AutoMix] 浏览器解码本地文件（可支持 m4a/aac）:', audioPath)
         const decoded = await decodeAudioUrl(mediaUrl, input.signal)
         return analyzeBuffer(input, decoded.buffer, decoded.format)
       }
     } catch (error) {
+      if (isHttp403(error)) {
+        const identity = parseRefreshIdentity(input.trackKey)
+        if (identity) {
+          const refreshedUrl = await refreshSongUrlOnce(identity.id, identity.platform, input.url).catch(() => null)
+          if (refreshedUrl && refreshedUrl !== input.url) {
+            const localPath = await window.electron?.audioDownload?.prepare?.(refreshedUrl, input.trackKey)
+            const mediaUrl = localPath ? await window.electron?.audioDownload?.getMediaUrl?.(localPath) : undefined
+            if (mediaUrl) {
+              const decoded = await decodeAudioUrl(mediaUrl, input.signal)
+              return analyzeBuffer(input, decoded.buffer, decoded.format)
+            }
+          }
+        }
+      }
       debugLog('⚠️ [AutoMix] 本地文件解码失败，尝试直接抓取 URL:', error)
     }
     debugLog('🎧 [AutoMix] 直接抓取原始 URL 解码')

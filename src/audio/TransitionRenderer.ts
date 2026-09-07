@@ -67,6 +67,7 @@ export class TransitionRenderer {
   private audioContext: AudioContext
   private masterGain: GainNode | null = null
   private cache: Map<string, RenderCache> = new Map()
+  private inFlightRenders = new Map<string, Promise<void>>()
   private activeSource: AudioBufferSourceNode | null = null
   private cacheCleanupTimer: ReturnType<typeof setInterval> | null = null
   private cacheBytes = 0
@@ -99,20 +100,28 @@ export class TransitionRenderer {
   }): Promise<void> {
     const { sourceUrl, targetUrl, plan, isStale } = params
     
-    // Check if already cached
-    const cached = this.cache.get(plan.id)
-    if (cached && cached.timestamp + this.CACHE_TTL > Date.now()
-      && this.backendForPlan(cached.plan) === this.backendForPlan(plan)) {
-      debugLog(`[TransitionRenderer] Pre-render: already cached ${plan.id}`)
-      return
+    const backend = this.backendForPlan(plan)
+    const renderKey = `${plan.id}:${backend}`
+    const running = this.inFlightRenders.get(renderKey)
+    if (running) {
+      debugLog(`[TransitionRenderer] Joining in-flight render ${renderKey}`)
+      return running
     }
-    if (cached) this.deleteCacheEntry(plan.id)
-    
-    debugLog(`[TransitionRenderer] Pre-rendering transition ${plan.id}`)
-    
-    // Trigger the render without waiting for the AudioBuffer
-    // This will download files and render to backend cache
-    await this.renderTransition(plan, sourceUrl, targetUrl, undefined, undefined, undefined, isStale)
+    const renderPromise = (async () => {
+      const cached = this.cache.get(plan.id)
+      if (cached && cached.timestamp + this.CACHE_TTL > Date.now()
+        && this.backendForPlan(cached.plan) === backend) {
+        debugLog(`[TransitionRenderer] Pre-render: already cached ${plan.id}`)
+        return
+      }
+      if (cached) this.deleteCacheEntry(plan.id)
+      debugLog(`[TransitionRenderer] Pre-rendering transition ${plan.id}`)
+      await this.renderTransition(plan, sourceUrl, targetUrl, undefined, undefined, undefined, isStale)
+    })().finally(() => {
+      this.inFlightRenders.delete(renderKey)
+    })
+    this.inFlightRenders.set(renderKey, renderPromise)
+    return renderPromise
   }
 
   async renderTransition(

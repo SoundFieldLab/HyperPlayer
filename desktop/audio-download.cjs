@@ -10,6 +10,28 @@ const http = require('http')
 const crypto = require('crypto')
 const { fileURLToPath } = require('url')
 
+const AUDIO_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
+const AUDIO_ACCEPT = 'audio/*,application/octet-stream;q=0.9,*/*;q=0.8'
+const MAX_REDIRECTS = 5
+const FORBIDDEN_COOLDOWN_MS = 30_000
+
+function normalizeAudioUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('Invalid audio URL')
+  let parsed
+  try { parsed = new URL(value.trim()) } catch { throw new Error('Invalid audio URL') }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('Invalid audio URL')
+  parsed.hash = ''
+  return parsed.href
+}
+
+function audioReferer(url) {
+  const host = new URL(url).hostname.toLowerCase()
+  if (host.includes('qq.com') || host.includes('qqmusic')) return 'https://y.qq.com/'
+  if (host.includes('163.com') || host.includes('netease')) return 'https://music.163.com/'
+  if (host.includes('bilibili') || host.includes('bilivideo')) return 'https://www.bilibili.com/'
+  return undefined
+}
+
 function realFilePath(candidate) {
   if (!candidate || typeof candidate !== 'string') return null
   try {
@@ -35,9 +57,13 @@ function isPathInside(root, target) {
 }
 
 class AudioDownloadService {
-  constructor(tempRoot) {
+  constructor(tempRoot, options = {}) {
     this.tempRoot = path.resolve(tempRoot)
+    this.requestFactory = options.requestFactory || null
+    this.logger = options.logger || ((message, details) => console.warn(message, details || ''))
+    this.now = options.now || (() => Date.now())
     this.activeDownloads = new Map()
+    this.forbiddenUntilByUrl = new Map()
     this.activeRequests = new Set()
     this.cacheIndex = new Map() // trackKey -> {filePath, size, timestamp, lastAccess}
     this.maxCacheSize = 2 * 1024 * 1024 * 1024 // 2GB
@@ -214,14 +240,20 @@ class AudioDownloadService {
    * 与 downloadForAnalysis 相同，暴露给外部直接调用。
    */
   async downloadForAnalysis(url, trackKey, options = {}) {
-    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
-      throw new Error('Invalid audio URL')
-    }
+    const canonicalUrl = normalizeAudioUrl(url)
     if (typeof trackKey !== 'string' || !trackKey.trim() || trackKey.length > 256) {
       throw new Error('Invalid track key')
     }
     trackKey = trackKey.trim()
     const { timeout = 60000, maxSize = 100 * 1024 * 1024 } = options // 100MB max
+    const now = this.now()
+    const forbiddenUntil = this.forbiddenUntilByUrl.get(canonicalUrl) || 0
+    if (forbiddenUntil > now) {
+      const error = new Error(`AUDIO_DOWNLOAD_403_COOLDOWN: retry after ${forbiddenUntil - now}ms`)
+      error.statusCode = 403
+      throw error
+    }
+    if (forbiddenUntil) this.forbiddenUntilByUrl.delete(canonicalUrl)
 
     // Check if already in cache
     const cached = this.cacheIndex.get(trackKey)
@@ -240,26 +272,27 @@ class AudioDownloadService {
       this.deleteCacheFile(trackKey)
     }
 
-    // Check if already downloading
-    if (this.activeDownloads.has(trackKey)) {
-      return await this.activeDownloads.get(trackKey)
+    // Check if already downloading the same signed URL.
+    const activeKey = `${trackKey}\n${canonicalUrl}`
+    if (this.activeDownloads.has(activeKey)) {
+      return await this.activeDownloads.get(activeKey)
     }
 
-    const downloadPromise = this._performDownload(url, trackKey, timeout, maxSize)
-    this.activeDownloads.set(trackKey, downloadPromise)
+    const downloadPromise = this._performDownload(canonicalUrl, trackKey, timeout, maxSize)
+    this.activeDownloads.set(activeKey, downloadPromise)
 
     try {
       const result = await downloadPromise
       return result
     } finally {
-      this.activeDownloads.delete(trackKey)
+      this.activeDownloads.delete(activeKey)
     }
   }
 
   _performDownload(url, trackKey, timeout, maxSize) {
     return new Promise((resolve, reject) => {
       // Generate cache file path
-      const hash = crypto.createHash('md5').update(trackKey).digest('hex')
+      const hash = crypto.createHash('md5').update(`${trackKey}\n${url}`).digest('hex')
       const urlExt = this._getExtensionFromUrl(url)
       const legacyCacheFile = path.join(this.tempRoot, `${hash}.${urlExt}`)
 
@@ -287,7 +320,6 @@ class AudioDownloadService {
 
       console.log('[AudioCache] Downloading audio from URL...')
 
-      const protocol = url.startsWith('https') ? https : http
       let writeStream = null
       let cacheFile = legacyCacheFile
       let downloadedSize = 0
@@ -301,8 +333,8 @@ class AudioDownloadService {
         if (timeoutHandle) clearTimeout(timeoutHandle)
         timeoutHandle = null
         this.activeRequests.delete(request)
-        if (responseStream && !responseStream.destroyed) responseStream.destroy()
-        if (request && !request.destroyed) request.destroy()
+        if (responseStream && typeof responseStream.destroy === 'function' && !responseStream.destroyed) responseStream.destroy()
+        if (request && typeof request.destroy === 'function' && !request.destroyed) request.destroy()
         if (writeStream && !writeStream.destroyed) writeStream.destroy()
         if (removePartial) {
           try { fs.unlinkSync(cacheFile) } catch {}
@@ -377,50 +409,88 @@ class AudioDownloadService {
         fail(new Error('Download timeout'))
       }, timeout)
 
-      request = protocol.get(url, (response) => {
-        responseStream = response
-        if (response.statusCode !== 200) {
-          response.resume()
-          fail(new Error(`HTTP ${response.statusCode}`))
-          return
+      const requestUrl = (currentUrl, redirectCount = 0) => {
+        const parsed = new URL(currentUrl)
+        const headers = {
+          'User-Agent': AUDIO_USER_AGENT,
+          Accept: AUDIO_ACCEPT,
         }
+        const referer = audioReferer(currentUrl)
+        if (referer) headers.Referer = referer
+        const responseHandler = (response) => {
+          responseStream = response
+          const statusCode = Number(response.statusCode) || 0
+          if ([301, 302, 303, 307, 308].includes(statusCode)) {
+            const location = response.headers.location
+            response.resume()
+            this.activeRequests.delete(request)
+            if (!location || redirectCount >= MAX_REDIRECTS) {
+              fail(new Error('Audio download redirect limit exceeded'))
+              return
+            }
+            requestUrl(new URL(location, currentUrl).href, redirectCount + 1)
+            return
+          }
+          if (statusCode !== 200 && statusCode !== 206) {
+            response.resume()
+            if (statusCode === 403) {
+              const forbiddenUntil = this.now() + FORBIDDEN_COOLDOWN_MS
+              this.forbiddenUntilByUrl.set(url, forbiddenUntil)
+              while (this.forbiddenUntilByUrl.size > 256) {
+                this.forbiddenUntilByUrl.delete(this.forbiddenUntilByUrl.keys().next().value)
+              }
+              this.logger('[AudioCache] Download blocked', {
+                trackKey,
+                host: parsed.hostname,
+                statusCode,
+                cooldownMs: FORBIDDEN_COOLDOWN_MS,
+              })
+              const error = new Error('AUDIO_DOWNLOAD_HTTP_403: HTTP 403')
+              error.statusCode = 403
+              fail(error)
+              return
+            }
+            const error = new Error(`AUDIO_DOWNLOAD_HTTP_${statusCode}: HTTP ${statusCode}`)
+            error.statusCode = statusCode
+            fail(error)
+            return
+          }
 
-        const contentLength = Number(response.headers['content-length'])
-        if (Number.isFinite(contentLength) && contentLength > maxSize) {
-          fail(new Error('File too large'))
-          return
-        }
-
-        response.on('data', (chunk) => {
-          if (settled) return
-          downloadedSize += chunk.length
-          if (downloadedSize > maxSize) {
+          const contentLength = Number(response.headers['content-length'])
+          if (Number.isFinite(contentLength) && contentLength > maxSize) {
             fail(new Error('File too large'))
             return
           }
-          if (!firstChunk) {
-            firstChunk = chunk
-            beginWrite(urlExt)
-          }
-        })
 
-        response.on('aborted', () => fail(new Error('Download aborted')))
-        response.on('error', fail)
-        // 空响应体也要收尾（创建文件后走 finish 的空文件校验）
-        response.on('end', () => {
-          if (!writeStream) beginWrite(urlExt)
-        })
-      })
+          response.on('data', (chunk) => {
+            if (settled) return
+            downloadedSize += chunk.length
+            if (downloadedSize > maxSize) {
+              fail(new Error('File too large'))
+              return
+            }
+            if (!firstChunk) {
+              firstChunk = chunk
+              beginWrite(urlExt)
+            }
+          })
 
-      this.activeRequests.add(request)
+          response.on('aborted', () => fail(new Error('Download aborted')))
+          response.on('error', fail)
+          response.on('end', () => {
+            if (!writeStream) beginWrite(urlExt)
+          })
+        }
+        const protocol = parsed.protocol === 'https:' ? https : http
+        request = this.requestFactory
+          ? this.requestFactory({ url: currentUrl, headers }, responseHandler)
+          : protocol.get(currentUrl, { headers }, responseHandler)
+        this.activeRequests.add(request)
+        request.on('error', fail)
+        request.setTimeout?.(timeout, () => fail(new Error('Request timeout')))
+      }
 
-      request.on('error', (error) => {
-        fail(error)
-      })
-
-      request.setTimeout(timeout, () => {
-        fail(new Error('Request timeout'))
-      })
+      requestUrl(url)
     })
   }
 

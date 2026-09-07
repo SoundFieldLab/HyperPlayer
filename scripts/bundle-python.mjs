@@ -184,9 +184,11 @@ async function installDependencies(pythonDir) {
   // wheel-only 策略由此脚本固定，避免构建环境解析出不同的 Beat This/Torch 组合。
   console.log(`⚙️  安装锁定依赖: ${path.relative(PROJECT_ROOT, requirementsPath)}`)
   console.log(`⚙️  平台: CPython ${PYTHON_VERSION} win_amd64${process.env.PIP_INDEX_URL ? `；镜像：${process.env.PIP_INDEX_URL}` : '；pip 默认索引'}`)
-  // proxy-tools 0.1.0 is a small pure-Python dependency of pywebview and has no wheel.
-  // Install that exact source distribution first; every remaining package stays wheel-only.
-  await execAsync(`"${pythonExe}" -m pip install proxy-tools==0.1.0 --no-deps --no-warn-script-location --disable-pip-version-check`, { maxBuffer: 10 * 1024 * 1024 })
+  // proxy-tools is a small source distribution. Install the pinned build backend first
+  // and disable isolated build so the embedded runtime can build it without network-only
+  // build dependencies.
+  await execAsync(`"${pythonExe}" -m pip install setuptools==69.5.1 --no-warn-script-location --disable-pip-version-check`, { maxBuffer: 10 * 1024 * 1024 })
+  await execAsync(`"${pythonExe}" -m pip install proxy-tools==0.1.0 --no-deps --no-build-isolation --no-warn-script-location --disable-pip-version-check`, { maxBuffer: 10 * 1024 * 1024 })
   const cmd = `"${pythonExe}" -m pip install --requirement "${requirementsPath}" --only-binary :all: --no-warn-script-location --disable-pip-version-check`
   
   const { stdout, stderr } = await execAsync(cmd, { maxBuffer: 10 * 1024 * 1024 })

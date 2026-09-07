@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
+  mapAnalyserByteEnergy,
+  applyTimedAttackRelease,
   spectrumDbMap,
   applyAttackDecay,
   compressSpectrumBands,
@@ -7,6 +9,52 @@ import {
   SPECTRUM_MIN_FREQ,
   SPECTRUM_MAX_FREQ,
 } from '../src/utils/spectrum'
+
+describe('mapAnalyserByteEnergy（固定 byte 标尺）', () => {
+  it('静音和噪声门以下保持为 0', () => {
+    expect(mapAnalyserByteEnergy(0)).toBe(0)
+    expect(mapAnalyserByteEnergy(0.03)).toBe(0)
+  })
+
+  it('整体增益降低时柱高同步下降，不会被帧内峰值归一化', () => {
+    const quiet = mapAnalyserByteEnergy(0.2)
+    const medium = mapAnalyserByteEnergy(0.45)
+    const loud = mapAnalyserByteEnergy(0.75)
+    expect(quiet).toBeLessThan(medium)
+    expect(medium).toBeLessThan(loud)
+    expect(medium).toBeLessThan(0.6)
+    expect(loud).toBeLessThan(1)
+  })
+
+  it('只钳制真正的满标尺输入', () => {
+    expect(mapAnalyserByteEnergy(1)).toBe(1)
+    expect(mapAnalyserByteEnergy(2)).toBe(1)
+  })
+})
+
+describe('applyTimedAttackRelease（时间一致的包络）', () => {
+  const advance = (fps: number, durationMs: number, target: number) => {
+    let state = new Float32Array([0])
+    const delta = 1000 / fps
+    for (let elapsed = 0; elapsed < durationMs - 0.01; elapsed += delta) {
+      state = applyTimedAttackRelease(state, new Float32Array([target]), delta)
+    }
+    return state[0]
+  }
+
+  it('30fps 与 60fps 经过同一时间后的包络接近', () => {
+    expect(advance(30, 300, 1)).toBeCloseTo(advance(60, 300, 1), 2)
+  })
+
+  it('上升快于回落并最终接近静音', () => {
+    const risen = applyTimedAttackRelease(new Float32Array([0]), new Float32Array([1]), 50)[0]
+    const fallen = applyTimedAttackRelease(new Float32Array([1]), new Float32Array([0]), 50)[0]
+    expect(risen).toBeGreaterThan(1 - fallen)
+    let state = new Float32Array([1])
+    for (let index = 0; index < 30; index += 1) state = applyTimedAttackRelease(state, new Float32Array([0]), 33)
+    expect(state[0]).toBeLessThan(0.02)
+  })
+})
 
 describe('spectrumDbMap（dB 地板/天花板映射）', () => {
   it('静音（0）映射为 0', () => {

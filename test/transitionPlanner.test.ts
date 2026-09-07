@@ -347,6 +347,28 @@ describe('planTransitionV2（AutoMix 增强版）', () => {
     expect(plan.id).toContain('smart-rendered-v2')
   })
 
+  it.each([0.35, 0.49])('完整网格在 v2 置信度边界 %s 仍使用智能渲染', confidence => {
+    const plan = planTransitionV2(
+      makeAnalysis('netease-source', { confidence }),
+      makeAnalysis('netease-target', { confidence }),
+      SMART_SETTINGS,
+      'smart-rendered-v2',
+    )
+    expect(plan.strategy).toBe('smart-rendered-v2')
+    expect(plan.fallbackReason).toBeUndefined()
+  })
+
+  it('完整网格低于 v2 置信度门槛时降级', () => {
+    const plan = planTransitionV2(
+      makeAnalysis('netease-source', { confidence: 0.349 }),
+      makeAnalysis('netease-target', { confidence: 0.349 }),
+      SMART_SETTINGS,
+      'smart-rendered-v2',
+    )
+    expect(plan.strategy).toBe('fixed-crossfade')
+    expect(plan.fallbackReason).toContain('Reliable beat/downbeat features')
+  })
+
   it('高能量（energy 0.8 / BPM 差 0）编排为 energetic：含 riser/鼓点/tempo ramp', () => {
     const plan = planTransitionV2(SOURCE, TARGET, SMART_SETTINGS, 'smart-rendered-v2')
     const choreography = plan.v2?.choreography
@@ -415,6 +437,18 @@ describe('planTransitionV2（AutoMix 增强版）', () => {
     expect(plan.v2?.withoutBeatGrid).toBe(true)
     expect(plan.v2?.choreography?.style).toBe('atmospheric')
     expect(plan.v2?.choreography?.drumFill).toBe(false)
+  })
+
+  it('大 BPM 差的无网格特效过渡不受 0.5 旧门槛阻断', () => {
+    const plan = planTransitionV2(
+      makeAnalysis('netease-source', { estimatedBpm: 120, confidence: 0.35 }),
+      makeAnalysis('netease-target', { estimatedBpm: 100, confidence: 0.35 }),
+      SMART_SETTINGS,
+      'smart-rendered-v2',
+    )
+    expect(plan.confidence).toBeLessThan(0.5)
+    expect(plan.strategy).toBe('smart-rendered-v2')
+    expect(plan.v2?.withoutBeatGrid).toBe(true)
   })
 
   it('BPM 差 >100 时降级为 fixed-crossfade', () => {

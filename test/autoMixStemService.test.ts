@@ -70,7 +70,28 @@ describe('refineTransitionWithStems', () => {
     expect(await refineTransitionWithStems({ plan: plan(), sourceAudioPath: 's.wav', targetAudioPath: 't.wav', requestPrefix: 'x' })).toBeNull()
   })
 
-  it('模型可用时并行分离两侧并生成 stem choreography 和稳定指纹', async () => {
+  it('模型可用时优先用单个 pair 请求分离两侧', async () => {
+    const separate = vi.fn()
+    const separatePair = vi.fn().mockResolvedValue({
+      requestId: 'pair:pair',
+      source: artifact('source'),
+      target: artifact('target'),
+    })
+    ;(globalThis as { window?: unknown }).window = {
+      electron: { stems: { status: vi.fn().mockResolvedValue({ available: true }), separate, separatePair, cancel: vi.fn() } },
+    }
+    const result = await refineTransitionWithStems({ plan: plan(), sourceAudioPath: 's.wav', targetAudioPath: 't.wav', requestPrefix: 'pair' })
+    expect(separatePair).toHaveBeenCalledOnce()
+    expect(separatePair).toHaveBeenCalledWith({
+      requestId: 'pair:pair',
+      source: { inputPath: 's.wav', mode: 'tail', startTime: 60, duration: 40 },
+      target: { inputPath: 't.wav', mode: 'head', startTime: 10, duration: 40 },
+    })
+    expect(separate).not.toHaveBeenCalled()
+    expect(result?.plan.v2?.stemFingerprint).toContain('source-cache:target-cache')
+  })
+
+  it('旧 bridge 可用时并行分离两侧并生成 stem choreography 和稳定指纹', async () => {
     const separate = vi.fn(async (request: { mode: string }) => request.mode === 'tail' ? artifact('source') : artifact('target'))
     ;(globalThis as { window?: unknown }).window = { electron: { stems: { status: vi.fn().mockResolvedValue({ available: true }), separate, cancel: vi.fn() } } }
     const result = await refineTransitionWithStems({ plan: plan(), sourceAudioPath: 's.wav', targetAudioPath: 't.wav', requestPrefix: 'pair' })

@@ -12,6 +12,7 @@ import struct
 import subprocess
 import sys
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -268,9 +269,10 @@ def write_float32_wav(path: Path, audio: np.ndarray, sample_rate: int = SAMPLE_R
         output.write(interleaved)
 
 
-def run(config: dict) -> dict:
+def run_with_session(config: dict, session) -> dict:
     input_path = Path(config["inputPath"]).expanduser().resolve()
-    model_path = Path(config["modelPath"]).expanduser().resolve()
+    model_path_value = config.get("modelPath")
+    model_path = Path(model_path_value).expanduser().resolve() if model_path_value else None
     output_dir = Path(config["outputDir"]).expanduser().resolve()
     mode = str(config.get("mode", "head")).lower()
     duration = float(config.get("duration", MAX_DURATION_SECONDS))
@@ -280,7 +282,7 @@ def run(config: dict) -> dict:
         raise ValueError("mode must be 'head' or 'tail'")
     if not input_path.is_file():
         raise FileNotFoundError(f"input audio not found: {input_path}")
-    if not model_path.is_file():
+    if model_path is not None and not model_path.is_file():
         raise FileNotFoundError(f"HTDemucs model not found: {model_path}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -292,7 +294,6 @@ def run(config: dict) -> dict:
     if excerpt.shape[1] == 0 or not np.isfinite(excerpt).all():
         raise ValueError("prepared excerpt is empty or contains NaN/infinity")
 
-    session = create_session(model_path)
     model_output, segment = separate(session, excerpt)
     if model_output.shape[2] != excerpt.shape[1] or not np.isfinite(model_output).all():
         raise RuntimeError("stem output length mismatch or NaN/infinity detected")
@@ -313,7 +314,7 @@ def run(config: dict) -> dict:
         "version": 1,
         "engine": "htdemucs-onnx-cpu",
         "inputPath": str(input_path),
-        "modelPath": str(model_path),
+        "modelPath": str(model_path) if model_path is not None else None,
         "mode": mode,
         "requestedDuration": duration,
         "startSeconds": start_seconds,
@@ -333,6 +334,52 @@ def run(config: dict) -> dict:
     manifest["manifestPath"] = str(manifest_path)
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
+
+
+def run(config: dict) -> dict:
+    model_path = Path(config["modelPath"]).expanduser().resolve()
+    if not model_path.is_file():
+        raise FileNotFoundError(f"HTDemucs model not found: {model_path}")
+    return run_with_session(config, create_session(model_path))
+
+
+def run_pair(configs: list[dict], session) -> list[dict]:
+    if not isinstance(configs, list) or not 1 <= len(configs) <= 2:
+        raise ValueError("separate_pair requires one or two window configurations")
+    with ThreadPoolExecutor(max_workers=len(configs), thread_name_prefix="htdemucs-pair") as executor:
+        futures = [executor.submit(run_with_session, config, session) for config in configs]
+        return [future.result() for future in futures]
+
+
+def serve(model_path: Path) -> int:
+    if not model_path.is_file():
+        print(json.dumps({"type": "fatal", "error": f"HTDemucs model not found: {model_path}"}), flush=True)
+        return 2
+    session = create_session(model_path)
+    print(json.dumps({"type": "ready", "modelPath": str(model_path)}), flush=True)
+    for line in sys.stdin:
+        request = None
+        try:
+            request = json.loads(line)
+            request_id = request.get("id")
+            request_type = request.get("type")
+            if request_type == "shutdown":
+                print(json.dumps({"type": "shutdown", "id": request_id}), flush=True)
+                return 0
+            if request_type == "separate":
+                result = run_with_session(request["config"], session)
+            elif request_type == "separate_pair":
+                result = run_pair(request["configs"], session)
+            else:
+                raise ValueError(f"unsupported request type: {request_type}")
+            print(json.dumps({"type": "result", "id": request_id, "result": result}, ensure_ascii=False), flush=True)
+        except Exception as error:
+            print(json.dumps({
+                "type": "error",
+                "id": request.get("id") if isinstance(request, dict) else None,
+                "error": str(error),
+            }, ensure_ascii=False), flush=True)
+    return 0
 
 
 def parse_config(argv: list[str] | None = None) -> dict:
@@ -362,8 +409,19 @@ def parse_config(argv: list[str] | None = None) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = list(argv if argv is not None else sys.argv[1:])
+    if "--serve" in arguments:
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("--serve", action="store_true", help="serve JSONL requests with one persistent model session")
+        parser.add_argument("--model", required=True)
+        args = parser.parse_args(arguments)
+        try:
+            return serve(Path(args.model).expanduser().resolve())
+        except Exception as error:
+            print(json.dumps({"type": "fatal", "error": str(error)}, ensure_ascii=False), flush=True)
+            return 1
     try:
-        manifest = run(parse_config(argv))
+        manifest = run(parse_config(arguments))
         print(json.dumps(manifest, ensure_ascii=False), flush=True)
         return 0
     except Exception as error:

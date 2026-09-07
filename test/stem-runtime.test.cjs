@@ -9,7 +9,7 @@ const { StemRuntime, resolvePaths } = require('../desktop/stem-runtime.cjs')
 
 function fixtureRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'waveforge-stem-test-'))
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  t.after(async () => fs.promises.rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }))
   return root
 }
 
@@ -27,18 +27,23 @@ function makeFixture(t, runnerSource) {
 }
 
 function runtimeOptions(fixture, extra = {}) {
-  return { ...fixture, isInputAllowed: () => true, ...extra }
+  return { ...fixture, isInputAllowed: () => true, workerInterpreterArgs: [], ...extra }
 }
 
 const SUCCESS_RUNNER = String.raw`
-const fs = require('fs'); const path = require('path');
-const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-fs.mkdirSync(config.outputDir, { recursive: true });
-const files = {};
-for (const name of ['drums','bass','vocals','other']) { files[name] = path.join(config.outputDir, name + '.wav'); fs.writeFileSync(files[name], 'wav-' + name); }
-const manifest = { frames: 100, sampleRate: 44100, channels: 2, files, validation: { lengthsMatch: true, finite: true } };
-fs.writeFileSync(path.join(config.outputDir, 'manifest.json'), JSON.stringify(manifest));
-console.log(JSON.stringify(manifest));
+const fs = require('fs'); const path = require('path'); const readline = require('readline');
+function run(config) {
+  fs.mkdirSync(config.outputDir, { recursive: true }); const files = {};
+  for (const name of ['drums','bass','vocals','other']) { files[name] = path.join(config.outputDir, name + '.wav'); fs.writeFileSync(files[name], 'wav-' + name); }
+  const manifest = { frames: 100, sampleRate: 44100, channels: 2, files, validation: { lengthsMatch: true, finite: true } };
+  fs.writeFileSync(path.join(config.outputDir, 'manifest.json'), JSON.stringify(manifest)); return manifest;
+}
+console.log(JSON.stringify({ type: 'ready' }));
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line); if (request.type === 'shutdown') return process.exit(0);
+  try { const result = request.type === 'separate_pair' ? request.configs.map(run) : run(request.config); console.log(JSON.stringify({ type: 'result', id: request.id, result })); }
+  catch (error) { console.log(JSON.stringify({ type: 'error', id: request.id, error: error.message })); }
+});
 `
 
 test('resolvePaths reports a missing optional model', () => {
@@ -80,15 +85,18 @@ test('queue is serial and queued jobs can be cancelled', async t => {
   const marker = path.join(os.tmpdir(), `waveforge-stem-marker-${process.pid}-${Date.now()}.txt`).replace(/\\/g, '\\\\')
   t.after(() => fs.rmSync(marker, { force: true }))
   const runner = String.raw`
-const fs = require('fs'); const path = require('path');
-const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-fs.appendFileSync('${marker}', 'start\n');
-setTimeout(() => {
-  fs.mkdirSync(config.outputDir, { recursive: true }); const files = {};
-  for (const name of ['drums','bass','vocals','other']) { files[name] = path.join(config.outputDir, name + '.wav'); fs.writeFileSync(files[name], 'wav'); }
-  const manifest = { files, validation: { lengthsMatch: true, finite: true } };
-  fs.writeFileSync(path.join(config.outputDir, 'manifest.json'), JSON.stringify(manifest)); console.log(JSON.stringify(manifest));
-}, 150);
+const fs = require('fs'); const path = require('path'); const readline = require('readline');
+console.log(JSON.stringify({ type: 'ready' }));
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line); if (request.type === 'shutdown') return process.exit(0);
+  const config = request.config; fs.appendFileSync('${marker}', 'start\\n');
+  setTimeout(() => {
+    fs.mkdirSync(config.outputDir, { recursive: true }); const files = {};
+    for (const name of ['drums','bass','vocals','other']) { files[name] = path.join(config.outputDir, name + '.wav'); fs.writeFileSync(files[name], 'wav'); }
+    const manifest = { files, validation: { lengthsMatch: true, finite: true } };
+    fs.writeFileSync(path.join(config.outputDir, 'manifest.json'), JSON.stringify(manifest)); console.log(JSON.stringify({ type: 'result', id: request.id, result: manifest }));
+  }, 150);
+});
 `
   const fixture = makeFixture(t, runner)
   const secondInput = path.join(fixture.root, 'second.wav')
@@ -104,12 +112,43 @@ setTimeout(() => {
 })
 
 test('active job can be cancelled', async t => {
-  const fixture = makeFixture(t, 'setTimeout(() => {}, 10000)')
+  const fixture = makeFixture(t, String.raw`
+console.log(JSON.stringify({ type: 'ready' }));
+require('readline').createInterface({ input: process.stdin }).on('line', () => {});
+`)
   const runtime = new StemRuntime(runtimeOptions(fixture, { cachePath: path.join(fixture.root, 'cache'), timeoutMs: 5000, appInfo: {} }))
   const pending = runtime.separate({ inputPath: fixture.inputPath, duration: 1, requestId: 'cancel-me' })
   await new Promise(resolve => setTimeout(resolve, 50))
   assert.equal(runtime.cancel('cancel-me'), true)
   await assert.rejects(pending, /cancelled/)
+  runtime.shutdown()
+})
+
+test('pair separation uses one persistent worker and caches both sides', async t => {
+  const fixture = makeFixture(t, SUCCESS_RUNNER)
+  const targetInput = path.join(fixture.root, 'target.wav')
+  fs.writeFileSync(targetInput, 'target-audio')
+  let spawnCount = 0
+  const runtime = new StemRuntime(runtimeOptions(fixture, {
+    cachePath: path.join(fixture.root, 'cache'),
+    appInfo: {},
+    spawn: (...args) => { spawnCount++; return require('child_process').spawn(...args) },
+  }))
+  const request = {
+    requestId: 'pair',
+    source: { inputPath: fixture.inputPath, mode: 'tail', duration: 2 },
+    target: { inputPath: targetInput, mode: 'head', duration: 2 },
+  }
+  const first = await runtime.separatePair(request)
+  assert.equal(spawnCount, 1)
+  assert.equal(first.source.requestId, 'pair:source')
+  assert.equal(first.target.requestId, 'pair:target')
+  assert.equal(first.source.cached, false)
+  assert.equal(first.target.cached, false)
+  const second = await runtime.separatePair({ ...request, requestId: 'pair-cached' })
+  assert.equal(spawnCount, 1)
+  assert.equal(second.source.cached, true)
+  assert.equal(second.target.cached, true)
   runtime.shutdown()
 })
 

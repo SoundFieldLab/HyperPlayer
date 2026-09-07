@@ -263,13 +263,14 @@ function fallbackReason(
   reliableGrid: boolean,
   confidence: number,
   maxBpmDifference = MAX_SMART_MIX_BPM_DIFFERENCE,
+  minConfidence = 0.5,
 ): string | undefined {
   if (!settings.beatMatching) return 'Beat matching is disabled'
   if (bpmDifference > maxBpmDifference) {
     return `BPM difference ${bpmDifference.toFixed(1)} exceeds the ${maxBpmDifference} BPM smart-mix limit`
   }
   if (!reliableGrid) return 'Reliable beat/downbeat features are unavailable'
-  if (confidence < 0.5) return 'Transition confidence is below the smart-render threshold'
+  if (confidence < minConfidence) return 'Transition confidence is below the smart-render threshold'
   return undefined
 }
 
@@ -877,7 +878,14 @@ export function planTransitionV2(
       reason = undefined
     }
   } else {
-    reason = fallbackReason(settings, bpmDifference, reliableGrid, confidence, MAX_SMART_MIX_BPM_DIFFERENCE_V2)
+    reason = fallbackReason(
+      settings,
+      bpmDifference,
+      reliableGrid,
+      confidence,
+      MAX_SMART_MIX_BPM_DIFFERENCE_V2,
+      MIN_ANALYSIS_CONFIDENCE_V2,
+    )
   }
   const smartEligible = !reason
   const finalStrategy = smartEligible

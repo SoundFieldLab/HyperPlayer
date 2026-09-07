@@ -57,37 +57,50 @@ export async function refineTransitionWithStems(input: {
   const status = await bridge.status().catch(() => null)
   if (!status?.available || isStale?.()) return null
 
+  const pairRequestId = `${requestPrefix}:pair`
   const sourceRequestId = `${requestPrefix}:source`
   const targetRequestId = `${requestPrefix}:target`
   let staleCancelled = false
-  const cancelBoth = () => {
+  const cancelRequests = () => {
     if (staleCancelled) return
     staleCancelled = true
-    void bridge.cancel(sourceRequestId)
-    void bridge.cancel(targetRequestId)
+    if (bridge.separatePair) void bridge.cancel(pairRequestId)
+    else {
+      void bridge.cancel(sourceRequestId)
+      void bridge.cancel(targetRequestId)
+    }
   }
   const staleTimer = isStale
-    ? globalThis.setInterval(() => { if (isStale()) cancelBoth() }, 100)
+    ? globalThis.setInterval(() => { if (isStale()) cancelRequests() }, 100)
     : null
   try {
-    const [sourceArtifact, targetArtifact] = await Promise.all([
-      bridge.separate({
-        inputPath: sourceAudioPath,
-        mode: 'tail',
-        startTime: requirement.source.startTime,
-        duration: requirement.source.duration,
-        requestId: sourceRequestId,
-      }),
-      bridge.separate({
-        inputPath: targetAudioPath,
-        mode: 'head',
-        startTime: requirement.target.startTime,
-        duration: requirement.target.duration,
-        requestId: targetRequestId,
-      }),
-    ])
+    const sourceRequest = {
+      inputPath: sourceAudioPath,
+      mode: 'tail' as const,
+      startTime: requirement.source.startTime,
+      duration: requirement.source.duration,
+    }
+    const targetRequest = {
+      inputPath: targetAudioPath,
+      mode: 'head' as const,
+      startTime: requirement.target.startTime,
+      duration: requirement.target.duration,
+    }
+    const pair = bridge.separatePair
+      ? await bridge.separatePair({
+        requestId: pairRequestId,
+        source: sourceRequest,
+        target: targetRequest,
+      })
+      : null
+    const [sourceArtifact, targetArtifact] = pair
+      ? [pair.source, pair.target]
+      : await Promise.all([
+        bridge.separate({ ...sourceRequest, requestId: sourceRequestId }),
+        bridge.separate({ ...targetRequest, requestId: targetRequestId }),
+      ])
     if (isStale?.()) {
-      cancelBoth()
+      cancelRequests()
       return null
     }
     if (!sourceArtifact || !targetArtifact) return null
@@ -131,6 +144,7 @@ export async function refineTransitionWithStems(input: {
       },
     }
   } catch (error) {
+    cancelRequests()
     console.warn('[AutoMix] HTDemucs stem refinement failed; keeping full-mix v2 DSP:', error)
     return null
   } finally {

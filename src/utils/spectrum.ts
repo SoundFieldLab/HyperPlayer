@@ -13,6 +13,38 @@ export const SPECTRUM_DB_CEILING = -12
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
 
 /**
+ * 将 AnalyserNode/bridge 的 0..255 byte 频谱能量映射为稳定的视觉强度。
+ * byte 值本身已经由 AnalyserNode.min/maxDecibels 映射，不能再次按线性幅度转 dB。
+ * 固定噪声门和 gamma 曲线保留整体响度差异，避免每帧最大频段总是满格。
+ */
+export function mapAnalyserByteEnergy(value01: number, noiseGate = 0.035, gamma = 1.35): number {
+  const normalized = (clamp01(value01) - noiseGate) / Math.max(1e-6, 1 - noiseGate)
+  if (normalized <= 0) return 0
+  return clamp01(Math.pow(normalized, gamma))
+}
+
+/** 基于真实经过时间的逐频段 attack/release，帧率变化不会改变响应速度。 */
+export function applyTimedAttackRelease(
+  previous: Float32Array | number[],
+  current: Float32Array | number[],
+  deltaMs: number,
+  attackMs = 55,
+  releaseMs = 220,
+): Float32Array {
+  const length = Math.min(previous.length, current.length)
+  const out = new Float32Array(length)
+  const dt = Math.max(0, Math.min(100, Number.isFinite(deltaMs) ? deltaMs : 0))
+  for (let index = 0; index < length; index += 1) {
+    const prev = clamp01(previous[index] || 0)
+    const next = clamp01(current[index] || 0)
+    const timeConstant = next >= prev ? Math.max(1, attackMs) : Math.max(1, releaseMs)
+    const alpha = 1 - Math.exp(-dt / timeConstant)
+    out[index] = prev + (next - prev) * alpha
+  }
+  return out
+}
+
+/**
  * 把 0..1 的线性幅度映射为 dB 刻度下的 0..1。
  * 线性幅度->dB：20*log10(v)。低于地板归 0，高于天花板归 1，中间线性映射。
  * 相比线性/对数压缩，dB 映射让低音量时柱条仍有可见动态，高音量时不会瞬间顶满。

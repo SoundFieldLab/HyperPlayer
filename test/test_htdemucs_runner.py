@@ -3,6 +3,7 @@ import json
 import os
 import struct
 import tempfile
+import threading
 import time
 import unittest
 import wave
@@ -114,6 +115,25 @@ class HTDemucsRunnerTests(unittest.TestCase):
         vocals = rng.normal(0, 0.02, (2, 64)).astype(np.float32)
         other = excerpt - drums - bass - vocals
         np.testing.assert_allclose(drums + bass + vocals + other, excerpt, atol=1e-7)
+
+    def test_run_pair_starts_both_windows_concurrently_with_one_session(self):
+        barrier = threading.Barrier(2)
+        session = object()
+        seen_sessions = []
+        original = runner.run_with_session
+
+        def fake_run(config, current_session):
+            seen_sessions.append(current_session)
+            barrier.wait(timeout=1)
+            return {"side": config["side"]}
+
+        runner.run_with_session = fake_run
+        try:
+            result = runner.run_pair([{"side": "source"}, {"side": "target"}], session)
+        finally:
+            runner.run_with_session = original
+        self.assertEqual(result, [{"side": "source"}, {"side": "target"}])
+        self.assertEqual(seen_sessions, [session, session])
 
     def test_accepts_forty_seconds_and_rejects_longer_windows(self):
         audio = np.zeros((2, 401), dtype=np.float32)
