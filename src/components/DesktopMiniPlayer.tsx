@@ -10,6 +10,7 @@ import React from 'react'
 interface DesktopMiniPlayerProps {
   currentSong: Song | null
   isPlaying: boolean
+  live?: boolean
   currentTime: number
   duration: number
   onPlayPause: () => void
@@ -25,6 +26,7 @@ interface DesktopMiniPlayerProps {
 function DesktopMiniPlayer({
   currentSong,
   isPlaying,
+  live = false,
   currentTime,
   duration,
   onPlayPause,
@@ -65,28 +67,34 @@ function DesktopMiniPlayer({
           WebkitBackdropFilter: `blur(${cardBlurAmount}px) saturate(180%)`,
         }}
       >
-        {/* 进度条 */}
-        <div className="h-1 bg-white/10 relative">
-          <motion.div
-            className="h-full w-full origin-left"
-            animate={{ scaleX: Math.max(0, Math.min(1, progress / 100)) }}
-            style={{
-              background: accentColor,
-              willChange: 'transform',
-            }}
-            transition={{ duration: 0.3, ease: 'linear' }}
-          />
-        </div>
+        {/* 直播不显示可定位进度，避免把滑动窗口误导成节目时长。 */}
+        {!live && (
+          <div className="h-1 bg-white/10 relative">
+            <motion.div
+              className="h-full w-full origin-left"
+              animate={{ scaleX: Math.max(0, Math.min(1, progress / 100)) }}
+              style={{
+                background: accentColor,
+                willChange: 'transform',
+              }}
+              transition={{ duration: 0.3, ease: 'linear' }}
+            />
+          </div>
+        )}
 
         {/* 主内容 */}
         <div className="flex items-center gap-3 px-4 py-3 min-[1360px]:gap-4 min-[1360px]:px-6 min-[1360px]:py-4">
           {/* 封面 */}
-          <img
-            src={currentSong.album?.picUrl || ''}
-            alt={currentSong.name}
-            className="h-12 w-12 rounded-lg shadow-lg min-[1360px]:h-14 min-[1360px]:w-14"
-            draggable={false}
-          />
+          {currentSong.album?.picUrl ? (
+            <img
+              src={currentSong.album.picUrl}
+              alt={currentSong.name}
+              className="h-12 w-12 rounded-lg object-cover shadow-lg min-[1360px]:h-14 min-[1360px]:w-14"
+              draggable={false}
+            />
+          ) : (
+            <div aria-label={`${currentSong.name} 封面占位`} className="h-12 w-12 shrink-0 rounded-lg bg-white/10 min-[1360px]:h-14 min-[1360px]:w-14" />
+          )}
 
           {/* 歌曲信息 */}
           <div className="flex-1 min-w-0">
@@ -96,8 +104,9 @@ function DesktopMiniPlayer({
             <p className="text-white/60 text-sm truncate">
               {currentSong.artists?.map((a: any) => a.name).join(', ')}
             </p>
+            {live && <p className="mt-1 text-xs font-semibold text-[#fa2d48]">正在直播</p>}
             {/* 当前歌词 */}
-            {currentLyric && (
+            {!live && currentLyric && (
               <p className="text-white/50 text-xs truncate mt-1 italic">
                 {currentLyric}
               </p>
@@ -107,7 +116,7 @@ function DesktopMiniPlayer({
           {/* 控制按钮 */}
           <div className="flex items-center gap-2 min-[1360px]:gap-3">
             {/* 上一曲 */}
-            <motion.button
+            {!live && <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
               onClick={(e) => {
@@ -117,7 +126,7 @@ function DesktopMiniPlayer({
               className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 transition-all flex items-center justify-center"
             >
               <SkipBack className="w-4 h-4 text-white" fill="currentColor" />
-            </motion.button>
+            </motion.button>}
 
             {/* 播放/暂停 */}
             <motion.button
@@ -140,7 +149,7 @@ function DesktopMiniPlayer({
             </motion.button>
 
             {/* 下一曲 */}
-            <motion.button
+            {!live && <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
               onClick={(e) => {
@@ -150,7 +159,7 @@ function DesktopMiniPlayer({
               className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 transition-all flex items-center justify-center"
             >
               <SkipForward className="w-4 h-4 text-white" fill="currentColor" />
-            </motion.button>
+            </motion.button>}
           </div>
         </div>
       </div>

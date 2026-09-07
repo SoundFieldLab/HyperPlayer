@@ -22,6 +22,27 @@ export const PLATFORM_LABELS: Record<MusicPlatform, string> = {
   soda: '汽水音乐',
 }
 
+export interface PlatformVisualMetadata {
+  label: string
+  shortLabel: string
+  color: string
+  background: string
+}
+
+/** 所有平台都提供本地文字视觉信息，避免依赖跨站图标。 */
+export const PLATFORM_VISUAL_METADATA: Record<MusicPlatform, PlatformVisualMetadata> = {
+  netease: { label: '网易云音乐', shortLabel: '网', color: '#fff', background: '#d81e2b' },
+  qq: { label: 'QQ音乐', shortLabel: 'QQ', color: '#102a1d', background: '#31c27c' },
+  apple: { label: 'Apple Music', shortLabel: 'AM', color: '#fff', background: '#fa2d48' },
+  spotify: { label: 'Spotify', shortLabel: 'S', color: '#082515', background: '#1db954' },
+  kugou: { label: '酷狗音乐', shortLabel: '酷', color: '#fff', background: '#ff7a00' },
+  soda: { label: '汽水音乐', shortLabel: '汽', color: '#06263a', background: '#38bdf8' },
+}
+
+export function getPlatformVisualMetadata(platform: MusicPlatform): PlatformVisualMetadata {
+  return PLATFORM_VISUAL_METADATA[platform]
+}
+
 export function platformLabel(platform: MusicPlatform | string | undefined | null): string {
   if (platform && platform in PLATFORM_LABELS) return PLATFORM_LABELS[platform as MusicPlatform]
   return '未知平台'
@@ -176,7 +197,7 @@ const APPLE_CAPABILITIES: PlatformCapabilities = {
   similarSongs: false,
   radio: false,
   playAsCarrier: false,
-  audioQuality: false,
+  audioQuality: true,
 }
 
 const SPOTIFY_CAPABILITIES: PlatformCapabilities = {

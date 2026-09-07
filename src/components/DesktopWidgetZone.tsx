@@ -277,7 +277,7 @@ function WeatherWidget({ settings, cardBlurAmount, accentColor, onOverlayOpenCha
   const [detailsTab, setDetailsTab] = useState<WeatherDetailsTab>('weather')
   const [hazards, setHazards] = useState<HazardSnapshot | null>(() => getCachedHazardSnapshot())
   const [hazardLoading, setHazardLoading] = useState(false)
-  const [hazardError, setHazardError] = useState('')
+  const [hazardTransportError, setHazardTransportError] = useState('')
   const requestControllerRef = useRef<AbortController | null>(null)
   const hazardControllerRef = useRef<AbortController | null>(null)
   const weatherIdentity = `${settings.weatherLocationMode}:${settings.weatherLocationMode === 'manual'
@@ -364,10 +364,10 @@ function WeatherWidget({ settings, cardBlurAmount, accentColor, onOverlayOpenCha
       const snapshot = await ensureHazardSnapshot({ forceRefresh: force, signal: controller.signal })
       if (controller.signal.aborted) return
       setHazards(snapshot)
-      setHazardError([snapshot.errors.typhoons, snapshot.errors.earthquakes].filter(Boolean).join('；'))
+      setHazardTransportError('')
     } catch (fetchError) {
       if ((fetchError as Error).name !== 'AbortError') {
-        setHazardError((fetchError as Error).message || '灾害信息暂时不可用')
+        setHazardTransportError((fetchError as Error).message || '灾害信息暂时不可用')
       }
     } finally {
       if (hazardControllerRef.current === controller) {
@@ -425,6 +425,9 @@ function WeatherWidget({ settings, cardBlurAmount, accentColor, onOverlayOpenCha
   const simpleMode = settings.weatherCardMode === 'simple'
   const prefersReducedMotion = useReducedMotion()
   const appleScene = useMemo(() => weather ? createAppleWeatherSceneModel(weather) : null, [weather])
+  const appleSceneId = appleScene?.id || ''
+  const appleSceneIdRef = useRef(appleSceneId)
+  appleSceneIdRef.current = appleSceneId
   const [appleCompactReady, setAppleCompactReady] = useState(false)
   const [appleCompactUnavailable, setAppleCompactUnavailable] = useState(false)
   const [appleCompactVisible, setAppleCompactVisible] = useState(true)
@@ -484,8 +487,12 @@ function WeatherWidget({ settings, cardBlurAmount, accentColor, onOverlayOpenCha
               scene={appleScene}
               active={!showDetails}
               reducedMotion={Boolean(prefersReducedMotion)}
-              onReady={() => setAppleCompactReady(true)}
-              onUnavailable={() => setAppleCompactUnavailable(true)}
+              onReady={() => {
+                if (appleSceneIdRef.current === appleSceneId) setAppleCompactReady(true)
+              }}
+              onUnavailable={() => {
+                if (appleSceneIdRef.current === appleSceneId) setAppleCompactUnavailable(true)
+              }}
             />
           </Suspense>
         )}
@@ -595,7 +602,9 @@ function WeatherWidget({ settings, cardBlurAmount, accentColor, onOverlayOpenCha
           loading={loading}
           hazards={hazards}
           hazardLoading={hazardLoading}
-          hazardError={hazardError}
+          hazardErrors={hazards?.errors}
+          hazardTransportError={hazardTransportError}
+          onHazardEnsure={() => void refreshHazards(false)}
           initialTab={detailsTab}
           onHazardRefresh={() => void refreshHazards(true)}
         />

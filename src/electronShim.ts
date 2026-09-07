@@ -16,6 +16,7 @@ export function installElectronShim(): void {
   }
 
   ;(window as any).electron = {
+    isShim: true,
     system: {
       isMaximized: async () => true,
       isFullscreen: async () => false,
@@ -23,6 +24,7 @@ export function installElectronShim(): void {
       maximize: () => {},
       close: () => {},
       setFullscreen: () => {},
+      getGpuSettings: async () => ({ enabled: true, gpuPreference: 'auto', pendingGpuChange: null }),
       getHardwareAcceleration: async () => ({
         enabled: true,
         actualEnabled: true,

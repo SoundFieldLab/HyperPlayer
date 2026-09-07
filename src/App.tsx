@@ -30,7 +30,8 @@ import { useAppleDynamicCover } from './hooks/useAppleDynamicCover'
 import { FOLIA_STYLES } from './vendor/folia/stylesMeta'
 import { useAudioPulseStore, type AudioPulseStore } from './hooks/useAudioPulse'
 import { useAutoHideCursor } from './hooks/useAutoHideCursor'
-import { Song, getSongUrl, getSodaPlaybackInfo, invalidateSongUrl, getLyrics, getProxiedImageUrl, getLocalAlbumIdentifier, resolveSongAlbumIdentifier, LyricLine } from './services/musicApi'
+import { Song, getSongUrl, getSodaPlaybackInfo, invalidateSongUrl, getLyrics, getProxiedImageUrl, getProxiedAudioUrl, getLocalAlbumIdentifier, resolveSongAlbumIdentifier, LyricLine } from './services/musicApi'
+import { recordAppleRecentPlaybackFallback } from './services/appleRecentPlayback'
 import type { MusicPlatform } from './services/platforms'
 import { getPlatformCapabilities, isPlatformVisible, platformLabel } from './services/platforms'
 import { getAppleMusicSettings, resolveAppleTrack } from './services/appleMusic'
@@ -38,7 +39,9 @@ import { getAppleAuthState, clearAppleLogin, type AppleUserInfo } from './servic
 import { recordLogin, clearLoginExpiry, isLoginExpired } from './services/loginExpiry'
 import { resolvePlayableSong, setAppleSongLoved, getLastAppleMutationResult, addAppleTracksToPlaylist, getAppleLibraryPlaylists, getAppleLibrarySongs, getAppleHotSongs, appleLibraryTrackToSong, appleSongToSong, resolveAppleLibraryCatalogId, APPLE_LIBRARY_ID_PATTERN } from './services/appleCatalog'
 import { ensureBridgeRunning, checkBridgeRunning, bridgePlay, bridgeStop, getState as getBridgeState, isBridgeReady, fetchBridgeSpectrum } from './services/appleWebViewBridge'
-import { isAppleNativeStreamEnabled, isAppleEmeCapable, releaseAppleNativeStream, resolveAppleNativeStream, type AppleNativeStream } from './services/applePlayback'
+import { getAppleRadioFailReason, isAppleNativeStreamEnabled, isAppleEmeCapable, releaseAppleNativeStream, resolveAppleNativeStream, resolveAppleRadioStream, type AppleNativeStream } from './services/applePlayback'
+import { decideAppleRadioFailure, getAppleRadioReconnectKey } from './services/appleRadioReconnect'
+import { fetchAppleRadioPage, fetchAppleStationDetail, appleStationToSong } from './services/appleWebService'
 import { getAppleAcceptanceSnapshot, installAppleEmeAcceptanceInstrumentation, resetAppleAcceptanceSnapshot } from './services/appleAcceptanceDiagnostics'
 import AppleLoginPanel from './components/AppleLoginPanel'
 import { cacheManager } from './services/cacheManager'
@@ -67,6 +70,7 @@ const loadTraditionalView = () => import('./components/TraditionalView')
 // 模式切换过渡动画时长：最短 3s（高性能机秒切也不一闪而过）；最长 12s 兜底（防止加载异常卡死界面）
 const MODE_TRANSITION_MIN_MS = 3000
 const MODE_TRANSITION_MAX_MS = 12000
+const PLAYBACK_NEUTRAL_COLOR = '#6b7280'
 const LazyHomeView = lazy(loadHomeView)
 const LazyExploreView = lazy(loadExploreView)
 const LazyDesktopView = lazy(loadDesktopView)
@@ -113,6 +117,8 @@ const loadMultidimensionalLyrics = () => import('./components/MultidimensionalLy
 const loadFoliaLyricsPage = () => import('./components/FoliaLyricsPage')
 const loadPvLyricsPage = () => import('./components/pvLyrics/PvLyricsPage')
 const loadModengPlayer = () => import('./components/ModengPlayerPage')
+const loadAppleRadioNowPlayingPage = () => import('./components/AppleRadioNowPlayingPage')
+const LazyAppleRadioNowPlayingPage = lazy(loadAppleRadioNowPlayingPage)
 const loadBilibiliMvPlayer = () => import('./components/BilibiliMvPlayer')
 const loadBilibiliMvBackground = () => import('./components/BilibiliMvBackground')
 const LazyModernAudioVisualizer = lazy(loadModernAudioVisualizer)
@@ -153,10 +159,19 @@ import { setChromaAudioAnalyzerStore, setChromaPlaybackActive } from './plugins/
 import { setSignalRgbAudioAnalyzerStore, setSignalRgbPlaybackActive } from './plugins/clients/SignalRgbClient'
 import { isPluginEnabled, PLUGIN_STATE_EVENT } from './services/pluginStore'
 import { hasEnabledAudioPlugin } from './plugins/registry'
-import { detectQQMusicVip } from './utils/musicEntitlements'
+import {
+  createPlatformEntitlements,
+  detectQQMusicVip,
+  entitlementTierFromSodaMembership,
+  entitlementTierFromSpotifyProduct,
+  entitlementTierFromVip,
+  type EntitlementTier,
+} from './utils/musicEntitlements'
 import { getQQUserDisplayName } from './utils/qqUser'
+import { getAppleLovedSongIds } from './services/appleCatalog'
 import {
   applyFavoriteMutation,
+  getFavoriteSongIdentifiers,
   getFavoriteUserId,
   loadFavoriteIdentifiers,
   peekSongFavoriteStatus,
@@ -772,7 +787,8 @@ function App() {
   const [profileInitialPlatform, setProfileInitialPlatform] = useState<MusicPlatform>('netease')
   const [profileInitialTab, setProfileInitialTab] = useState<'created' | 'subscribed' | 'detail' | 'recent'>('created')
 
-  const [showHome, setShowHome] = useState(true) // 控制首页显示
+  const [showHome, setShowHome] = useState(true) // 控制简约模式首页显示
+  const [showSharedPlayer, setShowSharedPlayer] = useState(false)
   const [enteredFromMode, setEnteredFromMode] = useState<ViewMode>('minimal') // 记录进入来源，用于返回时恢复状态
   const playbackOriginRef = useRef<PlaybackOrigin>({ mode: 'minimal', surface: 'home' })
   const recentPlaybackReportRef = useRef({
@@ -804,6 +820,7 @@ function App() {
   const [selectedCommentSong, setSelectedCommentSong] = useState<Song | null>(null)
   const [currentSongLiked, setCurrentSongLiked] = useState(false)
   const [playbackContextPlaylists, setPlaybackContextPlaylists] = useState<any[]>([])
+  const [playbackContextPlaylistsLoading, setPlaybackContextPlaylistsLoading] = useState(false)
   
   const [lyrics, setLyrics] = useState<LyricLine[]>([])
   const [appleCoverUrl, setAppleCoverUrl] = useState<string | null>(null)
@@ -1238,8 +1255,27 @@ function App() {
   
   // 当前播放进度
   const currentSong = currentIndex >= 0 && currentIndex < playlist.length ? playlist[currentIndex] : null
+  const currentAppleRadio = currentSong?.appleRadio || null
+  const isAppleRadioPlayback = Boolean(currentAppleRadio)
 
-  // Apple 播放面仅在 Electron CENC 失败时按需启动；正常 Apple 歌曲走本地 L3 音频图，
+  const [appleRadioStatus, setAppleRadioStatus] = useState<'connecting' | 'playing' | 'reconnecting' | 'error'>('connecting')
+  const [appleRadioError, setAppleRadioError] = useState('')
+  const appleRadioAcceptanceRef = useRef({
+    currentSong,
+    status: appleRadioStatus,
+    error: appleRadioError,
+    isPlaying,
+    streamResolved: false,
+  })
+  appleRadioAcceptanceRef.current = {
+    ...appleRadioAcceptanceRef.current,
+    currentSong,
+    status: appleRadioStatus,
+    error: appleRadioError,
+    isPlaying,
+  }
+
+  // Apple 播放面仅在 Electron CENC 失败时按需启动；正常 Apple 歌曲走本地 L3音频图，
   // 不因当前平台/队列是 Apple 就常驻拉起 WebView2。
   const appleBridgeStopTimerRef = useRef<number | null>(null)
   // 「播放面未授权」一次性会话提示标记（避免每次点歌都弹 toast）
@@ -1267,11 +1303,11 @@ function App() {
   const mvBackgroundActive = Boolean(currentSong) && lyricDisplayMode !== 'video' && mvBackgroundEnabled && !mvBackgroundFallback
   // Apple Music 动态封面（图层叠加式）：未开启/无动态封面/查询失败时为 null，封面永远回退平台静态图
   const appleDynamicCover = useAppleDynamicCover({
-    title: currentSong?.name || '',
-    artist: (currentSong?.artists || []).map((artist: { name: string }) => artist.name).join(', '),
-    album: currentSong?.album?.name || '',
-    duration: currentSong?.duration,
-    trackKey: currentSong?.id || currentSong?.mid || '',
+    title: isAppleRadioPlayback ? '' : currentSong?.name || '',
+    artist: isAppleRadioPlayback ? '' : (currentSong?.artists || []).map((artist: { name: string }) => artist.name).join(', '),
+    album: isAppleRadioPlayback ? '' : currentSong?.album?.name || '',
+    duration: isAppleRadioPlayback ? undefined : currentSong?.duration,
+    trackKey: isAppleRadioPlayback ? '' : currentSong?.id || currentSong?.mid || '',
   })
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('mvBackgroundActiveChanged', { detail: mvBackgroundActive }))
@@ -1324,7 +1360,7 @@ function App() {
   )
   // 稳定的歌手名拼接串（folia 等歌词组件按值比较避免每秒重渲染）
   const currentSongArtistLabel = useMemo(() => currentSongArtists.join(', '), [currentSongArtists])
-  const isPlaybackPage = viewMode === 'minimal' && Boolean(currentSong) && !showHome
+  const isPlaybackPage = Boolean(currentSong) && (showSharedPlayer || (viewMode === 'minimal' && !showHome))
   const canShowUpNextOnCurrentSurface = isPlaybackPage || showUpNextOutsidePlayer
 
   // TV 遥控器 BACK 兜底（最低优先级，弹窗/面板的 useTvBack 优先消费）：
@@ -1338,6 +1374,7 @@ function App() {
       return true
     }
     if (backStateRef.current.isPlaybackPage) {
+      setShowSharedPlayer(false)
       setShowHome(true)
       return true
     }
@@ -1466,6 +1503,7 @@ function App() {
   // URL 与歌词分开预载，并共享同一个进行中的歌词请求。无缝切歌时先使用
   // 已返回的基础歌词，随后原位升级为 TTML 逐字、翻译和罗马音组合结果。
   const ensureSongLyrics = useCallback((song: Song, cacheKey = getSongKey(song)): Promise<LyricLine[]> => {
+    if (song.appleRadio) return Promise.resolve([])
     const cached = preloadCacheRef.current.get(cacheKey)
     const cachedUrlTimestamp = cached?.urlTimestamp ?? (cached?.url ? cached.timestamp : undefined)
 
@@ -1721,6 +1759,9 @@ function App() {
   const [spotifyUsername, setSpotifyUsername] = useState(() => localStorage.getItem('spotify_username') || '')
   const [spotifyAvatar, setSpotifyAvatar] = useState(() => localStorage.getItem('spotify_avatar') || '')
   const [spotifyUserId, setSpotifyUserId] = useState(() => localStorage.getItem('spotify_user_id') || '')
+  const [spotifyEntitlement, setSpotifyEntitlement] = useState<EntitlementTier>(() => (
+    entitlementTierFromSpotifyProduct(localStorage.getItem('spotify_product'))
+  ))
   // 酷狗音乐：扫码 cookie 登录（KuGoo 网页会话 或 kg_token 客户端令牌）
   const [kugouLoggedIn, setKugouLoggedIn] = useState(() => {
     const cookie = localStorage.getItem('kugou_cookie') || ''
@@ -1734,6 +1775,17 @@ function App() {
   const [sodaUsername, setSodaUsername] = useState(() => localStorage.getItem('soda_username') || '')
   const [sodaAvatar, setSodaAvatar] = useState(() => localStorage.getItem('soda_avatar') || '')
   const [sodaUserId, setSodaUserId] = useState(() => localStorage.getItem('soda_user_id') || '')
+  const [sodaEntitlement, setSodaEntitlement] = useState<EntitlementTier>(() => (
+    (localStorage.getItem('soda_entitlement') as EntitlementTier | null) || 'unknown'
+  ))
+  const platformEntitlements = useMemo(() => createPlatformEntitlements({
+    netease: entitlementTierFromVip(neteaseVip),
+    qq: entitlementTierFromVip(qqVip),
+    apple: 'unknown',
+    spotify: spotifyLoggedIn ? spotifyEntitlement : 'unknown',
+    kugou: 'unknown',
+    soda: sodaLoggedIn ? sodaEntitlement : 'unknown',
+  }), [neteaseVip, qqVip, sodaEntitlement, sodaLoggedIn, spotifyEntitlement, spotifyLoggedIn])
   const [loginRestoreComplete, setLoginRestoreComplete] = useState(false)
   // 登录态发生变化后通知首页、个人中心等依赖平台账号的视图刷新。
   const [authRevision, setAuthRevision] = useState(0)
@@ -1760,20 +1812,7 @@ function App() {
       }
       return
     }
-    // Apple 曲目不向网易云/QQ 上报最近播放（Apple 端由 amp-api 记录）
-    if (currentSong.platform === 'apple') {
-      recentPlaybackReportRef.current = {
-        songKey: '',
-        reported: false,
-        inFlight: false,
-        attempts: 0,
-        nextRetryAt: 0,
-        lastObservedTime: 0,
-      }
-      return
-    }
-
-    const platform = (currentSong.platform || 'netease') as 'netease' | 'qq'
+    const platform = (currentSong.platform || 'netease') as MusicPlatform
     const songKey = getSongKey(currentSong)
     const effectiveDuration = duration > 0
       ? duration
@@ -1806,6 +1845,12 @@ function App() {
     }
 
     if (!isPlaying || currentTime < reportThreshold || session.reported || session.inFlight) return
+    if (platform === 'apple') {
+      recordAppleRecentPlaybackFallback(currentSong)
+      session.reported = true
+      return
+    }
+    if (platform !== 'netease' && platform !== 'qq') return
     if (session.attempts >= 2 || Date.now() < session.nextRetryAt) return
 
     const cookie = platform === 'qq' ? _qqCookie : _neteaseCookie
@@ -1888,6 +1933,15 @@ function App() {
     }
 
     let cancelled = false
+    if (platform === 'apple') {
+      const identifiers = getFavoriteSongIdentifiers(currentSong)
+      void getAppleLovedSongIds(identifiers)
+        .then(ids => {
+          if (!cancelled) setCurrentSongLiked(ids.some(id => identifiers.includes(id)))
+        })
+        .catch(() => undefined)
+      return () => { cancelled = true }
+    }
     void loadFavoriteIdentifiers(platform, userId)
       .then(() => {
         if (cancelled) return
@@ -1928,7 +1982,7 @@ function App() {
   // 因此用 ref 保存最新引用，供回调在运行时读取，避免陈旧闭包。
   const handleNextRef = useRef<() => void>(() => undefined)
   const appleAcceptanceActiveRef = useRef(false)
-  const dominantColorRef = useRef<string>('#3B82F6')
+  const dominantColorRef = useRef<string>(PLAYBACK_NEUTRAL_COLOR)
   
   // 调音室音效引擎：通过统一适配层（IAudioEngineAdapter）接入 v1/v2/v3，App 不再直接持有引擎实例。
   // engineAdapterRef 在版本切换时重建（getEngineAdapter(next)）；addToast 注入给 v2 低音量提示。
@@ -2036,6 +2090,13 @@ function App() {
     return () => window.removeEventListener('normalizationEnabledChanged', handleNormalizationChange)
   }, [audioEngineVersion])
   
+  const appleRadioReconnectKeyRef = useRef('')
+  const appleRadioReconnectTimerRef = useRef<number | null>(null)
+  const retryAppleRadioRef = useRef<(song: Song, index: number) => void>(() => undefined)
+  useEffect(() => () => {
+    if (appleRadioReconnectTimerRef.current !== null) window.clearTimeout(appleRadioReconnectTimerRef.current)
+  }, [])
+
   // 播放器状态监听器
   const audioPlayer = useAudioPlayer(
     useCallback((state) => {
@@ -2261,7 +2322,45 @@ function App() {
       triggerGaplessModeToast('已用「albumGapless 交叉淡化」切换')
     }
 
+    if (state.transitionState === 'failed') {
+      const activeRadioSong = playlist[currentIndex]
+      const activeRadio = activeRadioSong?.appleRadio
+      if (activeRadio) {
+        const reconnectKey = getAppleRadioReconnectKey(activeRadio.storefront, activeRadio.stationId)
+        const decision = decideAppleRadioFailure(
+          appleRadioReconnectKeyRef.current,
+          reconnectKey,
+          state.fallbackReason,
+        )
+        if (decision.type === 'reconnect') {
+          appleRadioReconnectKeyRef.current = decision.reconnectKey
+          setAppleRadioStatus('reconnecting')
+          setAppleRadioError('')
+          if (appleRadioReconnectTimerRef.current !== null) window.clearTimeout(appleRadioReconnectTimerRef.current)
+          appleRadioReconnectTimerRef.current = window.setTimeout(() => {
+            appleRadioReconnectTimerRef.current = null
+            const latestRadio = playlistRef.current[currentIndexRef.current]?.appleRadio
+            const latestKey = latestRadio
+              ? getAppleRadioReconnectKey(latestRadio.storefront, latestRadio.stationId)
+              : ''
+            if (latestKey !== decision.reconnectKey) return
+            retryAppleRadioRef.current(activeRadioSong, currentIndex)
+          }, decision.delayMs)
+          return
+        }
+        setAppleRadioStatus('error')
+        setAppleRadioError(decision.message)
+        return
+      }
+    }
+
     if (state.ended && playlist.length > 0 && state.transitionState !== 'committed') {
+      const activeSong = playlist[currentIndex]
+      if (activeSong?.appleRadio) {
+        setAppleRadioStatus('error')
+        setAppleRadioError('Apple Music 电台连接已结束，请重新连接')
+        return
+      }
       if (playMode === 'repeat') {
         // 尝试播放失败，可能需要重新登录
         audioPlayer.seek(0)
@@ -2384,28 +2483,67 @@ function App() {
     return () => window.removeEventListener(PLUGIN_STATE_EVENT, handler)
   }, [])
 
+  const [traditionalSpectrumVisible, setTraditionalSpectrumVisible] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('waveforge:traditional-preferences:v2') || '{}')
+      return stored.showWaveform !== false
+    } catch {
+      return true
+    }
+  })
+  const [traditionalRightColumnVisible, setTraditionalRightColumnVisible] = useState(() => (
+    typeof window.matchMedia !== 'function' || window.matchMedia('(min-width: 1180px)').matches
+  ))
+  useEffect(() => {
+    const syncPreference = (event: Event) => {
+      const detail = (event as CustomEvent<{ showWaveform?: boolean }>).detail
+      if (typeof detail?.showWaveform === 'boolean') setTraditionalSpectrumVisible(detail.showWaveform)
+    }
+    window.addEventListener('traditionalPreferencesChanged', syncPreference)
+    return () => window.removeEventListener('traditionalPreferencesChanged', syncPreference)
+  }, [])
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const media = window.matchMedia('(min-width: 1180px)')
+    const sync = () => setTraditionalRightColumnVisible(media.matches)
+    sync()
+    media.addEventListener?.('change', sync)
+    return () => media.removeEventListener?.('change', sync)
+  }, [])
+
   // 播放器状态监听
   const pulseActive = coverPulseEnabled && isPlaying
-  const analyzerEnabledNow = audioAnalyzerEnabled && (pulseActive || pluginAudioActive) && !isPerfModeEfficiency()
+  const traditionalSpectrumActive = viewMode === 'traditional' && showHome && Boolean(currentSong) && traditionalSpectrumVisible && traditionalRightColumnVisible
+  const analyzerEnabledNow = audioAnalyzerEnabled && (pulseActive || pluginAudioActive || traditionalSpectrumActive) && !isPerfModeEfficiency()
   // WebView2 播放面频谱：外部源模式下轮询 bridge /spectrum（WASAPI loopback），
   // 供桌面频谱 tick 与主可视化分析器共同消费
   const externalSpectrumRef = useRef<number[]>(Array(64).fill(0))
+  const clearExternalSpectrum = useCallback(() => {
+    externalSpectrumRef.current.fill(0)
+  }, [])
   useEffect(() => {
-    if (!externalPlaybackActive || !analyzerEnabledNow) return
+    if (!externalPlaybackActive || !analyzerEnabledNow) {
+      clearExternalSpectrum()
+      return
+    }
     let disposed = false
     let timer: number | null = null
     const loop = async () => {
       if (disposed) return
       const spectrum = await fetchBridgeSpectrum()
-      if (!disposed && spectrum && spectrum.bins.length > 0) externalSpectrumRef.current = spectrum.bins
-      if (!disposed) timer = window.setTimeout(loop, 120)
+      if (!disposed) {
+        if (spectrum && spectrum.bins.length > 0) externalSpectrumRef.current = spectrum.bins
+        else clearExternalSpectrum()
+      }
+      if (!disposed) timer = window.setTimeout(loop, 50)
     }
     void loop()
     return () => {
       disposed = true
+      clearExternalSpectrum()
       if (timer !== null) window.clearTimeout(timer)
     }
-  }, [externalPlaybackActive, analyzerEnabledNow])
+  }, [externalPlaybackActive, analyzerEnabledNow, clearExternalSpectrum])
   const externalAnalyzerSource = useMemo(() => ({
     active: externalPlaybackActive && analyzerEnabledNow,
     getBins: () => (externalPlaybackActive ? Uint8Array.from(externalSpectrumRef.current) : null),
@@ -2806,6 +2944,7 @@ function App() {
       syncWallpaperWatcher(mode)
       // 切换模式时清掉待恢复的歌单/搜索来源，避免切回后又自动打开上一次的歌单
       setRestorePlaybackOrigin(null)
+      setShowSharedPlayer(false)
       playbackOriginRef.current = { mode, surface: mode === 'minimal' ? 'home' : 'mode-root' }
       if (mode === 'desktop') setShowHome(false)
       else setShowHome(true)
@@ -2994,18 +3133,16 @@ function App() {
       setWatchInitialVideo(mvState?.songKey === handoffSongKey
         ? createSongOwnedHandoff(handoffSongKey, { ...mvState, currentTime: pos > 0 ? pos : 0 })
         : null)
-      // 先冻结逻辑歌曲时间，再取消渲染过渡并把物理 deck 对齐到同一时间。
-      // 渲染型 AutoMix 期间 store 是权威时间，而底层 audio.currentTime 可能落后数秒。
+      // 保持引擎继续播放，直到看歌播放器报告 active；目标 ready 后由 handoff effect 淡出并暂停。
+      watchHandoffPendingRef.current = true
+      watchPausedEngineRef.current = false
       audioPlayerRef.current?.setWatchHold?.(true)
       const heldEngineEl = audioPlayerRef.current?.getAudioElement?.() || engineEl
-      watchPausedEngineRef.current = true
       if (heldEngineEl) {
         const duration = Number(heldEngineEl.duration) || 0
         const heldPosition = Math.max(0, Math.min(pos, duration > 0 ? duration - 0.2 : pos))
         if (Math.abs(heldEngineEl.currentTime - heldPosition) > 0.05) heldEngineEl.currentTime = heldPosition
-        heldEngineEl.volume = 0
-        if (!heldEngineEl.paused) heldEngineEl.pause()
-        audioPlayer.playbackTimeStore.publish({ currentTime: heldPosition, isPlaying: false })
+        audioPlayer.playbackTimeStore.publish({ currentTime: heldPosition, isPlaying: !heldEngineEl.paused })
       }
       // 看歌模式视频接管时间线：中止任何在途的音频过渡并清掉过渡视觉状态，
       // 否则 transitionToTrack/预载会残留到切回歌词模式后，把下一首的 MV 叠到 MV 背景上。
@@ -3026,6 +3163,7 @@ function App() {
           if (switchSeq !== lyricModeSwitchSeqRef.current) return
           setLyricDisplayMode(mode)
           localStorage.setItem('lyricDisplayMode', mode)
+          lyricDisplayModeRef.current = mode
           window.dispatchEvent(new CustomEvent('lyricDisplayModeChanged', { detail: mode }))
         })
       })
@@ -3057,14 +3195,12 @@ function App() {
         const engineEl = audioPlayerRef.current?.getAudioElement?.()
         if (engineEl && resumeTime > 0) {
           const dur = Number(engineEl.duration) || 0
+          const restored = dur > 0 ? Math.max(0, Math.min(resumeTime, dur - 0.2)) : Math.max(0, resumeTime)
           if (dur > 0 && resumeTime >= dur - 0.5) {
-            // 看歌视频已播过歌曲音频末尾（MV 常比歌长）：续播位不能钳到 dur-0.2——
-            // 那会让引擎起播 0.2s 就 ended → 自动切到下一首（用户切个模式歌就被顶掉）。
-            // 停在歌曲末尾保持暂停，等用户手动播放/切歌（watchResumeHeldAtEndRef 让恢复 effect 跳过自动 play）。
-            engineEl.currentTime = Math.max(0, dur - 0.5)
+            audioPlayerRef.current?.seek(restored)
             watchResumeHeldAtEndRef.current = true
           } else {
-            engineEl.currentTime = Math.max(0, Math.min(resumeTime, dur > 0 ? dur - 0.2 : resumeTime))
+            audioPlayerRef.current?.seek(restored)
           }
         }
         // 先加载目标歌词模式 chunk 再切（防 app 级 Suspense 整页闪空）
@@ -3074,6 +3210,7 @@ function App() {
           if (switchSeq !== lyricModeSwitchSeqRef.current) return
           setLyricDisplayMode(mode)
           localStorage.setItem('lyricDisplayMode', mode)
+          lyricDisplayModeRef.current = mode
           window.dispatchEvent(new CustomEvent('lyricDisplayModeChanged', { detail: mode }))
         })
       })()
@@ -3109,11 +3246,11 @@ function App() {
   // 外部（快捷设置 QuickSettings 等）发起的歌词模式切换 → 走统一切换逻辑；
   // App 自身派发该事件时 lyricDisplayModeRef 已等于目标 mode，判等后直接忽略（防自触发递归）
   useEffect(() => {
-    const handleExternalLyricMode = (event: Event) => {
-      const mode = (event as CustomEvent<LyricDisplayMode>).detail
-      if (!ALL_LYRIC_MODES.includes(mode) || lyricDisplayModeRef.current === mode) return
-      handleLyricDisplayModeChange(mode)
-    }
+      const handleExternalLyricMode = (event: Event) => {
+        const mode = (event as CustomEvent<LyricDisplayMode>).detail
+        if (!ALL_LYRIC_MODES.includes(mode) || lyricDisplayModeRef.current === mode) return
+        lyricModeHandlerRef.current(mode)
+      }
     window.addEventListener('lyricDisplayModeChanged', handleExternalLyricMode)
     return () => window.removeEventListener('lyricDisplayModeChanged', handleExternalLyricMode)
   }, [])
@@ -3159,10 +3296,12 @@ function App() {
   const displayCoverUrl = currentTrack.coverUrl
 
   // 提取封面主色调
-  const { dominantColor: extractedColor, palette: coverPalette } = useColorThief(displayCoverUrl)
-  // 提取失败时使用默认强调色，过渡期间保留来源颜色以避免闪烁。
-  const dominantColor = extractedColor || '#3B82F6'
-  dominantColorRef.current = dominantColor
+  const { dominantColor: extractedColor, palette: coverPalette, status: coverColorStatus } = useColorThief(displayCoverUrl)
+  const playbackCoverColor = coverColorStatus === 'ready'
+    ? (coverPalette[0] || extractedColor || PLAYBACK_NEUTRAL_COLOR)
+    : PLAYBACK_NEUTRAL_COLOR
+  const dominantColor = playbackCoverColor
+  dominantColorRef.current = playbackCoverColor
   // 动画窗口：过渡动画（卡片/流光/交叉淡化）只在 currentTime 到达 transitionStartTime
   // （=动画起点，最多提前 10s）后才开始。AI 长混音的音频过渡远早于动画点开始，
   // 若不加门控，视觉会跟着 60s 混音全程走。transitionStartTime 为 null（普通交叉淡化/
@@ -3377,7 +3516,15 @@ function App() {
     navigationStack.current = []
     // Keep the source view painted while the first-use playback chunks are prepared. Without
     // this, the app-level Suspense boundary can reveal the fixed black base on the first song.
-    const playbackSurfaceReady = Promise.allSettled([
+    const isRadioSelection = Boolean(song.appleRadio)
+    if (appleRadioReconnectTimerRef.current !== null) {
+      window.clearTimeout(appleRadioReconnectTimerRef.current)
+      appleRadioReconnectTimerRef.current = null
+    }
+    if (!isRadioSelection) appleRadioReconnectKeyRef.current = ''
+    const playbackSurfaceReady = isRadioSelection
+      ? loadAppleRadioNowPlayingPage()
+      : Promise.allSettled([
       loadPlaybackRadialMenu(),
       loadImmersiveControls(),
       loadTranslationDisplay(),
@@ -3419,8 +3566,10 @@ function App() {
     playbackOriginRef.current = inferredOrigin
     setRestorePlaybackOrigin(null)
     const normalizedSong = normalizeSongCover(normalizeRawSongShape(song))
-    const normalizedPlaylist = playlistFromSource?.map(normalizeSongCover)
-    const nextPlaylist = normalizedPlaylist && normalizedPlaylist.length > 0
+    const normalizedPlaylist = isRadioSelection ? [normalizedSong] : playlistFromSource?.map(normalizeSongCover)
+    const nextPlaylist = isRadioSelection
+      ? [normalizedSong]
+      : normalizedPlaylist && normalizedPlaylist.length > 0
       ? normalizedPlaylist
       : playlist.some(item => getSongKey(item) === getSongKey(normalizedSong))
         ? playlist
@@ -3434,9 +3583,9 @@ function App() {
     setCurrentIndex(selectedIndex)
 
     const originMode = inferredOrigin.mode || viewMode
+    const playsInPlace = !isRadioSelection && (originMode === 'traditional' || originMode === 'explore')
     setEnteredFromMode(originMode)
-    // 传统模式：选歌原地播放，不跳播放页（播放页入口在右栏「正在播放」）；其余模式保持原有跳转
-    if (viewMode !== 'minimal' && originMode !== 'traditional') {
+    if (viewMode !== 'minimal' && (!playsInPlace || isRadioSelection)) {
       setViewMode('minimal')
       localStorage.setItem('viewMode', 'minimal')
     }
@@ -3444,9 +3593,21 @@ function App() {
     setShowSearch(false)
     setShowArtistDetail(false)
     setShowAlbumDetail(false)
-    await playbackSurfaceReady
-    setShowHome(false)
+    setShowSharedPlayer(false)
+    if (isRadioSelection) {
+      void playbackSurfaceReady
+      setShowHome(false)
+      setShowSharedPlayer(false)
+    } else if (originMode === 'explore') {
+      setShowHome(true)
+    } else if (!playsInPlace) {
+      await playbackSurfaceReady
+      setShowHome(false)
+    }
     await loadAndPlaySong(nextPlaylist[selectedIndex] || normalizedSong, selectedIndex, nextPlaylist)
+  }
+  retryAppleRadioRef.current = (song, index) => {
+    void loadAndPlaySong(song, index, [song])
   }
 
   // 打开艺人详情
@@ -3511,7 +3672,8 @@ function App() {
     setViewMode(targetMode)
     localStorage.setItem('viewMode', targetMode)
     setEnteredFromMode(targetMode)
-    setShowHome(true)
+    setShowSharedPlayer(false)
+    setShowHome(targetMode !== 'desktop')
     setShowSearch(origin.surface.startsWith('search'))
     setShowProfile(false)
     setShowArtistDetail(false)
@@ -3566,14 +3728,14 @@ function App() {
   }
 
   // 添加到我喜欢
-  const handleAddToFavorites = async (song: Song) => {
+  const handleAddToFavorites = async (song: Song): Promise<boolean> => {
     try {
       const platform = (song.platform || 'netease') as MusicPlatform
       // Apple：“喜爱”是评分状态，与“加入资料库”是两个独立操作。
       if (platform === 'apple') {
         if (!appleLoggedIn) {
           addToast('请先登录 Apple Music', 'error')
-          return
+          return false
         }
         const appleSongId = song.appleId || String(song.id)
         const ok = await setAppleSongLoved(appleSongId, true)
@@ -3583,17 +3745,18 @@ function App() {
           window.dispatchEvent(new CustomEvent('playlist-content-changed', {
             detail: { platform: 'apple', type: 'like', songId: appleSongId }
           }))
+          return true
         } else {
           const failure = getLastAppleMutationResult()
           addToast(failure.error || '标记喜爱歌曲失败', 'error')
+          return false
         }
-        return
       }
       const userId = getPlatformUserId(platform)
       
       if (!userId) {
         addToast(`请先登录${platformLabel(platform)}`, 'error')
-        return
+        return false
       }
       
       const mutationSong = platform === 'qq' && (!song.mid || !/^\d+$/.test(String(song.id)))
@@ -3601,7 +3764,7 @@ function App() {
         : song
       if (platform === 'qq' && !mutationSong.mid) {
         addToast('缺少 QQ 音乐歌曲 MID，无法添加到喜欢', 'error')
-        return
+        return false
       }
 
       const result = await likeSong(mutationSong.id.toString(), userId, platform, true, {
@@ -3634,12 +3797,15 @@ function App() {
             trackCountDelta: changed ? 1 : 0
           }
         }))
+        return true
       } else {
         addToast(result.error || result.message || '添加到喜欢失败', 'error')
+        return false
       }
     } catch (error) {
       console.error('添加到喜欢时出错:', error)
       addToast(error instanceof Error ? error.message : '添加到喜欢失败', 'error')
+      return false
     }
   }
 
@@ -3888,9 +4054,9 @@ function App() {
         if (requestRevision === queueRevisionRef.current && position === 0 && (effectiveCrossfadeEnabled || effectiveGaplessEnabled || effectiveAutoMixEnabled)) {
           debugLog(`📥 [Preload] 调用 audioPlayer.preloadNext (从缓存)`)
           debugLog(`   Position: ${position}`)
-          audioPlayer.preloadNext({
-            url: cached.url,
-            trackKey: cacheKey,
+            audioPlayer.preloadNext({
+              url: getProxiedAudioUrl(cached.url),
+              trackKey: cacheKey,
             index: idx,
             duration: song.duration / 1000,
             albumId: getLocalAlbumIdentifier(song, platform) || undefined,
@@ -3925,7 +4091,7 @@ function App() {
               debugLog(`📥 [Preload] 调用 audioPlayer.preloadNext (新获取)`)
               debugLog(`   Position: ${position}, URL: ${url.substring(0, 80)}...`)
               audioPlayer.preloadNext({
-                url,
+                url: getProxiedAudioUrl(url),
                 trackKey: cacheKey,
                 index: idx,
                 duration: song.duration / 1000,
@@ -4163,7 +4329,7 @@ function App() {
           ? `已按 HAM-2 重排 ${analyzed.length} 首后续歌曲，相邻差异降低约 ${reduction}%`
           : `已按 HAM-2 重排 ${analyzed.length} 首后续歌曲`,
         'success',
-        dominantColor || '#ef4444',
+        playbackCoverColor,
       )
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -4254,6 +4420,10 @@ function App() {
         currentAudio.currentTime = 0
       }
       setIsPlaying(false)
+      if (song.appleRadio) {
+        commitCurrentTime(0)
+        setDuration(0)
+      }
       // 上一首若是 WebView2 播放面播放，先退出外部源模式（内部会停掉播放面声音）
       audioPlayer.disableExternalPlayback()
       setExternalPlaybackActive(false)
@@ -4292,11 +4462,37 @@ function App() {
 
       // Apple Music 原生音源：webPlayback + CENC HLS + ECS Browser CDM (L3)。
       let appleHlsStream: AppleNativeStream | null = null
-      // Apple Music 电台直播：流已由探索页经 /v1/play/assets 取好（含 playParams），直接进 HLS 管线。
-      const radioStream = (normalizedSong as { appleRadio?: { stream: AppleNativeStream } | null }).appleRadio?.stream
-      if (radioStream) {
-        appleHlsStream = radioStream
-        debugLog('📻 [PlaySong] Apple 电台直播流就绪: ' + radioStream.url.slice(0, 96))
+      const radioDescriptor = normalizedSong.appleRadio
+      if (radioDescriptor) {
+        setAppleRadioStatus('connecting')
+        setAppleRadioError('')
+        let radioPlayParams = radioDescriptor.playParams
+        if (!radioPlayParams || Object.keys(radioPlayParams).length === 0) {
+          const stationDetail = await fetchAppleStationDetail(
+            radioDescriptor.stationId,
+            radioDescriptor.storefront || normalizedSong.appleStorefront,
+          ).catch(() => null)
+          if (!isLatestLoad()) return
+          if (stationDetail?.playParams) {
+            radioPlayParams = stationDetail.playParams
+            radioDescriptor.playParams = stationDetail.playParams
+          }
+          ;(window as any).electron?.log?.(`[AppleRadio] station detail resolved: hasPlayParams=${Boolean(radioPlayParams)}`)
+        }
+        appleHlsStream = await resolveAppleRadioStream(radioDescriptor.stationId, radioPlayParams).catch(error => {
+          setAppleRadioError(error instanceof Error ? error.message : 'Apple Music 电台取流失败')
+          return null
+        })
+        if (!isLatestLoad()) return
+        if (!appleHlsStream) {
+          setAppleRadioError(getAppleRadioFailReason())
+          setAppleRadioStatus('error')
+          setCurrentTrack(createTrackFromSong(normalizedSong))
+          return
+        }
+        radioDescriptor.timeline = appleHlsStream.live === true ? 'live' : appleHlsStream.live === false ? 'vod' : radioDescriptor.timeline
+        appleRadioAcceptanceRef.current.streamResolved = true
+        debugLog(`📻 [PlaySong] Apple 电台流就绪 timeline=${radioDescriptor.timeline}`)
       } else if (normalizedSong.platform === 'apple' && isAppleNativeStreamEnabled()) {
         let streamId = String(normalizedSong.appleId || normalizedSong.id || '')
         if (streamId && APPLE_LIBRARY_ID_PATTERN.test(streamId)) {
@@ -4353,6 +4549,16 @@ function App() {
       
       const platform = audioSong.platform || 'netease'
       const songId = (platform === 'qq' || platform === 'soda' || platform === 'kugou') ? (audioSong.mid || audioSong.id) : audioSong.id
+      const hasValidSongId = radioDescriptor || appleHlsStream
+        ? true
+        : platform === 'netease'
+          ? Number.isFinite(Number(songId)) && Number(songId) > 0
+          : Boolean(String(songId || '').trim())
+      if (!hasValidSongId) {
+        addToast('歌曲信息不完整，暂时无法播放，请重新加载该列表', 'error')
+        console.warn(`[PlaySong] ${platform} song is missing a playable identifier`)
+        return
+      }
       debugLog(`  歌手: ${normalizedSong.artists.map(a => a.name).join(', ')}`)
       if (platform === 'qq') {
         const cookie = localStorage.getItem('qq_cookie')
@@ -4363,14 +4569,14 @@ function App() {
       commitCurrentTime(0)
       // Apple Music：切歌即清封面，后台匹配命中后替换为高清封面
       setAppleCoverUrl(null)
-      resolveAppleCover(normalizedSong)
+      if (!radioDescriptor) resolveAppleCover(normalizedSong)
       
       // 如果有艺人ID，获取艺人详情
       const cacheKey = getSongKey(normalizedSong)
       activeTrackKeyRef.current = cacheKey
-      const cached = preloadCacheRef.current.get(cacheKey)
+      const cached = radioDescriptor ? undefined : preloadCacheRef.current.get(cacheKey)
       const now = Date.now()
-      const lyricsPromise = ensureSongLyrics(normalizedSong, cacheKey)
+      const lyricsPromise = radioDescriptor ? Promise.resolve([] as LyricLine[]) : ensureSongLyrics(normalizedSong, cacheKey)
       
       let url: string | null = null
       let songLyrics: LyricLine[] = cached?.lyrics || []
@@ -4501,7 +4707,7 @@ function App() {
       } else {
         try {
         // 此分支 !useWebView2：上方 url 为空分支已 return，url 必为有效载体/HLS 地址
-        started = await audioPlayer.loadAndPlay(url!, volume, {
+        started = await audioPlayer.loadAndPlay(appleHlsStream ? url! : getProxiedAudioUrl(url!), volume, {
           trackKey: cacheKey,
           index: songIndex,
           duration: normalizedSong.duration / 1000,
@@ -4524,6 +4730,9 @@ function App() {
           console.warn('[PlaySong] Apple 原生 HLS 播放失败:', firstPlaybackError)
           // 电台直播：给出可感知提示（无同款歌曲可回退）
           if ((normalizedSong as { appleRadio?: unknown }).appleRadio) {
+            const message = firstPlaybackError instanceof Error ? firstPlaybackError.message : '网络或授权问题'
+            setAppleRadioError(message)
+            setAppleRadioStatus('error')
             addToast('电台直播播放失败（网络或授权问题），请重试', 'error')
             return
           }
@@ -4552,7 +4761,7 @@ function App() {
               url = carrierUrl
               setCurrentTrack(createTrackFromSong(normalizedSong, url))
               songLyrics = preloadCacheRef.current.get(cacheKey)?.lyrics || songLyrics
-              started = await audioPlayer.loadAndPlay(url, volume, {
+              started = await audioPlayer.loadAndPlay(getProxiedAudioUrl(url), volume, {
                 trackKey: cacheKey,
                 index: songIndex,
                 duration: normalizedSong.duration / 1000,
@@ -4596,7 +4805,7 @@ function App() {
           lyricsPromise: refreshedLatest?.lyricsPromise,
         })
         setCurrentTrack(createTrackFromSong(normalizedSong, url))
-        started = await audioPlayer.loadAndPlay(url, volume, {
+        started = await audioPlayer.loadAndPlay(getProxiedAudioUrl(url), volume, {
           trackKey: cacheKey,
           index: songIndex,
           duration: normalizedSong.duration / 1000,
@@ -4611,17 +4820,29 @@ function App() {
         }
       } // ← closes catch
       } // ← closes else
-      if (!started || !isLatestLoad()) return
+      if (!started || !isLatestLoad()) {
+        if (radioDescriptor && isLatestLoad()) {
+          releaseAppleNativeStream(appleHlsStream)
+          setAppleRadioStatus('error')
+          setAppleRadioError('Apple Music 电台未能启动播放，请重新连接')
+        }
+        return
+      }
       
       // 响度归一化：按曲目测量 LUFS 并施加增益（adapter 内部按 capabilities 判断，v1/v3 no-op）
       // WebView2 播放面模式无本地音频链路，跳过
-      if (!useWebView2) engineAdapterRef.current.applyLoudnessNormalization(cacheKey, url!)
+      if (!radioDescriptor && !useWebView2) engineAdapterRef.current.applyLoudnessNormalization(cacheKey, url!)
       
       // 请求可能已经由下一首预载启动；这里仅保持引用，避免重复调用。
       void lyricsPromise
       
+      if (radioDescriptor) {
+        appleRadioReconnectKeyRef.current = ''
+        setAppleRadioStatus('playing')
+      }
+
       // 用于控制逐字歌词的显示，预留2秒缓冲
-      if (actualPlaylist.length > 1) {
+      if (!radioDescriptor && actualPlaylist.length > 1) {
         const indexToUse = songIndex !== undefined ? songIndex : currentIndex
         debugLog('📋 [PlaySong] 准备预加载下一首歌曲')
         debugLog('   使用索引:', indexToUse)
@@ -4640,7 +4861,7 @@ function App() {
 
   // 上一曲
   const handlePrevious = () => {
-    if (playlist.length === 0) return
+    if (playlist.length === 0 || currentSong?.appleRadio) return
     audioPlayer.cancelTransition('manual previous', false)
     audioPlayer.resetGaplessIntegration() // 清理预加载的音频
     bumpQueueRevision()
@@ -4669,7 +4890,7 @@ function App() {
 
   // 下一曲
   const handleNext = () => {
-    if (playlist.length === 0) return
+    if (playlist.length === 0 || currentSong?.appleRadio) return
     if (
       playbackOriginRef.current.continuation === 'explore-infinite' &&
       playMode === 'sequential' &&
@@ -4735,7 +4956,7 @@ function App() {
     const backup = Object.fromEntries(settingsKeys.map(key => [key, localStorage.getItem(key)]))
     let restoreEme: () => void = () => undefined
 
-    const configure = async (mode: 'crossfade' | 'gapless' | 'automix') => {
+    const configure = async (mode: 'crossfade' | 'gapless' | 'automix' | 'radio') => {
       appleAcceptanceActiveRef.current = true
       localStorage.setItem('appleNativeStream', 'true')
       localStorage.setItem('crossfadeEnabled', String(mode === 'crossfade'))
@@ -4785,6 +5006,42 @@ function App() {
       return { loggedIn: true, source, selectedTracks: 2 }
     }
 
+    const loadRadio = async () => {
+      const auth = getAppleAuthState()
+      if (!auth.loggedIn) throw new Error('Apple account is not logged in')
+      setAppleRadioStatus('connecting')
+      setAppleRadioError('')
+      appleRadioAcceptanceRef.current.streamResolved = false
+      const page = await fetchAppleRadioPage(auth.storefront)
+      const station = page.sections.flatMap(section => section.items).find(item => item.type === 'stations' && Boolean(item.playId || item.id))
+      if (!station) throw new Error('Unable to select an Apple radio station')
+      await handleSongSelectRef.current(
+        appleStationToSong(station, undefined, auth.storefront),
+        undefined,
+        { mode: 'minimal', surface: 'explore-apple', platform: 'apple', detail: { tab: 'radio' } },
+      )
+      await waitFor(() => {
+        const state = appleRadioAcceptanceRef.current
+        return state.status === 'error' || (state.status === 'playing' && state.isPlaying)
+      }, 60_000, 'Apple radio playback terminal state')
+      const state = appleRadioAcceptanceRef.current
+      return {
+        loggedIn: true,
+        stationSelected: true,
+        dedicatedPage: Boolean(state.currentSong?.appleRadio),
+        status: state.status,
+        playing: state.isPlaying,
+        streamResolved: state.streamResolved,
+        timeline: state.currentSong?.appleRadio?.timeline || 'unknown',
+        errorCategory: state.error
+          ? state.error.includes('404') ? 'not-found'
+            : state.error.includes('401') || state.error.includes('403') ? 'authorization'
+              : state.error.includes('license') || state.error.includes('CENC') ? 'drm'
+                : 'playback'
+          : '',
+      }
+    }
+
     const snapshot = () => ({
       auth: { loggedIn: getAppleAuthState().loggedIn },
       player: audioPlayerRef.current.getAcceptanceState(),
@@ -4825,7 +5082,7 @@ function App() {
       return snapshot()
     }
 
-    ;(window as any).__waveforgeAppleAcceptance = { configure, loadPair, snapshot, transition, cleanup }
+    ;(window as any).__waveforgeAppleAcceptance = { configure, loadPair, loadRadio, snapshot, transition, cleanup }
     return () => {
       restoreEme()
       delete (window as any).__waveforgeAppleAcceptance
@@ -4873,7 +5130,7 @@ function App() {
         id,
         message: modeNames[newMode],
         type: 'info',
-        accentColor: dominantColor || '#ef4444',
+        accentColor: playbackCoverColor,
       }])
     } else {
       setToasts(prev => {
@@ -4881,7 +5138,7 @@ function App() {
           id: existingId,
           message: modeNames[newMode],
           type: 'info' as const,
-          accentColor: dominantColor || '#ef4444',
+          accentColor: playbackCoverColor,
         }
         return prev.some(toast => toast.id === existingId)
           ? prev.map(toast => toast.id === existingId ? nextToast : toast)
@@ -4940,6 +5197,9 @@ function App() {
   /** 切到看歌时的按歌曲归属音频续播位置（秒） */
   const [watchSyncSeek, setWatchSyncSeek] = useState<SongOwnedHandoff<number> | null>(null)
   const watchPausedEngineRef = useRef(false)
+  const watchHandoffPendingRef = useRef(false)
+  const lyricModeHandlerRef = useRef<(mode: LyricDisplayMode) => void>(() => undefined)
+  lyricModeHandlerRef.current = handleLyricDisplayModeChange
   /**
    * 切出看歌时视频进度已越过歌曲音频末尾（MV 往往比歌长）：引擎停在歌曲末尾保持暂停，
    * 不再起播触发 ended → 自动切下一首（用户切个模式歌就被顶掉）。恢复 effect 据此跳过自动 play。
@@ -4972,10 +5232,21 @@ function App() {
       }
       return
     }
-    // 进入看歌：只标记，不碰引擎（停顿由 handleLyricDisplayModeChange 的淡出异步完成；
-    // 此处若再调 togglePlay 会与淡出回调形成双次 toggle → 引擎反被恢复播放）
-    if (watchVideoActive) {
-      watchPausedEngineRef.current = true
+    // 进入看歌：目标视频/音频 active 后才淡出并暂停引擎，避免加载期听感断点。
+    if (watchVideoActive && watchHandoffPendingRef.current) {
+      watchHandoffPendingRef.current = false
+      const engineEl = audioPlayerRef.current?.getAudioElement?.()
+      if (engineEl && !engineEl.paused) {
+        const from = engineEl.volume
+        void fadeElementVolume(engineEl, from, 0, 200).then(() => {
+          if (lyricDisplayModeRef.current !== 'video') return
+          engineEl.pause()
+          watchPausedEngineRef.current = true
+          audioPlayer.playbackTimeStore.publish({ currentTime: engineEl.currentTime, isPlaying: false })
+        })
+      } else {
+        watchPausedEngineRef.current = true
+      }
     }
   }, [lyricDisplayMode, watchVideoActive])
 
@@ -4983,7 +5254,7 @@ function App() {
   //（自动过渡计时、媒体键冲突、恢复逻辑误触发）把引擎重新拉起播放，都会与 DASH 音频轨
   // 形成双重奏（用户实测 生活 切看歌必现、切回即好）。1s 周期把误播的引擎压回去。
   useEffect(() => {
-    if (lyricDisplayMode !== 'video') return
+    if (lyricDisplayMode !== 'video' || !watchVideoActive || watchHandoffPendingRef.current) return
     const timer = window.setInterval(() => {
       const el = audioPlayerRef.current?.getAudioElement?.()
       if (el && !el.paused) {
@@ -5062,7 +5333,8 @@ function App() {
       setMuted(next)
     } else if (action === 'home') {
       // 遥控器 Home：回到当前模式主页（不切换模式），并关闭所有弹层
-      setShowHome(true)
+      setShowSharedPlayer(false)
+      setShowHome(viewModeRef.current !== 'desktop')
       setShowSongDetail(false)
       setShowRemote(false)
       setShowMixingStudio(false)
@@ -5081,7 +5353,7 @@ function App() {
       else if (showAlbumDetail) closeAlbumDetail()
       else if (showSettings) setShowSettings(false)
       else if (showSearch) setShowSearch(false)
-      else { setShowHome(true); setShowProfile(false) }
+      else { setShowSharedPlayer(false); setShowHome(viewModeRef.current !== 'desktop'); setShowProfile(false) }
     } else if (action === 'show-comment' || action === 'show-song' || action === 'show-artist') {
       const current = playlistRef.current[currentIndexRef.current]
       if (!current) return
@@ -5412,11 +5684,12 @@ function App() {
           }
         : null,
       // 时长（秒）：主进程据此把任务栏进度条换算为 0-1
-      duration: currentSong && Number.isFinite(Number(currentSong.duration))
+      duration: currentSong && !isAppleRadioPlayback && Number.isFinite(Number(currentSong.duration))
         ? Math.max(0, Number(currentSong.duration) / 1000)
         : 0,
+      live: isLive || currentAppleRadio?.timeline === 'live',
     })
-  }, [currentSong])
+  }, [currentSong, currentAppleRadio?.timeline, isAppleRadioPlayback, isLive])
 
   useEffect(() => {
     window.electron?.desktopPlayer?.pushState({
@@ -5943,6 +6216,11 @@ function App() {
       if (result.refreshToken) localStorage.setItem('spotify_refresh_token', result.refreshToken)
       if (result.username) localStorage.setItem('spotify_username', result.username)
       if (result.avatar) localStorage.setItem('spotify_avatar', result.avatar)
+      if (result.product) {
+        const tier = entitlementTierFromSpotifyProduct(result.product)
+        localStorage.setItem('spotify_product', String(result.product))
+        setSpotifyEntitlement(tier)
+      }
       if (result.userId) {
         localStorage.setItem('spotify_user_id', result.userId)
         setSpotifyUserId(String(result.userId))
@@ -5950,6 +6228,12 @@ function App() {
       setSpotifyLoggedIn(true)
       if (result.username) setSpotifyUsername(result.username)
       if (result.avatar) setSpotifyAvatar(result.avatar)
+      void import('./services/spotifyService').then(({ fetchSpotifyMe }) => fetchSpotifyMe().then(profile => {
+        if (!profile) return
+        const tier = entitlementTierFromSpotifyProduct(profile.product)
+        setSpotifyEntitlement(tier)
+        if (profile.product) localStorage.setItem('spotify_product', profile.product)
+      }))
       setAuthRevision(previous => previous + 1)
       window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'spotify', userId: result.userId || '' } }))
       addToast('Spotify 授权成功', 'success')
@@ -5964,6 +6248,8 @@ function App() {
       setSpotifyUserId('')
       setSpotifyUsername('')
       setSpotifyAvatar('')
+      setSpotifyEntitlement('unknown')
+      localStorage.removeItem('spotify_product')
       setAuthRevision(previous => previous + 1)
       addToast('Spotify 登录已过期，请重新登录', 'info')
     }
@@ -6008,6 +6294,9 @@ function App() {
       getSodaStatus().then(async st => {
         if (cancelled) return
         if (st?.loggedIn) {
+          const tier = entitlementTierFromSodaMembership(st.membership)
+          setSodaEntitlement(tier)
+          localStorage.setItem('soda_entitlement', tier)
           // 登录有效：仅当本地资料缺失时补齐昵称/头像/ID（原有「补全资料」逻辑保留）
           if (localStorage.getItem('soda_user_id') && localStorage.getItem('soda_username')) return
           const p = st.profile
@@ -6042,10 +6331,12 @@ function App() {
           localStorage.removeItem('soda_username')
           localStorage.removeItem('soda_avatar')
           localStorage.removeItem('soda_user_id')
+          localStorage.removeItem('soda_entitlement')
           setSodaLoggedIn(false)
           setSodaUsername('')
           setSodaAvatar('')
           setSodaUserId('')
+          setSodaEntitlement('unknown')
           setAuthRevision(previous => previous + 1)
           window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'soda' } }))
           addToast('汽水音乐登录态已失效，请重新登录', 'info')
@@ -6115,6 +6406,14 @@ function App() {
     const loggedIn = Boolean(localStorage.getItem('spotify_access_token'))
     setSpotifyLoggedIn(loggedIn)
     if (loggedIn) setSpotifyUserId(localStorage.getItem('spotify_user_id') || '')
+    if (loggedIn) {
+      void import('./services/spotifyService').then(({ fetchSpotifyMe }) => fetchSpotifyMe().then(profile => {
+        if (!profile) return
+        const tier = entitlementTierFromSpotifyProduct(profile.product)
+        setSpotifyEntitlement(tier)
+        if (profile.product) localStorage.setItem('spotify_product', profile.product)
+      }))
+    }
     if (username && loggedIn) {
       setSpotifyUsername(username)
       localStorage.setItem('spotify_username', username)
@@ -6129,10 +6428,12 @@ function App() {
     localStorage.removeItem('spotify_username')
     localStorage.removeItem('spotify_avatar')
     localStorage.removeItem('spotify_user_id')
+    localStorage.removeItem('spotify_product')
     setSpotifyLoggedIn(false)
     setSpotifyUsername('')
     setSpotifyAvatar('')
     setSpotifyUserId('')
+    setSpotifyEntitlement('unknown')
     setAuthRevision(previous => previous + 1)
     window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'spotify' } }))
     addToast('Spotify 已退出登录', 'info')
@@ -6202,27 +6503,30 @@ function App() {
         setSodaUserId(String(extra.userId))
         localStorage.setItem('soda_user_id', String(extra.userId))
       }
-      // 登录窗口未带回昵称/头像/ID 时：用后端 luna/pc/me 自愈（酷狗同款模式）
-      if (!username || !(extra && (extra.userId || extra.avatar))) {
-        void import('./services/sodaService').then(({ getSodaStatus }) =>
-          getSodaStatus().then(st => {
-            if (!st?.loggedIn || !st.profile) return
-            const p = st.profile
-            if (p.nickname) {
-              setSodaUsername(p.nickname)
-              localStorage.setItem('soda_username', p.nickname)
-            }
-            if (p.avatarUrl) {
-              setSodaAvatar(p.avatarUrl)
-              localStorage.setItem('soda_avatar', p.avatarUrl)
-            }
-            if (p.userId) {
-              setSodaUserId(String(p.userId))
-              localStorage.setItem('soda_user_id', String(p.userId))
-            }
-          }).catch(() => { /* 忽略 */ })
-        )
-      }
+      // 会员信息与资料字段是否齐全无关，每次登录都刷新。
+      void import('./services/sodaService').then(({ getSodaStatus }) =>
+        getSodaStatus().then(st => {
+          if (!st?.loggedIn) return
+          const tier = entitlementTierFromSodaMembership(st.membership)
+          setSodaEntitlement(tier)
+          localStorage.setItem('soda_entitlement', tier)
+          if (username && extra && (extra.userId || extra.avatar)) return
+          if (!st.profile) return
+          const p = st.profile
+          if (p.nickname) {
+            setSodaUsername(p.nickname)
+            localStorage.setItem('soda_username', p.nickname)
+          }
+          if (p.avatarUrl) {
+            setSodaAvatar(p.avatarUrl)
+            localStorage.setItem('soda_avatar', p.avatarUrl)
+          }
+          if (p.userId) {
+            setSodaUserId(String(p.userId))
+            localStorage.setItem('soda_user_id', String(p.userId))
+          }
+        }).catch(() => { /* 忽略 */ })
+      )
     }
     setAuthRevision(previous => previous + 1)
     window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'soda' } }))
@@ -6237,10 +6541,12 @@ function App() {
     localStorage.removeItem('soda_username')
     localStorage.removeItem('soda_avatar')
     localStorage.removeItem('soda_user_id')
+    localStorage.removeItem('soda_entitlement')
     setSodaLoggedIn(false)
     setSodaUsername('')
     setSodaAvatar('')
     setSodaUserId('')
+    setSodaEntitlement('unknown')
     setAuthRevision(previous => previous + 1)
     window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'soda' } }))
     addToast('汽水音乐已退出登录', 'info')
@@ -6284,8 +6590,22 @@ function App() {
 
       if (result.code === 200 || result.result === 100) {
         addToast('已从喜欢歌单中移除', 'success')
+        const changed = !result.unchanged
+        if (changed) {
+          updateCachedUserPlaylists(platform, userId, playlists => playlists.map(item => (
+            item.isLike
+              ? { ...item, trackCount: Math.max(0, Number(item.trackCount || 0) - 1) }
+              : item
+          )))
+        }
         window.dispatchEvent(new CustomEvent('playlist-content-changed', {
-          detail: { platform, type: 'unlike', songId: mutationSong.id, songMid: mutationSong.mid }
+          detail: {
+            platform,
+            type: 'unlike',
+            songId: mutationSong.id,
+            songMid: mutationSong.mid,
+            trackCountDelta: changed ? -1 : 0,
+          }
         }))
         return true
       }
@@ -6302,17 +6622,20 @@ function App() {
   const handlePlaybackContextMenuOpen = () => {
     if (!currentSong) return
     setPlaybackContextPlaylists([])
+    setPlaybackContextPlaylistsLoading(true)
     const platform = (currentSong.platform || 'netease') as MusicPlatform
-    // Apple：播放上下文歌单用资料库歌单（amp-api）
     if (platform === 'apple') {
       void getAppleLibraryPlaylists(100)
         .then(setPlaybackContextPlaylists)
         .catch(() => setPlaybackContextPlaylists([]))
+        .finally(() => setPlaybackContextPlaylistsLoading(false))
       return
     }
-    const userId = getPlatformUserId(platform)
+    const userId = getPlatformUserId(platform) || ''
     const username = platform === 'netease' ? neteaseUsername : qqUsername
-    if (!userId) {
+    const tokenDriven = platform === 'spotify' || platform === 'kugou' || platform === 'soda'
+    if (!userId && !tokenDriven) {
+      setPlaybackContextPlaylistsLoading(false)
       return
     }
     void getUserPlaylists(platform, userId, username)
@@ -6321,6 +6644,7 @@ function App() {
         console.warn('Failed to load playlists for playback context menu:', error)
         setPlaybackContextPlaylists([])
       })
+      .finally(() => setPlaybackContextPlaylistsLoading(false))
   }
 
   const handlePlaybackToggleFavorite = (song: Song, liked: boolean) => {
@@ -6399,12 +6723,12 @@ function App() {
     // 根据主题和显示模式返回背景样式
     if (playerTheme === 'light') {
       return dominantColor 
-        ? `linear-gradient(135deg, ${dominantColor}20 0%, #f5f5f0 50%, #e8e8e0 100%)`
+        ? `linear-gradient(135deg, color-mix(in srgb, ${dominantColor} 13%, transparent) 0%, #f5f5f0 50%, #e8e8e0 100%)`
         : 'linear-gradient(135deg, #f5f5f0 0%, #e8e8e0 100%)'
     }
     // 深色主题返回深色渐变背景
     return dominantColor 
-      ? `linear-gradient(135deg, ${dominantColor}15 0%, #000 100%)`
+      ? `linear-gradient(135deg, color-mix(in srgb, ${dominantColor} 8%, transparent) 0%, #000 100%)`
       : 'linear-gradient(135deg, #0a0a0a 0%, #000 100%)'
   }
 
@@ -6433,7 +6757,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
-    void window.electron?.system.getHardwareAcceleration().then(result => {
+    void window.electron?.system.getGpuSettings().then(result => {
       if (cancelled) return
       if (result.pendingGpuChange) setPendingGpuChange(result.pendingGpuChange)
     }).catch(() => {})
@@ -6495,7 +6819,7 @@ function App() {
     onOpenDeviceControl: () => void
     onSettingsClick: () => void
     onProfileClick: (platform: MusicPlatform, initialTab?: 'created' | 'subscribed' | 'detail' | 'recent') => void
-    onOpenPlayer: () => void
+    onOpenPlayer: (origin?: PlaybackOrigin) => void
     onExitDesktopMode: () => void
     onToggleFavorite: () => void
     onPlayModeChange: () => void
@@ -6556,14 +6880,14 @@ function App() {
       setProfileInitialTab(initialTab)
       setShowProfile(true)
     },
-    onOpenPlayer: () => {
+    onOpenPlayer: (origin) => {
       setShowLogin(false)
       setShowSearch(false)
-      playbackOriginRef.current = { mode: 'explore', surface: 'mode-root' }
+      const originMode = viewModeRef.current
+      playbackOriginRef.current = origin || { mode: originMode, surface: originMode === 'minimal' ? 'home' : 'mode-root' }
       setRestorePlaybackOrigin(null)
-      setEnteredFromMode('explore')
-      setViewMode('minimal')
-      localStorage.setItem('viewMode', 'minimal')
+      setEnteredFromMode(originMode)
+      setShowSharedPlayer(true)
       setShowHome(false)
     },
     onExitDesktopMode: () => {
@@ -6618,7 +6942,7 @@ function App() {
       onOpenDeviceControl: () => setShowDeviceControl(true),
       onSettingsClick: () => latest.current.onSettingsClick(),
       onProfileClick: (platform, initialTab) => latest.current.onProfileClick(platform, initialTab),
-      onOpenPlayer: () => latest.current.onOpenPlayer(),
+      onOpenPlayer: (origin) => latest.current.onOpenPlayer(origin),
       onExitDesktopMode: () => latest.current.onExitDesktopMode(),
       onToggleFavorite: () => latest.current.onToggleFavorite(),
       onPlayModeChange: () => latest.current.onPlayModeChange(),
@@ -6731,6 +7055,9 @@ function App() {
     window.addEventListener(OOBE_TRIGGER_EVENT, onTriggerOobe)
     return () => window.removeEventListener(OOBE_TRIGGER_EVENT, onTriggerOobe)
   }, [])
+
+  const renderedMode: ViewMode = isPlaybackPage ? 'minimal' : viewMode
+  const mixingStudioAudio = showMixingStudio ? audioPlayer.getAudioElement() : null
 
   return (
     <>
@@ -6944,7 +7271,7 @@ function App() {
       
       <Suspense fallback={null}><AnimatePresence initial={false} mode="sync" presenceAffectsLayout={false}>
         {/* 桌面模式 */}
-        {viewMode === 'explore' ? (
+        {renderedMode === 'explore' ? (
           <motion.div
             key="explore-mode"
             initial={{ opacity: 0, y: 26, scale: 0.985 }}
@@ -6963,9 +7290,10 @@ function App() {
               duration={duration}
               volume={volume}
               currentLyric={currentMiniLyric}
-              accentColor={dominantColor || '#8b5cf6'}
+              accentColor={playbackCoverColor}
               playerTheme={playerTheme}
               authRevision={authRevision}
+              platformEntitlements={platformEntitlements}
               neteaseLoggedIn={neteaseLoggedIn}
               neteaseUsername={neteaseUsername}
               neteaseAvatar={neteaseAvatar}
@@ -7010,7 +7338,7 @@ function App() {
             />
 
           </motion.div>
-        ) : viewMode === 'desktop' ? (
+        ) : renderedMode === 'desktop' ? (
           <motion.div
             key="desktop-mode"
             initial={{ opacity: 0, y: 26, scale: 0.985 }}
@@ -7077,7 +7405,7 @@ function App() {
               onOpenDeviceControl={viewCallbacks.onOpenDeviceControl}
             />
           </motion.div>
-        ) : viewMode === 'traditional' ? (
+        ) : renderedMode === 'traditional' ? (
           <motion.div
             key="traditional-mode"
             initial={{ opacity: 0, y: 26, scale: 0.985 }}
@@ -7094,9 +7422,10 @@ function App() {
               queue={playlist}
               currentIndex={currentIndex}
               isPlaying={isPlaying}
+              live={isLive || currentAppleRadio?.timeline === 'live'}
               playbackTimeStore={audioPlayer.playbackTimeStore}
               dominantColor={dominantColor}
-              analyserNode={audioPlayer.analyserNode}
+              analyzerStore={audioAnalyzer}
               duration={duration}
               lyrics={lyrics}
               volume={volume}
@@ -7136,6 +7465,7 @@ function App() {
               playMode={playMode}
               onPlayModeChange={viewCallbacks.onPlayModeChange}
               onOpenMixingStudio={viewCallbacks.onOpenMixingStudio}
+              onOpenPlayer={viewCallbacks.onOpenPlayer}
               onPlayPause={viewCallbacks.onPlayPause}
               onNext={viewCallbacks.onNext}
               onPrevious={viewCallbacks.onPrevious}
@@ -7185,7 +7515,7 @@ function App() {
             backgroundBlur={backgroundBlur}
           />
         )}
-        {currentSong && (
+        {currentSong && !isAppleRadioPlayback && (
           <LazyBilibiliMvBackground
             songTitle={currentSong.name}
             songArtists={currentSongArtists}
@@ -7306,25 +7636,6 @@ function App() {
           playerTheme,
             } as any)} />
         </Suspense>
-
-        {/* 调音室（统一通过适配层渲染：custom 模式返回引擎自带调音室，generic 模式返回通用调音室） */}
-        <AnimatePresence>
-          {showMixingStudio && (
-            <Suspense fallback={null}>
-              {engineAdapterRef.current.renderStudio({
-                onClose: () => setShowMixingStudio(false),
-                playerTheme,
-                anchorRect: mixingStudioAnchorRef.current,
-                engineVersion: audioEngineVersion,
-                onSwitchEngine: switchAudioEngine,
-                availableEngines: getAvailableEngines(),
-                sourceUrl: audioPlayer.audioElement?.src || undefined,
-                sourceDuration: audioPlayer.audioElement?.duration || undefined,
-                exportFileName: currentSong?.name || undefined,
-              })}
-            </Suspense>
-          )}
-        </AnimatePresence>
 
         {/* 主内容区 */}
         <div className="relative flex-1 flex items-center justify-center overflow-hidden">
@@ -7467,7 +7778,7 @@ function App() {
               onAddToPlaylist={viewCallbacks.onAddToPlaylist}
               onViewComments={viewCallbacks.onViewComments}
               onCopyInfo={viewCallbacks.onCopyInfo}
-              accentColor={dominantColor || '#3B82F6'}
+              accentColor={playbackCoverColor}
               currentSong={currentSong}
               playerTheme={playerTheme}
             />
@@ -7485,9 +7796,10 @@ function App() {
             >
               <LazyPlaybackRadialMenu
                 song={currentSong}
-                accentColor={dominantColor || '#3B82F6'}
+                accentColor={playbackCoverColor}
                 liked={currentSongLiked}
                 userPlaylists={playbackContextPlaylists}
+                playlistsLoading={playbackContextPlaylistsLoading}
                 playerTheme={playerTheme}
                 onPlayNow={(song) => { void handleSongSelect(song, playlist) }}
                 onPlayNext={handlePlayNext}
@@ -7506,6 +7818,7 @@ function App() {
               {(lyricDisplayMode !== 'video' || watchSearchFailed) && (
               <MaybePortal active={lyricDisplayMode === 'video'}>
                 <LazyImmersiveControls
+                  coverColor={playbackCoverColor}
                   onHomeClick={handlePlayerHome}
                 onOpenMixingStudio={(anchorRect) => {
                   if (anchorRect) {
@@ -7530,7 +7843,7 @@ function App() {
 
               {/* 顶部中央歌词模式切换：createPortal 挂到 body，逃出 minimal-playback-surface 的
                   transform 层叠上下文——否则在看歌模式下会被 data-watch-surface(z-10) 盖住，无法 hover */}
-              {!isPureMusic && createPortal((
+              {!isPureMusic && !isAppleRadioPlayback && createPortal((
                 <>
                   <button
                     type="button"
@@ -7609,9 +7922,9 @@ function App() {
                                     {([
                                       ['modern', '现代', 'linear-gradient(135deg, #2d1b3d 0%, #1a0f2e 50%, #0a0a0a 100%)'],
                                       ['immersive', '沉浸式', 'linear-gradient(135deg, #1e3a5f 0%, #0f1c2e 50%, #0a0a0a 100%)'],
-                                      ['wallpaper', '墙纸', `repeating-linear-gradient(0deg, rgba(255,255,255,.055) 0 1px, transparent 1px 18px), linear-gradient(135deg, ${dominantColor || '#6c5cff'} 0%, #18171c 58%, #09090b 100%)`],
-                                      ['glorious', '辉煌', `linear-gradient(118deg, #080713 0%, ${dominantColor || '#6f5cff'} 50%, #090911 78%, #101522 100%)`],
-                                      ['multidimensional', '多维', `linear-gradient(145deg, #05060c 0%, ${dominantColor || '#6657ff'} 48%, #0b1b2a 72%, #030409 100%)`],
+                                      ['wallpaper', '墙纸', `repeating-linear-gradient(0deg, rgba(255,255,255,.055) 0 1px, transparent 1px 18px), linear-gradient(135deg, ${playbackCoverColor} 0%, #18171c 58%, #09090b 100%)`],
+                                      ['glorious', '辉煌', `linear-gradient(118deg, #080713 0%, ${playbackCoverColor} 50%, #090911 78%, #101522 100%)`],
+                                      ['multidimensional', '多维', `linear-gradient(145deg, #05060c 0%, ${playbackCoverColor} 48%, #0b1b2a 72%, #030409 100%)`],
                                       ['modeng', '摩登', `linear-gradient(120deg, #3a3a3c 0%, #232325 45%, #101012 100%)`],
                                       ['video', '看歌', `linear-gradient(120deg, #f8a5c2 0%, #fb7299 45%, #2d1b3d 100%)`],
                                       ['pv', 'PV', `linear-gradient(135deg, #6d28d9 0%, #3b2f8f 42%, #0f172a 100%)`],
@@ -7628,7 +7941,7 @@ function App() {
                                           style={{
                                             background,
                                             borderColor: lyricDisplayMode === mode ? '#fff' : 'rgba(255,255,255,0.2)',
-                                            boxShadow: lyricDisplayMode === mode ? `0 0 18px ${(dominantColor || '#ffffff')}35` : 'none',
+                                            boxShadow: lyricDisplayMode === mode ? `0 0 18px ${(playbackCoverColor)}35` : 'none',
                                           }}
                                         >
                                           <div className="absolute inset-0 flex items-center justify-center">
@@ -7666,7 +7979,7 @@ function App() {
                                           style={{
                                             background: style.gradient,
                                             borderColor: active ? '#fff' : 'rgba(255,255,255,0.2)',
-                                            boxShadow: active ? `0 0 16px ${(dominantColor || '#ffffff')}40` : 'none',
+                                            boxShadow: active ? `0 0 16px ${(playbackCoverColor)}40` : 'none',
                                           }}
                                         >
                                           <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
@@ -7704,7 +8017,7 @@ function App() {
                                   ? 'border-white/15 bg-white/[0.08] text-white/85 hover:bg-white/[0.16] hover:text-white'
                                   : 'border-black/10 bg-black/[0.06] text-black/70 hover:bg-black/[0.12] hover:text-black'
                             }`}
-                            style={lyricPanelPage === 'folia' ? { backgroundColor: dominantColor || '#7c6cff', boxShadow: `0 0 12px ${(dominantColor || '#7c6cff')}55` } : undefined}
+                            style={lyricPanelPage === 'folia' ? { backgroundColor: playbackCoverColor, boxShadow: `0 0 12px ${playbackCoverColor}55` } : undefined}
                           >
                             <Sparkles className="h-[18px] w-[18px]" />
                           </button>
@@ -7725,7 +8038,7 @@ function App() {
                                     ? 'border-white/15 bg-white/[0.08] text-white/85 hover:bg-white/[0.16] hover:text-white'
                                     : 'border-black/10 bg-black/[0.06] text-black/70 hover:bg-black/[0.12] hover:text-black'
                               }`}
-                              style={foliaBackgroundEnabled ? { backgroundColor: dominantColor || '#7c6cff', boxShadow: `0 0 12px ${(dominantColor || '#7c6cff')}55` } : undefined}
+                              style={foliaBackgroundEnabled ? { backgroundColor: playbackCoverColor, boxShadow: `0 0 12px ${playbackCoverColor}55` } : undefined}
                             >
                               <ImageIcon className="h-[18px] w-[18px]" />
                             </button>
@@ -7818,7 +8131,31 @@ function App() {
 
               {(() => {
             // 播放器事件监听，处理播放状态变化
-            return isPureMusic ? (
+            return isAppleRadioPlayback && currentSong ? (
+              <motion.div
+                key="apple-radio-player"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 z-20"
+              >
+                <LazyAppleRadioNowPlayingPage
+                  song={currentSong}
+                  isPlaying={isPlaying}
+                  currentTime={currentTime}
+                  duration={duration}
+                  volume={volume}
+                  playerTheme={playerTheme}
+                  status={appleRadioStatus}
+                  error={appleRadioError}
+                  onBack={handlePlayerHome}
+                  onPlayPause={handlePlayPause}
+                  onSeek={audioPlayer.seek}
+                  onVolumeChange={handleVolumeChange}
+                  onRetry={() => { void loadAndPlaySong(currentSong, currentIndex, [currentSong]) }}
+                />
+              </motion.div>
+            ) : isPureMusic ? (
               /* 纯音乐愭椂灞呬腑显示 */
               <motion.div
                 key="no-lyrics-player"
@@ -7913,7 +8250,7 @@ function App() {
                       playbackTimeStore={audioPlayer.playbackTimeStore}
                       lyrics={lyrics}
                       isPlaying={isPlaying}
-                      accentColor={dominantColor || '#fff'}
+                      accentColor={playbackCoverColor}
                       translationEnabled={translationEnabled}
                       translationPosition="traditional"
                       onCurrentTranslationChange={setCurrentTranslation}
@@ -7941,7 +8278,7 @@ function App() {
                     playbackTimeStore={audioPlayer.playbackTimeStore}
                     timeOffset={lyricOffset - 0.2}
                     isPlaying={isPlaying}
-                    accentColor={dominantColor || '#fff'}
+                    accentColor={playbackCoverColor}
                     playerTheme={playerTheme}
                     songTitle={currentSong.name}
                     songArtist={currentSong.artists.map((artist: any) => artist.name).join(', ')}
@@ -7969,7 +8306,7 @@ function App() {
                     playbackTimeStore={audioPlayer.playbackTimeStore}
                     timeOffset={lyricOffset - 0.2}
                     isPlaying={isPlaying}
-                    accentColor={dominantColor || '#fff'}
+                    accentColor={playbackCoverColor}
                     songTitle={currentSong.name}
                     songArtist={currentSong.artists.map((artist: any) => artist.name).join(', ')}
                     songAlbum={currentSong.album?.name}
@@ -7978,6 +8315,7 @@ function App() {
                     translationEnabled={translationEnabled}
                     romanEnabled={romanEnabled}
                     isTransitioning={isVisualTransitioning}
+                    active={!isLyricsTransitioning}
                     onSeek={audioPlayer.seek}
                     mvBackgroundActive={mvBackgroundActive}
                   />
@@ -7998,7 +8336,7 @@ function App() {
                     timeOffset={lyricOffset - 0.2}
                     isPlaying={isPlaying}
                     playerTheme={playerTheme}
-                    accentColor={dominantColor || '#fff'}
+                    accentColor={playbackCoverColor}
                     songTitle={currentSong.name}
                     songArtist={currentSongArtistLabel}
                     songAlbum={currentSong.album?.name}
@@ -8011,6 +8349,7 @@ function App() {
                     foliaStyle={foliaStyle}
                     foliaBackgroundEnabled={foliaBackgroundEnabled}
                     mvBackgroundActive={mvBackgroundActive}
+                    active={!isLyricsTransitioning}
                   />
                 </motion.div>
               ) : lyricDisplayMode === 'glorious' ? (
@@ -8028,7 +8367,7 @@ function App() {
                     playbackTimeStore={audioPlayer.playbackTimeStore}
                     timeOffset={lyricOffset - 0.2}
                     isPlaying={isPlaying}
-                    accentColor={dominantColor || '#fff'}
+                    accentColor={playbackCoverColor}
                     songTitle={currentSong.name}
                     songArtist={currentSong.artists.map((artist: any) => artist.name).join(', ')}
                     songAlbum={currentSong.album?.name}
@@ -8055,7 +8394,7 @@ function App() {
                     playbackTimeStore={audioPlayer.playbackTimeStore}
                     timeOffset={lyricOffset - 0.2}
                     isPlaying={isPlaying}
-                    accentColor={dominantColor || '#fff'}
+                    accentColor={playbackCoverColor}
                     playerTheme={playerTheme}
                     songTitle={currentSong.name}
                     songArtist={currentSong.artists.map((artist: any) => artist.name).join(', ')}
@@ -8097,7 +8436,7 @@ function App() {
                     timeOffset={lyricOffset - 0.2}
                     isPlaying={isPlaying}
                     playerTheme={playerTheme}
-                    accentColor={dominantColor || '#fff'}
+                    accentColor={playbackCoverColor}
                     songTitle={currentSong.name}
                     songArtist={currentSongArtistLabel}
                     songAlbum={currentSong.album?.name}
@@ -8185,7 +8524,7 @@ function App() {
                       playbackTimeStore={audioPlayer.playbackTimeStore}
                           lyrics={lyrics}
                           isPlaying={isPlaying}
-                          accentColor={dominantColor || '#fff'}
+                          accentColor={playbackCoverColor}
                           translationEnabled={translationEnabled}
                           translationPosition={translationPosition}
                           onCurrentTranslationChange={setCurrentTranslation}
@@ -8220,7 +8559,7 @@ function App() {
                 key="modern-audio-visualizer"
                 analyser={audioPlayer.analyserNode}
                 isPlaying={isPlaying}
-                accentColor={dominantColor || '#ffffff'}
+                accentColor={playbackCoverColor}
                 palette={coverPalette}
                 playerTheme={playerTheme}
                 pulseStore={audioPulseStore}
@@ -8247,7 +8586,7 @@ function App() {
                   handleNext()
                 }}
                 theme={playerTheme}
-                accentColor={dominantColor || '#fff'}
+                accentColor={playbackCoverColor}
               />
               <FoliaTransitionOverlay
                 visible={foliaPresentation.overlayVisible}
@@ -8255,7 +8594,7 @@ function App() {
                 progress={transitionProgress}
                 duration={transitionDuration}
                 bpm={transitionDebug?.sourceBpm}
-                accentColor={dominantColor || '#fff'}
+                accentColor={playbackCoverColor}
                 theme={playerTheme}
               />
             </>
@@ -8279,7 +8618,7 @@ function App() {
               backgroundEffect={lyricDisplayMode === 'immersive' || lyricDisplayMode === 'glorious' || lyricDisplayMode === 'multidimensional' ? 'immersive' : backgroundEffect}
               playMode={playMode}
               onPlayModeChange={handlePlayModeChange}
-              accentColor={dominantColor || '#fff'}
+              accentColor={playbackCoverColor}
               transitionFromAccentColor={transitionFromAccentColor || transitionFromTrack?.dominantColor || undefined}
               transitionToAccentColor={transitionToAccentColor || undefined}
               transitionProgress={overlayProgress}
@@ -8316,7 +8655,8 @@ function App() {
           artist={currentTrack.artist}
           currentLyric={currentMiniLyric}
           hasLyrics={lyrics.length > 0}
-          accentColor={dominantColor || '#fff'}
+          live={isLive || currentAppleRadio?.timeline === 'live'}
+          accentColor={playbackCoverColor}
           onPlayPause={handlePlayPause}
           onNext={handleNext}
           onPrevious={handlePrevious}
@@ -8326,6 +8666,7 @@ function App() {
             playbackOriginRef.current = { mode: viewMode, surface: viewMode === 'minimal' ? 'home' : 'mode-root' }
             setRestorePlaybackOrigin(null)
             setEnteredFromMode(viewMode)
+            setShowSharedPlayer(true)
             setShowHome(false)
           }}
         />}
@@ -8353,6 +8694,25 @@ function App() {
 
       {/* 鐧诲綍瑙嗗浘 */}
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 调音室是全模式共享弹层，不能挂在简约模式分支中。 */}
+      <AnimatePresence>
+        {showMixingStudio && (
+          <Suspense fallback={null}>
+            {engineAdapterRef.current.renderStudio({
+              onClose: () => setShowMixingStudio(false),
+              playerTheme,
+              anchorRect: mixingStudioAnchorRef.current,
+              engineVersion: audioEngineVersion,
+              onSwitchEngine: switchAudioEngine,
+              availableEngines: getAvailableEngines(),
+              sourceUrl: mixingStudioAudio?.src || undefined,
+              sourceDuration: mixingStudioAudio?.duration || undefined,
+              exportFileName: currentSong?.name || undefined,
+            })}
+          </Suspense>
         )}
       </AnimatePresence>
 
@@ -8462,7 +8822,7 @@ function App() {
             onAlbumOpen={setSelectedArtistAlbumId}
             initialTab={selectedArtistTab || 'hotSongs'}
             onTabChange={setSelectedArtistTab}
-            accentColor={dominantColor || '#3B82F6'}
+            accentColor={playbackCoverColor}
             playerTheme={playerTheme}
             currentSong={currentSong}
             neteaseVip={neteaseVip}
@@ -8475,6 +8835,7 @@ function App() {
             onOpenArtist={viewCallbacks.onOpenArtist}
             onOpenAlbum={viewCallbacks.onOpenAlbum}
             onCopyInfo={viewCallbacks.onCopyInfo}
+            onVideoPlaybackStart={() => { if (isPlaying) handlePlayPause() }}
             />
           )}
       </Suspense>
@@ -8485,9 +8846,10 @@ function App() {
             key={'album-' + selectedAlbumId}
             albumId={selectedAlbumId}
             platform={selectedAlbumPlatform}
+            storefront={selectedAlbumPlatform === 'apple' ? appleStorefront : undefined}
             onClose={stableDialogCallbacks.closeAlbumDetail}
             onSongSelect={handleAlbumDetailSongSelect}
-            accentColor={dominantColor || '#3B82F6'}
+            accentColor={playbackCoverColor}
             playerTheme={playerTheme}
             currentSong={currentSong}
             neteaseVip={neteaseVip}

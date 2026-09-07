@@ -2,6 +2,7 @@ export type DesktopWidgetType =
   | 'datetime' | 'weather' | 'dayProgress' | 'calendar' | 'notes' | 'memo' | 'habits' | 'countdown'
   | 'recentlyPlayed' | 'dailyRecommendations' | 'playQueue' | 'favoriteSongs'
   | 'playlistShortcuts' | 'listeningStats' | 'musicCalendar' | 'artistUpdates'
+  | 'platformNewSongs' | 'playbackProgress' | 'hotCharts' | 'newAlbums' | 'lyricExcerpt'
   | 'spectrum' | 'quickLauncher' | 'systemStatus' | 'volumeControl'
 export type DesktopWidgetSide = 'left' | 'right'
 export type DesktopWeatherLocationMode = 'auto' | 'manual'
@@ -52,6 +53,11 @@ const DESKTOP_WIDGET_ESTIMATED_HEIGHT: Record<DesktopWidgetType, number> = {
   listeningStats: 152,
   musicCalendar: 138,
   artistUpdates: 188,
+  platformNewSongs: 226,
+  playbackProgress: 126,
+  hotCharts: 188,
+  newAlbums: 188,
+  lyricExcerpt: 150,
   spectrum: 142,
   quickLauncher: 138,
   systemStatus: 148,
@@ -106,6 +112,11 @@ const isWidgetType = (value: unknown): value is DesktopWidgetType =>
   || value === 'listeningStats'
   || value === 'musicCalendar'
   || value === 'artistUpdates'
+  || value === 'platformNewSongs'
+  || value === 'playbackProgress'
+  || value === 'hotCharts'
+  || value === 'newAlbums'
+  || value === 'lyricExcerpt'
   || value === 'spectrum'
   || value === 'quickLauncher'
   || value === 'systemStatus'

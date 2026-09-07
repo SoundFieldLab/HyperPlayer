@@ -37,6 +37,9 @@ import {
   CalendarRange,
   Radio,
   AudioLines,
+  Music2,
+  TrendingUp,
+  Disc3,
   Rocket,
   Cpu,
   Volume2,
@@ -52,6 +55,7 @@ import {
 import {
   getCachedWeather,
   getWeatherLocationAddress,
+  resolveWeatherLocationSearchResult,
   searchWeatherLocations,
   type WeatherLocationSearchResult,
 } from '../services/weatherService'
@@ -86,6 +90,11 @@ const WIDGET_OPTIONS: Array<{
   { type: 'listeningStats', label: '听歌统计', description: '今日、本周与常听歌手', icon: ChartNoAxesColumnIncreasing },
   { type: 'musicCalendar', label: '音乐日历', description: '每日听歌热力图', icon: CalendarRange },
   { type: 'artistUpdates', label: '歌手动态', description: '最近收听歌手与新歌线索', icon: Radio },
+  { type: 'platformNewSongs', label: '平台新歌', description: '发现各音乐平台最新发行', icon: Music2 },
+  { type: 'playbackProgress', label: '播放进度', description: '查看当前歌曲播放进度', icon: SlidersHorizontal },
+  { type: 'hotCharts', label: '热门榜单', description: '浏览平台热门歌曲榜单', icon: TrendingUp },
+  { type: 'newAlbums', label: '新专辑', description: '发现近期发行的新专辑', icon: Disc3 },
+  { type: 'lyricExcerpt', label: '歌词摘录', description: '展示当前歌曲的歌词片段', icon: Captions },
   { type: 'spectrum', label: '音频频谱', description: '跟随当前音乐实时律动', icon: AudioLines },
   { type: 'quickLauncher', label: '快捷启动器', description: '打开常用软件、文件夹和网页', icon: Rocket },
   { type: 'systemStatus', label: '系统状态', description: 'CPU、内存、磁盘与运行时间', icon: Cpu },
@@ -125,9 +134,9 @@ export default function DesktopCustomizationEditor({ open, settings, onClose }: 
   useEffect(() => {
     if (open) {
       setDraft(settings)
-      if (settings.weatherLocationMode === 'manual' && !locationQuery) {
-        setLocationQuery([settings.weatherCountry, settings.weatherProvince, settings.weatherCity, settings.weatherDistrict].filter(Boolean).join(' · '))
-      }
+      setLocationQuery('')
+      setLocationResults([])
+      setLocationSearchError(null)
     }
   }, [open, settings])
 
@@ -184,24 +193,32 @@ export default function DesktopCustomizationEditor({ open, settings, onClose }: 
     saveDesktopCustomization(next)
   }
 
-  const applyLocationResult = (result: WeatherLocationSearchResult) => {
-    update({
-      ...draft,
-      weatherLocationMode: 'manual',
-      weatherCountryCode: result.countryCode || 'CN',
-      weatherCountry: result.country || (result.countryCode === 'CN' ? '中国' : ''),
-      weatherProvinceCode: '',
-      weatherProvince: result.province,
-      weatherCityCode: '',
-      weatherCity: result.city,
-      weatherDistrictCode: '',
-      weatherDistrict: result.district || result.name || result.city,
-      weatherLatitude: result.latitude,
-      weatherLongitude: result.longitude,
-    })
-    setLocationQuery(result.label)
-    setLocationResults([])
+  const applyLocationResult = async (result: WeatherLocationSearchResult) => {
+    setLocationSearching(true)
     setLocationSearchError(null)
+    try {
+      const resolved = await resolveWeatherLocationSearchResult(result)
+      update({
+        ...draft,
+        weatherLocationMode: 'manual',
+        weatherCountryCode: resolved.countryCode || 'CN',
+        weatherCountry: resolved.country || (resolved.countryCode === 'CN' ? '中国' : ''),
+        weatherProvinceCode: resolved.provinceCode,
+        weatherProvince: resolved.province,
+        weatherCityCode: resolved.cityCode,
+        weatherCity: resolved.city,
+        weatherDistrictCode: resolved.districtCode,
+        weatherDistrict: resolved.district,
+        weatherLatitude: resolved.latitude,
+        weatherLongitude: resolved.longitude,
+      })
+      setLocationQuery('')
+      setLocationResults([])
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') setLocationSearchError((error as Error).message || '暂时无法应用所选地区')
+    } finally {
+      setLocationSearching(false)
+    }
   }
 
   const handleLocationSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -367,14 +384,14 @@ export default function DesktopCustomizationEditor({ open, settings, onClose }: 
                   <section className="mt-3 rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
                     <div className="flex items-center gap-2 text-sm font-medium"><CloudSun className="h-4 w-4 text-cyan-300" />天气位置</div>
                     <div className="mt-3 grid grid-cols-2 gap-2">
-                      <button type="button" onClick={() => update({ ...draft, weatherLocationMode: 'auto' })} className="rounded-2xl border p-3 text-left text-sm" style={{ borderColor: draft.weatherLocationMode === 'auto' ? 'rgba(103,232,249,.55)' : 'rgba(255,255,255,.08)', background: draft.weatherLocationMode === 'auto' ? 'rgba(34,211,238,.14)' : 'rgba(255,255,255,.025)' }}>自动定位<div className="mt-1 text-[10px] text-white/35">依据当前网络位置</div></button>
-                      <button type="button" onClick={() => update({ ...draft, weatherLocationMode: 'manual' })} className="rounded-2xl border p-3 text-left text-sm" style={{ borderColor: draft.weatherLocationMode === 'manual' ? 'rgba(103,232,249,.55)' : 'rgba(255,255,255,.08)', background: draft.weatherLocationMode === 'manual' ? 'rgba(34,211,238,.14)' : 'rgba(255,255,255,.025)' }}>搜索地区<div className="mt-1 text-[10px] text-white/35">输入城市或区县自动匹配</div></button>
+                      <button type="button" onClick={() => { setLocationQuery(''); setLocationResults([]); setLocationSearchError(null); update({ ...draft, weatherLocationMode: 'auto' }) }} className="rounded-2xl border p-3 text-left text-sm" style={{ borderColor: draft.weatherLocationMode === 'auto' ? 'rgba(103,232,249,.55)' : 'rgba(255,255,255,.08)', background: draft.weatherLocationMode === 'auto' ? 'rgba(34,211,238,.14)' : 'rgba(255,255,255,.025)' }}>自动定位<div className="mt-1 text-[10px] text-white/35">依据当前网络位置</div></button>
+                      <button type="button" onClick={() => { setLocationQuery(''); setLocationResults([]); setLocationSearchError(null); update({ ...draft, weatherLocationMode: 'manual' }) }} className="rounded-2xl border p-3 text-left text-sm" style={{ borderColor: draft.weatherLocationMode === 'manual' ? 'rgba(103,232,249,.55)' : 'rgba(255,255,255,.08)', background: draft.weatherLocationMode === 'manual' ? 'rgba(34,211,238,.14)' : 'rgba(255,255,255,.025)' }}>搜索地区<div className="mt-1 text-[10px] text-white/35">输入城市或区县自动匹配</div></button>
                     </div>
                     <div className="mt-4">
                       <div className="mb-2 text-[11px] text-white/40">天气卡片样式</div>
                       <div className="grid grid-cols-2 gap-2">
                         <button type="button" onClick={() => update({ ...draft, weatherCardMode: 'full' })} className="rounded-2xl border p-3 text-left text-sm" style={{ borderColor: draft.weatherCardMode !== 'simple' ? 'rgba(103,232,249,.55)' : 'rgba(255,255,255,.08)', background: draft.weatherCardMode !== 'simple' ? 'rgba(34,211,238,.14)' : 'rgba(255,255,255,.025)' }}>完整模式<div className="mt-1 text-[10px] text-white/35">动态天空场景 · 当前样式</div></button>
-                        <button type="button" onClick={() => update({ ...draft, weatherCardMode: 'simple' })} className="rounded-2xl border p-3 text-left text-sm" style={{ borderColor: draft.weatherCardMode === 'simple' ? 'rgba(103,232,249,.55)' : 'rgba(255,255,255,.08)', background: draft.weatherCardMode === 'simple' ? 'rgba(34,211,238,.14)' : 'rgba(255,255,255,.025)' }}>简约模式<div className="mt-1 text-[10px] text-white/35">苹果小组件风格 · 大温度与逐小时</div></button>
+                        <button type="button" onClick={() => update({ ...draft, weatherCardMode: 'simple' })} className="rounded-2xl border p-3 text-left text-sm" style={{ borderColor: draft.weatherCardMode === 'simple' ? 'rgba(103,232,249,.55)' : 'rgba(255,255,255,.08)', background: draft.weatherCardMode === 'simple' ? 'rgba(34,211,238,.14)' : 'rgba(255,255,255,.025)' }}>简约模式<div className="mt-1 text-[10px] text-white/35">保留天气与温度的极简设计</div></button>
                       </div>
                     </div>
                     {draft.weatherLocationMode === 'auto' && <div className="mt-3 flex items-start gap-2 rounded-2xl border border-cyan-200/12 bg-cyan-300/[0.06] p-3 text-[11px] leading-5 text-white/55"><LocateFixed className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-300" /><span>当前自动定位：{autoLocationLabel}</span></div>}
@@ -387,7 +404,7 @@ export default function DesktopCustomizationEditor({ open, settings, onClose }: 
                             onChange={event => { setLocationQuery(event.target.value); setLocationSearchError(null) }}
                             onKeyDown={handleLocationSearchKeyDown}
                             className="h-11 w-full rounded-xl border border-white/10 bg-black/25 pl-10 pr-10 text-sm text-white outline-none placeholder:text-white/28 focus:border-cyan-300/50"
-                            placeholder="搜索城市、区县，例如“张家港”"
+                            placeholder="支持搜索区/县，如姑苏区"
                             autoComplete="off"
                           />
                           {locationSearching && <LoaderCircle className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-cyan-300" />}
@@ -406,7 +423,9 @@ export default function DesktopCustomizationEditor({ open, settings, onClose }: 
                                 <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-cyan-300" />
                                 <span className="min-w-0">
                                   <span className="block truncate text-xs text-white/85">{result.label}</span>
-                                  <span className="mt-1 block text-[10px] tabular-nums text-white/30">{result.latitude.toFixed(4)}, {result.longitude.toFixed(4)}</span>
+                                  {result.latitude !== null && result.longitude !== null
+                                    ? <span className="mt-1 block text-[10px] tabular-nums text-white/30">{result.latitude.toFixed(4)}, {result.longitude.toFixed(4)}</span>
+                                    : <span className="mt-1 block text-[10px] text-white/30">本地行政区 · 选择后应用</span>}
                                 </span>
                               </button>
                             ))}

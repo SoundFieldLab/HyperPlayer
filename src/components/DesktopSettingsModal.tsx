@@ -4,7 +4,7 @@
  */
 import { useState, useRef, useEffect, useMemo, lazy, Suspense } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Image, Monitor, Upload, Trash2, Video, Check, RotateCcw, RefreshCw, ImageIcon, ChevronRight, ArrowLeft, Clock, LayoutDashboard, CloudSun, LocateFixed, MapPin, Captions, Sparkles, Hourglass, CheckCircle2, CalendarDays, CalendarClock, ListTodo, NotebookPen, Target, History, WandSparkles, ListMusic, Heart, Library, BarChart3, CalendarRange, Radio, AudioLines, Rocket, Cpu, Volume2, Timer, Shuffle, ListOrdered, Settings2 } from 'lucide-react'
+import { X, Image, Monitor, Upload, Trash2, Video, Check, RotateCcw, RefreshCw, ImageIcon, ChevronRight, ArrowLeft, Clock, LayoutDashboard, CloudSun, LocateFixed, MapPin, Captions, Sparkles, Hourglass, CheckCircle2, CalendarDays, CalendarClock, ListTodo, NotebookPen, Target, History, WandSparkles, ListMusic, Heart, Library, BarChart3, CalendarRange, Radio, AudioLines, Music2, TrendingUp, Disc3, Rocket, Cpu, Volume2, Timer, Shuffle, ListOrdered, Settings2 } from 'lucide-react'
 import { desktopWallpaperManager, DesktopWallpaperFile, DesktopWallpaperMode, DesktopWallpaperPlayMode, RandomImageSource, DesktopWallpaperSwitchMode } from '../services/desktopWallpaperManager'
 import {
   DESKTOP_CUSTOMIZATION_EVENT,
@@ -157,7 +157,7 @@ export default function DesktopSettingsModal({
   // 启动时从主进程同步真实 GPU 加速状态，避免与设置面板不一致
   useEffect(() => {
     let cancelled = false
-    void window.electron?.system.getHardwareAcceleration().then(result => {
+    void window.electron?.system.getGpuSettings().then(result => {
       if (cancelled) return
       setGpuAcceleration(result.enabled)
       localStorage.setItem('gpuAcceleration', JSON.stringify(result.enabled))
@@ -996,6 +996,11 @@ export default function DesktopSettingsModal({
                                 { type: 'listeningStats' as const, label: '听歌统计', description: '今日、本周与常听歌手', icon: BarChart3 },
                                 { type: 'musicCalendar' as const, label: '音乐日历', description: '每日听歌热力图', icon: CalendarRange },
                                 { type: 'artistUpdates' as const, label: '歌手动态', description: '近期常听歌手入口', icon: Radio },
+                                { type: 'platformNewSongs' as const, label: '平台新歌', description: '发现各平台最新发行', icon: Music2 },
+                                { type: 'playbackProgress' as const, label: '播放进度', description: '查看当前歌曲播放进度', icon: Timer },
+                                { type: 'hotCharts' as const, label: '热门榜单', description: '浏览平台热门歌曲榜单', icon: TrendingUp },
+                                { type: 'newAlbums' as const, label: '新专辑', description: '发现近期发行的新专辑', icon: Disc3 },
+                                { type: 'lyricExcerpt' as const, label: '歌词摘录', description: '展示当前歌曲的歌词片段', icon: Captions },
                                 { type: 'spectrum' as const, label: '音频频谱', description: '当前音乐实时律动', icon: AudioLines },
                                 { type: 'quickLauncher' as const, label: '快捷启动器', description: '应用、文件夹与网页', icon: Rocket },
                                 { type: 'systemStatus' as const, label: '系统状态', description: 'CPU、内存与磁盘', icon: Cpu },

@@ -313,6 +313,8 @@ export interface VmpStatus {
 }
 
 export interface ElectronAPI {
+  /** 非 Electron 环境安装的兼容桩。 */
+  isShim?: boolean
   localPython?: {
     ensure: (service: 'beat' | 'loudness' | 'compensation') => Promise<boolean>
   }
@@ -336,6 +338,7 @@ export interface ElectronAPI {
       source?: string
       error?: string
     }>
+    getGpuSettings: () => Promise<Pick<HardwareAccelerationStatus, 'enabled' | 'gpuPreference' | 'pendingGpuChange'>>
     getHardwareAcceleration: () => Promise<HardwareAccelerationStatus>
     setHardwareAcceleration: (enabled: boolean) => Promise<{ success: boolean; enabled: boolean; requiresRestart: boolean }>
     setGpuPreference: (preference: 'auto' | 'discrete' | 'integrated') => Promise<{ success: boolean; gpuPreference: 'auto' | 'discrete' | 'integrated'; requiresRestart: boolean }>
@@ -529,6 +532,11 @@ export interface ElectronAPI {
       startTime?: number
       requestId?: string
     }) => Promise<StemArtifact | null>
+    separatePair?: (request: {
+      requestId?: string
+      source: { inputPath: string; mode: 'head' | 'tail'; duration: number; startTime?: number }
+      target: { inputPath: string; mode: 'head' | 'tail'; duration: number; startTime?: number }
+    }) => Promise<{ requestId: string; source: StemArtifact; target: StemArtifact } | null>
     cancel: (requestId: string) => Promise<boolean>
     clearCache: () => Promise<{ success: boolean; cleared: number }>
   }
@@ -682,7 +690,7 @@ export interface ElectronAPI {
       partial: Partial<
         Pick<
           DesktopPlayerSnapshot,
-          'song' | 'lyric' | 'playing' | 'spectrum' | 'accentColor' | 'playlist' | 'currentIndex' | 'progress' | 'duration' | 'hasTranslation' | 'hasRomaji' | 'volume' | 'muted' | 'page'
+          'song' | 'lyric' | 'playing' | 'live' | 'spectrum' | 'accentColor' | 'playlist' | 'currentIndex' | 'progress' | 'duration' | 'hasTranslation' | 'hasRomaji' | 'volume' | 'muted' | 'page'
         >
       >
     ) => void
@@ -875,6 +883,7 @@ export interface DesktopPlayerSnapshot {
   song: DesktopPlayerSongInfo | null
   lyric: DesktopPlayerLyric | null
   playing: boolean
+  live: boolean
   spectrum: number[]
   enabled: boolean
   form: 'card' | 'bar'

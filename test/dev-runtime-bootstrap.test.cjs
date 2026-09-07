@@ -22,3 +22,27 @@ test('all Python audio services pin their own directory before importing shared 
     assert.match(source, /from local_service_auth import/, file)
   }
 })
+
+test('WaveForge network entrypoints prefer IPv4 when resolving external services', () => {
+  const launcher = fs.readFileSync(path.join(root, 'scripts', 'dev-electron.mjs'), 'utf8')
+  const main = fs.readFileSync(path.join(root, 'desktop', 'main.cjs'), 'utf8')
+  const api = fs.readFileSync(path.join(root, 'local-server.mjs'), 'utf8')
+  for (const source of [launcher, main, api]) {
+    assert.match(source, /setDefaultResultOrder\(['"]ipv4first['"]\)/)
+  }
+})
+
+test('development launcher stops before Electron when port 3001 belongs to another session', () => {
+  const source = fs.readFileSync(path.join(root, 'scripts', 'dev-electron.mjs'), 'utf8')
+  assert.match(source, /isCompatibleLocalApiHealth\(body\)/)
+  assert.match(source, /throw await createStaleLocalApiError\(\)/)
+  assert.match(source, /const api = await startAPI\(\)/)
+  assert.doesNotMatch(source, /freePortIfHijacked\(3001/)
+  assert.match(source, /本次启动已停止/)
+})
+
+test('local API health response publishes a stable service contract', () => {
+  const source = fs.readFileSync(path.join(root, 'local-server.mjs'), 'utf8')
+  assert.match(source, /service: LOCAL_API_SERVICE/)
+  assert.match(source, /protocolVersion: LOCAL_API_PROTOCOL_VERSION/)
+})

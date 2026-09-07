@@ -2,7 +2,7 @@
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
  * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Activity, AppWindow, AudioLines, CalendarRange, ChartNoAxesColumnIncreasing, Check, ChevronRight,
@@ -13,17 +13,28 @@ import {
 } from 'lucide-react'
 import type { DesktopWidgetType } from '../services/desktopCustomization'
 import type { MusicPlatform } from '../services/platforms'
-import type { Song } from '../services/musicApi'
+import type { LyricLine, Song } from '../services/musicApi'
+import type { PlaybackTimeStore } from '../audio/playbackTimeStore'
+import { clampPlaybackProgress, getLyricExcerpt } from '../services/desktopWidgetPlayback'
 import { fetchExploreHome, fetchExploreRecommendationBatch } from '../services/exploreApi'
 import { getNeteasePlaylistTrackPage, getPlaylistDetail } from '../services/playlistService'
-import { appleLibraryTrackToSong, getApplePlaylistTracks } from '../services/appleCatalog'
+import { appleSongToSong, getAppleFavoriteSongs } from '../services/appleCatalog'
 import {
   clearDesktopMusicActivity,
   DESKTOP_MUSIC_ACTIVITY_EVENT,
+  getDesktopActivityForPlatform,
   getDesktopSongKey,
   loadDesktopMusicActivity,
 } from '../services/desktopMusicActivity'
 import { registerDesktopSpectrumConsumer } from '../services/desktopSpectrum'
+import {
+  DesktopAlbumsView,
+  DesktopChartsView,
+  DesktopExploreStatus,
+  DesktopNewSongsView,
+  useDesktopChartDetail,
+  useDesktopExploreHome,
+} from './DesktopExploreWidgets'
 
 export interface DesktopWidgetPlaylist {
   id: string | number
@@ -36,6 +47,9 @@ export interface DesktopWidgetPlaylist {
 export interface DesktopMusicWidgetContext {
   currentSong: Song | null
   isPlaying: boolean
+  store: PlaybackTimeStore
+  lyrics: LyricLine[]
+  lyricOffset: number
   queue: Song[]
   currentIndex: number
   playlists: DesktopWidgetPlaylist[]
@@ -49,6 +63,7 @@ export interface DesktopMusicWidgetContext {
   onMoveQueueItem: (from: number, to: number) => void
   onPlaylistSelect: (playlist: DesktopWidgetPlaylist) => void
   onOpenArtist?: (artistId: string, platform: MusicPlatform) => void
+  onOpenAlbum?: (albumId: string, platform: MusicPlatform) => void
 }
 
 interface LauncherItem {
@@ -93,6 +108,11 @@ const defaultPreferences: ExtraWidgetPreferences = {
 
 const WIDGET_META: Record<string, { title: string; subtitle: string; icon: typeof Music2 }> = {
   recentlyPlayed: { title: '最近播放', subtitle: '继续刚才的旋律', icon: History },
+  platformNewSongs: { title: '当前平台新歌', subtitle: '新鲜发行速览', icon: Music2 },
+  playbackProgress: { title: '播放进度', subtitle: '进度与剩余时间', icon: Clock3 },
+  hotCharts: { title: '热门榜单', subtitle: '当前平台热度排行', icon: ChartNoAxesColumnIncreasing },
+  newAlbums: { title: '新碟雷达', subtitle: '当前平台近期新发行', icon: Library },
+  lyricExcerpt: { title: '歌词摘录', subtitle: '正在唱与下一句', icon: Music2 },
   dailyRecommendations: { title: '每日推荐', subtitle: '为你精选', icon: WandSparkles },
   playQueue: { title: '播放队列', subtitle: '接下来播放', icon: ListMusic },
   favoriteSongs: { title: '喜爱歌曲', subtitle: '喜爱歌曲', icon: Heart },
@@ -142,7 +162,9 @@ const formatBytes = (bytes: number) => {
 }
 
 function normalizePlaylistSongs(data: any, platform: MusicPlatform): Song[] {
-  const raw = platform === 'qq' ? data?.songlist || data?.playlist?.tracks || [] : data?.playlist?.tracks || data?.songs || []
+  const raw = platform === 'qq'
+    ? data?.songlist || data?.playlist?.tracks || data?.tracks || []
+    : data?.playlist?.tracks || data?.songs || data?.tracks || []
   if (platform === 'apple') {
     return raw.filter((song: Song) => Boolean(song.appleId || song.appleLibraryId || song.id))
   }
@@ -152,10 +174,10 @@ function normalizePlaylistSongs(data: any, platform: MusicPlatform): Song[] {
     album: { id: item.album?.id || item.albumid, mid: item.album?.mid || item.albummid, name: item.album?.name || item.albumname || '', picUrl: item.album?.picUrl || (item.albummid ? `https://y.gtimg.cn/music/photo_new/T002R500x500M000${item.albummid}.jpg` : '') },
     duration: Number(item.duration || item.interval || 0) * (Number(item.duration || 0) > 10000 ? 1 : 1000), platform: 'qq' as const,
   } : {
-    id: Number(item.id || 0), name: item.name || '未知歌曲',
-    artists: (item.ar || item.artists || []).map((artist: any) => ({ id: artist.id, name: artist.name })),
-    album: { id: item.al?.id || item.album?.id, name: item.al?.name || item.album?.name || '', picUrl: item.al?.picUrl || item.album?.picUrl || '' },
-    duration: Number(item.dt || item.duration || 0), platform: 'netease' as const,
+    id: Number(item.id || 0), mid: item.mid || item.songmid, name: item.name || '未知歌曲',
+    artists: (item.ar || item.artists || item.singer || []).map((artist: any) => ({ id: artist.id, mid: artist.mid, name: artist.name })),
+    album: { id: item.al?.id || item.album?.id, mid: item.al?.mid || item.album?.mid, name: item.al?.name || item.album?.name || '', picUrl: item.al?.picUrl || item.album?.picUrl || item.cover || '' },
+    duration: Number(item.dt || item.duration || 0), platform,
   }).filter((song: Song) => song.id || song.mid)
 }
 
@@ -196,36 +218,40 @@ function SettingCount({ value, onChange, label = '卡片显示数量', min = 2, 
   return <label className="block rounded-2xl border border-white/8 bg-white/[.035] p-3 text-xs text-white/55"><span className="flex justify-between"><span>{label}</span><b className="text-white">{value}</b></span><input type="range" min={min} max={max} value={value} onChange={event => onChange(Number(event.target.value))} className="mt-3 w-full accent-cyan-300" /></label>
 }
 
-function useActivity(kind: DesktopWidgetType) {
+function useActivity(kind: DesktopWidgetType, platform: MusicPlatform) {
   const enabled = kind === 'recentlyPlayed' || kind === 'listeningStats' || kind === 'musicCalendar' || kind === 'artistUpdates'
-  const [activity, setActivity] = useState<ReturnType<typeof loadDesktopMusicActivity>>(() => enabled ? loadDesktopMusicActivity() : { history: [], days: {}, lastSongKey: '', lastStartedAt: 0 })
+  const [activity, setActivity] = useState<ReturnType<typeof loadDesktopMusicActivity>>(() => enabled ? getDesktopActivityForPlatform(loadDesktopMusicActivity(), platform) : { history: [], days: {}, lastSongKey: '', lastStartedAt: 0 })
   const signatureRef = useRef('')
   useEffect(() => {
     if (!enabled) return
     const getSignature = (value: ReturnType<typeof loadDesktopMusicActivity>) => kind === 'recentlyPlayed' || kind === 'artistUpdates'
       ? value.history.map(entry => `${getDesktopSongKey(entry.song)}:${entry.playedAt}:${entry.playCount}`).join('|')
-      : Object.values(value.days).map(day => `${day.date}:${day.listenedSeconds}:${day.songStarts}`).join('|')
-    signatureRef.current = getSignature(activity)
+      : Object.values(value.days).map(day => `${day.date}:${day.platform || ''}:${day.listenedSeconds}:${day.songStarts}`).join('|')
     const sync = (event: Event) => {
-      const next = (event as CustomEvent<ReturnType<typeof loadDesktopMusicActivity>>).detail || loadDesktopMusicActivity()
+      const next = getDesktopActivityForPlatform((event as CustomEvent<ReturnType<typeof loadDesktopMusicActivity>>).detail || loadDesktopMusicActivity(), platform)
       const nextSignature = getSignature(next)
       if (nextSignature === signatureRef.current) return
       signatureRef.current = nextSignature
       setActivity(next)
     }
+    const initial = getDesktopActivityForPlatform(loadDesktopMusicActivity(), platform)
+    signatureRef.current = getSignature(initial)
+    setActivity(initial)
     window.addEventListener(DESKTOP_MUSIC_ACTIVITY_EVENT, sync)
     return () => window.removeEventListener(DESKTOP_MUSIC_ACTIVITY_EVENT, sync)
-  }, [activity, enabled, kind])
+  }, [enabled, kind, platform])
   return activity
 }
 function useRecommendations(platform: MusicPlatform, enabled: boolean) {
   const [songs, setSongs] = useState<Song[]>([])
   const [loading, setLoading] = useState(false)
   const [batch, setBatch] = useState(1)
+  const generationRef = useRef(0)
   const requestInFlight = useRef(false)
   const controllerRef = useRef<AbortController | null>(null)
   const refresh = useCallback(async (next = false) => {
     if (!enabled || requestInFlight.current) return
+    const generation = generationRef.current
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
@@ -235,23 +261,25 @@ function useRecommendations(platform: MusicPlatform, enabled: boolean) {
       if (next) {
         const nextBatch = batch + 1
         const nextSongs = await fetchExploreRecommendationBatch(platform, nextBatch, songs.map(getDesktopSongKey), controller.signal)
-        if (!controller.signal.aborted) {
-          setSongs(nextSongs)
-          setBatch(nextBatch)
-        }
+        if (!controller.signal.aborted && generation === generationRef.current) { setSongs(nextSongs); setBatch(nextBatch) }
       } else {
         const home = await fetchExploreHome(platform, controller.signal)
-        if (!controller.signal.aborted) setSongs(home.dailySongs.length ? home.dailySongs : home.radioSongs.length ? home.radioSongs : home.newSongs)
+        if (!controller.signal.aborted && generation === generationRef.current) setSongs(home.dailySongs.length ? home.dailySongs : home.radioSongs.length ? home.radioSongs : home.newSongs)
       }
     } catch (error) {
       if ((error as Error).name !== 'AbortError') console.warn('[DesktopWidgets] 推荐加载失败', error)
     } finally {
       if (controllerRef.current === controller) controllerRef.current = null
       requestInFlight.current = false
-      if (!controller.signal.aborted) setLoading(false)
+      if (!controller.signal.aborted && generation === generationRef.current) setLoading(false)
     }
   }, [batch, enabled, platform, songs])
   useEffect(() => {
+    generationRef.current += 1
+    controllerRef.current?.abort()
+    requestInFlight.current = false
+    setSongs([])
+    setBatch(1)
     if (!enabled) return
     void refresh(false)
     return () => controllerRef.current?.abort()
@@ -334,14 +362,44 @@ function Spectrum({ accentColor, style, large = false }: { accentColor: string; 
   return <div className={`flex items-end justify-center gap-1 overflow-hidden ${large ? 'h-72' : 'h-20'}`}>{expanded.map((value, index) => <span key={index} className="h-full w-2 origin-bottom rounded-md" style={{ background: `linear-gradient(to top, ${accentColor}, rgba(255,255,255,.9))`, opacity: .55 + (index % 4) * .1, boxShadow: `0 0 12px ${accentColor}55`, transform: `scaleY(${Math.max(large ? .03 : .1, Math.min(.9, value * .87))})`, transition: 'transform 100ms ease-out', willChange: 'transform' }} />)}</div>
 }
 
-export default function DesktopExtraWidget({ type, cardBlurAmount, accentColor, context, onOverlayOpenChange }: { type: DesktopWidgetType; cardBlurAmount: number; accentColor: string; context: DesktopMusicWidgetContext; onOverlayOpenChange?: (open: boolean) => void }) {
+function PlaybackProgress({ context, accentColor }: { context: DesktopMusicWidgetContext; accentColor: string }) {
+  const snapshot = useSyncExternalStore(context.store.subscribe, context.store.getSnapshot, context.store.getSnapshot)
+  const progress = clampPlaybackProgress(snapshot.currentTime, snapshot.duration)
+  const current = context.currentSong
+  const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
+  return <div className="desktop-widget-card w-full overflow-hidden rounded-[28px] p-4 text-white" style={{ background: `linear-gradient(145deg, ${accentColor}35, rgba(8,12,24,.58) 48%, rgba(255,255,255,.07))`, backdropFilter: 'blur(22px)' }}>
+    <div className="flex items-center gap-3">
+      {current?.album.picUrl ? <img src={current.album.picUrl} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover" /> : <span className="h-11 w-11 shrink-0 rounded-xl bg-white/10" />}
+      <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{current?.name || '等待播放'}</div><div className="mt-1 truncate text-[11px] text-white/40">{current?.artists.map(artist => artist.name).join(' / ') || '暂无歌曲'}</div></div>
+    </div>
+    <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full" style={{ width: `${progress * 100}%`, background: accentColor }} /></div>
+    <div className="mt-2 flex justify-between text-[10px] tabular-nums text-white/38"><span>{formatTime(Math.max(0, snapshot.currentTime))}</span><span>{formatTime(Math.max(0, snapshot.duration))}</span></div>
+  </div>
+}
+
+function LyricExcerpt({ context, accentColor }: { context: DesktopMusicWidgetContext; accentColor: string }) {
+  const snapshot = useSyncExternalStore(context.store.subscribe, context.store.getSnapshot, context.store.getSnapshot)
+  const excerpt = getLyricExcerpt(context.lyrics, snapshot.currentTime, context.lyricOffset)
+  const song = context.currentSong
+  const albumId = song?.album.id
+  return <button type="button" disabled={!albumId} onClick={event => { event.stopPropagation(); if (albumId && song?.platform) context.onOpenAlbum?.(String(albumId), song.platform) }} className="desktop-widget-card block w-full overflow-hidden rounded-[28px] p-4 text-left text-white disabled:cursor-default" style={{ background: `linear-gradient(145deg, ${accentColor}2e, rgba(8,12,24,.58) 48%, rgba(255,255,255,.07))`, backdropFilter: 'blur(22px)' }}>
+    <div className="text-[10px] uppercase tracking-[.18em] text-white/35">歌词摘录</div>
+    <div className="mt-3 min-h-10 text-sm leading-6 text-white/82">{excerpt || (context.lyrics.length ? '前奏中…' : '暂无歌词')}</div>
+    {song && <div className="mt-3 truncate text-[11px]" style={{ color: `${accentColor}cc` }}>{song.name}</div>}
+  </button>
+}
+
+function DesktopExtraWidgetContent({ type, cardBlurAmount, accentColor, context, onOverlayOpenChange }: { type: DesktopWidgetType; cardBlurAmount: number; accentColor: string; context: DesktopMusicWidgetContext; onOverlayOpenChange?: (open: boolean) => void }) {
   const [open, setOpen] = useState(false)
   const { preferences, update } = usePreferences()
-  const activity = useActivity(type)
+  const activity = useActivity(type, context.platform)
   const count = preferences.itemCounts[type] || 4
   const setCount = (value: number) => update({ itemCounts: { ...preferences.itemCounts, [type]: value } })
   const recommendationPlatform = preferences.recommendationPlatform === 'current' ? context.platform : preferences.recommendationPlatform
   const recommendations = useRecommendations(recommendationPlatform, type === 'dailyRecommendations')
+  const exploreEnabled = type === 'platformNewSongs' || type === 'hotCharts' || type === 'newAlbums'
+  const explore = useDesktopExploreHome(context.platform, exploreEnabled)
+  const chartDetail = useDesktopChartDetail()
   const [favoriteSongs, setFavoriteSongs] = useState<Song[]>([])
   const [favoritesLoading, setFavoritesLoading] = useState(false)
   const [system, setSystem] = useState<SystemSnapshot | null>(null)
@@ -351,22 +409,27 @@ export default function DesktopExtraWidget({ type, cardBlurAmount, accentColor, 
   const closeModal = () => { setOpen(false); onOverlayOpenChange?.(false) }
   const play = (song: Song, songs?: Song[]) => context.onSongSelect(song, songs)
 
+  const pinnedKey = (item: DesktopWidgetPlaylist) => `${context.platform}:${String(item.id)}`
   const pinnedPlaylists = useMemo(() => {
-    const explicit = preferences.pinnedPlaylistIds.map(id => context.playlists.find(item => String(item.id) === id)).filter(Boolean) as DesktopWidgetPlaylist[]
+    const explicit = preferences.pinnedPlaylistIds
+      .map(id => context.playlists.find(item => id === pinnedKey(item) || (id.indexOf(':') < 0 && String(item.id) === id)))
+      .filter(Boolean) as DesktopWidgetPlaylist[]
     return explicit.length ? explicit : context.playlists.slice(0, count)
-  }, [context.playlists, count, preferences.pinnedPlaylistIds])
+  }, [context.platform, context.playlists, count, preferences.pinnedPlaylistIds])
 
   useEffect(() => {
     if (type !== 'favoriteSongs') return
-    const liked = context.playlists.find(playlist => playlist.isLike) || context.playlists[0]
-    if (!liked) { setFavoriteSongs([]); return }
     let active = true
     setFavoritesLoading(true)
     const request: Promise<Song[]> = context.platform === 'apple'
-      ? getApplePlaylistTracks(String(liked.id), 5000).then(tracks => tracks.map(appleLibraryTrackToSong))
-      : context.platform === 'netease'
-        ? getNeteasePlaylistTrackPage(liked.id, 0, 120).then(page => normalizePlaylistSongs({ playlist: { tracks: page.tracks } }, context.platform))
-        : getPlaylistDetail(String(liked.id), context.platform).then(data => normalizePlaylistSongs(data, context.platform))
+      ? getAppleFavoriteSongs(5000).then(tracks => tracks.map(track => appleSongToSong(track)))
+      : (() => {
+        const liked = context.playlists.find(playlist => playlist.isLike)
+        if (!liked) return Promise.resolve([])
+        return context.platform === 'netease'
+          ? getNeteasePlaylistTrackPage(liked.id, 0, 120).then(page => normalizePlaylistSongs({ playlist: { tracks: page.tracks } }, context.platform))
+          : getPlaylistDetail(String(liked.id), context.platform).then(data => normalizePlaylistSongs(data, context.platform))
+      })()
     request.then(songs => { if (active) setFavoriteSongs(songs) }).catch(() => { if (active) setFavoriteSongs([]) }).finally(() => { if (active) setFavoritesLoading(false) })
     return () => { active = false }
   }, [context.platform, context.playlists, type])
@@ -412,7 +475,12 @@ export default function DesktopExtraWidget({ type, cardBlurAmount, accentColor, 
   const weekSeconds = Object.values(activity.days).filter(day => Date.now() - new Date(`${day.date}T00:00:00`).getTime() < 7 * 86400000).reduce((sum, day) => sum + day.listenedSeconds, 0)
   const topArtists = useMemo(() => {
     const scores = new Map<string, { name: string; id?: number; platform: MusicPlatform; score: number }>()
-    activity.history.forEach(entry => entry.song.artists.forEach(artist => { const key = `${entry.song.platform}:${artist.id || artist.name}`; const current = scores.get(key); scores.set(key, { name: artist.name, id: artist.id, platform: entry.song.platform || 'netease', score: (current?.score || 0) + entry.playCount }) }))
+    activity.history.forEach(entry => entry.song.artists.forEach(artist => {
+      if (!entry.song.platform) return
+      const key = `${entry.song.platform}:${artist.id || artist.name}`
+      const current = scores.get(key)
+      scores.set(key, { name: artist.name, id: artist.id, platform: entry.song.platform, score: (current?.score || 0) + entry.playCount })
+    }))
     return [...scores.values()].sort((a, b) => b.score - a.score)
   }, [activity.history])
 
@@ -423,7 +491,7 @@ export default function DesktopExtraWidget({ type, cardBlurAmount, accentColor, 
       if (!active) return
       const names = new Set(topArtists.slice(0, 12).map(artist => artist.name))
       const matched = home.newSongs.filter(song => song.artists.some(artist => names.has(artist.name)))
-      setArtistFeed((matched.length ? matched : home.newSongs).slice(0, 30))
+      setArtistFeed(matched.slice(0, 30))
     }).catch(() => { if (active) setArtistFeed([]) })
     return () => { active = false }
   }, [context.platform, topArtists, type])
@@ -442,10 +510,25 @@ export default function DesktopExtraWidget({ type, cardBlurAmount, accentColor, 
   let details: React.ReactNode = null
   let settings: React.ReactNode = <div className="rounded-2xl border border-white/8 bg-white/[.035] p-3 text-xs leading-5 text-white/42">此卡片会自动根据当前状态展示内容，无需设置显示数量。</div>
 
-  if (type === 'recentlyPlayed') {
+  if (type === 'platformNewSongs') {
+    const songs = explore.data?.newSongs || []
+    card = <><Header type={type} accentColor={accentColor} trailing={explore.loading ? <LoaderCircle className="h-4 w-4 animate-spin text-white/40" /> : <span className="text-xs text-white/35">{songs.length}</span>} />{songs.length ? <div className="mt-3"><DesktopNewSongsView songs={songs.slice(0, count)} compact onPlay={song => play(song, songs)} /></div> : <DesktopExploreStatus loading={explore.loading} error={explore.error} empty="当前平台暂无新歌数据" onRetry={() => void explore.refresh(true)} />}</>
+    details = <>{explore.data?.newSongs?.length ? <DesktopNewSongsView songs={explore.data.newSongs} compact={false} onPlay={song => play(song, explore.data?.newSongs)} /> : <DesktopExploreStatus loading={explore.loading} error={explore.error} empty="当前平台暂无新歌数据" onRetry={() => void explore.refresh(true)} />}</>
+    settings = <SettingCount value={count} onChange={setCount} />
+  } else if (type === 'hotCharts') {
+    const charts = explore.data?.charts || []
+    card = <><Header type={type} accentColor={accentColor} trailing={explore.loading ? <LoaderCircle className="h-4 w-4 animate-spin text-white/40" /> : <span className="text-xs text-white/35">{charts.length}</span>} />{charts.length ? <div className="mt-3"><DesktopChartsView charts={charts.slice(0, count)} compact selectedId={chartDetail.chart?.id} onSelect={chartDetail.selectChart} /></div> : <DesktopExploreStatus loading={explore.loading} error={explore.error} empty="当前平台暂无榜单数据" onRetry={() => void explore.refresh(true)} />}</>
+    details = <>{chartDetail.chart && <div className="mb-4 flex items-center gap-3 rounded-2xl border border-white/8 bg-white/[.035] p-3"><ListMusic className="h-5 w-5" style={{ color: accentColor }} /><span className="truncate text-sm font-medium">{chartDetail.chart.name}</span></div>}{chartDetail.loading ? <DesktopExploreStatus loading={true} error="" empty="" onRetry={() => undefined} /> : chartDetail.error ? <DesktopExploreStatus loading={false} error={chartDetail.error} empty="" onRetry={() => chartDetail.chart && void chartDetail.selectChart(chartDetail.chart)} /> : <SongList songs={chartDetail.songs} onPlay={song => play(song, chartDetail.songs)} />}</>
+    settings = <SettingCount value={count} onChange={setCount} />
+  } else if (type === 'newAlbums') {
+    const albums = explore.data?.albums || []
+    card = <><Header type={type} accentColor={accentColor} trailing={explore.loading ? <LoaderCircle className="h-4 w-4 animate-spin text-white/40" /> : <span className="text-xs text-white/35">{albums.length}</span>} />{albums.length ? <div className="mt-3"><DesktopAlbumsView albums={albums.slice(0, count)} compact onOpen={album => context.onOpenAlbum?.(String(album.mid || album.id), album.platform)} /></div> : <DesktopExploreStatus loading={explore.loading} error={explore.error} empty="当前平台暂未提供新碟数据" onRetry={() => void explore.refresh(true)} />}</>
+    details = <>{albums.length ? <DesktopAlbumsView albums={albums} compact={false} onOpen={album => context.onOpenAlbum?.(String(album.mid || album.id), album.platform)} /> : <DesktopExploreStatus loading={explore.loading} error={explore.error} empty="当前平台暂未提供新碟数据" onRetry={() => void explore.refresh(true)} />}</>
+    settings = <SettingCount value={count} onChange={setCount} />
+  } else if (type === 'recentlyPlayed') {
     card = <><Header type={type} accentColor={accentColor} trailing={<span className="text-xs text-white/35">{activity.history.length}</span>} /><div className="mt-3 space-y-1">{recent.map(entry => <SongRow key={getDesktopSongKey(entry.song)} song={entry.song} onClick={() => play(entry.song, activity.history.map(item => item.song))} />)}{!recent.length && <Empty text="播放歌曲后会出现在这里" />}</div></>
     details = <SongList songs={activity.history.map(entry => entry.song)} onPlay={song => play(song, activity.history.map(item => item.song))} />
-    settings = <><SettingCount value={count} onChange={setCount} /><button type="button" onClick={() => clearDesktopMusicActivity()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-rose-300/15 bg-rose-400/8 py-3 text-xs text-rose-200/70"><Trash2 className="h-3.5 w-3.5" />清空播放足迹</button></>
+    settings = <><SettingCount value={count} onChange={setCount} /><button type="button" onClick={() => clearDesktopMusicActivity(context.platform)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-rose-300/15 bg-rose-400/8 py-3 text-xs text-rose-200/70"><Trash2 className="h-3.5 w-3.5" />清空当前平台播放足迹</button></>
   } else if (type === 'dailyRecommendations') {
     const songs = recommendations.songs
     card = <><Header type={type} accentColor={accentColor} trailing={recommendations.loading ? <LoaderCircle className="h-4 w-4 animate-spin text-white/40" /> : <button type="button" aria-label="换一批每日推荐" onClick={event => { event.stopPropagation(); void recommendations.refresh(true) }}><RefreshCw className="h-4 w-4 text-white/40" /></button>} /><div className="mt-3 space-y-1">{songs.slice(0, count).map(song => <SongRow key={getDesktopSongKey(song)} song={song} onClick={() => play(song, songs)} />)}{!songs.length && <Empty text="正在准备今日推荐" />}</div></>
@@ -462,7 +545,7 @@ export default function DesktopExtraWidget({ type, cardBlurAmount, accentColor, 
   } else if (type === 'playlistShortcuts') {
     card = <><Header type={type} accentColor={accentColor} /><div className="mt-3 grid grid-cols-3 gap-2">{pinnedPlaylists.slice(0, count).map(item => <button key={item.id} type="button" onClick={event => { event.stopPropagation(); context.onPlaylistSelect(item) }} className="min-w-0"><img src={item.coverImgUrl} alt="" className="aspect-square w-full rounded-xl object-cover" /><span className="mt-1 block truncate text-[10px] text-white/55">{item.name}</span></button>)}</div></>
     details = <div className="grid grid-cols-3 gap-3">{context.playlists.map(item => <button key={item.id} type="button" onClick={() => context.onPlaylistSelect(item)} className="rounded-2xl border border-white/8 bg-white/[.035] p-3 text-left hover:bg-white/8"><img src={item.coverImgUrl} alt="" className="aspect-square w-full rounded-xl object-cover" /><div className="mt-2 truncate text-sm">{item.name}</div><div className="mt-1 text-[10px] text-white/35">{item.trackCount || 0} 首</div></button>)}</div>
-    settings = <><SettingCount value={count} onChange={setCount} /><div className="mt-4 text-xs text-white/42">固定歌单</div><div className="mt-2 max-h-72 space-y-1 overflow-y-auto">{context.playlists.map(item => { const selected = preferences.pinnedPlaylistIds.includes(String(item.id)); return <button key={item.id} type="button" onClick={() => update({ pinnedPlaylistIds: selected ? preferences.pinnedPlaylistIds.filter(id => id !== String(item.id)) : [...preferences.pinnedPlaylistIds, String(item.id)] })} className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-xs hover:bg-white/8"><span className="flex h-5 w-5 items-center justify-center rounded-md border" style={{ borderColor: selected ? accentColor : 'rgba(255,255,255,.2)', background: selected ? accentColor : 'transparent' }}>{selected && <Check className="h-3 w-3 text-slate-950" />}</span><span className="truncate">{item.name}</span></button> })}</div></>
+    settings = <><SettingCount value={count} onChange={setCount} /><div className="mt-4 text-xs text-white/42">固定歌单</div><div className="mt-2 max-h-72 space-y-1 overflow-y-auto">{context.playlists.map(item => { const key = pinnedKey(item); const selected = preferences.pinnedPlaylistIds.includes(key) || preferences.pinnedPlaylistIds.includes(String(item.id)); return <button key={item.id} type="button" onClick={() => update({ pinnedPlaylistIds: selected ? preferences.pinnedPlaylistIds.filter(id => id !== key && id !== String(item.id)) : [...preferences.pinnedPlaylistIds, key] })} className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-xs hover:bg-white/8"><span className="flex h-5 w-5 items-center justify-center rounded-md border" style={{ borderColor: selected ? accentColor : 'rgba(255,255,255,.2)', background: selected ? accentColor : 'transparent' }}>{selected && <Check className="h-3 w-3 text-slate-950" />}</span><span className="truncate">{item.name}</span></button> })}</div></>
   } else if (type === 'listeningStats') {
     card = <><Header type={type} accentColor={accentColor} /><div className="mt-4 grid grid-cols-2 gap-2"><Stat label="今日" value={formatMinutes(today.listenedSeconds)} /><Stat label="本周" value={formatMinutes(weekSeconds)} /></div><div className="mt-2 text-[11px] text-white/38">今日开始播放 {today.songStarts} 首</div></>
     details = <div className="grid grid-cols-3 gap-3"><Stat large label="今日听歌" value={formatMinutes(today.listenedSeconds)} /><Stat large label="近 7 天" value={formatMinutes(weekSeconds)} /><Stat large label="累计歌曲" value={`${activity.history.length} 首`} /><div className="col-span-3 mt-3 rounded-3xl border border-white/8 bg-white/[.035] p-4"><div className="mb-3 text-sm font-medium">常听歌手</div>{topArtists.slice(0, 10).map((artist, index) => <div key={`${artist.platform}:${artist.id || artist.name}`} className="flex items-center gap-3 border-b border-white/6 py-3 last:border-0"><span className="w-6 text-xs text-white/30">{index + 1}</span><span className="flex-1 text-sm">{artist.name}</span><span className="text-xs text-white/35">{artist.score} 次</span></div>)}</div></div>
@@ -495,6 +578,12 @@ export default function DesktopExtraWidget({ type, cardBlurAmount, accentColor, 
 
   if (!WIDGET_META[type]) return null
   return <><Shell cardBlurAmount={cardBlurAmount} accentColor={accentColor} onClick={openModal}><div className="p-4">{card}</div></Shell><Modal open={open} type={type} accentColor={accentColor} onClose={closeModal} settings={settings}>{details}</Modal></>
+}
+
+export default function DesktopExtraWidget({ type, cardBlurAmount, accentColor, context, onOverlayOpenChange }: { type: DesktopWidgetType; cardBlurAmount: number; accentColor: string; context: DesktopMusicWidgetContext; onOverlayOpenChange?: (open: boolean) => void }) {
+  if (type === 'playbackProgress') return <PlaybackProgress context={context} accentColor={accentColor} />
+  if (type === 'lyricExcerpt') return <LyricExcerpt context={context} accentColor={accentColor} />
+  return <DesktopExtraWidgetContent type={type} cardBlurAmount={cardBlurAmount} accentColor={accentColor} context={context} onOverlayOpenChange={onOverlayOpenChange} />
 }
 
 function Empty({ text }: { text: string }) { return <div className="py-5 text-center text-xs text-white/30">{text}</div> }

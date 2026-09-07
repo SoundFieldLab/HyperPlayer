@@ -24,6 +24,8 @@ src/generated/city-data/
 
 # Playwright 测试产物
 .playwright-mcp/
+.netease-acceptance-userdata/
+/NUL
 
 # 会话/抓取临时文件（本地开发痕迹，不入库）
 .zcode*

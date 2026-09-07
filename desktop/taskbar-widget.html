@@ -67,6 +67,8 @@
   .ctl:hover { background: rgba(127,127,127,0.22); opacity: 1; }
   .ctl:active { transform: scale(0.9); }
   .ctl.play { width: 34px; height: 34px; min-width: 34px; background: var(--accent); color: #fff; box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 45%, transparent); opacity: 1; }
+  body.live #prev, body.live #next, body.live #progress { display: none; }
+  body.live #controls { justify-content: center; }
   .ctl svg { width: 55%; height: 55%; }
 </style>
 </head>
@@ -93,7 +95,7 @@
 <script>
   const $ = (id) => document.getElementById(id)
   const bridge = window.taskbarWidget
-  const state = { playing: false, title: '', artist: '', cover: '', cur: 0, dur: 0, muted: false, lyric: null, theme: 'dark', accent: '#FB7299' }
+  const state = { playing: false, live: false, title: '', artist: '', cover: '', cur: 0, dur: 0, muted: false, lyric: null, theme: 'dark', accent: '#FB7299' }
   let mode = 'normal'
 
   // ── 逐字时序归一化 ──
@@ -220,7 +222,7 @@
   function fmt(sec) { if (!Number.isFinite(sec) || sec < 0) return '0:00'; const m = Math.floor(sec / 60); const s = Math.floor(sec % 60); return m + ':' + String(s).padStart(2, '0') }
 
   function apply() {
-    const hasSong = Boolean(state.title); document.body.classList.toggle('idle', !hasSong)
+    const hasSong = Boolean(state.title); document.body.classList.toggle('idle', !hasSong); document.body.classList.toggle('live', state.live === true)
     const coverEl = $('cover'); coverEl.innerHTML = ''
     if (hasSong) {
       coverEl.innerHTML = ''
@@ -235,6 +237,7 @@
     }
     const lyric = state.lyric, primary = $('linePrimary'), secondary = $('lineSecondary')
     if (hasSong && lyric && lyric.line) { rebuildKaraoke(lyric); if (karaokeWords) { secondary.textContent = '' } else { primary.textContent = lyric.line; secondary.textContent = '' } }
+    else if (state.live) { primary.textContent = state.title || 'Apple Music 广播'; secondary.textContent = '正在直播'; karaokeWords = null; karaokeWordEls = [] }
     else { primary.textContent = state.title || '未在播放'; secondary.textContent = state.artist || '' }
     // 歌词滚动：非逐字模式且文本超长时启用 marquee
     const wrap = $('lyricWrap'); wrap.classList.remove('marquee')
@@ -262,9 +265,9 @@
   // 事件：仅播控按钮可点击，其余区域鼠标穿透（保留任务栏原本功能）
   const barAction = (action) => (e) => { e.stopPropagation(); bridge.action(action) }
   $('play').addEventListener('click', barAction('toggle'))
-  $('prev').addEventListener('click', barAction('prev'))
-  $('next').addEventListener('click', barAction('next'))
-  $('progress').addEventListener('click', (e) => { e.stopPropagation(); const rect = $('progress').getBoundingClientRect(); bridge.action('seek', Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * (state.dur || 0)) })
+  $('prev').addEventListener('click', (e) => { if (state.live) return; barAction('prev')(e) })
+  $('next').addEventListener('click', (e) => { if (state.live) return; barAction('next')(e) })
+  $('progress').addEventListener('click', (e) => { if (state.live) return; e.stopPropagation(); const rect = $('progress').getBoundingClientRect(); bridge.action('seek', Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * (state.dur || 0)) })
 
   window.addEventListener('resize', () => layout())
   layout(); apply()

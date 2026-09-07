@@ -57,12 +57,12 @@ button { font: inherit; }
 .dp-lyric-word {
   --word-fill: 0%;
   color: transparent;
-  background: linear-gradient(90deg, #fff 0 var(--word-fill), rgba(255,255,255,.34) var(--word-fill) 100%);
+  background: linear-gradient(90deg, var(--dp-accent) 0 var(--word-fill), rgba(255,255,255,.34) var(--word-fill) 100%);
   background-clip: text; -webkit-background-clip: text;
   transition: background .06s linear;
 }
-.dp-lyric-word.complete { color: #fff; background: none; }
-.dp-lyric-word.roman { background: linear-gradient(90deg, rgba(255,255,255,.9) 0 var(--word-fill), rgba(255,255,255,.34) var(--word-fill) 100%); background-clip: text; -webkit-background-clip: text; }
+.dp-lyric-word.complete { color: var(--dp-accent); background: none; }
+.dp-lyric-word.roman { background: linear-gradient(90deg, var(--dp-accent) 0 var(--word-fill), rgba(255,255,255,.34) var(--word-fill) 100%); background-clip: text; -webkit-background-clip: text; }
 .dp-lyric-secondary { color: rgba(255,255,255,.55); font-size: 10.8px; }
 .dp-lyric-secondary.romaji { color: rgba(255,255,255,.4); font-style: italic; }
 .dp-lyric.compact { font-size: 11.5px; line-height: 1.25; text-align: center; }

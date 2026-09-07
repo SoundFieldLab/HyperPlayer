@@ -1,16 +1,17 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } from '../src/services/platformSync'
+import { GLOBAL_PLATFORM_KEY, LEGACY_PLATFORM_KEYS, PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } from '../src/services/platformSync'
 
-const keys = ['selectedPlatform', 'explorePlatform', 'traditionalPlatform', 'desktopModePlatform']
+const keys = [...LEGACY_PLATFORM_KEYS]
 
 describe('platformSync', () => {
   beforeEach(() => localStorage.clear())
 
-  it('syncs all four view keys and broadcasts once', () => {
+  it('syncs the global key and all four legacy view keys, then broadcasts once', () => {
     const listener = vi.fn()
     window.addEventListener(PLATFORM_CHANGED_EVENT, listener)
     syncPlatformAcrossViews('apple')
+    expect(localStorage.getItem(GLOBAL_PLATFORM_KEY)).toBe('apple')
     expect(keys.map(key => localStorage.getItem(key))).toEqual(['apple', 'apple', 'apple', 'apple'])
     expect(listener).toHaveBeenCalledTimes(1)
     expect((listener.mock.calls[0][0] as CustomEvent).detail).toBe('apple')
@@ -18,6 +19,12 @@ describe('platformSync', () => {
     syncPlatformAcrossViews('apple')
     expect(listener).toHaveBeenCalledTimes(1)
     window.removeEventListener(PLATFORM_CHANGED_EVENT, listener)
+  })
+
+  it('prefers the global key over a view-specific legacy key', () => {
+    localStorage.setItem(GLOBAL_PLATFORM_KEY, 'spotify')
+    localStorage.setItem('desktopModePlatform', 'apple')
+    expect(readSyncedPlatform(['apple', 'spotify'], 'desktopModePlatform')).toBe('spotify')
   })
 
   it('restores every supported platform across views and respects visibility', () => {
@@ -37,5 +44,11 @@ describe('platformSync', () => {
   it('rejects invalid legacy values and uses first visible platform', () => {
     localStorage.setItem('desktopModePlatform', 'legacy-platform')
     expect(readSyncedPlatform(['apple', 'qq'], 'desktopModePlatform')).toBe('apple')
+  })
+
+  it('protects reads when localStorage throws', () => {
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
+    expect(readSyncedPlatform(['qq', 'apple'], 'desktopModePlatform')).toBe('qq')
+    getItem.mockRestore()
   })
 })

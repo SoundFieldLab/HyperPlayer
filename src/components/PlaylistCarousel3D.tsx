@@ -1,7 +1,7 @@
 import type { MusicPlatform } from '../services/platforms'
 import { memo, useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion, useMotionValue, animate } from 'framer-motion'
-import { Heart, History } from 'lucide-react'
+import { Heart, History, ImageOff } from 'lucide-react'
 import { setTvFocus, useTvFocus } from '../tv/tvCore'
 import { isTvModeActive } from '../platform'
 
@@ -427,6 +427,18 @@ interface PlaylistCardProps {
 
 const PlaylistCard = memo(function PlaylistCard({ playlist, platform, index, isActive, scale, opacity, xOffset, zIndex, rotateY, onKeyboardActivate, onContextMenu, compact = false }: PlaylistCardProps) {
   const cardSize = compact ? Math.round(240 * COMPACT_SCALE) : 240
+  const [artworkFailed, setArtworkFailed] = useState(false)
+  const [failedCovers, setFailedCovers] = useState<Set<number>>(new Set())
+  useEffect(() => {
+    setArtworkFailed(false)
+    setFailedCovers(new Set())
+  }, [playlist.id, playlist.coverImgUrl, playlist.covers])
+  const fallbackArtwork = (compactMode = false) => (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-white/10 text-white/45">
+      <ImageOff className={compactMode ? 'h-6 w-6' : 'h-8 w-8'} aria-hidden="true" />
+      <span className="px-3 text-center text-xs">暂无封面</span>
+    </div>
+  )
   return (
     <motion.div
       data-playlist-index={index}
@@ -478,8 +490,15 @@ const PlaylistCard = memo(function PlaylistCard({ playlist, platform, index, isA
           <div className="grid h-full w-full grid-cols-2 grid-rows-2">
             {Array.from({ length: 4 }).map((_, coverIndex) => {
               const cover = playlist.covers?.[coverIndex]
-              return cover ? (
-                <img key={coverIndex} src={cover} alt="" className="h-full w-full object-cover" draggable={false} />
+              return cover && !failedCovers.has(coverIndex) ? (
+                <img
+                  key={coverIndex}
+                  src={cover}
+                  alt=""
+                  className="h-full w-full object-cover"
+                  draggable={false}
+                  onError={() => setFailedCovers(previous => new Set(previous).add(coverIndex))}
+                />
               ) : (
                 <div key={coverIndex} className="flex h-full w-full items-center justify-center bg-white/10">
                   <History className="h-6 w-6 text-white/30" />
@@ -487,6 +506,8 @@ const PlaylistCard = memo(function PlaylistCard({ playlist, platform, index, isA
               )
             })}
           </div>
+        ) : artworkFailed || !playlist.coverImgUrl ? (
+          fallbackArtwork(compact)
         ) : (
           <img
             src={playlist.coverImgUrl}
@@ -495,6 +516,7 @@ const PlaylistCard = memo(function PlaylistCard({ playlist, platform, index, isA
             loading={isActive ? 'eager' : 'lazy'}
             decoding="async"
             draggable={false}
+            onError={() => setArtworkFailed(true)}
           />
         )}
 

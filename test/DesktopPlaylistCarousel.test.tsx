@@ -12,7 +12,27 @@ vi.mock('../src/tv/tvCore', () => ({
 afterEach(cleanup)
 
 describe('Desktop playlist carousel', () => {
-  it('passes the selected playlist platform through unchanged', () => {
+  it('shows an explicit fallback when playlist artwork fails', () => {
+    const playlist = {
+      id: 'broken-playlist',
+      name: 'Broken Cover',
+      coverImgUrl: 'https://example.test/broken.jpg',
+      platform: 'apple' as const,
+    }
+
+    render(
+      <PlaylistCarousel3D
+        playlists={[playlist]}
+        platform="apple"
+        onPlaylistSelect={vi.fn()}
+      />,
+    )
+
+    fireEvent.error(screen.getByRole('img', { name: 'Broken Cover' }))
+    expect(screen.getByText('暂无封面')).not.toBeNull()
+  })
+
+  it('preserves the playlist platform when selecting a desktop playlist', () => {
     const onPlaylistSelect = vi.fn()
     const playlist = {
       id: 'spotify-playlist',

@@ -7,11 +7,10 @@ import { PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } f
 import { useTvMode, useRemoteCursorMode, useTvBack } from '../tv/tvCore'
 import { lazy, Suspense, memo, useState, useEffect, useRef, useMemo, useCallback, useSyncExternalStore } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, Search, Settings, X, Play, Clock, Volume2, VolumeX, LogIn, Captions, Heart, MonitorSmartphone, Speaker, Plus } from 'lucide-react'
+import { ChevronDown, Search, Settings, X, Play, Clock, Volume2, VolumeX, LogIn, Captions, Heart, MonitorSmartphone, Speaker } from 'lucide-react'
 import PluginShortcuts from './PluginShortcuts'
 import PlaylistCarousel3D from './PlaylistCarousel3D'
 import PlaylistContextMenu from './PlaylistContextMenu'
-import CreatePlaylistModal from './CreatePlaylistModal'
 import EditPlaylistModal from './EditPlaylistModal'
 import DeletePlaylistModal from './DeletePlaylistModal'
 import DesktopMiniPlayer from './DesktopMiniPlayer'
@@ -22,11 +21,12 @@ import DesktopWidgetZone from './DesktopWidgetZone'
 import DesktopFocusAlarmOverlay from './DesktopFocusAlarmOverlay'
 import { Song, LyricLine, isSameSong } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
-import { getPlatformCapabilities, getPlatformCookie, getVisiblePlatforms, PLATFORM_ORDER_EVENT, PLATFORM_VISIBILITY_EVENT } from '../services/platforms'
-import { getAppleLibraryPlaylists, getAppleLibrarySongs, getAppleFavoriteSongs, getAppleRecentPlayed, appleLibraryTrackToSong, getApplePlaylistTracks, getAppleCatalogPlaylistTracks, appleSongToSong, createApplePlaylist, updateApplePlaylist, deleteApplePlaylist, removeAppleTracksFromPlaylist, getLastAppleMutationResult, APPLE_FAVORITES_ID, APPLE_LIBRARY_ID } from '../services/appleCatalog'
+import { getPlatformCapabilities, getPlatformCookie, getVisiblePlatforms, getPlatformVisualMetadata, PLATFORM_ORDER_EVENT, PLATFORM_VISIBILITY_EVENT } from '../services/platforms'
+import { getAppleLibraryPlaylists, getAppleLibrarySongs, getAppleFavoriteSongs, getAppleRecentPlayed, appleLibraryTrackToSong, getApplePlaylistTracks, getAppleCatalogPlaylistTracks, appleSongToSong, updateApplePlaylist, deleteApplePlaylist, removeAppleTracksFromPlaylist, getLastAppleMutationResult, APPLE_FAVORITES_ID, APPLE_LIBRARY_ID } from '../services/appleCatalog'
 import { sodaMediaToSong } from '../services/sodaService'
+import { mergeAppleRecentPlayback } from '../services/appleRecentPlayback'
 import { desktopWallpaperManager, DesktopLiveWallpaperSource, toWallpaperUrl } from '../services/desktopWallpaperManager'
-import { createPlaylist, deletePlaylist, getPlaylistDetail, getUserPlaylists, removeSongFromPlaylist, streamNeteasePlaylistTracks, subscribePlaylist, updatePlaylist } from '../services/playlistService'
+import { deletePlaylist, getPlaylistDetail, getUserPlaylists, removeSongFromPlaylist, streamNeteasePlaylistTracks, subscribePlaylist, updatePlaylist } from '../services/playlistService'
 import { useColorThief } from '../hooks/useColorThief'
 import {
   DESKTOP_CUSTOMIZATION_EVENT,
@@ -37,7 +37,7 @@ import { useDesktopFocusTimer } from '../hooks/useDesktopFocusTimer'
 import { getReadableDesktopAccentColor } from '../utils/desktopAccentColor'
 import { parseStoredArray, parseStoredBoolean } from '../utils/storage'
 import { preloadOnIdle } from '../utils/lazyPreload'
-import type { PlaybackTimeStore } from '../audio/playbackTimeStore'
+import { createPlaybackTimeStore, type PlaybackTimeStore } from '../audio/playbackTimeStore'
 import type { PlaybackOrigin, SongSelectHandler } from '../types/playbackNavigation'
 import { addDesktopListeningSeconds, recordDesktopSongStart } from '../services/desktopMusicActivity'
 import type { DesktopMusicWidgetContext } from './DesktopExtraWidgets'
@@ -229,15 +229,27 @@ function DesktopView({
     duration,
     isPlaying,
   }), [currentTimeProp, duration, isPlaying])
-  const currentTime = useSyncExternalStore(
-    playbackTimeStore?.subscribe ?? (() => () => undefined),
-    playbackTimeStore?.getSnapshot ?? (() => fallbackPlaybackSnapshot),
-    playbackTimeStore?.getSnapshot ?? (() => fallbackPlaybackSnapshot),
-  ).currentTime
+  const [desktopPlaybackStore] = useState<PlaybackTimeStore>(() => playbackTimeStore || createPlaybackTimeStore(fallbackPlaybackSnapshot))
+  const activePlaybackStore = playbackTimeStore || desktopPlaybackStore
+  const playbackSnapshot = useSyncExternalStore(
+    activePlaybackStore.subscribe,
+    activePlaybackStore.getSnapshot,
+    activePlaybackStore.getSnapshot,
+  )
+  useEffect(() => {
+    if (!playbackTimeStore) activePlaybackStore.publish(fallbackPlaybackSnapshot)
+  }, [activePlaybackStore, fallbackPlaybackSnapshot, playbackTimeStore])
+  const currentTime = playbackSnapshot.currentTime
 
   // 当前平台（四视图共享）——支持全部六个平台，并在启动时按可见平台归一化
   const [currentPlatform, setCurrentPlatform] = useState<MusicPlatform>(() => readSyncedPlatform(getVisiblePlatforms(), 'desktopModePlatform'))
   const [visiblePlatforms, setVisiblePlatforms] = useState<MusicPlatform[]>(() => getVisiblePlatforms())
+  useEffect(() => {
+    // 挂载时将旧键解析结果回写到规范全局键，保持各视图状态一致。
+    const normalized = readSyncedPlatform(getVisiblePlatforms(), 'desktopModePlatform')
+    setCurrentPlatform(normalized)
+    syncPlatformAcrossViews(normalized)
+  }, [])
   useEffect(() => {
     const syncVisible = () => setVisiblePlatforms(getVisiblePlatforms())
     window.addEventListener(PLATFORM_VISIBILITY_EVENT, syncVisible)
@@ -315,7 +327,6 @@ function DesktopView({
   const [showPlaylistDetail, setShowPlaylistDetail] = useState(false)
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null)
   const [playlistContextMenu, setPlaylistContextMenu] = useState<{ show: boolean; x: number; y: number; playlist: Playlist | null }>({ show: false, x: 0, y: 0, playlist: null })
-  const [showCreatePlaylist, setShowCreatePlaylist] = useState(false)
   const [showEditPlaylist, setShowEditPlaylist] = useState(false)
   const [showDeletePlaylist, setShowDeletePlaylist] = useState(false)
   const [playlistMutationBusy, setPlaylistMutationBusy] = useState(false)
@@ -895,12 +906,20 @@ function DesktopView({
 
       try {
         if (currentPlatform === 'apple') {
-          const [data, libraryTracks, favoriteTracks] = await Promise.all([
+          const [playlistResult, libraryResult, favoriteResult] = await Promise.allSettled([
             getAppleLibraryPlaylists(100),
             getAppleLibrarySongs(500),
             getAppleFavoriteSongs(5000),
           ])
           if (!isCurrentRequest()) return
+
+          const data = playlistResult.status === 'fulfilled' ? playlistResult.value : []
+          const libraryTracks = libraryResult.status === 'fulfilled' ? libraryResult.value : []
+          const favoriteTracks = favoriteResult.status === 'fulfilled' ? favoriteResult.value : []
+          if (playlistResult.status === 'rejected') console.warn('[Desktop] Apple 歌单加载失败:', playlistResult.reason)
+          if (libraryResult.status === 'rejected') console.warn('[Desktop] Apple 资料库加载失败:', libraryResult.reason)
+          if (favoriteResult.status === 'rejected') console.warn('[Desktop] Apple 喜爱歌曲加载失败:', favoriteResult.reason)
+
           const playlistData = data.map(p => ({
             id: p.id,
             name: p.name,
@@ -912,10 +931,27 @@ function DesktopView({
             isLike: false,
             ownedByMe: true,
           }))
+          // Apple 资料库列表有时没有 artwork；仅为这些歌单取一首曲目作为封面，
+          // 分批限制请求数量，避免刷新桌面时同时打满 AMP 接口。
+          const missingArtwork = playlistData.filter(playlist => !playlist.coverImgUrl)
+          for (let offset = 0; offset < missingArtwork.length; offset += 4) {
+            const batch = missingArtwork.slice(offset, offset + 4)
+            const artworkResults = await Promise.allSettled(
+              batch.map(playlist => getApplePlaylistTracks(String(playlist.id), 1)),
+            )
+            artworkResults.forEach((result, index) => {
+              if (result.status !== 'fulfilled') return
+              const firstTrack = result.value[0]
+              const artwork = firstTrack?.artworkUrl
+              if (artwork) batch[index].coverImgUrl = artwork
+            })
+            if (!isCurrentRequest()) return
+          }
+
           const librarySongs = libraryTracks.map(appleLibraryTrackToSong)
           const favoriteSongs = favoriteTracks.map(track => appleSongToSong(track))
           setPlaylists([
-            ...(favoriteSongs.length > 0 ? [{
+            ...(favoriteResult.status === 'fulfilled' && favoriteSongs.length > 0 ? [{
               id: APPLE_FAVORITES_ID,
               name: '喜爱歌曲',
               coverImgUrl: favoriteSongs[0]?.album.picUrl || '',
@@ -924,14 +960,14 @@ function DesktopView({
               platform: 'apple' as const,
               isLike: true,
             }] : []),
-            {
+            ...(libraryResult.status === 'fulfilled' ? [{
               id: APPLE_LIBRARY_ID,
               name: '我的音乐库',
               coverImgUrl: librarySongs[0]?.album.picUrl || '',
               trackCount: librarySongs.length,
               playCount: 0,
               platform: 'apple' as const,
-            },
+            }] : []),
             ...playlistData,
           ])
           return
@@ -1012,8 +1048,14 @@ function DesktopView({
     const loadRecent = async () => {
       try {
         if (currentPlatform === 'apple') {
-          const tracks = await getAppleRecentPlayed(100)
-          const songs = tracks.map(track => appleSongToSong(track))
+          let remoteSongs: Song[] = []
+          try {
+            const tracks = await getAppleRecentPlayed(100)
+            remoteSongs = tracks.map(track => appleSongToSong(track))
+          } catch (error) {
+            console.warn('[DesktopView] Apple 云端最近播放暂时不可用，使用本地记录:', error)
+          }
+          const songs = mergeAppleRecentPlayback(remoteSongs)
           if (controller.signal.aborted) return
           setRecentSongs(songs)
           setRecentCovers(songs.map(song => song.album.picUrl || '').filter(Boolean))
@@ -1151,7 +1193,10 @@ function DesktopView({
     }
 
     void loadRecent()
-    const handleReported = () => { void loadRecent() }
+    const handleReported = (event: Event) => {
+      const platform = (event as CustomEvent<{ platform?: MusicPlatform }>).detail?.platform
+      if (!platform || platform === currentPlatform) void loadRecent()
+    }
     window.addEventListener('waveforge-recent-playback-reported', handleReported)
     return () => {
       controller.abort()
@@ -1507,7 +1552,7 @@ function DesktopView({
 
   const handleCarouselMouseLeave = () => {
     // 管理菜单或弹窗打开时保持歌单栏可见
-    if (!showPlaylistDetail && !playlistContextMenu.show && !showCreatePlaylist && !showEditPlaylist && !showDeletePlaylist) {
+    if (!showPlaylistDetail && !playlistContextMenu.show && !showEditPlaylist && !showDeletePlaylist) {
       hideCarouselTimerRef.current = scheduleTransientTimer(() => {
         hideCarouselTimerRef.current = null
         setShowPlaylistCarousel(false)
@@ -1542,28 +1587,6 @@ function DesktopView({
       detail: { platform, type: 'playlist-list', playlistId },
     }))
   }, [])
-
-  const handleCreateManagedPlaylist = useCallback(async (name: string, privacy: 'public' | 'private', description?: string) => {
-    const capabilities = getPlatformCapabilities(currentPlatform)
-    if (!capabilities.createPlaylist) return
-    setPlaylistMutationBusy(true)
-    try {
-      if (currentPlatform === 'apple') {
-        const ok = await createApplePlaylist(name, description)
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '创建 Apple 歌单失败')
-      } else {
-        const result = await createPlaylist(name, currentPlatform, { privacy: privacy === 'private' ? '10' : '0' })
-        if (result?.error) throw new Error(result.error)
-      }
-      setShowCreatePlaylist(false)
-      notifyPlaylistChange(currentPlatform)
-      showToastNotification('歌单创建成功', 'success')
-    } catch (error) {
-      showToastNotification(error instanceof Error ? error.message : '创建歌单失败', 'error')
-    } finally {
-      setPlaylistMutationBusy(false)
-    }
-  }, [currentPlatform, notifyPlaylistChange])
 
   const handleEditManagedPlaylist = useCallback(async (data: { name: string; desc?: string }) => {
     const playlist = playlistContextMenu.playlist
@@ -1937,7 +1960,6 @@ function DesktopView({
     || showThemePanel
     || showPlaylistDetail
     || playlistContextMenu.show
-    || showCreatePlaylist
     || showEditPlaylist
     || showDeletePlaylist
     || focusTimer.timer.status === 'ringing'
@@ -2019,6 +2041,9 @@ function DesktopView({
   const desktopMusicWidgetContext = useMemo<DesktopMusicWidgetContext>(() => ({
     currentSong,
     isPlaying,
+    store: activePlaybackStore,
+    lyrics,
+    lyricOffset,
     queue: playbackQueue,
     currentIndex,
     playlists,
@@ -2032,7 +2057,8 @@ function DesktopView({
     onMoveQueueItem: handleWidgetMoveQueueItem,
     onPlaylistSelect: handleWidgetPlaylistSelect,
     onOpenArtist: handleWidgetOpenArtist,
-  }), [currentSong, isPlaying, playbackQueue, currentIndex, playlists, currentPlatform, volume, handleWidgetVolumeChange, handleWidgetPlayPause, handleWidgetNext, handleWidgetSongSelect, handleWidgetRemoveQueueItem, handleWidgetMoveQueueItem, handleWidgetPlaylistSelect, handleWidgetOpenArtist])
+    onOpenAlbum,
+  }), [currentSong, isPlaying, activePlaybackStore, lyrics, lyricOffset, playbackQueue, currentIndex, playlists, currentPlatform, volume, handleWidgetVolumeChange, handleWidgetPlayPause, handleWidgetNext, handleWidgetSongSelect, handleWidgetRemoveQueueItem, handleWidgetMoveQueueItem, handleWidgetPlaylistSelect, handleWidgetOpenArtist, onOpenAlbum])
 
   return (
     <div
@@ -2461,18 +2487,6 @@ function DesktopView({
             
             {/* 底部控制区域：按钮组 */}
             <div className="flex items-center justify-center gap-3 mt-2">
-              {getPlatformCapabilities(currentPlatform).createPlaylist && recentLoggedIn && (
-                <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => setShowCreatePlaylist(true)}
-                  title={`创建${currentPlatform === 'apple' ? ' Apple' : ''}歌单`}
-                  aria-label="创建歌单"
-                  className="flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 transition-all"
-                >
-                  <Plus className="h-5 w-5 text-white" />
-                </motion.button>
-              )}
               {/* 播放设备控制按钮 */}
               <motion.button
                 whileHover={{ scale: 1.1 }}
@@ -2524,7 +2538,7 @@ function DesktopView({
                 <Search className="w-5 h-5 text-white" />
               </motion.button>
 
-              {/* 平台切换按钮 - 显示当前平台真实 logo */}
+              {/* 平台切换按钮 - 使用六平台均有的文字视觉标识 */}
               <motion.button
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
@@ -2538,31 +2552,17 @@ function DesktopView({
                   boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
                 }}
               >
-                {currentPlatform === 'netease' ? (
-                  // 网易云音乐 logo
-                  <img 
-                    src="https://s1.music.126.net/style/favicon.ico?v20180823" 
-                    alt="网易云音乐"
-                    className="w-6 h-6"
-                    style={{ objectFit: 'contain' }}
-                  />
-                ) : currentPlatform === 'qq' ? (
-                  // QQ音乐 logo
-                  <img 
-                    src="https://y.qq.com/favicon.ico" 
-                    alt="QQ音乐"
-                    className="w-6 h-6"
-                    style={{ objectFit: 'contain' }}
-                  />
-                ) : (
-                  // Apple Music logo
-                  <img 
-                    src="https://www.apple.com/favicon.ico" 
-                    alt="Apple Music"
-                    className="w-6 h-6"
-                    style={{ objectFit: 'contain' }}
-                  />
-                )}
+                <span
+                  aria-label={getPlatformVisualMetadata(currentPlatform).label}
+                  title={getPlatformVisualMetadata(currentPlatform).label}
+                  className="flex h-7 min-w-7 items-center justify-center rounded-md px-1 text-xs font-bold"
+                  style={{
+                    color: getPlatformVisualMetadata(currentPlatform).color,
+                    background: getPlatformVisualMetadata(currentPlatform).background,
+                  }}
+                >
+                  {getPlatformVisualMetadata(currentPlatform).shortLabel}
+                </span>
               </motion.button>
 
               {/* 桌面融合穿透开关 */}
@@ -2789,6 +2789,7 @@ function DesktopView({
           <DesktopMiniPlayer
             currentSong={currentSong}
             isPlaying={isPlaying}
+            live={currentSong.appleRadio?.timeline === 'live'}
             currentTime={currentTime}
             duration={duration}
             onPlayPause={onPlayPause}
@@ -2981,12 +2982,6 @@ function DesktopView({
         canDelete={contextCapabilities.deletePlaylist}
         canSubscribe={contextCapabilities.subscribePlaylist}
         canShare={contextCapabilities.sharePlaylist && (contextPlaylistPlatform !== 'apple' || String(contextPlaylist?.id || '').startsWith('pl.'))}
-      />
-      <CreatePlaylistModal
-        show={showCreatePlaylist}
-        onClose={() => setShowCreatePlaylist(false)}
-        onSubmit={(name, privacy, description) => { void handleCreateManagedPlaylist(name, privacy, description) }}
-        loading={playlistMutationBusy}
       />
       <EditPlaylistModal
         show={showEditPlaylist}

@@ -6,8 +6,13 @@ import { createRequire } from 'module'
 import { dirname, isAbsolute, resolve } from 'path'
 import { homedir } from 'os'
 import net from 'net'
+import dns from 'node:dns'
 import { randomBytes } from 'crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
+import { isCompatibleLocalApiHealth } from '../server/local-api-health.mjs'
+
+// 当前 Windows 网络的 IPv6 路由可能不可达；外部音乐 CDN/API 优先走 IPv4。
+dns.setDefaultResultOrder('ipv4first')
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -153,24 +158,49 @@ const ps = (args, opts = {}) => new Promise(resolve => {
   })
 })
 
-/** 端口上是否真的是 local API server：请求其本地 JSON 端点，校验响应为 JSON */
+/** 端口上是否为本次开发会话可复用的 local API server。 */
 async function isLocalApiServerHealthy() {
+  let timer
   try {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 1500)
+    timer = setTimeout(() => controller.abort(), 1500)
     const res = await fetch('http://127.0.0.1:3001/health', {
       headers: { 'X-WaveForge-Local-Token': localServiceToken },
       signal: controller.signal,
     })
-    clearTimeout(timer)
     if (!res.ok) return false
     const contentType = res.headers.get('content-type') || ''
     if (!contentType.includes('application/json')) return false
     const body = await res.json()
-    return body && typeof body === 'object'
+    return isCompatibleLocalApiHealth(body)
   } catch {
     return false
+  } finally {
+    clearTimeout(timer)
   }
+}
+
+async function waitForLocalApi(timeoutMs = 10000) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await isLocalApiServerHealthy()) return true
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+  return false
+}
+
+async function createStaleLocalApiError() {
+  const pid = await getPidOnPort(3001)
+  const pidText = pid ? `（PID ${pid}）` : ''
+  return new Error([
+    '',
+    '============================================================',
+    `检测到 3001 端口上存在旧的或其他会话的 WaveForge 后端${pidText}。`,
+    '为避免当前调试界面连接到错误的登录会话，本次启动已停止。',
+    '请先清理该残留后端，再重新运行 npm run dev:electron。',
+    '启动器没有自动终止该进程，也没有读取或输出任何登录凭据。',
+    '============================================================',
+  ].join('\n'))
 }
 
 /** 监听指定端口的 PID（仅 State=Listen 的进程） */
@@ -339,9 +369,7 @@ async function startDev() {
         console.log('Local API server already running on http://localhost:3001')
         return null
       }
-      // 端口被占但响应不是 API 服务（典型：残留 vite dev server 返回 HTML）→ 清理后重启
-      console.warn('Port 3001 is occupied but does not respond as the local API server; trying to reclaim it…')
-      await freePortIfHijacked(3001, 'Local API Server')
+      throw await createStaleLocalApiError()
     }
 
     console.log('Starting Local API Server...')
@@ -358,11 +386,11 @@ async function startDev() {
       }
     )
     
-    waitForPort(3001, 10000).then(success => {
+    waitForLocalApi(10000).then(success => {
       if (success) {
         console.log('Local API server started successfully on http://localhost:3001')
       } else {
-        console.warn('Local API server did not open port 3001 within 10 seconds')
+        console.warn('Local API server did not become ready on port 3001 within 10 seconds')
       }
     })
     
@@ -410,9 +438,10 @@ async function startDev() {
 
   // Start backends and the renderer in parallel. The cached production renderer is
   // the default fast path; set WAVEFORGE_LIVE_UI=1 to restore full Vite HMR.
-  const [python, api, loudness, compensation, server] = await Promise.all([
+  // 先完成 3001 预检，避免旧会话存在时仍启动其余服务并遗留更多进程。
+  const api = await startAPI()
+  const [python, loudness, compensation, server] = await Promise.all([
     startPython(),
-    startAPI(),
     startLoudness(),
     startCompensation(),
     startRendererServer()
@@ -474,4 +503,7 @@ async function startDev() {
   })
 }
 
-startDev()
+startDev().catch(error => {
+  console.error(error instanceof Error ? error.message : error)
+  process.exitCode = 1
+})

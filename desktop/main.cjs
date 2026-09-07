@@ -26,6 +26,11 @@ const { app, BrowserWindow, ipcMain, protocol, shell, session, safeStorage, dial
 const path = require('path')
 const fs = require('fs')
 const crypto = require('crypto')
+const dns = require('node:dns')
+
+// 当前 Windows 网络的 IPv6 路由可能不可达；外部音乐 CDN/API 优先走 IPv4。
+dns.setDefaultResultOrder('ipv4first')
+
 const { selectWaveForgeUserData } = require('./user-data-profile.cjs')
 
 // 开发版历史上因首次 getPath(userData) 过早而长期使用 %APPDATA%/Electron。
@@ -430,7 +435,7 @@ function readDesktopWidgetDisks() {
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 const devServerUrl = process.env.WAVEFORGE_DEV_SERVER_URL || 'http://127.0.0.1:3000'
-const appleAcceptanceMode = ['crossfade', 'gapless', 'automix'].includes(process.env.WAVEFORGE_APPLE_ACCEPTANCE)
+const appleAcceptanceMode = ['crossfade', 'gapless', 'automix', 'radio'].includes(process.env.WAVEFORGE_APPLE_ACCEPTANCE)
   ? process.env.WAVEFORGE_APPLE_ACCEPTANCE
   : ''
 const appleAcceptanceOutput = process.env.WAVEFORGE_APPLE_ACCEPTANCE_OUTPUT || ''
@@ -542,6 +547,38 @@ async function runAppleAcceptance(win, mode, outputPath) {
     result.stages.configured = {
       renderer: await evaluate('window.__waveforgeAppleAcceptance.snapshot()'),
       memory: getAppleAcceptanceMemory(win),
+    }
+    if (mode === 'radio') {
+      const radio = await evaluate('window.__waveforgeAppleAcceptance.loadRadio()')
+      result.phase = 'radio-ready'
+      result.stages.ready = {
+        radio,
+        renderer: await evaluate('window.__waveforgeAppleAcceptance.snapshot()'),
+        memory: getAppleAcceptanceMemory(win),
+      }
+      const cleanup = await evaluate('window.__waveforgeAppleAcceptance.cleanup(true)')
+      await collectAppleAcceptanceGarbage(win)
+      result.phase = 'cleaned'
+      result.stages.cleaned = { renderer: cleanup, memory: getAppleAcceptanceMemory(win) }
+      const ready = result.stages.ready.renderer
+      const checks = {
+        realAccountLoggedIn: radio.loggedIn === true,
+        stationSelected: radio.stationSelected === true,
+        dedicatedPageShown: radio.dedicatedPage === true,
+        radioReachedPlaying: radio.status === 'playing' && radio.playing === true,
+        timelineResolved: radio.timeline === 'live' || radio.timeline === 'vod',
+        hlsReady: ready.diagnostics.hlsReady >= 1,
+        licenseSucceeded: ready.diagnostics.licenseSuccesses >= 1 && ready.diagnostics.licenseFailures === 0,
+        hlsReleased: cleanup.diagnostics.activeHls === 0
+          && cleanup.diagnostics.hlsDestroyed === cleanup.diagnostics.hlsAttached,
+        emeReleased: cleanup.diagnostics.activeEmeSessions === 0
+          && cleanup.diagnostics.emeSessionsClosed >= cleanup.diagnostics.emeSessionsCreated,
+      }
+      result.checks = checks
+      result.ok = Object.values(checks).every(Boolean)
+      result.phase = result.ok ? 'passed' : 'failed-checks'
+      if (!result.ok) throw new Error('One or more Apple radio acceptance checks failed')
+      return
     }
     const selection = await evaluate('window.__waveforgeAppleAcceptance.loadPair()')
     result.phase = 'pair-ready'
@@ -716,6 +753,7 @@ const desktopPlayerState = {
   song: null, // { name, artists, coverUrl }
   lyric: null, // { line, translation, words, lineStart }
   playing: false,
+  live: false,
   spectrum: [0, 0, 0, 0, 0],
   accentColor: '',
   playlist: [],
@@ -1380,7 +1418,7 @@ ipcMain.on('desktop-player:state-update', (_event, partial) => {
       changed.playing = next
     }
   }
-  for (const key of ['hasTranslation', 'hasRomaji']) {
+  for (const key of ['hasTranslation', 'hasRomaji', 'live']) {
     if (partial[key] === undefined) continue
     const next = partial[key] === true
     if (desktopPlayerState[key] !== next) {
@@ -1632,6 +1670,7 @@ function safeSendToWindow(targetWindow, channel, ...args) {
 // 渲染进程已内置 280ms 防抖（Windows 可能把同一次按键同时交给 globalShortcut 与
 // Media Session，防止同一动作重复触发）。
 function dispatchPlayerControl(action, payload) {
+  if (desktopPlayerState.live === true && (action === 'prev' || action === 'next' || action === 'seek')) return
   safeSendToWindow(mainWindow, 'global-media-key', action, payload)
 }
 
@@ -1709,15 +1748,21 @@ function updateThumbarButtons() {
   const icons = getThumbarIcons()
   if (icons.play.isEmpty() || icons.pause.isEmpty()) return
   const playing = desktopPlayerState.playing === true
-  const buttons = [
-    { tooltip: '上一首', icon: icons.prev, click: () => dispatchPlayerControl('prev') },
-    {
-      tooltip: playing ? '暂停' : '播放',
-      icon: playing ? icons.pause : icons.play,
-      click: () => dispatchPlayerControl('toggle'),
-    },
-    { tooltip: '下一首', icon: icons.next, click: () => dispatchPlayerControl('next') },
-  ]
+  const buttons = desktopPlayerState.live === true
+    ? [{
+        tooltip: playing ? '暂停直播' : '播放直播',
+        icon: playing ? icons.pause : icons.play,
+        click: () => dispatchPlayerControl('toggle'),
+      }]
+    : [
+        { tooltip: '上一首', icon: icons.prev, click: () => dispatchPlayerControl('prev') },
+        {
+          tooltip: playing ? '暂停' : '播放',
+          icon: playing ? icons.pause : icons.play,
+          click: () => dispatchPlayerControl('toggle'),
+        },
+        { tooltip: '下一首', icon: icons.next, click: () => dispatchPlayerControl('next') },
+      ]
   try {
     mainWindow.setThumbarButtons(buttons)
   } catch {
@@ -1739,7 +1784,7 @@ function updateTaskbarProgress() {
   const hasSong = Boolean(desktopPlayerState.song)
   const ratio = getTaskbarProgressRatio()
   try {
-    if (!hasSong) {
+    if (!hasSong || desktopPlayerState.live === true) {
       mainWindow.setProgressBar(0, { mode: 'none' })
     } else {
       mainWindow.setProgressBar(ratio, { mode: playing ? 'normal' : 'paused' })
@@ -2069,7 +2114,7 @@ function updateTaskbarWidget() {
   const lyric = desktopPlayerState.lyric || null
   const { nativeTheme } = require('electron')
   // 内容键：歌曲/播放态/歌词行/静音/主题变化必须立即推送，仅进度变化时允许节流
-  const contentKey = `${song.name}|${desktopPlayerState.playing === true}|${lyric?.line || ''}|${desktopPlayerState.muted === true}|${nativeTheme.shouldUseDarkColors}`
+  const contentKey = `${song.name}|${desktopPlayerState.playing === true}|${desktopPlayerState.live === true}|${lyric?.line || ''}|${desktopPlayerState.muted === true}|${nativeTheme.shouldUseDarkColors}`
   const now = Date.now()
   if (contentKey === taskbarWidgetLastSendKey && now - taskbarWidgetLastSendAt < TASKBAR_WIDGET_SEND_THROTTLE_MS) {
     return
@@ -2081,8 +2126,9 @@ function updateTaskbarWidget() {
     artist: Array.isArray(song.artists) ? song.artists.join(' / ') : (song.artists || ''),
     cover: song.coverUrl || '',
     playing: desktopPlayerState.playing === true,
-    cur: Number(desktopPlayerState.progress) || 0,
-    dur: Number(desktopPlayerState.duration) || 0,
+    live: desktopPlayerState.live === true,
+    cur: desktopPlayerState.live === true ? 0 : Number(desktopPlayerState.progress) || 0,
+    dur: desktopPlayerState.live === true ? 0 : Number(desktopPlayerState.duration) || 0,
     muted: desktopPlayerState.muted === true,
     // 歌曲主题色：暂停按钮/进度条跟随（App 推送 dominantColor）
     accent: String(desktopPlayerState.accentColor || '') || '#FB7299',
@@ -4564,11 +4610,11 @@ ipcMain.handle('apple-fetch-url', guardTrustedIpc('privileged', async (_event, p
 }))
 
 // ── Apple Music 电台直播取流（Cider/MusicKit v3 同款）──────────────────────
-// GET api.music.apple.com/v1/play/assets?<playParams>&keyFormat=web，响应
+// GET amp-api.music.apple.com/v1/play/assets?<playParams>&keyFormat=web，响应
 // results.assets[0] 携带 HLS 主清单 url 与 EME keyURLs（keyServerUrl /
-// widevineKeyCertificateUrl / fairPlayKeyCertificateUrl）。api 宿主不可用时
-// 回退 amp-api（gamdl 常量亦指向 amp-api；两宿主响应结构一致）。
-const APPLE_PLAY_ASSETS_HOSTS = ['https://api.music.apple.com', 'https://amp-api.music.apple.com']
+// widevineKeyCertificateUrl / fairPlayKeyCertificateUrl）。网页私有播放 API 优先，
+// 公开 api 宿主仅作为兼容回退。
+const APPLE_PLAY_ASSETS_HOSTS = ['https://amp-api.music.apple.com', 'https://api.music.apple.com']
 ipcMain.handle('apple-play-assets', guardTrustedIpc('privileged', async (_event, payload) => {
   const { query, developerToken, mediaUserToken } = payload || {}
   if (typeof query !== 'string' || !query || !developerToken || !mediaUserToken) {
@@ -6650,6 +6696,12 @@ function classifyGpuKind(device) {
   }
   return 'unknown'
 }
+
+ipcMain.handle('get-gpu-settings', () => ({
+  enabled: performanceSettings.hardwareAcceleration,
+  gpuPreference: performanceSettings.gpuPreference,
+  pendingGpuChange: performanceSettings.pendingGpuChange,
+}))
 
 ipcMain.handle('get-hardware-acceleration', async () => {
   let gpuInfo = null

@@ -15,7 +15,7 @@
  * 模式私有设置（如传统模式的布局/背景、探索页板块排序、桌面组件）不进注册表，
  * 仍由各自的偏好存储管理；简约模式专属的"自定义首页显示内容"也不镜像。
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { parseStoredBoolean } from '../utils/storage'
 import {
   loadPlaybackShortcutSettings,
@@ -144,49 +144,56 @@ let desktopBridgeLoading = false
 
 /** 拉取 Electron 侧设置到缓存（幂等，可安全地在挂载 effect 里调用） */
 export function ensureDesktopBridgeSettings(): void {
-  if (desktopBridgeLoading || typeof window === 'undefined') return
+  if (desktopCache.loaded || desktopBridgeLoading || typeof window === 'undefined') return
   const api = electron()
   if (!api) return
   desktopBridgeLoading = true
-  const jobs: Array<Promise<unknown>> = []
-  if (api.desktopLyrics?.getSettings) {
-    jobs.push(api.desktopLyrics.getSettings().then((s: DesktopLyricsSettings) => {
-      if (s) desktopCache.desktopLyrics = s
-    }).catch(() => undefined))
-  }
-  if (api.desktopPlayer?.getInitialState) {
-    jobs.push(api.desktopPlayer.getInitialState().then((s: any) => {
-      desktopCache.desktopPlayer = { enabled: Boolean(s?.enabled), form: s?.form === 'bar' ? 'bar' : 'card' }
-    }).catch(() => undefined))
-  }
-  if (api.taskbarWidget?.getSettings) {
-    jobs.push(api.taskbarWidget.getSettings().then((s: TaskbarWidgetSettings) => {
-      if (s) desktopCache.taskbarWidget = s
-    }).catch(() => undefined))
-  }
-  if (api.system?.getHardwareAcceleration) {
-    jobs.push(api.system.getHardwareAcceleration().then((r: any) => {
-      if (r) {
-        desktopCache.gpu = { acceleration: Boolean(r.enabled), preference: r.gpuPreference || 'auto' }
-        localStorage.setItem('gpuAcceleration', JSON.stringify(Boolean(r.enabled)))
+  void (async () => {
+    try {
+      const jobs: Array<Promise<unknown>> = []
+      if (api.desktopLyrics?.getSettings) {
+        jobs.push(Promise.resolve(api.desktopLyrics.getSettings()).then((s: DesktopLyricsSettings) => {
+          if (s) desktopCache.desktopLyrics = s
+        }).catch(() => undefined))
       }
-    }).catch(() => undefined))
-  }
-  if (api.display?.getInfo) {
-    jobs.push(api.display.getInfo().then((info: any) => {
-      if (info) desktopCache.highRefresh = { enabled: Boolean(info.highRefreshEnabled), hz: info.highRefreshHz ?? null }
-    }).catch(() => undefined))
-  }
-  if (api.proxyManager?.getState) {
-    jobs.push(api.proxyManager.getState().then((s: any) => {
-      if (s) desktopCache.proxy = { ...desktopCache.proxy, enabled: Boolean(s.enabled), target: s.proxy ? `127.0.0.1:${s.proxy.port}` : null }
-    }).catch(() => undefined))
-  }
-  void Promise.all(jobs).then(() => {
-    desktopCache.loaded = true
-    desktopBridgeLoading = false
-    notifyGlobalSettingChanged()
-  })
+      if (api.desktopPlayer?.getInitialState) {
+        jobs.push(Promise.resolve(api.desktopPlayer.getInitialState()).then((s: any) => {
+          desktopCache.desktopPlayer = { enabled: Boolean(s?.enabled), form: s?.form === 'bar' ? 'bar' : 'card' }
+        }).catch(() => undefined))
+      }
+      if (api.taskbarWidget?.getSettings) {
+        jobs.push(Promise.resolve(api.taskbarWidget.getSettings()).then((s: TaskbarWidgetSettings) => {
+          if (s) desktopCache.taskbarWidget = s
+        }).catch(() => undefined))
+      }
+      const getGpuSettings = api.system?.getGpuSettings || api.system?.getHardwareAcceleration
+      if (getGpuSettings) {
+        jobs.push(Promise.resolve(getGpuSettings()).then((r: any) => {
+          if (r) {
+            desktopCache.gpu = { acceleration: Boolean(r.enabled), preference: r.gpuPreference || 'auto' }
+            localStorage.setItem('gpuAcceleration', JSON.stringify(Boolean(r.enabled)))
+          }
+        }).catch(() => undefined))
+      }
+      if (api.display?.getInfo) {
+        jobs.push(Promise.resolve(api.display.getInfo()).then((info: any) => {
+          if (info) desktopCache.highRefresh = { enabled: Boolean(info.highRefreshEnabled), hz: info.highRefreshHz ?? null }
+        }).catch(() => undefined))
+      }
+      if (api.proxyManager?.getState) {
+        jobs.push(Promise.resolve(api.proxyManager.getState()).then((s: any) => {
+          if (s) desktopCache.proxy = { ...desktopCache.proxy, enabled: Boolean(s.enabled), target: s.proxy ? `127.0.0.1:${s.proxy.port}` : null }
+        }).catch(() => undefined))
+      }
+      await Promise.all(jobs)
+      desktopCache.loaded = true
+      notifyGlobalSettingChanged()
+    } catch {
+      // 桥接方法也可能在返回 Promise 前同步抛错；保持未 loaded 以允许下次重试。
+    } finally {
+      desktopBridgeLoading = false
+    }
+  })()
 }
 
 // 桌面播放器/桌面歌词被小窗关闭时，主进程会广播事件 → 同步缓存
@@ -1184,20 +1191,35 @@ const REGISTRY_WATCHED_EVENTS = [
   PLAYBACK_SHORTCUT_SETTINGS_EVENT,
 ]
 
+let globalSettingsVersion = 0
+const globalSettingsSubscribers = new Set<() => void>()
+const bumpGlobalSettingsVersion = () => {
+  globalSettingsVersion += 1
+  for (const subscriber of globalSettingsSubscribers) subscriber()
+}
+const subscribeToGlobalSettings = (subscriber: () => void) => {
+  if (globalSettingsSubscribers.size === 0) {
+    for (const eventName of REGISTRY_WATCHED_EVENTS) window.addEventListener(eventName, bumpGlobalSettingsVersion)
+  }
+  globalSettingsSubscribers.add(subscriber)
+  return () => {
+    globalSettingsSubscribers.delete(subscriber)
+    if (globalSettingsSubscribers.size === 0) {
+      for (const eventName of REGISTRY_WATCHED_EVENTS) window.removeEventListener(eventName, bumpGlobalSettingsVersion)
+    }
+  }
+}
+const getGlobalSettingsVersion = () => globalSettingsVersion
+
 /**
  * 镜像设置界面的数据钩子：挂载时拉取 Electron 缓存 + 订阅全部变化事件，
  * 返回带版本的读取器（值变化时 version 自增触发重渲染）。
  */
 export function useGlobalSettings() {
-  const [version, setVersion] = useState(0)
+  const version = useSyncExternalStore(subscribeToGlobalSettings, getGlobalSettingsVersion, getGlobalSettingsVersion)
 
   useEffect(() => {
     ensureDesktopBridgeSettings()
-    const bump = () => setVersion(value => value + 1)
-    for (const eventName of REGISTRY_WATCHED_EVENTS) window.addEventListener(eventName, bump)
-    return () => {
-      for (const eventName of REGISTRY_WATCHED_EVENTS) window.removeEventListener(eventName, bump)
-    }
   }, [])
 
   return useMemo(() => ({

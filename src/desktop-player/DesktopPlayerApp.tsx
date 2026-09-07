@@ -12,6 +12,7 @@ const DEFAULT_STATE: DesktopPlayerSnapshot = {
   song: null,
   lyric: null,
   playing: false,
+  live: false,
   spectrum: [0, 0, 0, 0, 0],
   enabled: false,
   form: 'card',
@@ -396,11 +397,11 @@ function ControlPanel({ state, title, artists, showTranslation, setShowTranslati
   const hasRomaji = state.hasRomaji || Boolean(state.lyric?.romaji?.trim()) || Boolean(state.lyric?.romanWords?.length)
   return (
     <div className="dp-panel-content">
-      <div className="dp-panel-heading"><strong>{title}</strong><span>{artists || '未知歌手'}</span></div>
+      <div className="dp-panel-heading"><strong>{title}</strong><span>{state.live ? '正在直播' : artists || '未知歌手'}</span></div>
       <div className="dp-transport">
-        <button className="dp-ctrl-btn" aria-label="上一曲" onClick={() => sendControl('prev')}><PrevIcon /></button>
-        <button className="dp-ctrl-btn primary" aria-label="播放或暂停" onClick={() => sendControl('toggle')}>{state.playing ? <PauseIcon /> : <PlayIcon />}</button>
-        <button className="dp-ctrl-btn" aria-label="下一曲" onClick={() => sendControl('next')}><NextIcon /></button>
+        {!state.live ? <button className="dp-ctrl-btn" aria-label="上一曲" onClick={() => sendControl('prev')}><PrevIcon /></button> : null}
+        <button className="dp-ctrl-btn primary" aria-label={state.live ? '播放或暂停直播' : '播放或暂停'} onClick={() => sendControl('toggle')}>{state.playing ? <PauseIcon /> : <PlayIcon />}</button>
+        {!state.live ? <button className="dp-ctrl-btn" aria-label="下一曲" onClick={() => sendControl('next')}><NextIcon /></button> : null}
       </div>
       <div className="dp-tool-row">
         {hasTranslation ? <ToolButton title="显示翻译" active={showTranslation} onClick={() => setShowTranslation(!showTranslation)}><TranslateIcon /></ToolButton> : null}
