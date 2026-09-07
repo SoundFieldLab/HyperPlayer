@@ -3,6 +3,7 @@ import {
   clampMediaTime,
   mvTimeToSongTime,
   nextPlayableCandidateIndex,
+  resolveWatchSongTime,
   songTimeToMvTime,
   syncWatchVideoOnSurfaceRestore,
 } from '../src/components/BilibiliMvPlayer'
@@ -51,6 +52,16 @@ describe('BilibiliMvPlayer signed watch timeline', () => {
     expect(nextPlayableCandidateIndex(chain, new Set(['first', 'second', 'third']))).toBe(-1)
   })
 
+  it('preserves current watch song time when late alignment replaces the offset', () => {
+    const songTime = resolveWatchSongTime({ entryFloor: 60, engineTime: 60, watchTime: 66, appliedOffset: 0, watchReady: true })
+    expect(songTime).toBe(66)
+    expect(songTimeToMvTime(songTime, 10)).toBe(76)
+    expect(songTimeToMvTime(songTime, -4)).toBe(62)
+  })
+
+  it('never resolves startup before the captured entry floor', () => {
+    expect(resolveWatchSongTime({ entryFloor: 73, engineTime: 0, watchTime: 1, appliedOffset: 0, watchReady: true })).toBe(73)
+  })
   it('maps a Villain-style late-entry target onto a short MV and clamps negative results', () => {
     // 歌曲 66.1s + 缓存偏移 9.86s → 视频目标 75.96s；两个媒体轨都必须消费同一目标，
     // 音频 metadata 晚到时不得回退到 0 再触发大幅回拉。

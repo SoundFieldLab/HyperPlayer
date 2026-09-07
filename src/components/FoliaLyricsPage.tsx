@@ -55,6 +55,8 @@ export interface FoliaLyricsPageProps {
   foliaBackgroundEnabled?: boolean
   /** WaveForge MV 背景激活时置 true：folia 背景层完全透明（transparent），MV 视频露出 */
   mvBackgroundActive?: boolean
+  /** 模式退出动画期间为 false：保留静态视觉帧，但停止时钟与频谱订阅。 */
+  active?: boolean
 }
 
 /** LyricLine[]（行秒 + 逐字毫秒）→ folia Line[]（全秒制），完整保留字幕、对唱和背景和声。 */
@@ -145,6 +147,7 @@ export function FoliaLyricsPage({
   foliaStyle,
   foliaBackgroundEnabled = true,
   mvBackgroundActive,
+  active = true,
 }: FoliaLyricsPageProps) {
   const mode: VisualizerMode = hasVisualizerMode(foliaStyle) ? foliaStyle : DEFAULT_VISUALIZER_MODE
 
@@ -169,20 +172,20 @@ export function FoliaLyricsPage({
     }
     const tick = (now: number) => {
       if (lastFrame && now - lastFrame < FRAME_MIN_INTERVAL_MS) {
-        if (playing && document.visibilityState === 'visible') raf = requestAnimationFrame(tick)
+        if (playing && active && document.visibilityState === 'visible') raf = requestAnimationFrame(tick)
         else raf = 0
         return
       }
       lastFrame = now
       const extrapolated = playing ? Math.min(0.5, (now - anchorWall) / 1000) : 0
       currentTime.set(anchorTime + extrapolated + timeOffset)
-      if (playing && document.visibilityState === 'visible') raf = requestAnimationFrame(tick)
+      if (playing && active && document.visibilityState === 'visible') raf = requestAnimationFrame(tick)
       else raf = 0
     }
     syncClock()
     const unsubscribe = playbackTimeStore.subscribe(syncClock)
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && raf === 0 && playing) raf = requestAnimationFrame(tick)
+      if (document.visibilityState === 'visible' && raf === 0 && playing && active) raf = requestAnimationFrame(tick)
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
     raf = requestAnimationFrame(tick)
@@ -191,7 +194,7 @@ export function FoliaLyricsPage({
       document.removeEventListener('visibilitychange', onVisibilityChange)
       cancelAnimationFrame(raf)
     }
-  }, [playbackTimeStore, timeOffset, currentTime])
+  }, [playbackTimeStore, timeOffset, currentTime, active])
 
   // ── 音频分析器 → folia AudioBands（30Hz 快照直接映射为 MotionValue）──
   const audioPower = useMotionValue(0)
@@ -214,7 +217,7 @@ export function FoliaLyricsPage({
     spectrum: spectrumBand,
   }), [bassBand, lowMidBand, midBand, vocalBand, trebleBand, spectrumBand])
   useEffect(() => {
-    if (!analyzerStore) return
+    if (!analyzerStore || !active) return
     const update = () => {
       const snapshot = analyzerStore.getSnapshot()
       const scaled = scaleAnalyzerSnapshotForFolia(snapshot)
@@ -239,7 +242,7 @@ export function FoliaLyricsPage({
     }
     update()
     return analyzerStore.subscribe(update)
-  }, [analyzerStore, audioPower, bassBand, lowMidBand, midBand, vocalBand, trebleBand, spectrumBand])
+  }, [analyzerStore, active, audioPower, bassBand, lowMidBand, midBand, vocalBand, trebleBand, spectrumBand])
 
   // ── 歌词行转换 ──
   const lines = useMemo(
@@ -295,7 +298,7 @@ export function FoliaLyricsPage({
 
   return (
     <div className="absolute inset-0 overflow-hidden">
-      {rendererReady && lines.length > 0 && (
+      {rendererReady && active && lines.length > 0 && (
         <VisualizerRenderer
           mode={mode}
           currentTime={currentTime}
@@ -350,7 +353,8 @@ function foliaPropsEqual(prev: FoliaLyricsPageProps, next: FoliaLyricsPageProps)
     prev.analyzerStore === next.analyzerStore &&
     prev.foliaStyle === next.foliaStyle &&
     prev.foliaBackgroundEnabled === next.foliaBackgroundEnabled &&
-    prev.mvBackgroundActive === next.mvBackgroundActive
+    prev.mvBackgroundActive === next.mvBackgroundActive &&
+    prev.active === next.active
   )
 }
 

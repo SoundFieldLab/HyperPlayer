@@ -166,6 +166,39 @@ type WatchStatus = 'login' | 'searching' | 'loading' | 'playing' | 'confirm' | '
 const VOLUME_KEY = 'bilibiliVideoVolume'
 const BILI_PINK = '#FB7299'
 
+export function ManualMarkPrompt({ songTitle, onConfirm, onDismiss }: { songTitle: string; onConfirm: () => void; onDismiss: () => void }) {
+  const [remaining, setRemaining] = useState(10)
+  useEffect(() => {
+    const interval = window.setInterval(() => setRemaining(value => Math.max(1, value - 1)), 1000)
+    const timeout = window.setTimeout(onDismiss, 10_000)
+    return () => {
+      window.clearInterval(interval)
+      window.clearTimeout(timeout)
+    }
+  }, [onDismiss])
+
+  return (
+    <motion.div
+      role="alertdialog"
+      aria-labelledby="manual-mv-mark-question"
+      initial={{ opacity: 0, y: -14, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8, scale: 0.97 }}
+      transition={{ duration: 0.2 }}
+      className="absolute z-[60] top-20 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3 rounded-2xl px-6 py-4 bg-black/85 backdrop-blur-xl border border-white/15 shadow-2xl"
+      style={{ maxWidth: 'min(92vw, 420px)' }}
+    >
+      <p id="manual-mv-mark-question" className="text-sm text-white text-center leading-relaxed">
+        这个视频已播放 15 秒，是否将其标记为<br />《{songTitle}》的 MV？
+      </p>
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={onConfirm} className="rounded-lg px-4 py-1.5 text-xs font-semibold text-white transition-transform hover:scale-105" style={{ backgroundColor: BILI_PINK }}>标记</button>
+        <button type="button" autoFocus onClick={onDismiss} aria-label={`不标记，${remaining} 秒后自动关闭`} className="rounded-lg px-4 py-1.5 text-xs font-medium text-white/80 hover:bg-white/10 transition-colors">不标记 ({remaining})</button>
+      </div>
+    </motion.div>
+  )
+}
+
 const TYPE_BADGES: Record<CandidateType, { label: string; color: string }> = {
   official: { label: '官方', color: '#FB7299' },
   live: { label: '现场', color: '#4C8DFF' },
@@ -197,6 +230,13 @@ export function songTimeToMvTime(songTime: number, alignmentOffset: number): num
 /** 对齐约定的逆变换：歌曲时间 = MV 时间 - 有符号偏移。 */
 export function mvTimeToSongTime(mvTime: number, alignmentOffset: number): number {
   return mvTime - alignmentOffset
+}
+
+export function resolveWatchSongTime({ entryFloor, engineTime, watchTime, appliedOffset, watchReady }: { entryFloor: number; engineTime: number; watchTime: number; appliedOffset: number; watchReady: boolean }): number {
+  const candidates = [entryFloor]
+  if (Number.isFinite(engineTime) && engineTime > 0) candidates.push(engineTime)
+  if (watchReady && Number.isFinite(watchTime) && watchTime > 0) candidates.push(mvTimeToSongTime(watchTime, appliedOffset))
+  return Math.max(0, ...candidates.filter(Number.isFinite))
 }
 
 export function clampMediaTime(time: number, duration: number, endPadding = 0): number {
@@ -330,12 +370,15 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
   /** 视频状态上报节流（播放中 timeupdate 最多每 1s 上报一次给 App） */
   const lastVideoStateReportRef = useRef(0)
   /** 音频轨音量渐变（等功率线性）：用于进入看歌淡入 / 切出淡出，避免双声爆音 */
-  const fadeAudioVolume = (from: number, to: number, ms: number): Promise<void> =>
-    new Promise((resolve) => {
+  const fadeGenerationRef = useRef(0)
+  const fadeAudioVolume = (from: number, to: number, ms: number): Promise<void> => {
+    const generation = ++fadeGenerationRef.current
+    return new Promise((resolve) => {
       const audio = audioRef.current
       if (!audio) return resolve()
       const startAt = performance.now()
       const step = () => {
+        if (generation !== fadeGenerationRef.current || audioRef.current !== audio) return resolve()
         const t = Math.min(1, (performance.now() - startAt) / ms)
         audio.volume = from + (to - from) * t
         if (t < 1) requestAnimationFrame(step)
@@ -343,6 +386,7 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
       }
       requestAnimationFrame(step)
     })
+  }
   const searchControllerRef = useRef<AbortController | null>(null)
   const manualSearchControllerRef = useRef<AbortController | null>(null)
   const manualSearchGenerationRef = useRef(0)
@@ -396,6 +440,7 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
   subtitlePosRef.current = subtitlePos
   const subtitleDragRef = useRef<{ startY: number; startPos: number } | null>(null)
   const onSubtitlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.isPrimary || e.button !== 0) return
     e.preventDefault()
     e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -407,11 +452,15 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
     setSubtitlePos(next)
     subtitlePosRef.current = next
   }
-  const onSubtitlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+  const finishSubtitleDrag = (e: React.PointerEvent<HTMLDivElement>, persist: boolean) => {
     subtitleDragRef.current = null
-    e.currentTarget.releasePointerCapture?.(e.pointerId)
-    try { localStorage.setItem('bilibili_subtitle_pos', String(subtitlePosRef.current)) } catch { /* 忽略 */ }
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    if (persist) {
+      try { localStorage.setItem('bilibili_subtitle_pos', String(subtitlePosRef.current)) } catch { /* 忽略 */ }
+    }
   }
+  const onSubtitlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => finishSubtitleDrag(e, true)
+  const onSubtitlePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => finishSubtitleDrag(e, false)
   // 用户手动开关字幕的选择：非 null 时跨歌保持（加载新歌不再被默认值覆盖回开）
   const subtitleUserChoiceRef = useRef<boolean | null>(null)
 
@@ -527,21 +576,32 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
   const surfacePausedVideoRef = useRef(false)
   const surfaceVisibleRef = useRef(surfaceVisible)
   surfaceVisibleRef.current = surfaceVisible
-  const applyAlignmentOffset = useCallback(() => {
+  const applyAlignmentOffset = useCallback((previousOffset = alignmentOffsetRef.current) => {
     const video = videoRef.current
     const audio = audioRef.current
-    const offset = alignmentOffsetRef.current
-    if (!video || !audio || offset === 0 || !Number.isFinite(video.duration)) return
-    const enginePos = getEnginePositionRef.current ? Number(getEnginePositionRef.current()) || 0 : 0
-    const target = songTimeToMvTime(enginePos, offset)
-    const clamped = clampMediaTime(target, video.duration, 8)
-    if (clamped > 0 && Math.abs(video.currentTime - clamped) > 0.5) {
-      video.currentTime = clamped
-      if (audio) audio.currentTime = clamped
-      const signedOffset = `${offset >= 0 ? '+' : ''}${offset.toFixed(1)}`
-      void window.electron?.automixLog?.('MvAlign', `[播放器] 对齐seek 引擎=${enginePos.toFixed(1)}s ${signedOffset}s → video=${clamped.toFixed(1)}s`)?.catch?.(() => undefined)
-    }
-  }, [])
+    const nextOffset = alignmentOffsetRef.current
+    if (!video || !audio || !Number.isFinite(video.duration)) return
+    const entryFloor = startupSeekRef.current?.songTime ?? initialSeekSeconds ?? 0
+    const engineTime = engineHandoffActiveRef.current && getEnginePositionRef.current
+      ? Number(getEnginePositionRef.current()) || 0
+      : 0
+    const watchTime = Number.isFinite(audio.currentTime) && audio.currentTime > 0 ? audio.currentTime : video.currentTime
+    const songTime = resolveWatchSongTime({
+      entryFloor,
+      engineTime,
+      watchTime,
+      appliedOffset: previousOffset,
+      watchReady: audio.readyState >= 1 || video.readyState >= 1,
+    })
+    const target = songTimeToMvTime(songTime, nextOffset)
+    const videoTarget = clampMediaTime(target, video.duration, 8)
+    const audioTarget = clampMediaTime(target, audio.duration, 8)
+    if (Math.abs(video.currentTime - videoTarget) > 0.5) video.currentTime = videoTarget
+    if (Number.isFinite(audio.duration) && Math.abs(audio.currentTime - audioTarget) > 0.5) audio.currentTime = audioTarget
+    if (startupSeekRef.current) startupSeekRef.current.songTime = songTime
+    const signedOffset = `${nextOffset >= 0 ? '+' : ''}${nextOffset.toFixed(1)}`
+    void window.electron?.automixLog?.('MvAlign', `[播放器] 对齐seek 歌曲=${songTime.toFixed(1)}s ${signedOffset}s → video=${videoTarget.toFixed(1)}s`)?.catch?.(() => undefined)
+  }, [initialSeekSeconds])
 
   // ===== 工具 =====
 
@@ -684,7 +744,6 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
           }
           setVideoUrl(reuseVideoUrl || bilibiliStreamUrl(cacheKey, 'video'))
           setStatus('playing')
-          reportVideoActive(true)
           // 音频优先用本地缓存（mv-align 分析/预载已下载同一 DASH 音轨）：
           // 命中即秒开，避免流式加载慢导致"进看歌开头无声"（日志实测 loadedmetadata
           // 可延迟 ~10s）。未命中照旧走流式 URL（不先整文件下载再播放）。
@@ -705,9 +764,10 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
           userPausedRef.current = false // 新视频：复位用户暂停标记，恢复自动播放
           const cachedAlign = getMvAlignmentFor(song.songKey, candidate.video.bvid, { candidateType: candidate.type, ccVerification: candidate.ccVerification })
           if (cachedAlign && cachedAlign.confidence >= MIN_ALIGNMENT_CONFIDENCE) {
+            const previousOffset = alignmentOffsetRef.current
             alignmentOffsetRef.current = cachedAlign.offsetSeconds
             alignmentVerifiedRef.current = true
-            applyAlignmentOffset()
+            applyAlignmentOffset(previousOffset)
           } else {
             void ensureMvAlignment({
               songKey: song.songKey,
@@ -726,9 +786,10 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
             }).then((align) => {
               if (isStaleLoad()) return
               if (align && align.confidence >= MIN_ALIGNMENT_CONFIDENCE) {
+                const previousOffset = alignmentOffsetRef.current
                 alignmentOffsetRef.current = align.offsetSeconds
                 alignmentVerifiedRef.current = true
-                applyAlignmentOffset()
+                applyAlignmentOffset(previousOffset)
                 void window.electron?.automixLog?.('MvAlign', `[播放器] 对齐应用 offset=${align.offsetSeconds}s conf=${align.confidence.toFixed(2)} method=${align.method}`)?.catch?.(() => undefined)
               }
             }).catch(() => undefined)
@@ -1008,14 +1069,13 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
       const now = performance.now()
       // 诊断：每 3s **无条件**打印一次（健康/不健康都打）——此前只在 readyState<2 时打，
       // 健康时段静默，无法判断"全程没解出帧"还是"解出了但画面本身是黑边内容"
-      if (now - lastDiag > 3000) {
+      if (now - lastDiag > 3000 && localStorage.getItem('waveforge:verbose-log') === '1') {
         lastDiag = now
         console.log(`[Ambient] mode=${ambientMode} canvas=${canvas.width > 0 ? canvas.width + 'x' + canvas.height : '空'} video=${video.readyState}/${video.videoWidth}x${video.videoHeight} paused=${video.paused} draw=${drawCount} fail=${drawFails} aspect=${videoAspect ?? '-'} box=${Math.round(extMinX * 100)}-${Math.round(extMaxX * 100)}/${Math.round(extMinY * 100)}-${Math.round(extMaxY * 100)}`)
       }
-      if (video.readyState < 2) return
-      // 100ms 轻节流（≈12fps）：模糊光晕下观感连续（之前 pixelated+300~600ms 才跳格），
-      // 高刷屏不再每帧满负荷跑 getImageData/扫描/模糊（用户要求省性能，光晕是慢变量）
-      if (now - lastDraw < 100) return
+      if (video.readyState < 2 || video.paused) return
+      // 150ms 节流（约 6-7fps）：泛光是低频氛围，不需要跟随高刷面板逐帧读取视频像素。
+      if (now - lastDraw < 150) return
       lastDraw = now
       // 降采样 1/12：模糊半径掩盖细节，省 GPU/内存（用户要求只算周围一圈，顺便更省）
       const scaleFactor = 12
@@ -1096,6 +1156,14 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
   // 卸载清理
   useEffect(() => {
     return () => {
+      fadeGenerationRef.current += 1
+      for (const media of [videoRef.current, audioRef.current]) {
+        if (!media) continue
+        try { media.pause() } catch { /* ignore */ }
+        media.removeAttribute('src')
+        try { media.load() } catch { /* ignore */ }
+      }
+      subtitleDragRef.current = null
       searchControllerRef.current?.abort()
       manualSearchControllerRef.current?.abort()
       manualPlaybackSecondsRef.current = 0
@@ -1837,8 +1905,10 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
         fadeInOnLoadRef.current = false
         void window.electron?.automixLog?.('看歌-audio', `loadedmetadata 淡入触发 target=${volume}`)?.catch?.(() => undefined)
         audio.volume = 0
-        void audio.play().catch(() => undefined)
+        void audio.play().then(() => reportVideoActive(true)).catch(() => undefined)
         void fadeAudioVolume(0, volume, 250)
+      } else if (audio) {
+        void audio.play().then(() => reportVideoActive(true)).catch(() => undefined)
       }
     }
     audio?.addEventListener('ended', onAudioEnded)
@@ -2348,12 +2418,15 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className="absolute z-30 left-1/2 -translate-x-1/2 w-[70%] text-center cursor-grab active:cursor-grabbing select-none"
+                className="absolute z-30 left-1/2 -translate-x-1/2 w-[70%] text-center cursor-grab active:cursor-grabbing select-none touch-none"
                 style={{ bottom: subtitlePos }}
+                aria-label="字幕位置，可拖动调整"
+                data-subtitle-drag-surface
+                onClick={event => event.stopPropagation()}
                 onPointerDown={onSubtitlePointerDown}
                 onPointerMove={onSubtitlePointerMove}
                 onPointerUp={onSubtitlePointerUp}
-                title="拖动可调整字幕位置（自动记住）"
+                onPointerCancel={onSubtitlePointerCancel}
               >
                 <p
                   className="inline-block px-4 py-1.5 rounded-xl bg-black/45 backdrop-blur-sm text-white leading-snug shadow-lg"
@@ -2785,35 +2858,7 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
       {/* 手动选择视频播放满 15 秒：询问是否标记为该歌 MV（仅本地） */}
       <AnimatePresence>
         {manualPlaybackMarkPrompt && (
-          <motion.div
-            initial={{ opacity: 0, y: -14, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.97 }}
-            transition={{ duration: 0.2 }}
-            className="absolute z-[60] top-20 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3 rounded-2xl px-6 py-4 bg-black/85 backdrop-blur-xl border border-white/15 shadow-2xl"
-            style={{ maxWidth: 'min(92vw, 420px)' }}
-          >
-            <p className="text-sm text-white text-center leading-relaxed">
-              这个视频已播放 15 秒，是否将其标记为<br />《{songTitle}》的 MV？
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={confirmManualMark}
-                className="rounded-lg px-4 py-1.5 text-xs font-semibold text-white transition-transform hover:scale-105"
-                style={{ backgroundColor: BILI_PINK }}
-              >
-                标记
-              </button>
-              <button
-                type="button"
-                onClick={dismissManualMark}
-                className="rounded-lg px-4 py-1.5 text-xs font-medium text-white/80 hover:bg-white/10 transition-colors"
-              >
-                不标记
-              </button>
-            </div>
-          </motion.div>
+          <ManualMarkPrompt songTitle={songTitle} onConfirm={confirmManualMark} onDismiss={dismissManualMark} />
         )}
       </AnimatePresence>
 

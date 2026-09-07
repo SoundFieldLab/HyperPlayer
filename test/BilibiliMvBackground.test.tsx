@@ -197,7 +197,7 @@ describe('BilibiliMvBackground regressions', () => {
       />,
     )
 
-    await waitFor(() => expect(bili.getBilibiliPlayUrl).toHaveBeenCalledWith('target-bvid', 1, 127, expect.any(AbortSignal)))
+    await waitFor(() => expect(bili.getBilibiliPlayUrl).toHaveBeenCalledWith('target-bvid', 1, 112, expect.any(AbortSignal)))
     resolveCurrent({ status: 'confirm', best: null, candidates: [], fallbackChain: [] })
   })
 

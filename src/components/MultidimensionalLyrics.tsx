@@ -25,6 +25,8 @@ interface MultidimensionalLyricsProps {
   pulseStore?: AudioPulseStore
   /** 音频频段分析（波形河/节拍环）。 */
   analyzerStore?: AudioAnalyzerStore
+  /** 退出动画期间为 false：保留容器过渡，但卸载 Diorama Canvas。 */
+  active?: boolean
   /** MV 背景激活时：外层与 Canvas 透明化，让下层 MV 视频可见，3D 内置背景退场。 */
   mvBackgroundActive?: boolean
 }
@@ -47,6 +49,7 @@ export default function MultidimensionalLyrics({
   onSeek,
   pulseStore,
   analyzerStore,
+  active = true,
   mvBackgroundActive = false,
 }: MultidimensionalLyricsProps) {
   const lines = useMemo(() => convertLyricsToFoliaLines(lyrics), [lyrics])
@@ -61,22 +64,24 @@ export default function MultidimensionalLyrics({
       className={`relative h-full min-h-[440px] w-full overflow-hidden text-white ${mvBackgroundActive ? 'bg-transparent' : 'bg-[#05060c]'}`}
       style={{ opacity: isTransitioning ? 0 : 1, transition: 'opacity 320ms ease' }}
     >
-      <FoliaDioramaLyrics
-        lines={lines}
-        currentIndex={safeIndex}
-        playbackTimeStore={playbackTimeStore}
-        timeOffset={timeOffset}
-        isPlaying={isPlaying}
-        accentColor={accentColor}
-        trackKey={trackKey}
-        translationEnabled={translationEnabled}
-        romanEnabled={romanEnabled}
-        onSeek={onSeek}
-        pulseStore={pulseStore}
-        analyzerStore={analyzerStore}
-        coverUrl={coverUrl}
-        mvBackgroundActive={mvBackgroundActive}
-      />
+      {active && (
+        <FoliaDioramaLyrics
+          lines={lines}
+          currentIndex={safeIndex}
+          playbackTimeStore={playbackTimeStore}
+          timeOffset={timeOffset}
+          isPlaying={isPlaying}
+          accentColor={accentColor}
+          trackKey={trackKey}
+          translationEnabled={translationEnabled}
+          romanEnabled={romanEnabled}
+          onSeek={onSeek}
+          pulseStore={pulseStore}
+          analyzerStore={analyzerStore}
+          coverUrl={coverUrl}
+          mvBackgroundActive={mvBackgroundActive}
+        />
+      )}
 
       {/* 电影暗角：聚焦画面中心、压住四角，替代原先平铺直叙的满屏 3D
           MV 背景激活时弱化暗角（0.52→0.18），让 MV 视频更多可见，仅保留极轻边缘压暗维持画面聚焦感 */}

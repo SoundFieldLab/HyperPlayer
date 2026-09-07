@@ -19,6 +19,7 @@ import DioramaPostFx from './dioramaPostFx'
 import { DIORAMA_RASTER_FONT_PX, buildDioramaFontSpec, measureDioramaText } from './dioramaTextRaster'
 import { EMPTY_AUDIO_PULSE_STORE, type AudioPulseStore } from '../../hooks/useAudioPulse'
 import type { AudioAnalyzerStore } from '../../hooks/useAudioAnalyzer'
+import { isGpuSoftwareCompositing, resolveDioramaRenderQuality } from '../../services/playbackPerformancePolicy'
 
 // 字体栈：拉丁字体在前（西文歌词用 SF/Segoe 的拉丁字形，比中文字体的西文部分精致得多），
 // 中文按平台最优顺序回退；canvas 逐字形 fallback，不会影响中文字形选择
@@ -143,6 +144,16 @@ export default function FoliaDioramaLyrics({
   coverUrl,
   mvBackgroundActive = false,
 }: FoliaDioramaLyricsProps) {
+  const [gpuSoftwareCompositing, setGpuSoftwareCompositing] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    void window.electron?.system.getHardwareAcceleration?.().then(status => {
+      if (!cancelled) setGpuSoftwareCompositing(isGpuSoftwareCompositing(status?.featureStatus))
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [])
+  const renderQuality = resolveDioramaRenderQuality({ mvBackgroundActive, gpuSoftwareCompositing })
+  const shouldRenderCanvas = !mvBackgroundActive
   const currentTime = useMotionValue(0)
   // sequencer 状态机（切歌铺段 / 歌词晚到原位重建 / 行推进与循环）抽到 hook：5 state + 4 ref + 4 effect
   // + setTimeout 跟踪全在 hook 内，主组件只保留 rAF 时间同步与 WebGL 恢复（与 sequencer 无关）。
@@ -174,7 +185,7 @@ export default function FoliaDioramaLyrics({
       const extrapolated = playing ? Math.min(0.5, (now - anchorWall) / 1000) : 0
       currentTime.set(anchorTime + extrapolated + timeOffset)
       // 未播放或窗口隐藏时停帧（Electron backgroundThrottling 关闭，隐藏后 rAF 仍全速）
-      if (playing && document.visibilityState === 'visible') {
+      if (playing && shouldRenderCanvas && document.visibilityState === 'visible') {
         raf = requestAnimationFrame(tick)
       } else {
         raf = 0
@@ -183,7 +194,7 @@ export default function FoliaDioramaLyrics({
     syncClock()
     const unsubscribe = playbackTimeStore.subscribe(syncClock)
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && raf === 0 && playing) raf = requestAnimationFrame(tick)
+      if (document.visibilityState === 'visible' && raf === 0 && playing && shouldRenderCanvas) raf = requestAnimationFrame(tick)
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
     raf = requestAnimationFrame(tick)
@@ -192,7 +203,7 @@ export default function FoliaDioramaLyrics({
       document.removeEventListener('visibilitychange', onVisibilityChange)
       cancelAnimationFrame(raf)
     }
-  }, [currentTime, playbackTimeStore, timeOffset])
+  }, [currentTime, playbackTimeStore, timeOffset, shouldRenderCanvas])
 
   // ── 运动参数（默认 normal 强度） ───────────────────────────────────────────────────────
   const motion = useMemo(() => resolveDioramaMotionParams(DEFAULT_DIORAMA_TUNING, 'normal'), [])
@@ -262,46 +273,44 @@ export default function FoliaDioramaLyrics({
 
   return (
     <div className={`relative h-full w-full overflow-hidden ${mvBackgroundActive ? 'bg-transparent' : 'bg-[#05060c]'}`}>
-      <div ref={canvasHostRef} className="absolute inset-0">
-        <Canvas
-          key={canvasRecoveryKey}
-          dpr={[1, 2]}
-          flat
-          camera={{ fov: 55, near: 0.1, far: 140, position: [0, 0.6, 9] }}
-          // MV 背景激活时启用 alpha 透明，让下层 MV 视频透过 Canvas 可见；
-          // 否则保持默认（不透明）以获得更好的深度清晰度与性能。
-          gl={{ powerPreference: 'high-performance', alpha: mvBackgroundActive }}
-          className="h-full w-full"
-        >
-          <DioramaScene
-            currentTime={currentTime}
-            sequencer={sequencer}
-            globalIndex={globalIndex}
-            motion={motion}
-            fontStack={FONT_STACK}
-            accentColor={accentColor}
-            outgoingGlobalIndex={outgoingGlobalIndex}
-            onSeek={onSeek}
-            pulseStore={effectivePulse}
-            flightActive={flightActive}
-            analyzerStore={analyzerStore}
-            linesEpoch={linesEpoch}
-            coverUrl={coverUrl}
-            mvBackgroundActive={mvBackgroundActive}
-          />
-          <CameraRig
-            currentTime={currentTime}
-            sequencer={sequencer}
-            globalIndex={globalIndex}
-            activeLineWidthRef={activeLineWidthRef}
-            motion={motion}
-            transitionEpoch={transitionEpoch}
-          />
-          {/* HDR UnrealBloom：发光体真实泛光（flat=NoToneMapping 与 OutputPass 配套）；
-              强度 0.24 + 门槛 0.92：亮封面背景不会击穿阈值引发闪白，歌词点亮仍可见 */}
-          <DioramaPostFx strength={0.24} radius={0.45} threshold={0.92} />
-        </Canvas>
-      </div>
+      {shouldRenderCanvas && (
+        <div ref={canvasHostRef} className="absolute inset-0">
+          <Canvas
+            key={canvasRecoveryKey}
+            dpr={renderQuality.dpr}
+            flat
+            camera={{ fov: 55, near: 0.1, far: 140, position: [0, 0.6, 9] }}
+            gl={{ powerPreference: 'high-performance', alpha: false }}
+            className="h-full w-full"
+          >
+            <DioramaScene
+              currentTime={currentTime}
+              sequencer={sequencer}
+              globalIndex={globalIndex}
+              motion={motion}
+              fontStack={FONT_STACK}
+              accentColor={accentColor}
+              outgoingGlobalIndex={outgoingGlobalIndex}
+              onSeek={onSeek}
+              pulseStore={effectivePulse}
+              flightActive={flightActive}
+              analyzerStore={analyzerStore}
+              linesEpoch={linesEpoch}
+              coverUrl={coverUrl}
+              mvBackgroundActive={false}
+            />
+            <CameraRig
+              currentTime={currentTime}
+              sequencer={sequencer}
+              globalIndex={globalIndex}
+              activeLineWidthRef={activeLineWidthRef}
+              motion={motion}
+              transitionEpoch={transitionEpoch}
+            />
+            {renderQuality.postFx && <DioramaPostFx strength={0.24} radius={0.45} threshold={0.92} />}
+          </Canvas>
+        </div>
+      )}
 
       {/* 底部字幕：当前行翻译/罗马音 + 下一行提示（毛玻璃药丸） */}
       <div className="pointer-events-none absolute inset-x-0 bottom-7 z-10 flex flex-col items-center gap-1.5 px-8 text-center">

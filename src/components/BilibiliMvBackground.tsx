@@ -44,6 +44,7 @@ import {
 } from '../services/mvAlignment'
 import type { BilibiliVideo, CandidateSignals } from '../services/bilibiliApi'
 import type { LyricLine } from '../services/musicApi'
+import { clampMvBlur, resolveMvBackgroundQuality } from '../services/playbackPerformancePolicy'
 
 type MvBackgroundStatus = 'idle' | 'searching' | 'loading' | 'playing' | 'confirm' | 'none' | 'error'
 
@@ -176,8 +177,7 @@ async function resolveAndPrewarmAlignment(
       if (!cid) cid = view.data.cid
     }
     if (!cid) return
-    const settings = getBilibiliWatchSettings()
-    const qn = settings.targetQuality === 'auto' ? 127 : settings.targetQuality
+    const qn = resolveMvBackgroundQuality()
     const playInfo = await getBilibiliPlayUrl(candidate.video.bvid, cid, qn, signal)
     if (playInfo.code !== 0 || !playInfo.cacheKey) return
     await prewarmMvBeatAnalysis({
@@ -445,11 +445,12 @@ export default function BilibiliMvBackground({
         void window.electron?.automixLog?.('MvAlign', `[背景] 跳转对齐 ${bvid} offset=${alignment.offsetSeconds}s conf=${alignment.confidence.toFixed(2)} audio=${audio.currentTime.toFixed(1)}s → video seek ${target.toFixed(1)}s（原 ${video.currentTime.toFixed(1)}s，槽${slot} src=${(video.currentSrc || video.src || '空').slice(-40)}）`)?.catch?.(() => undefined)
         lastSyncCorrectionRef.current = performance.now()
         video.currentTime = target
-        if (isPlayingRef.current && video.paused && video.readyState >= 3) void video.play().catch(() => undefined)
+          if (isPlayingRef.current && video.paused && video.readyState >= 3 && (slot === activeSlotRef.current || slot === incomingSlotRef.current)) void video.play().catch(() => undefined)
       }
     }
   }, [songKey])
 
+  const normalizedBlur = clampMvBlur(blur)
   const slotUrl = (slot: 'A' | 'B') => (slot === 'A' ? slotAUrl : slotBUrl)  // 过渡期（automix/无缝/普通切歌的 audio 过渡期间）为 true：预载的目标 MV 以 transitionProgress 叠在旧 MV 上渐入
   const transitionActive = Boolean(transitionToTrack?.trackKey)
   transitionActiveRef.current = transitionActive
@@ -471,6 +472,9 @@ export default function BilibiliMvBackground({
     return 0
   }
   const slotEl = (slot: 'A' | 'B') => (slot === 'A' ? slotARef.current : slotBRef.current)
+  const shouldPlaySlot = (slot: 'A' | 'B') => (
+    isPlaying && !hidden && (slot === activeSlot || slot === incomingSlot)
+  )
   const activeEl = () => slotEl(activeSlotRef.current)
   const otherSlot = (slot: 'A' | 'B') => (slot === 'A' ? 'B' : 'A')
 
@@ -511,7 +515,7 @@ export default function BilibiliMvBackground({
             if (!cid) cid = view.data.cid
           }
           const settings = getBilibiliWatchSettings()
-          const qn = settings.targetQuality === 'auto' ? 127 : settings.targetQuality
+          const qn = resolveMvBackgroundQuality()
           const playInfo = await getBilibiliPlayUrl(candidate.video.bvid, cid, qn, controller.signal)
           if (playInfo.code === -404) throw new Error('视频已失效或删除')
           if (playInfo.code !== 0 || !playInfo.cacheKey) throw new Error(playInfo.error || '获取播放地址失败')
@@ -630,6 +634,10 @@ export default function BilibiliMvBackground({
   // 完成后新槽晋升为 active 并释放旧槽。快速切歌时该槽若已被新目标顶掉，定时器直接放弃本次晋升。
   const beginCrossfade = (slot: 'A' | 'B') => {
     if (stagedSlotRef.current !== slot) return
+    const stagedVideo = slotEl(slot)
+    if (stagedVideo && isPlayingRef.current && !hidden && stagedVideo.paused) {
+      void stagedVideo.play().catch(() => undefined)
+    }
     const prevActive = activeSlotRef.current
     stagedSlotRef.current = null
     pendingPromotionRef.current = null
@@ -1071,9 +1079,14 @@ export default function BilibiliMvBackground({
       }
     }
     // 恢复播放：活跃槽 + 已 staged 槽
-    for (const ref of [slotARef, slotBRef]) {
+    for (const [slot, ref] of [['A', slotARef], ['B', slotBRef]] as const) {
       const video = ref.current
-      if (video && video.paused && video.readyState >= 2) void video.play().catch(() => undefined)
+      if (!video || video.readyState < 2) continue
+      if (shouldPlaySlot(slot)) {
+        if (video.paused) void video.play().catch(() => undefined)
+      } else if (!video.paused) {
+        video.pause()
+      }
     }
     // 周期性校正（1.5s 检查一次）：只校正当前可见槽、且该槽视频已确认对齐
     const interval = window.setInterval(() => {
@@ -1147,7 +1160,7 @@ export default function BilibiliMvBackground({
         returnSyncTimerRef.current = null
       }
     }
-  }, [isPlaying, enabled, hidden, songKey, transitionActive])
+  }, [isPlaying, enabled, hidden, songKey, transitionActive, activeSlot, incomingSlot])
 
   // Seek events stay registered while paused. Explicit media seeks use audio.currentTime so a paused
   // rendered-transition clock cannot mask the user's new position, and never force video playback.
@@ -1403,7 +1416,7 @@ export default function BilibiliMvBackground({
       <video
         ref={slotARef}
         src={slotAUrl ?? undefined}
-        autoPlay={isPlaying}
+        autoPlay={shouldPlaySlot('A')}
         loop
         muted
         playsInline
@@ -1415,8 +1428,8 @@ export default function BilibiliMvBackground({
           display: slotAUrl ? undefined : 'none',
           // scale() 不是合法的 filter 函数（filter 里写 blur+scale 整条被浏览器丢弃，模糊永不生效），
           // 放大 1.08 盖住模糊边缘改用 transform 承担
-          filter: blur > 0 ? `blur(${blur}px)` : undefined,
-          transform: blur > 0 ? 'scale(1.08)' : undefined,
+          filter: normalizedBlur > 0 ? `blur(${normalizedBlur}px)` : undefined,
+          transform: normalizedBlur > 0 ? 'scale(1.08)' : undefined,
         }}
         onCanPlay={() => handleCanPlay('A')}
         onError={() => handleVideoError('A')}
@@ -1425,7 +1438,7 @@ export default function BilibiliMvBackground({
       <video
         ref={slotBRef}
         src={slotBUrl ?? undefined}
-        autoPlay={isPlaying}
+        autoPlay={shouldPlaySlot('B')}
         loop
         muted
         playsInline
@@ -1435,8 +1448,8 @@ export default function BilibiliMvBackground({
           transition: slotTransition('B'),
           zIndex: slotZIndex('B'),
           display: slotBUrl ? undefined : 'none',
-          filter: blur > 0 ? `blur(${blur}px)` : undefined,
-          transform: blur > 0 ? 'scale(1.08)' : undefined,
+          filter: normalizedBlur > 0 ? `blur(${normalizedBlur}px)` : undefined,
+          transform: normalizedBlur > 0 ? 'scale(1.08)' : undefined,
         }}
         onCanPlay={() => handleCanPlay('B')}
         onError={() => handleVideoError('B')}

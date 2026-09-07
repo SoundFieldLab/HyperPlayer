@@ -5,6 +5,7 @@ import {
   getAllMVs,
   getMVCategories,
   getMVListByCategory,
+  getMVDetail,
   getProxiedImageUrl,
   searchMVs
 } from '../services/musicApi'
@@ -22,6 +23,7 @@ interface MVItem {
 
 interface MVExploreModalProps {
   initialPlatform?: 'netease' | 'qq'
+  initialMvId?: string | number
   onClose: () => void
   playerTheme?: 'dark' | 'light'
 }
@@ -37,7 +39,7 @@ const formatCount = (value?: number) => {
 const NETESE_AREAS = ['全部', '内地', '港台', '欧美', '日本', '韩国', '其他']
 const NETEASE_TYPES = ['全部', '官方版', '原声', '现场版', '网易出品']
 
-export default function MVExploreModal({ initialPlatform = 'netease', onClose, playerTheme = 'dark' }: MVExploreModalProps) {
+export default function MVExploreModal({ initialPlatform = 'netease', initialMvId, onClose, playerTheme = 'dark' }: MVExploreModalProps) {
   // TV 遥控器 BACK：关闭 MV 浏览弹窗
   useTvBack(() => {
     onClose()
@@ -70,6 +72,26 @@ export default function MVExploreModal({ initialPlatform = 'netease', onClose, p
   // 正在播放的 MV
   const [playingMV, setPlayingMV] = useState<MVItem | null>(null)
   const [isVideoOpen, setIsVideoOpen] = useState(false)
+
+  useEffect(() => {
+    if (!initialMvId || initialPlatform !== 'netease') return
+    let cancelled = false
+    void getMVDetail(initialMvId, 'netease').then(data => {
+      if (cancelled) return
+      const detail = data?.data || data || {}
+      const item: MVItem = {
+        id: initialMvId,
+        name: String(detail.name || '网易云 MV'),
+        cover: getProxiedImageUrl(String(detail.cover || detail.coverUrl || detail.imgurl16v9 || ''), 400),
+        artistName: String(detail.artistName || (Array.isArray(detail.artists) ? detail.artists.map((artist: any) => artist.name).join('/') : '')),
+        playCount: Number(detail.playCount || 0),
+        platform: 'netease',
+      }
+      setPlayingMV(item)
+      setIsVideoOpen(true)
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [initialMvId, initialPlatform])
 
   // 搜索状态
   const [searchKeyword, setSearchKeyword] = useState('')

@@ -16,6 +16,7 @@
 
 import { recordLogin, clearLoginExpiry, isLoginExpired } from './loginExpiry'
 import { Converter } from 'opencc-js/t2cn'
+import { BILIBILI_MV_DECLARATION_VERSION, getDeveloperBilibiliMvDeclaration } from '../data/bilibiliMvDeclarations'
 
 export let BILI_API_BASE = 'http://localhost:3001/api/bilibili'
 
@@ -1841,6 +1842,19 @@ export function addBilibiliBlacklist(songKey: string, bvid: string): string[] {
   return next
 }
 
+export function prioritizeExplicitCandidates(
+  candidates: CandidateScore[],
+  userOverride: CandidateScore | null,
+  developerDeclaration: CandidateScore | null,
+): CandidateScore[] {
+  let chain = [...candidates]
+  for (const explicit of [developerDeclaration, userOverride]) {
+    if (!explicit) continue
+    chain = [explicit, ...chain.filter(candidate => candidate.video.bvid !== explicit.video.bvid)]
+  }
+  return chain
+}
+
 // ===== 全流程：查找并匹配当前歌曲的 B 站视频 =====
 
 const TOP_CONFIRM_COUNT = 12
@@ -2105,6 +2119,7 @@ export function rescoreResultWithLyrics(
   lyricsText: string,
   overrideBvid: string,
   reviewLookup: (bvid: string) => { manualZh?: boolean; autoZh?: boolean; subLines?: Array<{ from?: number; text?: string }>; cid?: number } | undefined = (bvid) => reviewCache.get(bvid),
+  developerBvid = '',
 ): BilibiliMatchResult {
   if (!result.ccUnverifiedWithoutLyrics || !result.fallbackChain.length) return result
   const preference = settings.matchPreference
@@ -2125,16 +2140,17 @@ export function rescoreResultWithLyrics(
   }).sort(compareCandidates)
   let chain = rescored
   let best = rescored[0]
-  if (overrideBvid) {
-    const remembered = rescored.find((c) => c.video.bvid === overrideBvid)
-    if (remembered) {
-      chain = [remembered, ...rescored.filter((c) => c.video.bvid !== overrideBvid)]
-      best = remembered
+  const explicitBvids = [overrideBvid, developerBvid].filter(Boolean)
+  for (const bvid of explicitBvids.reverse()) {
+    const explicit = rescored.find((candidate) => candidate.video.bvid === bvid)
+    if (explicit) {
+      chain = [explicit, ...chain.filter((candidate) => candidate.video.bvid !== bvid)]
+      best = chain[0]
     }
   }
   let status: BilibiliMatchStatus
   if (!best) status = 'none'
-  else if (overrideBvid) status = 'auto'
+  else if (overrideBvid || developerBvid) status = 'auto'
   else if (settings.forceAutoPlayHighest || shouldAutoPlay(best, settings.autoPlayStrictness)) status = 'auto'
   else status = 'confirm'
   const ccUnverifiedWithoutLyrics = rescored.some((c) => (c.manualZhSubtitle || c.autoSubtitle) && c.ccVerification === 'unverified') && !lyricsText
@@ -2146,6 +2162,8 @@ export async function findBestBilibiliMv(
   opts?: {
     signal?: AbortSignal
     settings?: Partial<BilibiliWatchSettings>
+    /** benchmark 可关闭开发者声明，避免人工答案污染纯算法指标。 */
+    useDeveloperDeclarations?: boolean
     /** 同步取当前歌歌词（含翻译，flattenLyricLinesForMatch 产物）。仅用于 CC 字幕内容验证：
      *  匹配时已加载就传入（验证 +25/-20 分档），没加载就返回空（unverified 缩水档）——绝不为此等待网络。 */
     lyricsProvider?: () => string | null | undefined
@@ -2156,6 +2174,7 @@ export async function findBestBilibiliMv(
   // 手动选择记忆（override）也入指纹：用户换了记忆视频后不能继续命中旧缓存（旧 best 会盖过新选择）
   const songKey = songKeyOf(song)
   const overrideBvid = settings.useRememberedOverride ? (getBilibiliOverride(songKey) || '') : ''
+  const developerBvid = opts?.useDeveloperDeclarations === false ? '' : (getDeveloperBilibiliMvDeclaration(songKey)?.bvid || '')
   const settingsFingerprint = [
     MATCH_SCORE_VERSION,
     settings.matchPreference,
@@ -2164,6 +2183,7 @@ export async function findBestBilibiliMv(
     settings.customKeywordTemplate,
     settings.forceAutoPlayHighest ? 'force' : 'gate',
     overrideBvid,
+    developerBvid ? `${BILIBILI_MV_DECLARATION_VERSION}:${developerBvid}` : '',
   ].join('|')
   const cacheKey = `${songKey}::${settingsFingerprint}`
   const cached = matchCache.get(cacheKey)
@@ -2171,13 +2191,13 @@ export async function findBestBilibiliMv(
     // 命中缓存但当时无歌词可比：现在有歌词了 → 用缓存的字幕内容零网络重扫升级（CC 验证分档生效）
     const lyricsText = String(opts?.lyricsProvider?.() || '').trim()
     if (lyricsText && cached.result.ccUnverifiedWithoutLyrics) {
-      const upgraded = rescoreResultWithLyrics(cached.result, song, settings, lyricsText, overrideBvid)
+      const upgraded = rescoreResultWithLyrics(cached.result, song, settings, lyricsText, overrideBvid, undefined, developerBvid)
       if (upgraded !== cached.result) matchCache.set(cacheKey, { at: cached.at, result: upgraded })
       return upgraded
     }
     return cached.result
   }
-  const result = await findBestBilibiliMvUncached(song, cacheKey, settings, opts?.signal, opts?.lyricsProvider)
+  const result = await findBestBilibiliMvUncached(song, cacheKey, settings, opts?.signal, opts?.lyricsProvider, opts?.useDeveloperDeclarations !== false)
   matchCache.set(cacheKey, { at: Date.now(), result })
   pruneMatchCache()
   return result
@@ -2189,6 +2209,7 @@ async function findBestBilibiliMvUncached(
   settings: BilibiliWatchSettings,
   signal?: AbortSignal,
   lyricsProvider?: () => string | null | undefined,
+  useDeveloperDeclarations = true,
 ): Promise<BilibiliMatchResult> {
   // override/黑名单按歌曲存储键读写（与缓存键分离：不含设置指纹）
   const songKey = songKeyOf(song)
@@ -2230,9 +2251,33 @@ async function findBestBilibiliMvUncached(
       }
     }
   }
-  /** 记忆视频直接播放（搜索失败/无候选时也要能放记忆的视频） */
-  const rememberedOnly = (): BilibiliMatchResult | null =>
-    rememberedOverride ? finish({ status: 'auto', best: rememberedOverride, candidates: [rememberedOverride], fallbackChain: [rememberedOverride] }) : null
+  let developerDeclaration: CandidateScore | null = null
+  const developerBvid = useDeveloperDeclarations ? getDeveloperBilibiliMvDeclaration(songKey)?.bvid : undefined
+  if (developerBvid && !blacklist.has(developerBvid)) {
+    try {
+      const view = await getBilibiliView(developerBvid, signal)
+      if (view.code === 0 && view.data.cid) {
+        const video: BilibiliVideo = {
+          bvid: developerBvid,
+          title: view.data.title,
+          duration: view.data.duration,
+          play: view.data.play || 0,
+          author: view.data.owner.name,
+          pic: view.data.pic,
+        }
+        const scored = await reviewCandidates([scoreCandidate(video, song, { officialVerifyType: view.data.owner.officialVerifyType, preference: settings.matchPreference })], song, settings.matchPreference, signal, lyricsText)
+        developerDeclaration = scored[0] || null
+      }
+    } catch {
+      // 声明视频失效时继续使用原匹配算法，不修改内置声明。
+    }
+  }
+
+  /** 显式绑定视频在搜索失败/无候选时也能播放。 */
+  const explicitOnly = (): BilibiliMatchResult | null => {
+    const chain = prioritizeExplicitCandidates([], rememberedOverride, developerDeclaration)
+    return chain.length ? finish({ status: 'auto', best: chain[0], candidates: chain, fallbackChain: chain }) : null
+  }
 
   // 1. 偏好感知多查询搜索（前两页提升召回）
   const queries = buildQueries(song, settings)
@@ -2256,7 +2301,7 @@ async function findBestBilibiliMvUncached(
     }
     if (videos.length >= 60) break
   }
-  if (!videos.length) return rememberedOnly() || empty('搜索失败，请稍后重试')
+  if (!videos.length) return explicitOnly() || empty('搜索失败，请稍后重试')
 
   // 2. 初筛打分（硬淘汰无关 + 黑名单剔除 + 排名信号）
   let candidates = videos
@@ -2264,7 +2309,7 @@ async function findBestBilibiliMvUncached(
     .filter((c) => c.score !== -Infinity && !blacklist.has(c.video.bvid))
     .sort(compareCandidates)
 
-  if (!candidates.length) return rememberedOnly() || { status: 'none', candidates: [], fallbackChain: [] }
+  if (!candidates.length) return explicitOnly() || { status: 'none', candidates: [], fallbackChain: [] }
 
   // 3. 前 8 名复审（作者认证 + 字幕 + CC 内容歌词比对，全局 bvid 缓存）。
   // 同标题稿件必须先完成来源复审再去重，否则社区转载可能在官号认证加分前将其挤掉。
@@ -2272,16 +2317,10 @@ async function findBestBilibiliMvUncached(
   candidates = dedupeCandidates(candidates).sort(compareCandidates)
 
   // 4. 排序取最佳 + 门槛判定（forceAutoPlayHighest 开启时直接播评分最高，跳过确认）
-  let fallbackChain = candidates
-  let best = fallbackChain[0]
-  if (rememberedOverride) {
-    // 记忆视频前置为 best（用户显式选择，无条件播放），但完整候选链保留——
-    // 记忆视频失效时可沿链回退，用户也能在列表里换回其他 MV
-    fallbackChain = [rememberedOverride, ...fallbackChain.filter((c) => c.video.bvid !== rememberedOverride.video.bvid)]
-    best = rememberedOverride
-  }
+  let fallbackChain = prioritizeExplicitCandidates(candidates, rememberedOverride, developerDeclaration)
+  const best = fallbackChain[0]
   const topCandidates = fallbackChain.slice(0, TOP_CONFIRM_COUNT)
-  if (rememberedOverride || !best) {
+  if (rememberedOverride || developerDeclaration || !best) {
     if (!best) return { status: 'none', candidates: [], fallbackChain: [] }
     return finish({ status: 'auto', best, candidates: topCandidates, fallbackChain })
   }

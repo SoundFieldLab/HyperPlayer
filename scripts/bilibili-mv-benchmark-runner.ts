@@ -98,6 +98,7 @@ async function collectCase(item: CorpusCase): Promise<CaseResult> {
   activeRequestLog = requestLog
   try {
     const result = await findBestBilibiliMv(song, {
+      useDeveloperDeclarations: false,
       settings: {
         matchPreference: 'balanced',
         autoPlayStrictness: 'standard',
@@ -177,6 +178,7 @@ async function main() {
   } catch { /* optional metadata */ }
   const sourceFiles = [
     'src/services/bilibiliApi.ts',
+    'src/data/bilibiliMvDeclarations.ts',
     'server/bilibili-api.mjs',
     'scripts/bilibili-mv-benchmark-runner.ts',
     'benchmark/bilibili-mv/corpus.json',
