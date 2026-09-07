@@ -20,7 +20,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { memo, useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence, Reorder } from 'framer-motion'
-import { X, Settings as SettingsIcon, User, Palette, Sparkles, Info, ExternalLink, Github, ChevronRight, ChevronLeft, Trash2, Heart, Copy, ClipboardPaste, KeyRound, Code2, Users, BadgeCheck, CheckCircle2, Gift, Headphones, MonitorSmartphone, Gamepad2, Eye, EyeOff, FileText, Music, FolderHeart, Trash, AlertTriangle } from 'lucide-react'
+import { X, Settings as SettingsIcon, User, Palette, Sparkles, Info, ExternalLink, Github, ChevronRight, ChevronLeft, Trash2, Heart, Copy, ClipboardPaste, KeyRound, Code2, Users, BadgeCheck, CheckCircle2, Gift, Headphones, MonitorSmartphone, Gamepad2, Eye, EyeOff, FileText, Music, FolderHeart, Trash, AlertTriangle, ListMusic } from 'lucide-react'
 import LoginButton from './LoginButton'
 import type { AppleUserInfo } from '../services/appleAuth'
 import type { StemModelProgress } from '../electron'
@@ -36,6 +36,7 @@ import {
   type MusicPlatform,
 } from '../services/platforms'
 import HomeCustomizeModal from './HomeCustomizeModal'
+import PlaybackRadialMenuCustomizeModal from './PlaybackRadialMenuCustomizeModal'
 import DeviceInfoModal from './DeviceInfoModal'
 import AudioQualitySettingsModal from './AudioQualitySettingsModal'
 import FontPicker from './FontPicker'
@@ -62,10 +63,12 @@ import {
   loadAudioQualitySettings,
   type AudioQualityPreference,
 } from '../services/audioQualitySettings'
+import { getPlaybackRadialActions } from '../services/playbackRadialMenuSettings'
 import {
   getAppleMusicSettings,
   type AppleMusicSettings,
 } from '../services/appleMusic'
+import { isAppleDynamicCoverEnabled, setAppleDynamicCoverEnabled } from '../services/appleDynamicCover'
 import { checkBridgeRunning, ensureBridgeRunning, bridgeShowWindow, bridgeHideWindow, getState as getAppleBridgeState } from '../services/appleWebViewBridge'
 import BilibiliLoginPanel from './BilibiliLoginPanel'
 import BilibiliProfileModal from './BilibiliProfileModal'
@@ -99,13 +102,16 @@ type UpdateDetail = {
 type DeviceGrant = { feature: string; label: string; issuedAt: number; expiresAt: number | null; note?: string }
 type DeviceState = { status: 'idle' | 'loading' | 'ready' | 'error'; deviceId: string; storage?: 'registry' | 'file'; grants: DeviceGrant[]; message?: string }
 
-const audioQualityLabel = (quality: AudioQualityPreference) => ({
+const audioQualityLabel = (quality: AudioQualityPreference | 'aac' | 'hi-res-lossless' | 'atmos') => ({
   auto: '自动最高',
   standard: '标准',
   high: '高品质',
   'very-high': '超高品质',
   lossless: '无损',
   'hi-res': 'Hi-Res',
+  aac: 'AAC',
+  'hi-res-lossless': '高解析无损',
+  atmos: '空间音频',
 }[quality])
 
 const appLogoUrl = new URL('../../logo.png', import.meta.url).href
@@ -324,6 +330,7 @@ function SettingsPanel({
   const [appleMusic, setAppleMusic] = useState<AppleMusicSettings>(() => getAppleMusicSettings())
   // Apple 原生音源开关（Cider 式直连；默认开，localStorage 独立存储）
   const [appleNativeStreamEnabled, setAppleNativeStreamEnabled] = useState(() => localStorage.getItem('appleNativeStream') !== 'false')
+  const [appleDynamicCoverEnabled, setAppleDynamicCoverEnabledState] = useState(isAppleDynamicCoverEnabled)
 
   // Apple Music 播放面（WebView2 bridge）状态与窗口开关
   const [appleBridgeWindowVisible, setAppleBridgeWindowVisible] = useState(false)
@@ -428,6 +435,8 @@ function SettingsPanel({
   
   // 首页自定义弹窗状态
   const [showHomeCustomize, setShowHomeCustomize] = useState(false)
+  const [showPlaybackRadialCustomize, setShowPlaybackRadialCustomize] = useState(false)
+  const [playbackRadialActionCount, setPlaybackRadialActionCount] = useState(() => getPlaybackRadialActions().length)
   const [showAudioQuality, setShowAudioQuality] = useState(false)
   const [audioQualitySettings, setAudioQualitySettings] = useState(loadAudioQualitySettings)
 
@@ -435,6 +444,12 @@ function SettingsPanel({
     const handleAudioQualityChange = () => setAudioQualitySettings(loadAudioQualitySettings())
     window.addEventListener(AUDIO_QUALITY_SETTINGS_EVENT, handleAudioQualityChange)
     return () => window.removeEventListener(AUDIO_QUALITY_SETTINGS_EVENT, handleAudioQualityChange)
+  }, [])
+
+  useEffect(() => {
+    const sync = () => setPlaybackRadialActionCount(getPlaybackRadialActions().length)
+    window.addEventListener('waveforge-playback-radial-menu-settings-changed', sync)
+    return () => window.removeEventListener('waveforge-playback-radial-menu-settings-changed', sync)
   }, [])
 
   // 桌面播放器（独立置顶小窗口）设置
@@ -1481,6 +1496,8 @@ function SettingsPanel({
     download: StemModelProgress
   } | null>(null)
   const [stemModelProgress, setStemModelProgress] = useState<StemModelProgress | null>(null)
+  const [showStemModelDownloadDialog, setShowStemModelDownloadDialog] = useState(false)
+  const [showStemModelDeleteDialog, setShowStemModelDeleteDialog] = useState(false)
   const probeStemModelStatus = useCallback(async () => {
     try {
       const status = await window.electron?.stemModel?.getStatus?.()
@@ -1505,16 +1522,14 @@ function SettingsPanel({
     return () => off?.()
   }, [autoMixEnabled, autoMixEnhanced, probeStemModelStatus])
   const handleStemModelDownload = () => {
-    const confirmed = window.confirm('下载 HTDemucs 分轨模型与运行环境？\n\n下载约 138MB，安装后 AutoMix 增强版会自动使用人声/鼓/贝斯分轨混音；不下载也可继续使用 DSP 兼容模式。')
-    if (!confirmed) return
+    setShowStemModelDownloadDialog(false)
     void window.electron?.stemModel?.download?.()
   }
   const handleStemModelResume = () => { void window.electron?.stemModel?.download?.() }
   const handleStemModelPause = () => { void window.electron?.stemModel?.pause?.() }
   const handleStemModelCancel = () => { void window.electron?.stemModel?.cancel?.(); setStemModelProgress(null) }
   const handleStemModelDelete = () => {
-    const confirmed = window.confirm('删除 HTDemucs 分轨模型和运行环境？\n\nAutoMix 增强版会继续使用 DSP 兼容模式，标准 AutoMix 不受影响。')
-    if (!confirmed) return
+    setShowStemModelDeleteDialog(false)
     window.dispatchEvent(new Event('waveforge:track-stem-cache-clearing'))
     void window.electron?.stemModel?.delete?.().then(result => {
       if (result?.ok) {
@@ -2471,6 +2486,27 @@ function SettingsPanel({
                     </button>
                   </div>
 
+                  {/* 右键轮盘 */}
+                  <div>
+                    <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>播放交互</h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowPlaybackRadialCustomize(true)}
+                      className={`w-full ${bgCard} rounded-xl p-4 border ${borderColor} ${hoverBg} transition-all flex items-center justify-between group`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${accentColor}20` }}>
+                          <ListMusic className="w-5 h-5" style={{ color: accentColor }} />
+                        </div>
+                        <div className="text-left min-w-0">
+                          <div className={`${textPrimary} font-medium`}>右键轮盘</div>
+                          <div className={`${textSecondary} text-sm truncate`}>播放页长按右键呼出 · 已配置 {playbackRadialActionCount} 个功能</div>
+                        </div>
+                      </div>
+                      <ChevronRight className={`w-5 h-5 ${textTertiary} flex-shrink-0 group-hover:translate-x-1 transition-transform`} />
+                    </button>
+                  </div>
+
                   {/* 播放音质 */}
                   <div>
                     <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>播放音质</h3>
@@ -2485,7 +2521,7 @@ function SettingsPanel({
                         <div className="text-left min-w-0">
                         <div className={`${textPrimary} font-medium`}>各平台播放音质</div>
                         <div className={`${textSecondary} text-sm truncate`}>
-                          网易云：{audioQualityLabel(audioQualitySettings.netease)} · QQ音乐：{audioQualityLabel(audioQualitySettings.qq)} · Spotify：{audioQualityLabel(audioQualitySettings.spotify)} · 酷狗：{audioQualityLabel(audioQualitySettings.kugou)} · 汽水：{audioQualityLabel(audioQualitySettings.soda)}
+                          Apple Music：{audioQualityLabel(audioQualitySettings.apple)} · 网易云：{audioQualityLabel(audioQualitySettings.netease)} · QQ音乐：{audioQualityLabel(audioQualitySettings.qq)} · Spotify：{audioQualityLabel(audioQualitySettings.spotify)} · 酷狗：{audioQualityLabel(audioQualitySettings.kugou)} · 汽水：{audioQualityLabel(audioQualitySettings.soda)}
                         </div>
                         </div>
                       </div>
@@ -3552,7 +3588,7 @@ function SettingsPanel({
                                   </div>
                                   <div className="flex flex-shrink-0 items-center gap-1.5">
                                     {stemModelStatus?.installed ? (
-                                      <button type="button" onClick={handleStemModelDelete} className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ color: '#f87171', background: playerTheme === 'dark' ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>删除</button>
+                                      <button type="button" onClick={() => setShowStemModelDeleteDialog(true)} className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ color: '#f87171', background: playerTheme === 'dark' ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>删除</button>
                                     ) : stemModelProgress?.status === 'downloading' ? (
                                       <button type="button" onClick={handleStemModelPause} className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ color: playerTheme === 'dark' ? '#f2f3f7' : '#1c1d22', background: playerTheme === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>暂停</button>
                                     ) : stemModelProgress?.status === 'paused' ? (
@@ -3561,7 +3597,7 @@ function SettingsPanel({
                                         <button type="button" onClick={handleStemModelCancel} className="rounded-lg px-2 py-1.5 text-xs" style={{ color: textSecondary }}>取消</button>
                                       </>
                                     ) : (
-                                      <button type="button" onClick={handleStemModelDownload} disabled={stemModelStatus?.supported === false} className="rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40" style={{ background: accentColor }}>下载模型</button>
+                                      <button type="button" onClick={() => setShowStemModelDownloadDialog(true)} disabled={stemModelStatus?.supported === false} className="rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40" style={{ background: accentColor }}>下载模型</button>
                                     )}
                                   </div>
                                 </div>
@@ -3882,6 +3918,28 @@ function SettingsPanel({
                             className="sr-only peer"
                           />
                           <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: appleMusic.enabled ? accentColor : '' }}></div>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Apple Music 动态封面 */}
+                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`}>
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <div className={`${textPrimary} font-medium mb-1`}>Apple Music 动态封面</div>
+                          <div className={`${textSecondary} text-sm`}>播放页优先显示 Apple editorialVideo；不可用时自动回退静态封面</div>
+                        </div>
+                        <label className="relative inline-flex shrink-0 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={appleDynamicCoverEnabled}
+                            onChange={(event) => {
+                              setAppleDynamicCoverEnabledState(event.target.checked)
+                              setAppleDynamicCoverEnabled(event.target.checked)
+                            }}
+                            className="sr-only peer"
+                          />
+                          <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: appleDynamicCoverEnabled ? accentColor : '' }} />
                         </label>
                       </div>
                     </div>
@@ -4775,6 +4833,14 @@ function SettingsPanel({
         }}
       />
       
+      {/* 播放轮盘设置弹窗 */}
+      <PlaybackRadialMenuCustomizeModal
+        show={showPlaybackRadialCustomize}
+        onClose={() => setShowPlaybackRadialCustomize(false)}
+        playerTheme={playerTheme}
+        accentColor={accentColor}
+      />
+
       {/* 缓存清理弹窗 */}
       {/* 播放音质弹窗 */}
       <AudioQualitySettingsModal
@@ -4789,6 +4855,7 @@ function SettingsPanel({
         spotifyLoggedIn={spotifyLoggedIn}
         kugouLoggedIn={kugouLoggedIn}
         sodaLoggedIn={sodaLoggedIn}
+        appleLoggedIn={appleLoggedIn}
       />
 
       {/* 远程遥控器设置弹窗 */}
@@ -5411,6 +5478,108 @@ function SettingsPanel({
                 style={{ backgroundColor: '#ef4444', boxShadow: deleteLicenseCountdown > 0 ? undefined : '0 10px 28px rgba(239, 68, 68, 0.24)' }}
               >
                 确定{deleteLicenseCountdown > 0 ? `（${deleteLicenseCountdown}）` : ''}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* HTDemucs 分轨引擎下载确认弹窗 */}
+      {showStemModelDownloadDialog && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)' }}
+          onClick={() => setShowStemModelDownloadDialog(false)}
+        >
+          <motion.div
+            data-tv-scope
+            initial={{ scale: 0.94, opacity: 0, y: 12 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.94, opacity: 0, y: 12 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl relative"
+          >
+            <div className="absolute inset-0 rounded-3xl overflow-hidden">
+              <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.3) 0%, rgba(20,20,30,0.5) 50%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)' }} />
+              <div className="absolute inset-0 rounded-3xl" style={{ border: '1px solid rgba(255,255,255,0.2)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.15)', pointerEvents: 'none' }} />
+            </div>
+            <div className="relative z-10 p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'rgba(251,191,36,0.18)' }}>
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-semibold text-white">下载增强版分轨引擎</h3>
+                  <p className="text-white/70 text-sm mt-1 leading-relaxed">
+                    将下载 HTDemucs 模型与运行环境（约 138MB）。安装后 AutoMix 增强版会自动使用人声、鼓和贝斯分轨混音。
+                  </p>
+                  <p className="text-white/40 text-xs mt-1.5">暂不下载也可继续使用 DSP 兼容模式。</p>
+                </div>
+                <button type="button" onClick={() => setShowStemModelDownloadDialog(false)} className="p-2 rounded-full transition-colors hover:bg-white/15 -m-1">
+                  <X className="w-5 h-5 text-white/60" />
+                </button>
+              </div>
+            </div>
+            <div className="relative z-10 flex gap-3 p-4">
+              <button type="button" onClick={() => setShowStemModelDownloadDialog(false)} className="flex-1 py-2.5 px-4 text-white/80 rounded-xl transition-colors hover:bg-white/10" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                取消
+              </button>
+              <button type="button" onClick={handleStemModelDownload} className="flex-1 py-2.5 px-4 rounded-xl font-medium text-white transition-transform hover:scale-[1.02]" style={{ background: 'linear-gradient(135deg, #7c6cff, #5a4bd8)', boxShadow: '0 4px 16px rgba(124,108,255,0.4)' }}>
+                确认下载
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* HTDemucs 分轨引擎删除确认弹窗 */}
+      {showStemModelDeleteDialog && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)' }}
+          onClick={() => setShowStemModelDeleteDialog(false)}
+        >
+          <motion.div
+            data-tv-scope
+            initial={{ scale: 0.94, opacity: 0, y: 12 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.94, opacity: 0, y: 12 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl relative"
+          >
+            <div className="absolute inset-0 rounded-3xl overflow-hidden">
+              <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.3) 0%, rgba(20,20,30,0.5) 50%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)' }} />
+              <div className="absolute inset-0 rounded-3xl" style={{ border: '1px solid rgba(255,255,255,0.2)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.15)', pointerEvents: 'none' }} />
+            </div>
+            <div className="relative z-10 p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'rgba(239,68,68,0.18)' }}>
+                  <AlertTriangle className="w-5 h-5 text-red-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-semibold text-white">删除增强版分轨引擎</h3>
+                  <p className="text-white/60 text-sm mt-1">确定要删除 HTDemucs 模型与运行环境吗？</p>
+                  <p className="text-white/40 text-xs mt-1.5">删除后增强版会继续使用 DSP 兼容模式，标准 AutoMix 不受影响。</p>
+                </div>
+                <button type="button" onClick={() => setShowStemModelDeleteDialog(false)} className="p-2 rounded-full transition-colors hover:bg-white/15 -m-1">
+                  <X className="w-5 h-5 text-white/60" />
+                </button>
+              </div>
+            </div>
+            <div className="relative z-10 flex gap-3 p-4">
+              <button type="button" onClick={() => setShowStemModelDeleteDialog(false)} className="flex-1 py-2.5 px-4 text-white/80 rounded-xl transition-colors hover:bg-white/10" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                取消
+              </button>
+              <button type="button" onClick={handleStemModelDelete} className="flex-1 py-2.5 px-4 rounded-xl font-medium text-white" style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', boxShadow: '0 4px 16px rgba(239,68,68,0.4)' }}>
+                删除
               </button>
             </div>
           </motion.div>
