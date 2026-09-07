@@ -7814,12 +7814,14 @@ function App() {
                 onContextMenuOpen={handlePlaybackContextMenuOpen}
               />
               {/* 沉浸模式控制按钮 - 右上角（看歌正常播放时由播放器内部控件接管；
-                  真正无视频/失败时经 MaybePortal 恢复全局入口）。 */}
-              {(lyricDisplayMode !== 'video' || watchSearchFailed) && (
+                  真正无视频/失败时经 MaybePortal 恢复全局入口；
+                  摩登模式改用自身左下角页脚控件，全局入口不渲染）。 */}
+              {((lyricDisplayMode !== 'video' && lyricDisplayMode !== 'modeng') || watchSearchFailed) && (
               <MaybePortal active={lyricDisplayMode === 'video'}>
                 <LazyImmersiveControls
                   coverColor={playbackCoverColor}
                   onHomeClick={handlePlayerHome}
+                  hideHome={lyricDisplayMode === 'modeng'}
                 onOpenMixingStudio={(anchorRect) => {
                   if (anchorRect) {
                     mixingStudioAnchorRef.current = { x: anchorRect.x, y: anchorRect.y, width: anchorRect.width, height: anchorRect.height }
@@ -8155,7 +8157,7 @@ function App() {
                   onRetry={() => { void loadAndPlaySong(currentSong, currentIndex, [currentSong]) }}
                 />
               </motion.div>
-            ) : isPureMusic ? (
+            ) : isPureMusic && lyricDisplayMode !== 'modeng' ? (
               /* 纯音乐愭椂灞呬腑显示 */
               <motion.div
                 key="no-lyrics-player"
@@ -8601,7 +8603,7 @@ function App() {
           )}
 
           {/* 全局播放器固定在底部；真正无视频/失败时通过 portal 恢复音频控制。 */}
-          {currentSong && !showHome && lyricDisplayMode !== 'modeng' && (lyricDisplayMode !== 'video' || watchSearchFailed) && (
+          {currentSong && !showHome && lyricDisplayMode !== 'modeng' && ((lyricDisplayMode !== 'video' && lyricDisplayMode !== 'modeng') || watchSearchFailed) && (
             <MaybePortal active={lyricDisplayMode === 'video'}>
             <LivePlayerControls
                       playbackTimeStore={audioPlayer.playbackTimeStore}

@@ -3,7 +3,6 @@ import { AudioLines, Captions, Film, Home, Languages } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import QuickSettings from './QuickSettings'
 import { useTvMode, useRemoteCursorMode } from '../tv/tvCore'
-import StemMixerPopover, { type TrackStemControlModel } from './StemMixerPopover'
 
 interface ImmersiveControlsProps {
   onHomeClick: () => void
@@ -19,8 +18,8 @@ interface ImmersiveControlsProps {
   mvBackgroundEnabled?: boolean
   playerTheme?: 'light' | 'dark'
   isPureMusic?: boolean // 新增：是否为纯音乐
-  stemControl?: TrackStemControlModel
-  coverColor: string
+  /** 隐藏右上角 Home 按钮（摩登模式改用自身左下角页脚的 Home，避免重复） */
+  hideHome?: boolean
 }
 
 export default function ImmersiveControls({
@@ -36,8 +35,7 @@ export default function ImmersiveControls({
   mvBackgroundEnabled = false,
   playerTheme = 'dark',
   isPureMusic = false, // 默认非纯音乐
-  stemControl,
-  coverColor,
+  hideHome = false,
 }: ImmersiveControlsProps) {
   const [isVisible, setIsVisible] = useState(true)
   const [isHovered, setIsHovered] = useState(false)
@@ -47,6 +45,24 @@ export default function ImmersiveControls({
   const effectiveHovered = (tvMode && !remoteCursorMode) || isHovered
   // TV 紧凑布局：按钮/间距更小、更适配遥控器排版（手机遥控器连上时用 PC 式布局）
   const tvCompact = tvMode && !remoteCursorMode
+
+  const [accentColor, setAccentColor] = useState(() => {
+    const saved = localStorage.getItem('accentColor')
+    return saved || '#3B82F6'
+  })
+  
+  // 监听主题色变化
+  useEffect(() => {
+    const handleAccentColorChange = (e: CustomEvent) => {
+      setAccentColor(e.detail)
+    }
+    
+    window.addEventListener('accentColorChanged', handleAccentColorChange as EventListener)
+    
+    return () => {
+      window.removeEventListener('accentColorChanged', handleAccentColorChange as EventListener)
+    }
+  }, [])
 
   useEffect(() => {
     // 当鼠标离开后3秒自动隐藏（TV 模式常驻，不自动隐藏）
@@ -69,20 +85,15 @@ export default function ImmersiveControls({
   }
 
   const showMvButton = typeof onMvBackgroundToggle === 'function'
-  const translationRow = hasTranslation ? 1 : 0
-  const romanRow = hasRoman ? 1 : 0
-  const mvRow = showMvButton ? 1 : 0
-  const stemRow = stemControl ? 1 : 0
-  const featureButtonCount = translationRow + romanRow + mvRow + stemRow
+  const featureButtonCount = (hasTranslation ? 1 : 0) + (hasRoman ? 1 : 0) + (showMvButton ? 1 : 0) // MV 背景按钮常驻
   const rowRem = tvCompact ? 3.2 : 4 // 每个按钮行占位高度（rem），TV 紧凑更小
   // 各按钮顶位置都按同一行高网格计算（不能混用 Tailwind top-16=4rem：TV 紧凑档会错位/重叠）
-  const firstFeatureTop = tvCompact ? 3.2 : 4
-  const translationButtonTop = `${firstFeatureTop}rem`
-  const romanButtonTop = `${firstFeatureTop + translationRow * rowRem}rem`
-  const mvButtonTop = `${firstFeatureTop + (translationRow + romanRow) * rowRem}rem`
-  const stemButtonTop = `${firstFeatureTop + (translationRow + romanRow + mvRow) * rowRem}rem`
-  const quickSettingsTop = `${firstFeatureTop + featureButtonCount * rowRem}rem`
-  const mixingStudioTop = `${firstFeatureTop + (featureButtonCount + 1) * rowRem}rem`
+  const translationButtonTop = `${(tvCompact ? 3.2 : 4)}rem`
+  const romanButtonTop = hasTranslation ? `${(tvCompact ? 6.4 : 8)}rem` : `${(tvCompact ? 3.2 : 4)}rem`
+  // MV 背景按钮：紧跟翻译/罗马音功能行的下一行
+  const mvButtonTop = `${(tvCompact ? 3.2 : 4) + (featureButtonCount - 1) * rowRem}rem`
+  const quickSettingsTop = `${(tvCompact ? 3.2 : 4) + featureButtonCount * rowRem}rem`
+  const mixingStudioTop = `${(tvCompact ? 6.4 : 8) + featureButtonCount * rowRem}rem`
   const btnPad = tvCompact ? 'p-2.5' : 'p-3' // 按钮内边距
   const iconCls = tvCompact ? 'w-5 h-5' : 'w-6 h-6' // 图标尺寸
   const featureButtonTransition = {
@@ -92,12 +103,13 @@ export default function ImmersiveControls({
 
   return (
     <div
-      className="fixed right-3 top-[34px] z-40"
+      className="fixed top-[34px] right-0 z-40"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       style={{ width: tvCompact ? '104px' : '120px', height: tvCompact ? `${158 + featureButtonCount * 38}px` : `${214 + featureButtonCount * 50}px` }}
     >
       {/* Home按钮 */}
+      {!hideHome && (
       <motion.button
         initial={{ x: 0, opacity: 1 }}
         animate={{
@@ -113,7 +125,6 @@ export default function ImmersiveControls({
         whileHover={{ scale: 1.1, x: -2 }}
         whileTap={{ scale: 0.9 }}
         onClick={onHomeClick}
-        aria-label="返回来源模式"
         className={`absolute top-0 right-6 ${btnPad} rounded-full backdrop-blur-md border transition-colors ${
           playerTheme === 'dark'
             ? 'bg-black/40 hover:bg-black/60 border-white/20'
@@ -122,6 +133,7 @@ export default function ImmersiveControls({
       >
         <Home className={`${iconCls} ${playerTheme === 'dark' ? 'text-white' : 'text-black'}`} />
       </motion.button>
+      )}
 
       {/* 翻译按钮 - 只在有翻译时显示 */}
       {hasTranslation && (
@@ -142,17 +154,17 @@ export default function ImmersiveControls({
           style={{
             top: translationButtonTop,
             backgroundColor: translationEnabled
-              ? coverColor
+              ? accentColor
               : playerTheme === 'dark' 
                 ? 'rgba(0,0,0,0.4)' 
                 : 'rgba(255,255,255,0.5)',
             borderColor: translationEnabled
-              ? `${coverColor}66`
+              ? `${accentColor}66`
               : playerTheme === 'dark'
                 ? 'rgba(255,255,255,0.2)'
                 : 'rgba(0,0,0,0.2)',
             boxShadow: translationEnabled
-              ? `0 0 20px ${coverColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
+              ? `0 0 20px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
               : '0 4px 12px rgba(0,0,0,0.15)',
           }}
         >
@@ -193,17 +205,17 @@ export default function ImmersiveControls({
           style={{
             top: romanButtonTop,
             backgroundColor: romanEnabled
-              ? coverColor
+              ? accentColor
               : playerTheme === 'dark'
                 ? 'rgba(0,0,0,0.4)'
                 : 'rgba(255,255,255,0.5)',
             borderColor: romanEnabled
-              ? `${coverColor}66`
+              ? `${accentColor}66`
               : playerTheme === 'dark'
                 ? 'rgba(255,255,255,0.2)'
                 : 'rgba(0,0,0,0.2)',
             boxShadow: romanEnabled
-              ? `0 0 20px ${coverColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
+              ? `0 0 20px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
               : '0 4px 12px rgba(0,0,0,0.15)',
           }}
         >
@@ -244,17 +256,17 @@ export default function ImmersiveControls({
         style={{
           top: mvButtonTop,
           backgroundColor: mvBackgroundEnabled
-            ? coverColor
+            ? accentColor
             : playerTheme === 'dark'
               ? 'rgba(0,0,0,0.4)'
               : 'rgba(255,255,255,0.5)',
           borderColor: mvBackgroundEnabled
-            ? `${coverColor}66`
+            ? `${accentColor}66`
             : playerTheme === 'dark'
               ? 'rgba(255,255,255,0.2)'
               : 'rgba(0,0,0,0.2)',
           boxShadow: mvBackgroundEnabled
-            ? `0 0 20px ${coverColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
+            ? `0 0 20px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
             : '0 4px 12px rgba(0,0,0,0.15)',
         }}
       >
@@ -273,31 +285,6 @@ export default function ImmersiveControls({
           }}
         />
       </motion.button>
-      )}
-
-      {stemControl && (
-        <motion.div
-          key="stem-mixer-button"
-          initial={{ x: 44, opacity: 0, scale: 0.96, filter: 'blur(6px)' }}
-          animate={{
-            x: isVisible ? 0 : 44,
-            opacity: isVisible ? 1 : 0,
-            scale: isVisible ? 1 : 0.96,
-            filter: isVisible ? 'blur(0px)' : 'blur(6px)',
-          }}
-          transition={featureButtonTransition}
-          className="absolute right-6"
-          style={{ top: stemButtonTop }}
-        >
-          <StemMixerPopover
-            control={stemControl}
-            accentColor={coverColor}
-            theme={playerTheme}
-            variant="immersive"
-            placement="left"
-            size={tvCompact ? 'compact' : 'default'}
-          />
-        </motion.div>
       )}
 
       {/* 快速设置按钮 */}

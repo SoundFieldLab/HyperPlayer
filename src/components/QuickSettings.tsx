@@ -7,11 +7,22 @@ interface QuickSettingsProps {
   forceClose?: boolean
   playerTheme?: 'light' | 'dark'
   isPureMusic?: boolean
+  /** 自定义触发按钮 className（如摩登模式的 modeng-btn-chip 玻璃按钮）；不传用默认圆钮 */
+  triggerClassName?: string
+  /** 触发按钮宽/高（px，自定义样式时配合 chip 尺寸用） */
+  triggerWidth?: number
+  triggerHeight?: number
+  /** 触发图标尺寸（px，默认 24） */
+  triggerIconSize?: number
+  /** 触发图标颜色（自定义样式时传入匹配 chip 的文字色） */
+  triggerIconColor?: string
+  /** 面板向上展开（放在左下角/底部时用），默认 top-14 向下 */
+  expandUp?: boolean
 }
 
 type CoverPulseMode = 'dynamic' | 'soft' | 'restless'
 type WordByWordEffectMode = 'clear' | 'soft' | 'apple'
-type LyricDisplayMode = 'modern' | 'immersive' | 'wallpaper' | 'glorious' | 'video' | 'pv'
+type LyricDisplayMode = 'modern' | 'immersive' | 'wallpaper' | 'glorious' | 'modeng' | 'video' | 'pv'
 
 // 大体积设置面板（约 900 行 JSX）：props 均为原语（forceClose/playerTheme/isPureMusic），
 // memo 让 1Hz 播放重渲染（经 ImmersiveControls 传递）不再连带重渲染整个面板
@@ -19,6 +30,12 @@ export default memo(function QuickSettings({
   forceClose,
   playerTheme = 'dark',
   isPureMusic = false,
+  triggerClassName,
+  triggerWidth,
+  triggerHeight,
+  triggerIconSize = 24,
+  triggerIconColor,
+  expandUp = false,
 }: QuickSettingsProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [activeSection, setActiveSection] = useState<'appearance' | 'features'>('appearance')
@@ -62,7 +79,7 @@ export default memo(function QuickSettings({
       }
 
       const saved = localStorage.getItem('lyricDisplayMode')
-      setLyricDisplayMode(saved === 'immersive' || saved === 'wallpaper' || saved === 'glorious' || saved === 'video' || saved === 'pv' ? saved : 'modern')
+      setLyricDisplayMode(saved === 'immersive' || saved === 'wallpaper' || saved === 'glorious' || saved === 'modeng' || saved === 'video' || saved === 'pv' ? saved : 'modern')
     }
 
     window.addEventListener('lyricDisplayModeChanged', handleLyricDisplayModeChange)
@@ -148,7 +165,7 @@ export default memo(function QuickSettings({
 
   const [lyricDisplayMode, setLyricDisplayMode] = useState<LyricDisplayMode>(() => {
     const saved = localStorage.getItem('lyricDisplayMode')
-    return saved === 'immersive' || saved === 'wallpaper' || saved === 'glorious' || saved === 'video' || saved === 'pv' ? saved : 'modern'
+    return saved === 'immersive' || saved === 'wallpaper' || saved === 'glorious' || saved === 'modeng' || saved === 'video' || saved === 'pv' ? saved : 'modern'
   })
 
   // PV 歌词模式切换入口（全自动编排，无设置面板）
@@ -157,6 +174,17 @@ export default memo(function QuickSettings({
     const saved = localStorage.getItem('modernAudioVisualizerEnabled')
     return saved !== null ? JSON.parse(saved) : true
   })
+
+  // 摩登模式"左右交替歌词"（独立 key waveforge_modeng_side_align，仅 modeng 显示该项，不影响其它模式）
+  const [modengSideAlign, setModengSideAlign] = useState<boolean>(() => {
+    try { return localStorage.getItem('waveforge_modeng_side_align') === 'true' } catch { return false }
+  })
+  const handleModengSideAlignToggle = () => {
+    const next = !modengSideAlign
+    setModengSideAlign(next)
+    try { localStorage.setItem('waveforge_modeng_side_align', JSON.stringify(next)) } catch { /* noop */ }
+    window.dispatchEvent(new CustomEvent('waveforge:modeng-side-align', { detail: next }))
+  }
 
   const [hideImmersiveSongInfo, setHideImmersiveSongInfo] = useState(() => {
     const saved = localStorage.getItem('hideImmersiveSongInfo')
@@ -332,17 +360,22 @@ export default memo(function QuickSettings({
       `}</style>
 
       <motion.button
-        whileHover={{ scale: 1.1, x: -2 }}
+        whileHover={{ scale: 1.06, x: -1 }}
         whileTap={{ scale: 0.9 }}
         onClick={() => setIsOpen(!isOpen)}
-        className={`p-3 rounded-full backdrop-blur-md border transition-colors ${
-          playerTheme === 'dark'
-            ? 'bg-black/40 hover:bg-black/60 border-white/20'
-            : 'bg-white/40 hover:bg-white/60 border-black/20'
-        }`}
+        style={{ width: triggerWidth, height: triggerHeight }}
+        className={
+          triggerClassName ??
+          `p-3 rounded-full backdrop-blur-md border transition-colors ${
+            playerTheme === 'dark'
+              ? 'bg-black/40 hover:bg-black/60 border-white/20'
+              : 'bg-white/40 hover:bg-white/60 border-black/20'
+          }`
+        }
       >
         <SlidersHorizontal
-          className={`w-6 h-6 ${playerTheme === 'dark' ? 'text-white' : 'text-black'} transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          style={{ width: triggerIconSize, height: triggerIconSize, ...(triggerIconColor ? { color: triggerIconColor } : {}) }}
+          className={`${playerTheme === 'dark' ? 'text-white' : 'text-black'} transition-transform ${isOpen ? 'rotate-180' : ''}`}
         />
       </motion.button>
 
@@ -358,11 +391,11 @@ export default memo(function QuickSettings({
             />
 
             <motion.div
-              initial={{ opacity: 0, scale: 0.9, x: 20, y: -20 }}
+              initial={{ opacity: 0, scale: 0.9, x: 20, y: expandUp ? -20 : 20 }}
               animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, x: 20, y: -20 }}
+              exit={{ opacity: 0, scale: 0.9, x: 20, y: expandUp ? -20 : 20 }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="absolute top-14 right-0 z-50 w-80 rounded-3xl overflow-hidden"
+              className={`absolute ${expandUp ? 'bottom-14' : 'top-14'} right-0 z-50 w-80 rounded-3xl overflow-hidden`}
             >
               <div
                 className="absolute inset-0"
@@ -826,6 +859,35 @@ export default memo(function QuickSettings({
                         </button>
                       </div>
                     </div>
+
+                    {localStorage.getItem('lyricDisplayMode') === 'modeng' && (
+                      <div className="flex items-center justify-between">
+                        <span className={`text-sm ${playerTheme === 'dark' ? 'text-white/80' : 'text-black/80'}`}>
+                          左右交替歌词
+                        </span>
+                        <button
+                          onClick={handleModengSideAlignToggle}
+                          className="relative w-12 h-7 rounded-full transition-all duration-300"
+                          style={{
+                            backgroundColor: modengSideAlign
+                              ? accentColor
+                              : playerTheme === 'dark'
+                              ? 'rgba(255,255,255,0.15)'
+                              : 'rgba(0,0,0,0.15)',
+                            boxShadow: modengSideAlign
+                              ? `0 0 12px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.2)`
+                              : 'inset 0 1px 2px rgba(0,0,0,0.1)',
+                          }}
+                        >
+                          <motion.div
+                            animate={{ x: modengSideAlign ? 22 : 2, scale: modengSideAlign ? 1 : 0.9 }}
+                            transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                            className="absolute top-1 w-5 h-5 bg-white rounded-full"
+                            style={{ boxShadow: '0 2px 4px rgba(0,0,0,0.2), 0 0 2px rgba(0,0,0,0.1)' }}
+                          />
+                        </button>
+                      </div>
+                    )}
 
                     {!isPureMusic && (
                       <>
