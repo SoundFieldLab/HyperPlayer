@@ -1,3 +1,77 @@
+import type { Song } from '../services/musicApi'
+import type { MusicPlatform } from '../services/platforms'
+
+export type EntitlementTier = 'unknown' | 'free' | 'vip' | 'svip'
+
+export type PlatformEntitlements = Record<MusicPlatform, EntitlementTier>
+
+const TIER_RANK: Record<EntitlementTier, number> = {
+  unknown: -1,
+  free: 0,
+  vip: 1,
+  svip: 2,
+}
+
+export const normalizeEntitlementTier = (value: unknown): EntitlementTier => {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (normalized === 'free' || normalized === 'vip' || normalized === 'svip') return normalized
+  return 'unknown'
+}
+
+export const entitlementTierFromVip = (isVip: boolean): EntitlementTier => isVip ? 'vip' : 'free'
+
+export const entitlementTierFromSpotifyProduct = (product: unknown): EntitlementTier => {
+  const normalized = String(product ?? '').trim().toLowerCase()
+  if (normalized === 'premium') return 'vip'
+  if (normalized === 'free' || normalized === 'open') return 'free'
+  return 'unknown'
+}
+
+export const entitlementTierFromSodaMembership = (membership: {
+  isVip?: boolean
+  isSvip?: boolean
+  vipLabel?: string
+  membershipKnown?: boolean
+  membershipStatus?: unknown
+  vipLevel?: number
+} | null | undefined): EntitlementTier => {
+  if (!membership) return 'unknown'
+  const reported = normalizeEntitlementTier(membership.membershipStatus)
+  if (reported !== 'unknown') return reported
+  if (membership.isSvip || Number(membership.vipLevel) >= 2 || /\bsvip\b/i.test(membership.vipLabel || '')) return 'svip'
+  if (membership.isVip || Number(membership.vipLevel) === 1 || /\bvip\b/i.test(membership.vipLabel || '')) return 'vip'
+  return membership.membershipKnown ? 'free' : 'unknown'
+}
+
+export const createPlatformEntitlements = (values: Partial<PlatformEntitlements> = {}): PlatformEntitlements => ({
+  netease: 'unknown',
+  qq: 'unknown',
+  apple: 'unknown',
+  spotify: 'unknown',
+  kugou: 'unknown',
+  soda: 'unknown',
+  ...values,
+})
+
+export const getSongRequiredTier = (song: Pick<Song, 'requiredTier' | 'vip'>): EntitlementTier => {
+  const explicit = normalizeEntitlementTier(song.requiredTier)
+  if (explicit !== 'unknown') return explicit
+  return song.vip ? 'vip' : 'free'
+}
+
+export const entitlementSatisfies = (activeTier: EntitlementTier, requiredTier: EntitlementTier): boolean => {
+  if (activeTier === 'unknown' || requiredTier === 'unknown') return false
+  return TIER_RANK[activeTier] >= TIER_RANK[requiredTier]
+}
+
+export const shouldShowEntitlementBadge = (
+  song: Pick<Song, 'requiredTier' | 'vip'>,
+  activeTier: EntitlementTier,
+): boolean => {
+  const requiredTier = getSongRequiredTier(song)
+  return requiredTier !== 'free' && !entitlementSatisfies(activeTier, requiredTier)
+}
+
 const isActiveFlag = (value: unknown) => {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value > 0

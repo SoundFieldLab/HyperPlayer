@@ -34,7 +34,7 @@ import {
 } from 'lucide-react'
 import PluginShortcuts from './PluginShortcuts'
 import type { Song } from '../services/musicApi'
-import { getNeteaseBanner, getQQBanner, neteaseRecommendDislike, neteaseFmTrash } from '../services/musicApi'
+import { neteaseRecommendDislike, neteaseFmTrash } from '../services/musicApi'
 import {
   fetchExploreChannel,
   fetchExploreChart,
@@ -52,8 +52,6 @@ import type { PlaybackTimeStore } from '../audio/playbackTimeStore'
 import MiniPlayer from './MiniPlayer'
 import PlaylistDetailPanel from './PlaylistDetailPanel'
 import { AppleExplorePanel } from './AppleExplorePanel'
-import QQMusicJourney from './QQMusicJourney'
-import NeteaseMusicJourney from './NeteaseMusicJourney'
 import { getAppleLibraryPlaylists, APPLE_EXPLORE_COUNTRIES } from '../services/appleCatalog'
 import { fetchApplePlaylistTracksForPlay, fetchLibraryPlaylistTracksForPlay } from '../services/appleWebService'
 import { getPlatformCapabilities, getVisiblePlatforms, PLATFORM_VISIBILITY_EVENT, PLATFORM_ORDER_EVENT } from '../services/platforms'
@@ -66,11 +64,17 @@ import ExploreSettingsPanel, {
   type ExploreCardOpacity,
 } from './ExploreSettingsPanel'
 import SongContextMenu from './SongContextMenu'
+import PlaylistContextMenu from './PlaylistContextMenu'
 import MVExploreModal from './MVExploreModal'
-import { getUserPlaylists } from '../services/playlistService'
+import { getUserPlaylists, subscribePlaylist } from '../services/playlistService'
+import { isPlaylistOwner } from '../services/playlistOwnership'
 import type { PlaybackOrigin, SongSelectHandler } from '../types/playbackNavigation'
 import type { MirrorActionId } from '../services/globalSettingsRegistry'
 import { preloadOnIdle } from '../utils/lazyPreload'
+import ScrollToTop from './ScrollToTop'
+import QQExplorePage from '../features/qqExplore/QQExplorePage'
+import NeteaseExplorePage from '../features/neteaseExplore/NeteaseExplorePage'
+import { shouldShowEntitlementBadge, type PlatformEntitlements } from '../utils/musicEntitlements'
 
 // 全局设置镜像里的共享弹窗（按需加载）
 const LazyAudioQualityModal = lazy(() => import('./AudioQualitySettingsModal'))
@@ -114,6 +118,7 @@ interface ExploreViewProps {
   accentColor?: string
   playerTheme?: 'light' | 'dark'
   authRevision?: number
+  platformEntitlements: PlatformEntitlements
   neteaseLoggedIn: boolean
   neteaseUsername: string
   neteaseAvatar?: string
@@ -150,8 +155,8 @@ interface ExploreViewProps {
   onOpenArtist?: (artistId: string, platform: ExplorePlatform) => void
   onOpenAlbum?: (albumId: string, platform: ExplorePlatform) => void
   onPlayNext?: (song: Song) => void
-  onAddToFavorites?: (song: Song) => void
-  onRemoveFromFavorites?: (song: Song) => void | Promise<unknown>
+  onAddToFavorites?: (song: Song) => void | Promise<boolean>
+  onRemoveFromFavorites?: (song: Song) => void | Promise<boolean>
   onAddToPlaylist?: (song: Song, playlistId: string) => void
   onViewComments?: (song: Song) => void
   onCopyInfo?: (song: Song) => void
@@ -514,6 +519,7 @@ function ExploreView({
   accentColor = '#8b5cf6',
   playerTheme = 'dark',
   authRevision = 0,
+  platformEntitlements,
   neteaseLoggedIn,
   neteaseUsername,
   neteaseAvatar,
@@ -599,6 +605,7 @@ function ExploreView({
   const [detailError, setDetailError] = useState('')
   const detailRequestRef = useRef(0)
   const detailControllerRef = useRef<AbortController | null>(null)
+  const detailRetryRef = useRef<(() => void) | null>(null)
   const detailCleanupTimerRef = useRef<number | null>(null)
   const [userPlaylists, setUserPlaylists] = useState<any[]>([])
   // Apple 探索国家/地区切换（缺省取账号 storefront）
@@ -618,29 +625,15 @@ function ExploreView({
     songs: Song[]
     continuous: boolean
   }>({ show: false, x: 0, y: 0, song: null, songs: [], continuous: false })
+  const [playlistContextMenu, setPlaylistContextMenu] = useState<{ show: boolean; x: number; y: number; playlist: ExplorePlaylist | null }>({ show: false, x: 0, y: 0, playlist: null })
+  const [feedPlaylistSubscriptions, setFeedPlaylistSubscriptions] = useState<Map<string, boolean>>(new Map())
   const [shuffleOffset, setShuffleOffset] = useState(0)
   // Apple Music 刷新信号（AM 无「换一批」，顶栏按钮改为刷新，信号传给 AppleExplorePanel 强制重载）
   const [appleRefreshSignal, setAppleRefreshSignal] = useState(0)
   const [showModePanel, setShowModePanel] = useState(false)
   const [showMVExplore, setShowMVExplore] = useState(false)
+  const [neteaseFeedMvId, setNeteaseFeedMvId] = useState<string | null>(null)
   const [fmLoading, setFmLoading] = useState(false)
-  // 网易云首页 Banner 轮播
-  const [banners, setBanners] = useState<ExploreBannerItem[]>([])
-
-  useEffect(() => {
-    if (platform !== 'netease' && platform !== 'qq') return
-    let cancelled = false
-    const load = platform === 'netease' ? getNeteaseBanner() : getQQBanner()
-    void load.then((list) => {
-      if (cancelled) return
-      setBanners(Array.isArray(list) ? list.map((b: any) => ({
-        imageUrl: b.imageUrl || '',
-        url: b.url || '',
-        title: b.title || b.typeTitle || '',
-      })).filter(b => b.imageUrl) : [])
-    })
-    return () => { cancelled = true }
-  }, [platform])
 
   // 处理 Banner 点击（解析网易云 url 打开歌单/歌曲）
   // useCallback 稳定引用：供 ExploreBanner memo 比较，避免父级每次重渲染传入新函数。
@@ -678,6 +671,7 @@ function ExploreView({
     detailRequestRef.current += 1
     detailControllerRef.current?.abort()
     detailControllerRef.current = null
+    detailRetryRef.current = null
     setDetailOpen(false)
     setDetailError('')
     if (detailCleanupTimerRef.current !== null) window.clearTimeout(detailCleanupTimerRef.current)
@@ -775,6 +769,7 @@ function ExploreView({
     () => import('./RemoteControlSettingsModal'),
   ]), [])
   const [moreSection, setMoreSection] = useState<ExploreSectionId | null>(null)
+  const exploreScrollRef = useRef<HTMLDivElement>(null)
   useTvBack(() => {
     if (globalModal) { setGlobalModal(null); return true }
     if (settingsOpen) { setSettingsOpen(false); return true }
@@ -822,7 +817,8 @@ function ExploreView({
     : platform === 'kugou' ? kugouAvatar
     : platform === 'soda' ? sodaAvatar
     : neteaseAvatar
-  const vip = platform === 'qq' ? qqVip : platform === 'netease' ? neteaseVip : false
+  const vip = platformEntitlements[platform] === 'vip' || platformEntitlements[platform] === 'svip'
+  const activeEntitlement = platformEntitlements[platform]
   const platformMeta = EXPLORE_PLATFORM_META[platform]
   const platformName = platformMeta.name
   const accent = platformMeta.accent
@@ -834,10 +830,9 @@ function ExploreView({
     '--explore-accent-rgb': accentRgb,
   } as CSSProperties
 
-  const loadExplore = useCallback(async (signal?: AbortSignal, forceRefresh = false) => {
-    // Apple renders through AppleExplorePanel. Avoid running the legacy ExplorePayload
-    // pipeline behind it, which duplicates requests and can surface hidden errors.
-    if (platform === 'apple') {
+  const loadExplore = useCallback(async (signal?: AbortSignal, forceRefresh = false, allowNeteaseLegacyFallback = false) => {
+    // Apple 和网易云原生页自行加载数据，避免在后台重复请求旧聚合首页。
+    if (platform === 'apple' || (platform === 'netease' && !allowNeteaseLegacyFallback)) {
       setLoading(false)
       setError('')
       return
@@ -1015,6 +1010,25 @@ function ExploreView({
     setSongContextMenu({ show: true, x: event.clientX, y: event.clientY, song, songs, continuous })
   }, [])
 
+  const openPlaylistContextMenu = useCallback((event: React.MouseEvent, playlist: ExplorePlaylist) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setPlaylistContextMenu({ show: true, x: event.clientX, y: event.clientY, playlist })
+  }, [])
+
+  useEffect(() => {
+    const handlePlaylistContentChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ platform?: string; type?: string; trackCountDelta?: number }>).detail
+      if (detail?.platform !== 'netease' || !detail.trackCountDelta || (detail.type !== 'like' && detail.type !== 'unlike')) return
+      setUserPlaylists(previous => previous.map(playlist => {
+        const isLiked = Boolean(playlist.isLike) || /我喜欢/.test(String(playlist.name || ''))
+        return isLiked ? { ...playlist, trackCount: Math.max(0, Number(playlist.trackCount || 0) + Number(detail.trackCountDelta)) } : playlist
+      }))
+    }
+    window.addEventListener('playlist-content-changed', handlePlaylistContentChanged)
+    return () => window.removeEventListener('playlist-content-changed', handlePlaylistContentChanged)
+  }, [])
+
   const sectionOrder = useMemo(
     () => Object.fromEntries(platformPreferences.order.map((section, index) => [section, index])) as Record<ExploreSectionId, number>,
     [platformPreferences.order]
@@ -1071,6 +1085,7 @@ function ExploreView({
     loader: (signal: AbortSignal) => Promise<ExploreDetail>,
     autoplay = false,
   ) => {
+    detailRetryRef.current = () => { void openDetail(fallback, loader, autoplay) }
     detailControllerRef.current?.abort()
     const controller = new AbortController()
     detailControllerRef.current = controller
@@ -1443,7 +1458,13 @@ function ExploreView({
         transition={{ duration: 0.36, ease: [0.22, 1, 0.36, 1] }}
         style={{ willChange: 'transform', backfaceVisibility: 'hidden', transform: 'translateZ(0)' }}
       >
-      <div className="relative h-full overflow-y-auto overscroll-contain explore-scrollbar">
+      <div
+        ref={exploreScrollRef}
+        className="relative h-full overflow-y-auto overscroll-contain explore-scrollbar"
+        onDragStart={event => {
+          if (event.target instanceof HTMLImageElement) event.preventDefault()
+        }}
+      >
         <header className="sticky top-0 z-30 border-b border-white/[0.07] bg-[#090d14]/72 backdrop-blur-2xl">
           <div className="mx-auto flex max-w-[1680px] items-center gap-4 px-5 pb-2 pt-8 md:px-8 lg:px-10">
             <div className="flex min-w-0 items-center gap-3">
@@ -1483,7 +1504,7 @@ function ExploreView({
             </div>
 
             <div className="ml-auto flex items-center gap-2">
-              {getPlatformCapabilities(platform).radio && (
+              {platform !== 'netease' && getPlatformCapabilities(platform).radio && (
                 <button
                   type="button"
                   onClick={() => void handlePlayFM()}
@@ -1556,17 +1577,18 @@ function ExploreView({
           </div>
         </header>
 
-        <main className="mx-auto max-w-[1680px] px-5 pb-8 pt-7 md:px-8 lg:px-10">
+        <main
+          className="mx-auto max-w-[1680px] px-5 pb-8 pt-7 md:px-8 lg:px-10"
+          onDragStartCapture={event => {
+            if (event.target instanceof HTMLImageElement) event.preventDefault()
+          }}
+        >
+          {platform !== 'qq' && platform !== 'netease' && (
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
               <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.2em] text-white/36">
                 <Waves className="h-3.5 w-3.5" />
                 {platformName} · 今日声场
-                {platform === 'qq' && payload?.officialEnhanced && (
-                  <span className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2 py-0.5 tracking-normal text-emerald-200/80">
-                    官方 API 已增强
-                  </span>
-                )}
               </div>
               <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">{getGreeting()}，{displayName}</h2>
               <p className="mt-2 text-sm text-white/42">
@@ -1609,6 +1631,7 @@ function ExploreView({
               )}
             </div>
           </div>
+          )}
 
           <AnimatePresence>
             {(error || detailError) && (
@@ -1624,10 +1647,69 @@ function ExploreView({
             )}
           </AnimatePresence>
 
-          {/* 首页 Banner 轮播（网易云 / QQ） */}
-          <ExploreBanner banners={banners} onBannerClick={handleBannerClick} />
-
-          {platform === 'apple' ? (
+          {platform === 'qq' ? (
+            <QQExplorePage
+              loggedIn={qqLoggedIn}
+              username={qqUsername}
+              userId={qqUserId}
+              entitlement={platformEntitlements.qq}
+              authRevision={authRevision}
+              accent={accent}
+              showDescription={showSectionDescriptions}
+              officialEnhanced={Boolean(payload?.officialEnhanced)}
+              publicContent={payload}
+              onLogin={() => onLoginClick('qq')}
+              onPlaySongs={(song, songs, continuous) => playExploreCollection(song, songs, continuous)}
+              onOpenPlaylist={(playlist, autoplay) => void handlePlaylist(playlist, autoplay)}
+              onOpenChart={(chart, autoplay) => void handleChart(chart, autoplay)}
+              onOpenAlbum={onOpenAlbum}
+              onOpenChannel={(channel, autoplay) => void handleChannel(channel, autoplay)}
+              onOpenSearch={query => {
+                if (query) {
+                  sessionStorage.setItem('waveforge_search_keyword', query)
+                  sessionStorage.setItem('waveforge_search_platform', 'qq')
+                  sessionStorage.setItem('waveforge_search_searched', 'false')
+                }
+                onSearchClick()
+              }}
+              onConfiguredChange={() => setRefreshKey(key => key + 1)}
+              onOpenPlaylists={() => setMoreSection('playlists')}
+              onOpenCharts={() => setMoreSection('charts')}
+              onSongContextMenu={(event, song, songs) => openSongContextMenu(event, song, songs)}
+              onViewComments={onViewComments}
+              onAddToFavorites={onAddToFavorites}
+              onRemoveFromFavorites={onRemoveFromFavorites}
+            />
+          ) : platform === 'netease' ? (
+            <NeteaseExplorePage
+              loggedIn={neteaseLoggedIn}
+              username={neteaseUsername}
+              userId={neteaseUserId}
+              entitlement={platformEntitlements.netease}
+              authRevision={authRevision}
+              accent={accent}
+              showDescription={showSectionDescriptions}
+              currentSong={currentSong}
+              publicContent={payload}
+              accountPlaylists={userPlaylists}
+              onRequestFallback={() => { void loadExplore(undefined, true, true) }}
+              onLogin={() => onLoginClick('netease')}
+              onPlaySongs={(song, songs, continuous) => playExploreCollection(song, songs, continuous)}
+              onOpenPlaylist={(playlist, autoplay) => void handlePlaylist(playlist, autoplay)}
+              onOpenChannel={(channel, autoplay) => void handleChannel(channel, autoplay)}
+              onOpenAlbum={albumId => onOpenAlbum?.(albumId, 'netease')}
+              onOpenArtist={artistId => onOpenArtist?.(artistId, 'netease')}
+              onOpenMV={mvId => {
+                setNeteaseFeedMvId(mvId)
+                setShowMVExplore(true)
+              }}
+              onViewComments={onViewComments}
+              onSongContextMenu={(event, song, songs, continuous) => openSongContextMenu(event, song, songs, continuous)}
+              onPlaylistContextMenu={openPlaylistContextMenu}
+              onAddToFavorites={onAddToFavorites}
+              onRemoveFromFavorites={onRemoveFromFavorites}
+            />
+          ) : platform === 'apple' ? (
             <AppleExplorePanel
               appleLoggedIn={appleLoggedIn}
               appleUsername={appleUsername}
@@ -1638,6 +1720,7 @@ function ExploreView({
               playerTheme={playerTheme}
               onSongSelect={onSongSelect}
               onLoginClick={() => onLoginClick('apple')}
+              onVideoPlaybackStart={() => { if (isPlaying) onPlayPause() }}
               onOpenAlbum={onOpenAlbum}
               onOpenPlaylistPanel={handleApplePlaylist}
               onOpenArtistPanel={onOpenArtist}
@@ -1721,7 +1804,11 @@ function ExploreView({
                       <div className="relative flex h-full flex-col justify-end p-4">
                         <div className="mb-auto flex items-center justify-between">
                           <span className="rounded-full bg-black/35 px-2.5 py-1 text-[10px] font-medium text-white/66 backdrop-blur-md">
-                            {playlist.source === 'qqmusic-skills' ? 'AI 歌单' : index === 0 ? '为你精选' : '灵感歌单'}
+                            {playlist.source === 'qqmusic-skills'
+                              ? 'AI 歌单'
+                              : playlist.source === 'qq-native-personalized'
+                                ? '账号推荐'
+                                : '公共歌单'}
                           </span>
                           <button
                             type="button"
@@ -1776,12 +1863,12 @@ function ExploreView({
                       songs: payload.dailySongs.length ? payload.dailySongs : payload.newSongs,
                     },
                     {
-                      label: platform === 'qq' ? '猜你喜欢' : platform === 'netease' ? '私人漫游' : '新鲜首发',
-                      title: (platform === 'netease' || platform === 'qq') ? '一键进入无限电台' : '刚刚上线的新鲜声音',
+                      label: '新鲜首发',
+                      title: '刚刚上线的新鲜声音',
                       copy: payload.radioSongs.length ? '越听越懂你的连续推荐' : '从相似口味自然延伸',
                       icon: Radio,
                       cover: payload.radioSongs[0]?.album.picUrl || payload.channels[0]?.coverUrl || payload.dailySongs[0]?.album.picUrl,
-                      songs: payload.radioSongs.length ? payload.radioSongs : (platform === 'netease' || platform === 'qq' ? payload.radioSongs : payload.newSongs),
+                      songs: payload.radioSongs.length ? payload.radioSongs : payload.newSongs,
                       continuous: true,
                     },
                     {
@@ -1845,31 +1932,6 @@ function ExploreView({
                   })}
                 </div>
               </section>
-              )}
-
-              {sectionVisible('journey') && ((platform === 'qq' && qqLoggedIn) || (platform === 'netease' && neteaseLoggedIn && neteaseUserId)) && (
-                <section style={sectionStyle('journey')}>
-                  {platform === 'qq' ? (
-                    <QQMusicJourney
-                      configured={payload.officialEnhanced}
-                      cookie={getExploreCookie('qq')}
-                      accent={accent}
-                      showDescription={showSectionDescriptions}
-                      onConfiguredChange={() => setRefreshKey(key => key + 1)}
-                      onOpenPlaylists={() => setMoreSection('playlists')}
-                      onOpenCharts={() => setMoreSection('charts')}
-                    />
-                  ) : (
-                    <NeteaseMusicJourney
-                      uid={neteaseUserId || ''}
-                      cookie={getExploreCookie('netease')}
-                      accent={accent}
-                      showDescription={showSectionDescriptions}
-                      onPlaySongs={(song, songs) => playExploreCollection(song, songs)}
-                      onSongContextMenu={(event, song, songs) => openSongContextMenu(event, song, songs)}
-                    />
-                  )}
-                </section>
               )}
 
               {sectionVisible('playlists') && (
@@ -2019,7 +2081,7 @@ function ExploreView({
                         <span className="mt-1 block truncate text-xs text-white/36">{song.artists.map(artist => artist.name).join(' / ')}</span>
                       </span>
                       {/* 皇冠代表当前账号缺少该 VIP 曲目的播放权限；会员账号不显示。 */}
-                      {song.vip && !vip && <Crown className="h-3.5 w-3.5 shrink-0 text-amber-300/70" />}
+                      {shouldShowEntitlementBadge(song, activeEntitlement) && <Crown className="h-3.5 w-3.5 shrink-0 text-amber-300/70" />}
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-white/44 opacity-0 transition group-hover:opacity-100">
                         <Play className="h-3.5 w-3.5 fill-current" />
                       </span>
@@ -2062,9 +2124,9 @@ function ExploreView({
               <section style={sectionStyle('channels')}>
                 <SectionHeading
                   icon={<Radio className="h-5 w-5" />}
-                  title={platform === 'qq' ? '音乐频道' : '声音与播客'}
-                  subtitle={showSectionDescriptions ? (platform === 'qq' ? '按场景、心情与曲风随心播放' : '音乐之外，也听见有趣的人和故事') : undefined}
-                  action={<MoreButton label={platform === 'qq' ? '音乐频道' : '声音与播客'} onClick={() => setMoreSection('channels')} />}
+                  title="声音与播客"
+                  subtitle={showSectionDescriptions ? '音乐之外，也听见有趣的人和故事' : undefined}
+                  action={<MoreButton label="声音与播客" onClick={() => setMoreSection('channels')} />}
                 />
                 <div className={`grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 ${compactCards ? 'xl:grid-cols-8' : 'xl:grid-cols-6'}`}>
                   {payload.channels.slice(0, expandedHome ? 18 : 12).map((channel, index) => (
@@ -2215,6 +2277,8 @@ function ExploreView({
         playlist={detail?.playlist || null}
         songs={detail?.songs || []}
         loading={detailLoading}
+        error={detailError}
+        onRetry={() => detailRetryRef.current?.()}
         onClose={closeExploreDetail}
         onSongSelect={(song, songs) => {
           // 选歌后关闭歌单详情覆盖层，否则播放页出现后歌单界面还叠在上面
@@ -2240,6 +2304,44 @@ function ExploreView({
         currentSong={currentSong}
         accentColor={accent}
       />
+
+      {playlistContextMenu.playlist && (() => {
+        const playlist = playlistContextMenu.playlist
+        const key = String(playlist.id)
+        const subscribed = feedPlaylistSubscriptions.get(key) ?? Boolean((playlist as any).isCollected || (playlist as any).subscribed)
+        return <PlaylistContextMenu
+          show={playlistContextMenu.show}
+          x={playlistContextMenu.x}
+          y={playlistContextMenu.y}
+          playlist={playlist}
+          onClose={() => setPlaylistContextMenu(previous => ({ ...previous, show: false }))}
+          onEdit={() => undefined}
+          onDelete={() => undefined}
+          onSubscribe={(_, subscribe) => {
+            const previous = subscribed
+            setFeedPlaylistSubscriptions(values => new Map(values).set(key, subscribe))
+            void subscribePlaylist(key, subscribe, 'netease').then(result => {
+              const success = result?.code === 200 || result?.result === 200 || result?.data?.code === 200
+              if (!success) throw new Error(result?.message || result?.error || '歌单收藏操作失败')
+              window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: subscribe ? '已收藏歌单' : '已取消收藏', type: 'success' } }))
+            }).catch(error => {
+              setFeedPlaylistSubscriptions(values => new Map(values).set(key, previous))
+              window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: error instanceof Error ? error.message : '歌单收藏操作失败', type: 'error' } }))
+            })
+          }}
+          onShare={() => {
+            void navigator.clipboard?.writeText(`https://music.163.com/#/playlist?id=${key}`)
+            window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: '歌单链接已复制', type: 'success' } }))
+          }}
+          isOwner={isPlaylistOwner(playlist, { neteaseUserId })}
+          isSubscribed={subscribed}
+          isSpecialPlaylist={false}
+          canEdit={false}
+          canDelete={false}
+          canSubscribe={neteaseLoggedIn && Boolean(neteaseUserId) && !isPlaylistOwner(playlist, { neteaseUserId })}
+          canShare
+        />
+      })()}
 
       {songContextMenu.song && (
         <SongContextMenu
@@ -2308,8 +2410,12 @@ function ExploreView({
         {showMVExplore && (
           <MVExploreModal
             initialPlatform={(platform === 'apple' || platform === 'spotify' || platform === 'soda' || platform === 'kugou') ? 'netease' : platform}
+            initialMvId={neteaseFeedMvId || undefined}
             playerTheme={playerTheme}
-            onClose={() => setShowMVExplore(false)}
+            onClose={() => {
+              setShowMVExplore(false)
+              setNeteaseFeedMvId(null)
+            }}
           />
         )}
       </AnimatePresence>
@@ -2333,6 +2439,16 @@ function ExploreView({
         onVolumeChange={onVolumeChange}
         onClick={onOpenPlayer}
       />
+      {!moreSection && !detailOpen && !settingsOpen && (
+        <ScrollToTop
+          containerRef={exploreScrollRef}
+          threshold={200}
+          playerTheme={playerTheme}
+          position="fixed"
+          offsetRight={24}
+          offsetBottom={currentSong ? 168 : 24}
+        />
+      )}
       </motion.div>
     </div>
   )

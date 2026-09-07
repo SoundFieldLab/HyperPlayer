@@ -188,6 +188,33 @@ describe('Apple catalog mutations', () => {
     expect(song.album.appleId).toBe('album.1')
   })
 
+  it('uses included catalog artwork when a library playlist has no artwork', async () => {
+    apiRequest.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        data: [{
+          id: 'library.playlist',
+          type: 'library-playlists',
+          attributes: { name: 'Road Trip' },
+          relationships: { catalog: { data: [{ id: 'catalog.playlist', type: 'playlists' }] } },
+        }],
+        included: [{
+          id: 'catalog.playlist',
+          type: 'playlists',
+          attributes: { artwork: { url: 'https://example.test/{w}x{h}bb.jpg' } },
+        }],
+      },
+    })
+
+    await expect(catalog.getAppleLibraryPlaylists(10)).resolves.toEqual([
+      expect.objectContaining({
+        id: 'library.playlist',
+        catalogId: 'catalog.playlist',
+        artworkUrl: 'https://example.test/300x300bb.jpg',
+      }),
+    ])
+  })
   it('resolves a catalog id before removing a song from the library', async () => {
     apiRequest
       .mockResolvedValueOnce({ ok: true, status: 200, data: { data: [resource('i.library', 'Song', '12345')] } })
@@ -238,6 +265,39 @@ describe('Apple catalog pagination', () => {
     expect(apiRequest.mock.calls[1][0]).toBe(`/v1/catalog/jp/${type}?offset=2`)
   })
 
+  it('marks a collection-only album response as incomplete instead of a zero-track success', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [{
+          wrapperType: 'collection',
+          collectionId: 201,
+          collectionName: 'Album',
+          artistName: 'Artist',
+          trackCount: 12,
+        }],
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(catalog.getAppleAlbumDetail('201', 'jp')).resolves.toMatchObject({
+      album: { id: '201', name: 'Album' },
+      tracks: [],
+      incomplete: true,
+    })
+    vi.unstubAllGlobals()
+  })
+
+  it('propagates catalog playlist request failures instead of returning an empty list', async () => {
+    apiRequest.mockResolvedValue({ ok: false, status: 401, data: null })
+    await expect(catalog.getAppleCatalogPlaylistTracks('pl.1', 'jp')).rejects.toMatchObject({ status: 401 })
+  })
+
+  it('distinguishes an unavailable favorites endpoint from an empty favorite list', async () => {
+    apiRequest.mockResolvedValue({ ok: false, status: 404, data: { errors: [{ title: 'Not Found' }] } })
+    await expect(catalog.getAppleFavoriteSongIds()).resolves.toBeNull()
+  })
+
   it('reads favorite songs across pages and deduplicates ids', async () => {
     apiRequest
       .mockResolvedValueOnce({
@@ -260,6 +320,11 @@ describe('Apple catalog pagination', () => {
 
 describe('Apple library pagination and identities', () => {
   beforeEach(() => apiRequest.mockReset())
+
+  it('propagates library playlist request failures instead of returning an empty list', async () => {
+    apiRequest.mockResolvedValue({ ok: false, status: 403, data: null })
+    await expect(catalog.getApplePlaylistTracks('p.library')).rejects.toMatchObject({ status: 403 })
+  })
 
   it('follows next links and preserves catalog and library song ids', async () => {
     apiRequest

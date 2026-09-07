@@ -1,4 +1,13 @@
+/** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const storage = new Map<string, string>()
+vi.stubGlobal('localStorage', {
+  clear: () => storage.clear(),
+  getItem: (key: string) => storage.get(key) ?? null,
+  removeItem: (key: string) => storage.delete(key),
+  setItem: (key: string, value: string) => storage.set(key, String(value)),
+})
 
 const { renameSpotifyPlaylist, spotifyFetch } = await import('../src/services/spotifyService')
 

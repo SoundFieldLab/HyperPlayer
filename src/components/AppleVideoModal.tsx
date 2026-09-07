@@ -21,10 +21,12 @@ import { useTvBack } from '../tv/tvCore'
 interface AppleVideoModalProps {
   item: AppleWebItem
   onClose: () => void
+  onPlaybackStart?: () => void
 }
 
-export default function AppleVideoModal({ item, onClose }: AppleVideoModalProps) {
+export default function AppleVideoModal({ item, onClose, onPlaybackStart }: AppleVideoModalProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const playbackStartNotifiedRef = useRef(false)
   const [state, setState] = useState<'loading' | 'playing' | 'error'>('loading')
   const [error, setError] = useState('')
   const [manualPaused, setManualPaused] = useState(false)
@@ -39,6 +41,7 @@ export default function AppleVideoModal({ item, onClose }: AppleVideoModalProps)
     let cancelled = false
     setState('loading')
     setError('')
+    playbackStartNotifiedRef.current = false
     ;(async () => {
       try {
         const stream = await resolveAppleNativeStream(item.playId || item.id)
@@ -47,7 +50,11 @@ export default function AppleVideoModal({ item, onClose }: AppleVideoModalProps)
           if (!cancelled && !stream) throw new Error('视频取流失败（可能需要订阅 Apple Music）')
           return
         }
-        await attachAppleHls(videoRef.current, stream)
+        await attachAppleHls(videoRef.current, stream, fatalError => {
+          if (cancelled) return
+          setState('error')
+          setError(fatalError.message)
+        })
         if (cancelled) return
         try {
           await videoRef.current.play()
@@ -96,7 +103,18 @@ export default function AppleVideoModal({ item, onClose }: AppleVideoModalProps)
               playsInline
               className="h-full w-full"
               onPause={() => setManualPaused(true)}
-              onPlay={() => setManualPaused(false)}
+              onPlay={() => {
+                setManualPaused(false)
+                if (!playbackStartNotifiedRef.current) {
+                  playbackStartNotifiedRef.current = true
+                  onPlaybackStart?.()
+                }
+              }}
+              onError={() => {
+                const mediaError = videoRef.current?.error
+                setState('error')
+                setError(mediaError?.message || '视频解码或播放失败')
+              }}
             />
             {state === 'loading' && (
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70">

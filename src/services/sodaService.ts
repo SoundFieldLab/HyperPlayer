@@ -73,6 +73,9 @@ export interface SodaMembership {
   isSvip?: boolean
   vipLabel?: string
   expiresAt?: number
+  membershipKnown?: boolean
+  membershipStatus?: 'unknown' | 'free' | 'vip' | 'svip'
+  vipLevel?: number
 }
 
 /** 登录状态（GET /status 返回；请求失败时降级为 loggedIn:false 空状态） */
@@ -261,6 +264,7 @@ export function sodaMediaToSong(s: SodaSong): Song {
     duration: Number(s?.durationMs || 0),
     platform: 'soda' as const,
     vip,
+    requiredTier: tier,
     fee: vip ? 1 : 0,
     songType: 1,
     fusedSources: [],
@@ -306,10 +310,17 @@ export async function getSodaStatus(cookie?: string): Promise<SodaStatus> {
         expiresAt: typeof p.expiresAt === 'number' ? p.expiresAt : undefined,
       }
     : undefined
+  const membership: SodaMembership = {
+    ...(data.membership || {}),
+    isVip: data.membership?.isVip ?? p?.isVip,
+    isSvip: data.membership?.isSvip ?? p?.isSvip,
+    vipLabel: data.membership?.vipLabel || p?.vipLabel,
+    expiresAt: data.membership?.expiresAt ?? p?.expiresAt,
+  }
   return {
     loggedIn: Boolean(data.loggedIn),
     profile,
-    membership: data.membership || {},
+    membership,
   }
 }
 

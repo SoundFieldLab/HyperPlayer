@@ -1,5 +1,7 @@
 import type { MusicPlatform } from './platforms'
-const API_BASE = 'http://localhost:3001/api'
+import type { EntitlementTier } from '../utils/musicEntitlements'
+import { getApiBase } from './apiConfig'
+const API_BASE = getApiBase()
 
 import { parseTTML } from '../utils/ttmlParser'
 import {
@@ -28,6 +30,8 @@ const SONG_URL_FETCH_TIMEOUT = 26 * 1000
 const SONG_URL_CACHE_MAX_ENTRIES = 256
 const songUrlCache = new Map<string, { url: string | null; expiresAt: number }>()
 const songUrlPending = new Map<string, Promise<string | null>>()
+const songUrlRefreshPending = new Map<string, Promise<string | null>>()
+const songUrlRefreshUntil = new Map<string, number>()
 const songUrlInvalidationVersions = new Map<string, number>()
 let songUrlCacheGeneration = 0
 
@@ -35,6 +39,8 @@ export const clearSongUrlCache = () => {
   songUrlCacheGeneration += 1
   songUrlCache.clear()
   songUrlPending.clear()
+  songUrlRefreshPending.clear()
+  songUrlRefreshUntil.clear()
   songUrlInvalidationVersions.clear()
 }
 
@@ -111,6 +117,29 @@ export const invalidateSongUrl = (id: number | string, platform: MusicPlatform =
   }
 }
 
+export async function refreshSongUrlOnce(id: number | string, platform: MusicPlatform, failedUrl: string): Promise<string | null> {
+  const key = `${platform}:${id}:${fingerprint(failedUrl)}`
+  const now = Date.now()
+  const until = songUrlRefreshUntil.get(key) || 0
+  if (until > now) return null
+  const pending = songUrlRefreshPending.get(key)
+  if (pending) return pending
+  const promise = (async () => {
+    invalidateSongUrl(id, platform)
+    return getSongUrl(id, platform)
+  })().finally(() => {
+    songUrlRefreshPending.delete(key)
+    songUrlRefreshUntil.set(key, Date.now() + 15_000)
+    while (songUrlRefreshUntil.size > SONG_URL_CACHE_MAX_ENTRIES) {
+      const oldest = songUrlRefreshUntil.keys().next().value
+      if (oldest === undefined) break
+      songUrlRefreshUntil.delete(oldest)
+    }
+  })
+  songUrlRefreshPending.set(key, promise)
+  return promise
+}
+
 export interface Song {
   id: number
   mid?: string // QQ音乐需要mid
@@ -134,13 +163,25 @@ export interface Song {
   appleLibraryId?: string
   /** Apple Music storefront，避免跨区详情回落到默认商店 */
   appleStorefront?: string
-  /** Apple Music 电台直播（流已取好；携带后跳过 webPlayback/载体匹配，直接走 HLS） */
+  /** Apple Music 电台/节目描述。队列只保存描述，每次播放重新解析有时效的 HLS。 */
   appleRadio?: {
-    stream: import('./applePlayback').AppleNativeStream
     stationId: string
-    isLive: boolean
+    storefront: string
+    playParams?: import('./applePlayback').AppleRadioPlayParams
+    timeline: 'live' | 'vod' | 'unknown'
+    showName?: string
+    description?: string
+    airTime?: { start?: string; end?: string }
+    artworkUrl?: string
+    motionArtworkUrl?: string
+    motionPosterUrl?: string
+    heroArtworkUrl?: string
+    /** 旧会话兼容字段；新建队列不再持久化 stream。 */
+    stream?: import('./applePlayback').AppleNativeStream
   }
   vip?: boolean // 是否为VIP歌曲
+  /** 播放该曲所需的规范化会员档位；旧数据仅有 vip 时按 vip 处理。 */
+  requiredTier?: EntitlementTier
   noCopyright?: boolean // 是否无版权
   commentCount?: number
   fee?: number // 付费类型（网易云）0免费 1VIP 4付费专辑 8低音质免费
@@ -359,6 +400,18 @@ export function getProxiedImageUrl(originalUrl: string, size: number = 500): str
   const devMode = localStorage.getItem('developerMode') === 'true'
   
   return `${API_BASE}/cover?url=${encodeURIComponent(urlWithSize)}&devMode=${devMode}`
+}
+
+export function getProxiedAudioUrl(originalUrl: string): string {
+  if (!originalUrl || !/^https?:\/\//i.test(originalUrl)) return originalUrl
+  try {
+    const input = new URL(originalUrl)
+    const proxy = new URL(`${API_BASE}/audio`)
+    if (input.origin === proxy.origin && input.pathname === proxy.pathname) return originalUrl
+  } catch {
+    return originalUrl
+  }
+  return `${API_BASE}/audio?url=${encodeURIComponent(originalUrl)}`
 }
 
 // 搜索歌曲（支持平台选择）

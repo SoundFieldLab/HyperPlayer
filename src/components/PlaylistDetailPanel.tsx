@@ -40,6 +40,8 @@ interface PlaylistDetailPanelProps {
   } | null
   songs: Song[]
   loading: boolean
+  error?: string
+  onRetry?: () => void
   onClose: () => void
   onSongSelect: (song: Song, playlist: Song[]) => void
   neteaseVip?: boolean
@@ -68,6 +70,8 @@ function PlaylistDetailPanel({
   playlist,
   songs,
   loading,
+  error = '',
+  onRetry,
   onClose,
   onSongSelect,
   neteaseVip = false,
@@ -741,6 +745,20 @@ function PlaylistDetailPanel({
                           </div>
                         </div>
                       </div>
+                    </div>
+                  ) : error ? (
+                    <div role="alert" className="flex h-40 flex-col items-center justify-center gap-3 px-6 text-center">
+                      <Info className={`h-10 w-10 ${playerTheme === 'dark' ? 'text-amber-200/55' : 'text-amber-700/55'}`} />
+                      <div className={playerTheme === 'dark' ? 'text-white/72' : 'text-black/65'}>{error}</div>
+                      {onRetry && (
+                        <button
+                          type="button"
+                          onClick={onRetry}
+                          className={`rounded-full border px-4 py-2 text-sm font-medium transition ${playerTheme === 'dark' ? 'border-white/15 bg-white/8 text-white hover:bg-white/14' : 'border-black/15 bg-black/5 text-black hover:bg-black/10'}`}
+                        >
+                          重试
+                        </button>
+                      )}
                     </div>
                   ) : songs.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-32">

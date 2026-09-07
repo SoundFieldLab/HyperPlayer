@@ -405,6 +405,7 @@ interface ArtistDetailModalProps {
   onOpenArtist?: (artistId: string, platform: MusicPlatform) => void
   onOpenAlbum?: (albumId: string, platform: MusicPlatform) => void
   onCopyInfo?: (song: Song) => void
+  onVideoPlaybackStart?: () => void
 }
 
 export default function ArtistDetailModal({
@@ -427,7 +428,8 @@ export default function ArtistDetailModal({
   onAddToPlaylist,
   onViewComments,
   onOpenArtist,
-  onCopyInfo
+  onCopyInfo,
+  onVideoPlaybackStart
 }: ArtistDetailModalProps) {
   const [artist, setArtist] = useState<Artist | null>(null)
   const [hotSongs, setHotSongs] = useState<Song[]>([])
@@ -1871,6 +1873,7 @@ export default function ArtistDetailModal({
           <AppleVideoModal
             item={appleMvItem}
             onClose={() => setAppleMvItem(null)}
+            onPlaybackStart={onVideoPlaybackStart}
           />
         )}
       </AnimatePresence>

@@ -60,6 +60,20 @@ export function peekSongFavoriteStatus(
   return getFavoriteSongIdentifiers(song).some(identifier => ids.has(identifier))
 }
 
+export function invalidateFavoriteIdentifiers(platform: FavoritePlatform, userId?: string): void {
+  if (userId) {
+    const key = ownerKey(platform, userId)
+    favoriteIdsCache.delete(key)
+    pendingLoads.delete(key)
+    pendingOwnerMutations.delete(key)
+    return
+  }
+  const prefix = `${platform}:`
+  for (const key of favoriteIdsCache.keys()) if (key.startsWith(prefix)) favoriteIdsCache.delete(key)
+  for (const key of pendingLoads.keys()) if (key.startsWith(prefix)) pendingLoads.delete(key)
+  for (const key of pendingOwnerMutations.keys()) if (key.startsWith(prefix)) pendingOwnerMutations.delete(key)
+}
+
 export function loadFavoriteIdentifiers(
   platform: FavoritePlatform,
   userId: string,

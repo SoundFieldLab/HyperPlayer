@@ -515,13 +515,14 @@ export async function areSpotifyArtistsFollowed(artistIds: string[]): Promise<Se
 // ─────────────────────────── 用户 ───────────────────────────
 
 /** 用户信息（登录后） */
-export async function fetchSpotifyMe(): Promise<{ displayName: string; id: string; images: Array<{ url: string }> } | null> {
+export async function fetchSpotifyMe(): Promise<{ displayName: string; id: string; images: Array<{ url: string }>; product?: string } | null> {
   const data = await spotifyFetch('/me')
   if (!data) return null
   return {
     displayName: String(data.display_name || data.id || ''),
     id: String(data.id || ''),
     images: data.images || [],
+    product: data.product ? String(data.product) : undefined,
   }
 }
 
@@ -551,6 +552,7 @@ export function spotifyTrackToSong(track: SpotifyTrack): Song {
     },
     duration: track.duration_ms || 0,
     platform: 'spotify' as const,
+    requiredTier: 'free',
     fee: 0,
     songType: 1,
     fusedSources: [],

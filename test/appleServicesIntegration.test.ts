@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const apiRequest = vi.fn()
 const catalogSummary = vi.fn()
 const catalogTracks = vi.fn()
+const libraryTracks = vi.fn()
 const favoriteSongIds = vi.fn()
 const addTracks = vi.fn()
 const removeTracks = vi.fn()
@@ -28,6 +29,7 @@ vi.mock('../src/services/appleCatalog', async importOriginal => {
     ...original,
     getAppleCatalogPlaylistSummary: catalogSummary,
     getAppleCatalogPlaylistTracks: catalogTracks,
+    getApplePlaylistTracks: libraryTracks,
     getAppleFavoriteSongIds: favoriteSongIds,
     addAppleTracksToPlaylist: addTracks,
     removeAppleTracksFromPlaylist: removeTracks,
@@ -62,6 +64,7 @@ describe('Apple service integration', () => {
     apiRequest.mockReset()
     catalogSummary.mockReset()
     catalogTracks.mockReset()
+    libraryTracks.mockReset()
     favoriteSongIds.mockReset()
     addTracks.mockReset().mockResolvedValue(true)
     removeTracks.mockReset().mockResolvedValue(true)
@@ -125,6 +128,18 @@ describe('Apple service integration', () => {
     expect(song.appleId).toBe('101')
     expect(song.appleLibraryId).toBe('i.song')
     expect(song.appleStorefront).toBe('jp')
+  })
+
+  it('routes Apple library playlist ids to the me-library tracks endpoint', async () => {
+    libraryTracks.mockResolvedValue([{ id: 'i.song', catalogId: '101', name: 'Song', artistName: 'Artist' }])
+
+    const detail = await getPlaylistDetail('p.library', 'apple')
+
+    expect(libraryTracks).toHaveBeenCalledWith('p.library', 5000)
+    expect(catalogSummary).not.toHaveBeenCalled()
+    expect(catalogTracks).not.toHaveBeenCalled()
+    expect(detail.tracks).toHaveLength(1)
+    expect(detail.tracks[0].appleId).toBe('101')
   })
 
   it('passes the current storefront through Apple playlist details and tracks', async () => {
@@ -225,6 +240,12 @@ describe('Apple service integration', () => {
     expect(updatePlaylist).toHaveBeenCalledWith('p.list', { name: 'Renamed', description: 'Description' })
     expect(deletePlaylist).toHaveBeenCalledWith('p.list')
     expect(backendFetch).not.toHaveBeenCalled()
+  })
+
+  it('keeps an unavailable Apple favorites endpoint out of the empty-state cache path', async () => {
+    favoriteSongIds.mockResolvedValue(null)
+
+    await expect(getLikedSongs('', 'apple')).rejects.toThrow('Apple Music 喜爱状态暂不可用')
   })
 
   it('uses favorites as the Apple liked-song source without playlist-name matching', async () => {

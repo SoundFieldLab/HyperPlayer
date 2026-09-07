@@ -13,6 +13,7 @@ import {
   loadFavoriteIdentifiers,
   peekSongFavoriteStatus,
 } from '../services/favoriteStatusService'
+import { getAppleLovedSongIds } from '../services/appleCatalog'
 import { addSodaSongToPlaylist, checkSodaLiked, isSodaLoggedIn, setSodaTrackLiked } from '../services/sodaService'
 import { addKugouSongToPlaylist, likeKugouSong } from '../services/kugouService'
 
@@ -172,6 +173,16 @@ export default function SongContextMenu({
           }
         })
         .catch(() => { /* 兜底失败保持加载态，等待通用路径 */ })
+    }
+
+    if (resolvedPlatform === 'apple') {
+      const identifiers = getFavoriteSongIdentifiers(song)
+      void getAppleLovedSongIds(identifiers)
+        .then(ids => {
+          if (!cancelled) setFavoriteStatus(ids.some(id => identifiers.includes(id)))
+        })
+        .catch(() => undefined)
+      return () => { cancelled = true }
     }
 
     void loadFavoriteIdentifiers(resolvedPlatform, favoriteUserId)

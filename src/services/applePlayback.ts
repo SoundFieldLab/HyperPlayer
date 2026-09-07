@@ -23,6 +23,7 @@
  * - 无 Widevine 或取流失败 → 上层回退网易云/QQ 载体匹配（原有路径不变）
  */
 import { getAppleCredentials } from './appleAuth'
+import { getAudioQualityPreference, type AppleAudioQualityPreference } from './audioQualitySettings'
 import { recordAppleAcceptanceEvent } from './appleAcceptanceDiagnostics'
 import { ensureAppleWebDevToken, prepareAppleDeveloperToken, shouldRefreshAppleDeveloperToken } from './appleMusicToken'
 
@@ -45,6 +46,12 @@ export interface AppleNativeStream {
   cencKeyUri?: string
   /** 当前流改写清单对应的 blob URL；由挂载该流的播放器负责释放 */
   manifestObjectUrl?: string
+  /** 当前流实际使用的 Apple 音频档位。 */
+  actualQuality?: 'aac' | 'lossless' | 'hi-res-lossless' | 'atmos'
+  /** 用户请求的 Apple 音质；与实际档位分离，避免把降级误报为无损。 */
+  requestedQuality?: AppleAudioQualityPreference
+  /** 请求档位不可用时的降级说明。 */
+  qualityFallbackReason?: string
   /** 直播流（电台/直播视频）：时长按 Infinity 处理，不做进度/切歌 */
   live?: boolean
 }
@@ -57,22 +64,32 @@ export function isAppleNativeStreamEnabled(): boolean {
 /** 最近一次原生取流的失败原因（供 UI 提示/诊断；成功或未尝试时为空） */
 let lastNativeFailReason = ''
 
-// Apple license 明确拒绝（例如 -1021）后，本会话内不重复消耗 30s HLS/EME 超时；
-// 上层会立即走 WebView2 兼容播放。-1021 可能来自 VMP、session、限流或服务端状态，
-// 不能再解释为“Apple 整类拒绝 L3/MF 才可用”。重启应用会重新探活一次。
-let cencRejected = false
+// Apple license 明确拒绝（例如 -1021）后，短时间内不重复消耗 HLS/EME 超时；
+// 冷却到期后自动探活，避免一次瞬时拒绝让整个应用会话永久失去 CENC。
+const CENC_REJECTION_COOLDOWN_MS = 10 * 60 * 1000
+let cencRejectedAt = 0
 export function markCencRejected(): void {
-  cencRejected = true
-  console.warn('[ApplePlayback] CENC license 本会话被拒，后续直接走兼容播放（重启后重新探活）')
+  cencRejectedAt = Date.now()
+  console.warn('[ApplePlayback] CENC license 被拒，10 分钟内直接走兼容播放')
 }
 function isCencRejected(): boolean {
-  return cencRejected
+  if (!cencRejectedAt) return false
+  if (Date.now() - cencRejectedAt < CENC_REJECTION_COOLDOWN_MS) return true
+  cencRejectedAt = 0
+  return false
+}
+
+export function resetAppleCencRejectionForTests(): void {
+  cencRejectedAt = 0
 }
 
 /** 最近一次 EME 能力检测的失败原因（供 UI 提示） */
 let lastEmeFailReason = ''
 export function getAppleNativeFailReason(): string {
   return lastNativeFailReason || lastEmeFailReason || ''
+}
+export function getAppleRadioFailReason(): string {
+  return lastNativeFailReason || 'Apple Music 电台暂不可用'
 }
 function setNativeFailReason(reason: string): void {
   lastNativeFailReason = reason
@@ -377,8 +394,12 @@ export async function resolveAppleNativeStream(songId: string): Promise<AppleNat
   const blobUrl = `${manifestObjectUrl}#apple-hls.m3u8`
   recordAppleAcceptanceEvent('manifest-created')
 
+  const requestedQuality = getAudioQualityPreference('apple') as AppleAudioQualityPreference
+  const qualityFallbackReason = requestedQuality !== 'auto' && requestedQuality !== 'aac'
+    ? '当前 Apple 网页播放资产仅确认支持 AAC，已自动降级'
+    : undefined
   lastNativeFailReason = ''
-  forwardToMainLog(`[ApplePlayback] CENC/Widevine HLS 就绪: keys=${hasKeys ? 'yes' : 'no'}`)
+  forwardToMainLog(`[ApplePlayback] CENC/Widevine HLS 就绪: keys=${hasKeys ? 'yes' : 'no'} quality=aac requested=${requestedQuality}`)
   return {
     url: blobUrl,
     masterUrl: cencUrl,
@@ -389,22 +410,32 @@ export async function resolveAppleNativeStream(songId: string): Promise<AppleNat
     songId,
     cencKeyUri,
     manifestObjectUrl,
+    actualQuality: 'aac',
+    requestedQuality,
+    qualityFallbackReason,
   }
 }
 
 // ─────────────────────────── 电台直播取流（/v1/play/assets） ───────────────────────────
 
-/** 电台 resource 的 playParams（来自 /v1/catalog/{sf}/stations/{id}） */
-export interface AppleRadioPlayParams {
-  id?: string
-  kind?: string
-  format?: string
-  stationHash?: string
-  hasDrm?: boolean
-  mediaType?: string
+export type AppleRadioScalar = string | number | boolean
+export type AppleRadioPlayParams = Record<string, AppleRadioScalar>
+
+const BLOCKED_PLAY_PARAM_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+
+export function sanitizeAppleRadioPlayParams(value: unknown): AppleRadioPlayParams {
+  const safe: AppleRadioPlayParams = Object.create(null)
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return safe
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!key || BLOCKED_PLAY_PARAM_KEYS.has(key) || !/^[A-Za-z0-9_.\-[\]]+$/.test(key)) continue
+    if (typeof entry === 'string' || typeof entry === 'boolean' || (typeof entry === 'number' && Number.isFinite(entry))) {
+      safe[key] = entry
+    }
+  }
+  return safe
 }
 
-const APPLE_PLAY_ASSETS_URL = 'https://api.music.apple.com/v1/play/assets'
+const APPLE_PLAY_ASSETS_URL = 'https://amp-api.music.apple.com/v1/play/assets'
 
 async function runPlayAssetsRequest(
   query: string,
@@ -496,14 +527,10 @@ export async function resolveAppleRadioStream(
   }
 
   const params: Record<string, string> = { keyFormat: 'web' }
-  if (playParams?.id) params.id = String(playParams.id)
-  else params.id = stationId
-  if (playParams?.kind) params.kind = String(playParams.kind)
-  else params.kind = 'radioStation'
-  if (playParams?.format) params.format = String(playParams.format)
-  if (playParams?.stationHash) params.stationHash = String(playParams.stationHash)
-  if (playParams?.hasDrm !== undefined) params.hasDrm = String(playParams.hasDrm)
-  if (playParams?.mediaType) params.mediaType = String(playParams.mediaType)
+  const safePlayParams = sanitizeAppleRadioPlayParams(playParams)
+  for (const [key, value] of Object.entries(safePlayParams)) params[key] = String(value)
+  if (!params.id) params.id = stationId
+  if (!params.kind) params.kind = 'radioStation'
   const query = new URLSearchParams(params).toString()
 
   const data = await fetchPlayAssets(query, credentials.developerToken, credentials.mediaUserToken)
@@ -520,9 +547,14 @@ export async function resolveAppleRadioStream(
     return null
   }
   const resolved = masterUrl.startsWith('manifest://') ? masterUrl.replace(/^manifest:\/\//, 'https://') : masterUrl
+  const manifestText = await fetchText(resolved)
+  const timeline: 'live' | 'vod' | 'unknown' = manifestText
+    ? manifestText.includes('#EXT-X-ENDLIST') ? 'vod' : 'live'
+    : 'unknown'
   lastNativeFailReason = ''
-  const licenseAdamId = playParams?.id ? String(playParams.id) : stationId
-  forwardToMainLog(`[ApplePlayback] 电台直播 HLS 就绪: ${resolved.slice(0, 96)} keys=${asset?.keyServerUrl ? 'yes' : 'NO'} adam-id=${licenseAdamId.slice(0, 40)}`)
+  const playAssetId = safePlayParams.id ? String(safePlayParams.id) : stationId
+  const licenseAdamId = String(asset?.adamId || asset?.songId || asset?.contentId || playAssetId)
+  forwardToMainLog(`[ApplePlayback] 电台 HLS 就绪: timeline=${timeline} keys=${asset?.keyServerUrl ? 'yes' : 'no'}`)
   return {
     url: resolved,
     masterUrl: resolved,
@@ -532,7 +564,7 @@ export async function resolveAppleRadioStream(
       ? String(asset.widevineKeyCertificateUrl || asset['widevine-cert-url']) : undefined,
     licenseAdamId,
     songId: stationId,
-    live: true,
+    live: timeline === 'unknown' ? undefined : timeline === 'live',
   }
 }
 

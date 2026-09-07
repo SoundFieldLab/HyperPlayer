@@ -8,6 +8,7 @@ const shouldRefresh = vi.fn()
 const appleApi = vi.fn()
 const applePlayback = vi.fn()
 const applePlayAssets = vi.fn()
+const appleFetchUrl = vi.fn()
 
 vi.mock('../src/services/appleMusicToken', () => ({
   ensureAppleWebDevToken: ensureToken,
@@ -23,7 +24,7 @@ vi.mock('../src/services/appleAuth', () => ({
   }),
 }))
 
-const electron = { appleApi, applePlayback, applePlayAssets }
+const electron = { appleApi, applePlayback, applePlayAssets, appleFetchUrl }
 ;(globalThis as typeof globalThis & { window: any }).window = {
   electron,
   setTimeout,
@@ -31,14 +32,17 @@ const electron = { appleApi, applePlayback, applePlayAssets }
 }
 
 const { appleApiRequest } = await import('../src/services/appleApiBridge')
-const { resolveAppleNativeStream, resolveAppleRadioStream } = await import('../src/services/applePlayback')
+const { markCencRejected, resetAppleCencRejectionForTests, resolveAppleNativeStream, resolveAppleRadioStream } = await import('../src/services/applePlayback')
 
 describe('Apple Developer Token request policy', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
+    vi.useRealTimers()
+    resetAppleCencRejectionForTests()
     prepareToken.mockImplementation(async (token: string) => token)
     shouldRefresh.mockReturnValue(false)
+    appleFetchUrl.mockResolvedValue({ ok: false, status: 0 })
   })
 
   it('uses the request-time refreshed token before the first amp-api request', async () => {
@@ -77,6 +81,72 @@ describe('Apple Developer Token request policy', () => {
     expect(appleApi).toHaveBeenCalledTimes(2)
     expect(appleApi.mock.calls[1][1]).toBe('replacement-token')
     expect(localStorage.getItem('appleDeveloperToken')).toBe('replacement-token')
+  })
+
+  it('automatically retries CENC after the ten minute rejection cooldown', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-07T00:00:00Z'))
+    applePlayback.mockResolvedValue({ ok: true, status: 200, data: { songList: [{}] } })
+    markCencRejected()
+
+    await resolveAppleNativeStream('song-1')
+    expect(applePlayback).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(10 * 60 * 1000)
+    await resolveAppleNativeStream('song-1')
+    expect(applePlayback).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['live', '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nsegment.aac', true],
+    ['vod', '#EXTM3U\n#EXTINF:6,\nsegment.aac\n#EXT-X-ENDLIST', false],
+    ['unknown', null, undefined],
+  ] as const)('preserves %s radio timeline from the HLS manifest', async (_label, manifest, expectedLive) => {
+    applePlayAssets.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { results: { assets: [{
+        url: 'manifest://radio.example/master.m3u8',
+        keyServerUrl: 'https://license.example/key',
+        widevineKeyCertificateUrl: 'https://license.example/cert',
+        adamId: 'license-id',
+      }] } },
+    })
+    appleFetchUrl.mockResolvedValue(manifest === null
+      ? { ok: false, status: 503 }
+      : { ok: true, status: 200, text: manifest })
+
+    const stream = await resolveAppleRadioStream('station-1', {
+      id: 'asset-1', kind: 'radioStation', stationHash: 'hash', customFlag: true,
+    })
+
+    expect(stream).toMatchObject({
+      url: 'https://radio.example/master.m3u8',
+      hlsKeyServerUrl: 'https://license.example/key',
+      widevineCertUrl: 'https://license.example/cert',
+      licenseAdamId: 'license-id',
+      live: expectedLive,
+    })
+    const query = new URLSearchParams(applePlayAssets.mock.calls[0][0])
+    expect(Object.fromEntries(query)).toMatchObject({
+      keyFormat: 'web', id: 'asset-1', kind: 'radioStation', stationHash: 'hash', customFlag: 'true',
+    })
+  })
+
+  it('prefers a DRM-capable radio asset over an earlier unprotected candidate', async () => {
+    applePlayAssets.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { results: { assets: [
+        { url: 'https://radio.example/fallback.m3u8', hasDrm: false },
+        { url: 'https://radio.example/widevine.m3u8', keyServerUrl: 'https://license.example/key', widevineKeyCertificateUrl: 'https://license.example/cert' },
+      ] } },
+    })
+    appleFetchUrl.mockResolvedValue({ ok: true, status: 200, text: '#EXTM3U\n#EXT-X-TARGETDURATION:6' })
+
+    const stream = await resolveAppleRadioStream('station-1')
+    expect(stream?.url).toBe('https://radio.example/widevine.m3u8')
+    expect(stream?.hlsKeyServerUrl).toBe('https://license.example/key')
   })
 
   it('prepares tokens before webPlayback and play/assets requests', async () => {

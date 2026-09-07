@@ -5,7 +5,7 @@ import { platformLabel } from './platforms'
  */
 
 import { indexedDBCache } from './indexedDBCache'
-import { getAppleLibraryPlaylists, getApplePlaylistTracks, getAppleCatalogPlaylistTracks, getAppleCatalogPlaylistSummary, getAppleFavoriteSongIds, appleSongToSong } from './appleCatalog'
+import { getAppleLibraryPlaylists, getApplePlaylistTracks, getAppleCatalogPlaylistTracks, getAppleCatalogPlaylistSummary, getAppleFavoriteSongIds, appleSongToSong, appleLibraryTrackToSong, APPLE_LIBRARY_ID_PATTERN } from './appleCatalog'
 import { getAppleCredentials } from './appleAuth'
 import { isQQFallbackDisplayName } from '../utils/qqUser'
 
@@ -271,6 +271,7 @@ async function fetchUserPlaylists(
       coverImgUrl: p.coverUrl || '',
       trackCount: p.songcount || 0,
       playCount: p.playcount || 0,
+      ownedByMe: p.isMine === true,
       platform: 'kugou',
     }))
   }
@@ -609,8 +610,22 @@ export async function getPlaylistDetail(
   // Apple Music：目录/编辑歌单曲目（amp-api catalog playlists/{id}/tracks，需 Developer Token）
   if (platform === 'apple') {
     const storefront = getAppleCredentials().storefront || 'cn'
-    const summary = await getAppleCatalogPlaylistSummary(playlistId, storefront).catch(() => null)
-    const tracks = await getAppleCatalogPlaylistTracks(playlistId, storefront).catch(() => [])
+    const isLibraryPlaylist = APPLE_LIBRARY_ID_PATTERN.test(String(playlistId))
+    if (isLibraryPlaylist) {
+      const tracks = await getApplePlaylistTracks(playlistId, 5000)
+      return {
+        playlist: {
+          id: playlistId,
+          name: `Apple Music 资料库歌单（${tracks.length} 首）`,
+          trackCount: tracks.length,
+          platform: 'apple',
+        },
+        tracks: tracks.map(appleLibraryTrackToSong),
+        privileges: {},
+      }
+    }
+    const summary = await getAppleCatalogPlaylistSummary(playlistId, storefront)
+    const tracks = await getAppleCatalogPlaylistTracks(playlistId, storefront)
     return {
       playlist: {
         id: playlistId,
@@ -744,7 +759,8 @@ export async function getLikedSongs(
   // Apple：“喜爱歌曲”读取与写入统一使用 favorites。
   if (platform === 'apple') {
     const favoriteIds = await getAppleFavoriteSongIds(5000)
-    return { ids: favoriteIds || [] }
+    if (favoriteIds === null) throw new Error('Apple Music 喜爱状态暂不可用')
+    return { ids: favoriteIds }
   }
   // 汽水：喜欢列表 =「qishui-liked」虚拟歌单曲目；返回 ids 供喜欢状态比对（favoriteStatusService 消费）。
   // 后端单页上限 50 条，这里分页拉全量，保证超过一页的喜欢列表红心状态仍准确

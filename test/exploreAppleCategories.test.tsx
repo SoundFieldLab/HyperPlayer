@@ -16,6 +16,7 @@ vi.mock('../src/services/appleWebService', async importOriginal => {
     ...actual,
     fetchAppleSearchLanding: vi.fn(),
     fetchAppleCuratorPage: vi.fn(),
+    appleWebItemToSong: vi.fn(actual.appleWebItemToSong),
   }
 })
 
@@ -66,6 +67,54 @@ describe('Apple Explore categories', () => {
     expect(screen.queryByText('One Detail')).toBeNull()
     expect(dispatchTvBack()).toBe(true)
     await waitFor(() => expect(screen.getByText('类别浏览')).toBeTruthy())
+  })
+
+  it('keeps landing, curator details, and songs on the explicit storefront', async () => {
+    vi.mocked(appleWeb.fetchAppleSearchLanding).mockResolvedValue({
+      sections: [{ id: 'curators', title: 'Categories', kind: 'curators', items: [curator('one', 'One')] }],
+      hero: null,
+      personalized: false,
+      sourceLabel: 'test',
+    })
+    vi.mocked(appleWeb.fetchAppleCuratorPage).mockResolvedValue({
+      curator: curator('one', 'One Detail'),
+      sections: [{
+        id: 'songs',
+        title: 'Songs',
+        kind: 'grid',
+        items: [{ id: 'song.1', playId: 'song.1', type: 'songs', name: 'Song One', artistName: 'Artist' }],
+      }],
+      playlists: [],
+      playlistCount: 0,
+    })
+    const onSongSelect = vi.fn()
+
+    render(<AppleSearchBrowse storefront="jp" onSongSelect={onSongSelect} />)
+    fireEvent.click(await screen.findByText('One'))
+    fireEvent.click(await screen.findByText('Song One'))
+
+    expect(appleWeb.fetchAppleSearchLanding).toHaveBeenCalledWith('jp')
+    expect(appleWeb.fetchAppleCuratorPage).toHaveBeenCalledWith('one', 'jp')
+    expect(appleWeb.appleWebItemToSong).toHaveBeenCalledWith(expect.objectContaining({ id: 'song.1' }), 'jp')
+    expect(vi.mocked(appleWeb.appleWebItemToSong).mock.calls.every(([, storefront]) => storefront === 'jp')).toBe(true)
+    expect(onSongSelect).toHaveBeenCalledOnce()
+  })
+
+  it('shows and retries a failed category landing request', async () => {
+    vi.mocked(appleWeb.fetchAppleSearchLanding)
+      .mockRejectedValueOnce(new Error('landing unavailable'))
+      .mockResolvedValueOnce({
+        sections: [{ id: 'curators', title: 'Categories', kind: 'curators', items: [curator('one', 'Recovered Category')] }],
+        hero: null,
+        personalized: false,
+        sourceLabel: 'test',
+      })
+
+    render(<AppleSearchBrowse onSongSelect={vi.fn()} />)
+    expect((await screen.findByRole('alert')).textContent).toContain('landing unavailable')
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await screen.findByText('Recovered Category')
+    expect(appleWeb.fetchAppleSearchLanding).toHaveBeenCalledTimes(2)
   })
 
   it('retries a failed curator request locally', async () => {

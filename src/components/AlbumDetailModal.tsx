@@ -16,6 +16,7 @@ import { useTvBack } from '../tv/tvCore'
 interface AlbumDetailModalProps {
   albumId: string | number
   platform: MusicPlatform
+  storefront?: string
   onClose: () => void
   onSongSelect?: (song: Song, playlist?: Song[]) => void
   playerTheme?: 'light' | 'dark'
@@ -53,6 +54,7 @@ const coverImageUrl = (platform: MusicPlatform, url: string | undefined | null):
 function AlbumDetailModal({
   albumId,
   platform,
+  storefront: explicitStorefront,
   onClose,
   onSongSelect,
   playerTheme = 'dark',
@@ -167,7 +169,7 @@ function AlbumDetailModal({
 
   useEffect(() => {
     loadAlbumData()
-  }, [albumId, platform])
+  }, [albumId, platform, explicitStorefront])
 
   useEffect(() => {
     // 汽水：歌单写接口未接入（userPlaylists=false），右键菜单歌单列表保持为空
@@ -203,9 +205,20 @@ function AlbumDetailModal({
     try {
       // Apple：iTunes Lookup 一次返回专辑信息与曲目（免 token）
       if (platform === 'apple') {
-        const storefront = localStorage.getItem('appleStorefront') || 'cn'
+        const storefront = explicitStorefront || localStorage.getItem('appleStorefront') || 'cn'
         const detail = await getAppleAlbumDetail(String(albumId), storefront)
-        if (detail) {
+        if (detail?.incomplete) {
+          setAlbum({
+            id: Number(detail.album.id) || 0,
+            name: detail.album.name,
+            picUrl: detail.album.artworkUrl || '',
+            artist: { name: detail.album.artistName },
+            publishTime: detail.album.releaseDate ? Date.parse(detail.album.releaseDate) : undefined,
+            platform: 'apple',
+          })
+          setSongs([])
+          setError('Apple Music 未返回该专辑的曲目，请重试或检查地区设置')
+        } else if (detail) {
           setAlbum({
             id: Number(detail.album.id) || 0,
             name: detail.album.name,

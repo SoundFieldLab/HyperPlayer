@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import type { SongSelectHandler } from '../types/playbackNavigation'
 import type { Song } from '../services/musicApi'
-import { resolveAppleRadioStream, type AppleNativeStream } from '../services/applePlayback'
+import type { AppleNativeStream } from '../services/applePlayback'
 import {
   addAppleMusicVideoToLibrary,
   addApplePlaylistToLibrary,
@@ -33,6 +33,7 @@ import {
   addAppleSongToLibrary,
   addAppleStationToLibrary,
   removeApplePlaylistFromLibrary,
+  removeAppleResourceFromLibrary,
   appleStationToSong,
   appleWebItemToSong,
   fetchAppleBrowsePage,
@@ -54,22 +55,23 @@ import {
   type AppleWebPage,
   type AppleWebSection,
 } from '../services/appleWebService'
-import { getAppleFavoriteSongIds, removeAppleSongFromLibrary, type AppleLibraryAlbum } from '../services/appleCatalog'
+import { getAppleLovedSongIds, removeAppleSongFromLibrary, type AppleLibraryAlbum } from '../services/appleCatalog'
 import { applyFavoriteMutation } from '../services/favoriteStatusService'
 import { useTvBack } from '../tv/tvCore'
 import AppleSearchBrowse from './AppleSearchBrowse'
 import AppleVideoModal from './AppleVideoModal'
+import { HorizontalShelf } from './apple-explore/HorizontalShelf'
 
 // ─────────────────────────── 动态封面 ───────────────────────────
 
 /** 动态封面（web powerswoosh 同款）：HLS 流 → hls.js 播放；失败/无则静态帧/静态图 */
 function DynamicCover({ item, className, iconClassName }: { item: AppleWebItem; className?: string; iconClassName?: string }) {
-  const [videoFailed, setVideoFailed] = useState(false)
+  const [videoFailed, setVideoFailed] = useState(() => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const motionHls = item.motionArtworkUrl
   useEffect(() => {
     if (!motionHls || videoFailed) return
-    let hls: { destroy: () => void } | null = null
+    let hls: { destroy: () => void; __visibilityCleanup?: () => void } | null = null
     let cancelled = false
     ;(async () => {
       try {
@@ -81,18 +83,28 @@ function DynamicCover({ item, className, iconClassName }: { item: AppleWebItem; 
         inst.loadSource(motionHls)
         inst.attachMedia(videoRef.current)
         inst.on(Hls.Events.MANIFEST_PARSED, () => {
-          if (cancelled) return
+          if (cancelled || document.hidden) return
           void videoRef.current?.play().catch(() => undefined)
         })
+        const onVisibilityChange = () => {
+          const video = videoRef.current
+          if (!video) return
+          if (document.hidden) video.pause()
+          else void video.play().catch(() => undefined)
+        }
+        document.addEventListener('visibilitychange', onVisibilityChange)
         inst.on(Hls.Events.ERROR, (_e: unknown, data: { fatal?: boolean }) => {
           if (data?.fatal && !cancelled) setVideoFailed(true)
         })
+        if (cancelled) document.removeEventListener('visibilitychange', onVisibilityChange)
+        else hls.__visibilityCleanup = () => document.removeEventListener('visibilitychange', onVisibilityChange)
       } catch {
         if (!cancelled) setVideoFailed(true)
       }
     })()
     return () => {
       cancelled = true
+      try { hls?.__visibilityCleanup?.() } catch { /* 忽略 */ }
       try { hls?.destroy() } catch { /* 忽略 */ }
     }
   }, [motionHls, videoFailed])
@@ -256,6 +268,7 @@ interface AppleExplorePanelProps {
   playerTheme?: 'light' | 'dark'
   onSongSelect: SongSelectHandler
   onLoginClick: () => void
+  onVideoPlaybackStart?: () => void
   onOpenAlbum?: (albumId: string, platform: 'apple') => void
   /** 打开探索页现成歌单详情面板（PlaylistDetailPanel） */
   onOpenPlaylistPanel?: (playlist: { id: string; name: string; coverUrl?: string; creator?: string; trackCount?: number; description?: string; platform: 'apple'; isLibrary?: boolean }) => void
@@ -297,6 +310,7 @@ export function AppleExplorePanel({
   playerTheme = 'dark',
   onSongSelect,
   onLoginClick,
+  onVideoPlaybackStart,
   onOpenAlbum,
   onOpenPlaylistPanel,
   onOpenArtistPanel,
@@ -393,6 +407,7 @@ export function AppleExplorePanel({
     const saved = new Set<string>()
     const libraryIds = new Map<string, string>()
     for (const item of libraryPage.sections.flatMap(section => section.items)) {
+      if (!item.libraryId) continue
       const catalogId = item.catalogId || item.playId
       if (item.type === 'songs' || item.type === 'albums' || item.type === 'music-videos') {
         if (catalogId) saved.add(`lib:${item.type}:${catalogId}`)
@@ -412,12 +427,24 @@ export function AppleExplorePanel({
       setFavorited(new Set())
       return
     }
+    const visibleSongIds = [...new Set(
+      Object.values(pages)
+        .filter((page): page is AppleWebPage => Boolean(page))
+        .flatMap(page => page.sections)
+        .flatMap(section => section.items)
+        .filter(item => item.type === 'songs' && item.playId)
+        .map(item => item.playId),
+    )]
+    if (visibleSongIds.length === 0) {
+      setFavorited(new Set())
+      return
+    }
     let cancelled = false
-    void getAppleFavoriteSongIds(5000).then(ids => {
-      if (!cancelled && ids) setFavorited(new Set(ids))
+    void getAppleLovedSongIds(visibleSongIds).then(ids => {
+      if (!cancelled) setFavorited(new Set(ids))
     }).catch(() => undefined)
     return () => { cancelled = true }
-  }, [appleLoggedIn, refreshSignal])
+  }, [appleLoggedIn, pages, refreshSignal])
 
   useEffect(() => {
     const syncFavorite = (event: Event) => {
@@ -496,21 +523,27 @@ export function AppleExplorePanel({
   }, [onSongContextMenu, storefront])
 
   const toggleFavorite = useCallback(async (item: AppleWebItem) => {
-    if (!appleLoggedIn || !isPlayableItem(item)) return
+    if (!appleLoggedIn) {
+      onLoginClick()
+      return
+    }
+    if (!isPlayableItem(item)) return
     const next = !favorited.has(item.playId)
     const ok = await setAppleFavorite('songs', item.playId, next)
-    if (ok) {
-      setFavorited(prev => {
-        const clone = new Set(prev)
-        if (next) clone.add(item.playId)
-        else clone.delete(item.playId)
-        return clone
-      })
-      const detail = { platform: 'apple' as const, type: next ? 'like' : 'unlike', songId: item.playId }
-      applyFavoriteMutation(detail)
-      window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail }))
+    if (!ok) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: '喜爱状态更新失败，请重试', type: 'error' } }))
+      return
     }
-  }, [appleLoggedIn, favorited])
+    setFavorited(prev => {
+      const clone = new Set(prev)
+      if (next) clone.add(item.playId)
+      else clone.delete(item.playId)
+      return clone
+    })
+    const detail = { platform: 'apple' as const, type: next ? 'like' : 'unlike', songId: item.playId }
+    applyFavoriteMutation(detail)
+    window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail }))
+  }, [appleLoggedIn, favorited, onLoginClick])
 
   const openPlaylistPanel = useCallback((item: AppleWebItem) => {
     const detailId = item.isLibrary ? item.libraryId : item.playId
@@ -563,9 +596,10 @@ export function AppleExplorePanel({
 
   /** 广播节目 → 站内详情；节目中的 station/episode 再进入电台详情或播放。 */
   const openRadioShow = useCallback(async (item: AppleWebItem) => {
-    if (!item.playId) return
+    const showId = item.playId || item.id
+    if (!showId) return
     setRadioShowDetail({ item, detail: null, loading: true })
-    const detail = await fetchAppleRadioShowDetail(item.playId, storefront).catch(() => null)
+    const detail = await fetchAppleRadioShowDetail(showId, storefront).catch(() => null)
     setRadioShowDetail(prev => prev && prev.item.id === item.id
       ? { item: detail?.show || prev.item, detail, loading: false }
       : prev)
@@ -573,9 +607,10 @@ export function AppleExplorePanel({
 
   /** 电台 → 详情抽屉（/v1/catalog/{sf}/stations/{id} + 动态封面） */
   const openStation = useCallback(async (item: AppleWebItem) => {
-    if (!item.playId) return
+    const stationId = item.playId || item.id
+    if (!stationId) return
     setStationDetail({ station: item, loading: true })
-    const detail = await fetchAppleStationDetail(item.playId, storefront).catch(() => null)
+    const detail = await fetchAppleStationDetail(stationId, storefront).catch(() => null)
     setStationDetail(prev => prev && prev.station.id === item.id
       ? { station: detail || prev.station, loading: false }
       : prev)
@@ -583,48 +618,24 @@ export function AppleExplorePanel({
 
   /** 站内直播播放电台：/v1/play/assets 取流（Cider 同款）→ HLS + Widevine EME → 单曲队列 */
   const playStation = useCallback(async (item: AppleWebItem) => {
-    if (!item.playId) return
+    ;(window as any).electron?.log?.(`[AppleRadio] play requested: hasPlayId=${Boolean(item.playId)} hasResourceId=${Boolean(item.id)} hasPlayParams=${Boolean(item.playParams)}`)
+    if (!item.playId && !item.id) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: '该电台缺少播放标识，暂不可播放', type: 'error' } }))
+      return
+    }
     if (!appleLoggedIn) {
       onLoginClick()
       return
     }
-    if (playingStationsRef.current.has(item.playId)) return
-    playingStationsRef.current.add(item.playId)
-    const notifyFail = (message: string) => {
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message, type: 'error' } }))
-    }
+    const stationKey = item.playId || item.id
+    if (playingStationsRef.current.has(stationKey)) return
+    playingStationsRef.current.add(stationKey)
     try {
-      // 编辑元素里的 station 常只带 id（无 playParams）→ 补拉详情拿 playParams
-      let station: AppleWebItem | null = item.playParams?.id ? item : null
-      if (!station) station = await fetchAppleStationDetail(item.playId, storefront).catch(() => null)
-      if (!station?.playId) {
-        notifyFail('电台详情获取失败，请稍后重试')
-        return
-      }
-      // 个别电台 resource 自带 offers[0].hlsUrl（免 play/assets 直接可播）
-      let stream: AppleNativeStream | null = null
-      if (station.offersHlsUrl && station.offersHasDrm === false) {
-        stream = {
-          url: station.offersHlsUrl.replace(/^manifest:\/\//, 'https://'),
-          masterUrl: station.offersHlsUrl,
-          licenseAdamId: station.playParams?.id || station.playId,
-          songId: station.playId,
-          live: true,
-        }
-      } else {
-        stream = await resolveAppleRadioStream(station.playId, station.playParams).catch(() => null)
-      }
-      if (!stream) {
-        notifyFail('电台直播流获取失败（可能需要订阅 Apple Music 或登录态已过期）')
-        return
-      }
-      // isLive=false 的点播单集按 VOD 处理（hls.js 可拿真实时长与进度）；
-      // 直播/未标注一律按直播（否则滑动窗口时长会让进度条来回走）
-      if (station.isLive === false) stream.live = false
-      const song = appleStationToSong(station, stream, storefront)
-      onSongSelect(song, [song], appleOrigin({ drawerType: 'station', item }))
+      // 立即进入专属播放页；详情加载不能阻塞播放，App 会用 station id/playParams 取流。
+      const song = appleStationToSong(item, undefined, storefront)
+      void onSongSelect(song, [song], appleOrigin({ drawerType: 'station', item }))
     } finally {
-      playingStationsRef.current.delete(item.playId)
+      playingStationsRef.current.delete(stationKey)
     }
   }, [appleLoggedIn, appleOrigin, onLoginClick, onSongSelect, storefront])
 
@@ -649,7 +660,8 @@ export function AppleExplorePanel({
 
   /** 探索更多 room 页：/room/{id} 编辑树 → 复用整页分区渲染 */
   const openRoom = useCallback(async (item: AppleWebItem) => {
-    const roomId = String(item.url || '').split('/').pop() || item.id
+    const path = String(item.url || '').split(/[?#]/, 1)[0].replace(/\/+$/, '')
+    const roomId = path.split('/').pop() || item.id
     if (!roomId) return
     setRoomDetail({ id: roomId, name: item.name || '探索', page: null, loading: true })
     const page = await fetchAppleRoomPage(roomId, storefront).catch(() => null)
@@ -685,14 +697,21 @@ export function AppleExplorePanel({
   /** 通用「加入资料库」（歌曲/专辑/视频；成功切换 + 态） */
   const saveToLibrary = useCallback(async (item: AppleWebItem) => {
     const key = `lib:${item.type}:${item.playId}`
-    if (!appleLoggedIn || !item.playId || item.isLibrary || libraryMutations.has(key)) return
-    const isSaved = savedPlaylists.has(key)
-    if (isSaved && item.type !== 'songs') return
-    setLibraryMutations(previous => new Set(previous).add(key))
-    try {
-      const ok = isSaved
-        ? await removeAppleSongFromLibrary(item.playId)
-        : item.type === 'songs'
+    if (!appleLoggedIn) {
+      onLoginClick()
+      return
+    }
+    if (!item.playId || item.isLibrary || libraryMutations.has(key)) return
+      const isSaved = savedPlaylists.has(key)
+      setLibraryMutations(previous => new Set(previous).add(key))
+      try {
+        const ok = isSaved
+          ? item.type === 'songs'
+            ? await removeAppleSongFromLibrary(item.playId)
+            : item.type === 'albums' || item.type === 'music-videos'
+              ? await removeAppleResourceFromLibrary(item.type, item.playId, item.libraryId)
+              : false
+          : item.type === 'songs'
           ? await addAppleSongToLibrary(item.playId)
           : item.type === 'albums'
             ? await addAppleAlbumToLibrary(item.playId)
@@ -717,7 +736,7 @@ export function AppleExplorePanel({
         return next
       })
     }
-  }, [appleLoggedIn, libraryMutations, savedPlaylists])
+  }, [appleLoggedIn, libraryMutations, onLoginClick, savedPlaylists])
 
   const savePlaylist = useCallback(async (item: AppleWebItem) => {
     if (!appleLoggedIn || !item.playId || item.isLibrary || libraryMutations.has(`playlist:${item.playId}`)) return
@@ -751,15 +770,38 @@ export function AppleExplorePanel({
   }, [appleLoggedIn, catalogLibraryIds, libraryMutations, loadTab, savedPlaylists])
 
   const saveStation = useCallback(async (item: AppleWebItem) => {
-    if (!appleLoggedIn || !item.playId || savedPlaylists.has(`st:${item.playId}`)) return
-    const ok = await addAppleStationToLibrary(item.playId)
-    if (ok) {
-      setSavedPlaylists(prev => new Set(prev).add(`st:${item.playId}`))
-      window.dispatchEvent(new CustomEvent('playlist-content-changed', {
-        detail: { platform: 'apple', type: 'library-add', stationId: item.playId },
-      }))
+    if (!appleLoggedIn) {
+      onLoginClick()
+      return
     }
-  }, [appleLoggedIn])
+    if (!item.playId || libraryMutations.has(`station:${item.playId}`)) return
+    const key = `st:${item.playId}`
+    const isSaved = savedPlaylists.has(key)
+    setLibraryMutations(previous => new Set(previous).add(`station:${item.playId}`))
+    try {
+      const ok = isSaved
+        ? await removeAppleResourceFromLibrary('stations', item.playId, item.libraryId)
+        : await addAppleStationToLibrary(item.playId)
+      if (!ok) throw new Error(isSaved ? '从资料库移除电台失败，请刷新后重试' : '加入资料库失败，请重试')
+      setSavedPlaylists(prev => {
+        const next = new Set(prev)
+        if (isSaved) next.delete(key)
+        else next.add(key)
+        return next
+      })
+      window.dispatchEvent(new CustomEvent('playlist-content-changed', {
+        detail: { platform: 'apple', type: isSaved ? 'remove' : 'library-add', stationId: item.playId },
+      }))
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: error instanceof Error ? error.message : '电台资料库操作失败', type: 'error' } }))
+    } finally {
+      setLibraryMutations(previous => {
+        const next = new Set(previous)
+        next.delete(`station:${item.playId}`)
+        return next
+      })
+    }
+  }, [appleLoggedIn, libraryMutations, onLoginClick, savedPlaylists])
 
   const openExternal = useCallback((url?: string) => {
     if (!url) return
@@ -830,6 +872,11 @@ export function AppleExplorePanel({
         data-tv-focus
         className="group min-w-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#fa2d48]"
         onClick={() => activateItem(item, items)}
+        onKeyDown={event => {
+          if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+          event.preventDefault()
+          activateItem(item, items)
+        }}
       >
         <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.04]">
           {isPlaylist ? (
@@ -856,17 +903,16 @@ export function AppleExplorePanel({
             </>
           )}
           {/* hover 播放按钮 */}
-          {isPlayableItem(item) && (
-            <span
-              role="button"
-              tabIndex={0}
+          {(isPlayableItem(item) || (item.type === 'stations' && Boolean(item.playId || item.id))) && (
+            <button
+              type="button"
               onClick={(event) => { event.stopPropagation(); if (item.type === 'stations') void playStation(item); else playItemWithQueue(item, items) }}
-              className="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full text-[#0a0f14] opacity-0 shadow-xl transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+              className="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full text-[#0a0f14] opacity-0 shadow-xl transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"
               style={{ background: accentColor }}
               aria-label={`播放${item.name}`}
             >
               <Play className="h-4 w-4 fill-current" />
-            </span>
+            </button>
           )}
         </div>
         <div className="mt-2 px-0.5">
@@ -914,7 +960,7 @@ export function AppleExplorePanel({
                   event.stopPropagation()
                   activateItem(item, section.items)
                 }}
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[#0a0f14] opacity-0 shadow-xl transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[#0a0f14] opacity-0 [@media(hover:none)]:opacity-100 shadow-xl transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
                 style={{ background: accentColor }}
                 aria-label={`播放${item?.name || section.title}`}
               >
@@ -933,10 +979,8 @@ export function AppleExplorePanel({
     return (
       <motion.div
         whileHover={{ y: -3 }}
-        tabIndex={0}
         data-tv-focus
-        className="group min-w-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#fa2d48]"
-        onClick={() => void playStation(item)}
+        className="group min-w-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-[#fa2d48]"
       >
         <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.04]">
           {item.artworkUrl ? (
@@ -951,36 +995,29 @@ export function AppleExplorePanel({
           )}
           <button
             type="button"
-            aria-label={isSaved ? '已加入资料库' : '加入资料库'}
-            disabled={isSaved}
+            aria-label={isSaved ? '从资料库移除' : '加入资料库'}
+            disabled={libraryMutations.has(`station:${item.playId}`)}
             onClick={(event) => { event.stopPropagation(); void saveStation(item) }}
-            className={`absolute right-2 top-2 z-20 flex h-8 w-8 items-center justify-center rounded-full backdrop-blur-md transition ${
-              isSaved ? 'bg-white/90 text-[#fa2d48]' : 'bg-black/40 text-white/75 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100'
-            }`}
+            className="absolute right-2 top-2 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white/85 opacity-0 backdrop-blur-md transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100 disabled:cursor-wait disabled:opacity-50"
           >
-            <Plus className="h-4 w-4" />
+            {isSaved ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           </button>
-          {/* hover 播放按钮：点击即站内直播 */}
-          <span
-            role="button"
-            tabIndex={0}
+          {/* 中央播放按钮 */}
+          <button
+            type="button"
             aria-label={`播放${item.name}`}
-            onClick={(event) => { event.stopPropagation(); void playStation(item) }}
-            className="absolute inset-0 z-10 flex items-center justify-center opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+            onClick={() => void playStation(item)}
+            className="absolute left-1/2 top-1/2 z-10 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-[#0a0f14] opacity-0 [@media(hover:none)]:opacity-100 shadow-xl transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+            style={{ background: accentColor }}
           >
-            <span
-              className="flex h-12 w-12 items-center justify-center rounded-full text-[#0a0f14] shadow-xl"
-              style={{ background: accentColor }}
-            >
-              <Play className="h-5 w-5 fill-current" />
-            </span>
-          </span>
+            <Play className="h-5 w-5 fill-current" />
+          </button>
           {/* 详情按钮：电台详情抽屉（保存/浏览器打开） */}
           <button
             type="button"
             aria-label="电台详情"
             onClick={(event) => { event.stopPropagation(); void openStation(item) }}
-            className="absolute bottom-2 right-2 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/45 text-white/80 opacity-0 backdrop-blur-md transition hover:bg-black/65 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+            className="absolute bottom-2 right-2 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/45 text-white/80 opacity-0 [@media(hover:none)]:opacity-100 backdrop-blur-md transition hover:bg-black/65 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
           >
             <Info className="h-4 w-4" />
           </button>
@@ -1020,7 +1057,7 @@ export function AppleExplorePanel({
             </div>
           )}
           <span
-            className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+            className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 [@media(hover:none)]:opacity-100 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
             aria-hidden="true"
           >
             <Play className="h-4 w-4 fill-white text-white" />
@@ -1043,19 +1080,19 @@ export function AppleExplorePanel({
           aria-label={savedPlaylists.has(`lib:songs:${item.playId}`) ? '从资料库移除' : '添加到资料库'}
           disabled={libraryMutations.has(`lib:songs:${item.playId}`)}
           onClick={(event) => { event.stopPropagation(); void saveToLibrary(item) }}
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition ${
-            savedPlaylists.has(`lib:songs:${item.playId}`) ? 'text-[#fa2d48]' : 'text-white/50 opacity-0 hover:bg-white/10 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100'
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100 ${
+            savedPlaylists.has(`lib:songs:${item.playId}`) ? 'text-[#fa2d48]' : 'text-white/50 hover:bg-white/10'
           }`}
         >
-          <Plus className={`h-4 w-4 ${savedPlaylists.has(`lib:songs:${item.playId}`) ? 'rotate-45' : ''}`} />
+          {savedPlaylists.has(`lib:songs:${item.playId}`) ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
         </button>
         )}
         <button
           type="button"
           aria-label="喜爱歌曲"
           onClick={(event) => { event.stopPropagation(); void toggleFavorite(item) }}
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition ${
-            isFav ? 'text-[#fa2d48]' : 'text-white/50 opacity-0 hover:bg-white/10 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100'
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100 ${
+            isFav ? 'text-[#fa2d48]' : 'text-white/50 hover:bg-white/10'
           }`}
         >
           <Heart className={`h-4 w-4 ${isFav ? 'fill-current' : ''}`} />
@@ -1063,8 +1100,8 @@ export function AppleExplorePanel({
         <button
           type="button"
           aria-label="更多操作"
-          onClick={(event) => openSongMenu(event, item, items)}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white/50 opacity-0 transition hover:bg-white/10 group-hover:opacity-100"
+          onClick={(event) => { event.stopPropagation(); openSongMenu(event, item, items) }}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white/50 opacity-0 transition hover:bg-white/10 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"
         >
           <MoreHorizontal className="h-4 w-4" />
         </button>
@@ -1077,9 +1114,9 @@ export function AppleExplorePanel({
     <motion.div
       whileHover={{ y: -3 }}
       className="group relative min-w-0 cursor-pointer overflow-hidden rounded-2xl border border-white/[0.08]"
-      onClick={() => item.type === 'stations' && item.playId
+      onClick={() => item.type === 'stations' && (item.playId || item.id)
         ? void openStation(item)
-        : item.type === 'radio-shows' && item.playId
+        : item.type === 'radio-shows' && (item.playId || item.id)
           ? void openRadioShow(item)
           : openExternal(item.url)}
     >
@@ -1093,7 +1130,9 @@ export function AppleExplorePanel({
       <div className="absolute inset-0 bg-[linear-gradient(0deg,rgba(6,9,14,0.85)_0%,rgba(6,9,14,0.15)_60%,transparent_100%)]" />
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 p-3.5">
         <p className="min-w-0 truncate text-sm font-semibold">{item.name}</p>
-        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-white/45 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100" />
+        {item.type === 'stations' || item.type === 'radio-shows'
+          ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-white/45 opacity-0 [@media(hover:none)]:opacity-100 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100" />
+          : <ExternalLink className="h-3.5 w-3.5 shrink-0 text-white/45 opacity-0 [@media(hover:none)]:opacity-100 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100" />}
       </div>
     </motion.div>
   )
@@ -1113,7 +1152,7 @@ export function AppleExplorePanel({
         whileHover={{ y: -3 }}
         tabIndex={0}
         data-tv-focus
-        className={`group w-40 shrink-0 cursor-pointer rounded-2xl border outline-none focus-visible:ring-2 focus-visible:ring-[#fa2d48] ${cardBorder} ${cardBg} p-2`}
+        className="group w-[148px] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#fa2d48] sm:w-[164px] lg:w-[176px]"
         onClick={() => activateItem(item, items)}
       >
         <div className="relative overflow-hidden rounded-xl">
@@ -1133,21 +1172,17 @@ export function AppleExplorePanel({
             <button
               type="button"
               aria-label={isPlaylist ? (isSaved ? '从资料库移除歌单' : '添加歌单到资料库') : isLibraryResource ? (isLibrarySaved ? '已添加到资料库' : '添加到资料库') : '喜欢'}
-              disabled={isLibrarySaved}
+              disabled={libraryMutations.has(libraryKey)}
               onClick={(event) => {
                 event.stopPropagation()
                 if (isPlaylist) void savePlaylist(item)
                 else if (isLibraryResource) void saveToLibrary(item)
                 else void toggleFavorite(item)
               }}
-              className={`absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full backdrop-blur-md transition disabled:cursor-default ${
-                (isPlaylist ? isSaved : isLibraryResource ? isLibrarySaved : isFav)
-                  ? 'bg-white/90 text-[#fa2d48]'
-                  : 'bg-black/35 text-white/72 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100'
-              }`}
+              className={`absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white/85 opacity-0 backdrop-blur-md transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100 disabled:cursor-default`}
             >
               {isPlaylist
-                ? <Plus className={`h-4 w-4 ${isSaved ? 'rotate-45' : ''}`} />
+                ? isSaved ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />
                 : isLibraryResource
                   ? isLibrarySaved ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />
                   : <Heart className={`h-4 w-4 ${isFav ? 'fill-current' : ''}`} />}
@@ -1170,9 +1205,9 @@ export function AppleExplorePanel({
         return (
           <section key={section.id} className="space-y-3">
             <SectionTitle title={section.title} subtitle={section.subtitle} />
-            <div className="grid grid-cols-1 gap-x-5 gap-y-6 sm:grid-cols-2 xl:grid-cols-3">
+            <HorizontalShelf edgeControls="hover" ariaLabel={section.title} itemClassName="w-[min(78vw,360px)] sm:w-[340px] lg:w-[380px]">
               {section.items.map(item => <FeaturedCard key={`${section.id}-${item.id}`} item={item} items={section.items} />)}
-            </div>
+            </HorizontalShelf>
           </section>
         )
       case 'banner':
@@ -1185,9 +1220,9 @@ export function AppleExplorePanel({
         return (
           <section key={section.id} className="space-y-3">
             <SectionTitle title={section.title} subtitle={section.subtitle} />
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <HorizontalShelf edgeControls="hover" ariaLabel={section.title} itemClassName="w-[min(78vw,320px)] sm:w-[300px] lg:w-[330px]">
               {section.items.map(item => <ShowCard key={`${section.id}-${item.id}`} item={item} />)}
-            </div>
+            </HorizontalShelf>
           </section>
         )
       case 'grid': {
@@ -1202,21 +1237,44 @@ export function AppleExplorePanel({
                 ))}
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+              <HorizontalShelf edgeControls="hover" ariaLabel={section.title}>
                 {section.items.map(item => (
                   item.type === 'stations'
-                    ? <StationCard key={`${section.id}-${item.type}-${item.id}`} item={item} />
+                    ? <div className="w-[148px] sm:w-[164px] lg:w-[176px]"><StationCard key={`${section.id}-${item.type}-${item.id}`} item={item} /></div>
                     : item.type === 'radio-shows'
-                      ? <ShowCard key={`${section.id}-${item.type}-${item.id}`} item={item} />
+                      ? <div className="w-[min(78vw,320px)] sm:w-[300px]"><ShowCard key={`${section.id}-${item.type}-${item.id}`} item={item} /></div>
                       : <RowCard key={`${section.id}-${item.type}-${item.id}`} item={item} items={section.items} />
                 ))}
-              </div>
+              </HorizontalShelf>
             )}
           </section>
         )
       }
       case 'chart': {
-        const chartItemType = section.items[0]?.type
+        const chartItemType = section.items.length > 0 && section.items.every(item => item.type === section.items[0].type)
+          ? section.items[0].type
+          : null
+        if (!chartItemType) {
+          return (
+            <section key={section.id} className="space-y-3">
+              <SectionTitle title={section.title} subtitle={`${section.items.length} 项 · 点击查看完整榜单`} />
+              <button
+                type="button"
+                onClick={() => setChartDetail(section)}
+                className="group flex w-full items-center gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.04] p-4 text-left transition hover:bg-white/[0.07]"
+              >
+                <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-white/[0.06]">
+                  <Trophy className="h-7 w-7 opacity-50" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-base font-semibold">{section.title}</span>
+                  <span className="mt-1 block truncate text-xs text-white/40">歌曲、专辑、歌单与视频</span>
+                </span>
+                <ChevronRight className="h-5 w-5 shrink-0 text-white/25 transition group-hover:text-white/60" />
+              </button>
+            </section>
+          )
+        }
         // 歌曲/专辑榜：整榜一张卡（封面 + 榜名），点开抽屉看完整排名（web /new/top-charts 同款）
         if (chartItemType === 'songs' || chartItemType === 'albums') {
           const cover = section.items[0]?.artworkUrl
@@ -1257,7 +1315,7 @@ export function AppleExplorePanel({
               <SectionTitle title={section.title} subtitle="各地区榜单 · 点击进入" />
               <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {section.items.map(item => (
-                  <div key={`${section.id}-${item.id}`} className="group min-w-0 cursor-pointer" onClick={() => openPlaylistPanel(item)}>
+                  <button type="button" key={`${section.id}-${item.id}`} className="group min-w-0 cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-[#fa2d48]" onClick={() => openPlaylistPanel(item)}>
                     <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.04]">
                       {item.artworkUrl ? (
                         <img src={item.artworkUrl} alt={item.name} loading="lazy" className="aspect-square w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
@@ -1266,15 +1324,15 @@ export function AppleExplorePanel({
                           <ListMusic className="h-7 w-7 opacity-40" />
                         </div>
                       )}
-                      <span className="absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full text-[#0a0f14] opacity-0 shadow-xl transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100" style={{ background: accentColor }}>
-                        <Play className="h-4 w-4 fill-current" />
+                      <span className="absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full text-[#0a0f14] opacity-0 [@media(hover:none)]:opacity-100 shadow-xl transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100" style={{ background: accentColor }}>
+                        <ListMusic className="h-4 w-4" />
                       </span>
                     </div>
                     <div className="mt-2 px-0.5">
                       <p className="truncate text-[13px] font-medium leading-tight">{item.name}</p>
                       <p className="mt-0.5 truncate text-[11px] text-white/40">{item.curatorName || 'Apple Music 榜单'}</p>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </section>
@@ -1286,7 +1344,7 @@ export function AppleExplorePanel({
             <SectionTitle title={section.title} subtitle="热门音乐视频" />
             <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
               {section.items.map(item => (
-                <div key={`${section.id}-${item.id}`} className="group min-w-0 cursor-pointer" onClick={() => playVideo(item)}>
+                <button type="button" key={`${section.id}-${item.id}`} className="group min-w-0 cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-[#fa2d48]" onClick={() => playVideo(item)}>
                   <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.04]">
                     {item.artworkUrl ? (
                       <img src={item.artworkUrl} alt={item.name} loading="lazy" className="aspect-square w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
@@ -1295,7 +1353,7 @@ export function AppleExplorePanel({
                         <MusicGlyph className="h-7 w-7 opacity-40" />
                       </div>
                     )}
-                    <span className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white/85 opacity-0 backdrop-blur-md transition group-hover:opacity-100">
+                    <span className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white/85 opacity-0 [@media(hover:none)]:opacity-100 backdrop-blur-md transition group-hover:opacity-100">
                       <Play className="h-4 w-4 fill-current" />
                     </span>
                   </div>
@@ -1303,7 +1361,7 @@ export function AppleExplorePanel({
                     <p className="truncate text-[13px] font-medium leading-tight">{item.name}</p>
                     <p className="mt-0.5 truncate text-[11px] text-white/40">{item.artistName || item.subtitle || 'Apple Music'}</p>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </section>
@@ -1316,24 +1374,23 @@ export function AppleExplorePanel({
         return (
           <section key={section.id} className="space-y-3">
             <SectionTitle title={section.title} subtitle={section.subtitle} />
-            <div className="no-scrollbar -mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
+            <HorizontalShelf edgeControls="hover" ariaLabel={section.title}>
               {section.items.map(item => <RowCard key={`${section.id}-${item.id}`} item={item} items={section.items} />)}
               {section.items.length === 0 && (
-                <div className="w-full rounded-2xl px-4 py-6 text-sm text-white/36">暂无内容</div>
+                <div className="w-full px-4 py-6 text-sm text-white/36">暂无内容</div>
               )}
-            </div>
+            </HorizontalShelf>
           </section>
         )
     }
   }
 
   const SectionTitle = ({ title, subtitle }: { title: string; subtitle?: string }) => (
-    <div className="flex items-end justify-between gap-3">
+    <div className="border-b border-white/[0.08] pb-2.5">
       <div className="min-w-0">
         <h3 className="truncate text-lg font-semibold tracking-tight">{title}</h3>
         {subtitle && <p className="mt-0.5 truncate text-xs text-white/42">{subtitle}</p>}
       </div>
-      <ChevronRight className="h-4 w-4 shrink-0 text-white/25" />
     </div>
   )
 
@@ -1356,8 +1413,10 @@ export function AppleExplorePanel({
           nodes.push(renderSection(banners[0]))
         } else {
           nodes.push(
-            <section key={`${banners[0].id}-banner-grid`} className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              {banners.map(banner => <BannerCard key={banner.id} section={banner} />)}
+            <section key={`${banners[0].id}-banner-shelf`}>
+              <HorizontalShelf edgeControls="hover" ariaLabel="精品推荐" itemClassName="w-[min(86vw,620px)] sm:w-[520px] lg:w-[min(48vw,620px)]">
+                {banners.map(banner => <BannerCard key={banner.id} section={banner} />)}
+              </HorizontalShelf>
             </section>,
           )
         }
@@ -1418,7 +1477,7 @@ export function AppleExplorePanel({
             <button
               type="button"
               aria-label="播放"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#0a0f14] opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#0a0f14] opacity-0 [@media(hover:none)]:opacity-100 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
               onClick={(event) => { event.stopPropagation(); void onSongSelect(song, tracks, drawerOrigin) }}
             >
               <Play className="h-4 w-4 fill-current" />
@@ -1502,7 +1561,7 @@ export function AppleExplorePanel({
               <motion.div
                 key={album.id}
                 whileHover={{ y: -2 }}
-                onClick={() => void openAlbumDrawer(album)}
+                onClick={() => { setArtistDrawer(null); void openAlbumDrawer(album) }}
                 className="group cursor-pointer rounded-2xl border border-white/[0.08] bg-white/[0.05] p-2"
               >
                 {album.artworkUrl
@@ -1652,7 +1711,7 @@ export function AppleExplorePanel({
                 <p className="truncate text-xs text-white/45">{item.artistName || item.curatorName || item.subtitle || 'Apple Music'}</p>
               </div>
               <span
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#0a0f14] opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#0a0f14] opacity-0 [@media(hover:none)]:opacity-100 transition group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
                 aria-hidden="true"
               >
                 <Play className="h-4 w-4 fill-current" />
@@ -1770,20 +1829,22 @@ export function AppleExplorePanel({
             </button>
             <button
               type="button"
-              disabled={!appleLoggedIn || savedPlaylists.has(`st:${stationDetail.station.playId}`)}
+              disabled={!appleLoggedIn || libraryMutations.has(`station:${stationDetail.station.playId}`)}
               onClick={() => void saveStation(stationDetail.station)}
               className={`flex flex-1 items-center justify-center gap-2 rounded-full border border-white/[0.12] bg-white/[0.06] py-3 text-sm font-semibold ${appleLoggedIn && !savedPlaylists.has(`st:${stationDetail.station.playId}`) ? 'text-white/80 hover:bg-white/[0.1]' : 'opacity-40'}`}
             >
               {savedPlaylists.has(`st:${stationDetail.station.playId}`) ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />} {savedPlaylists.has(`st:${stationDetail.station.playId}`) ? '已加入资料库' : '加入资料库'}
             </button>
-            <button
-              type="button"
-              aria-label="在 Apple Music 打开"
-              onClick={() => openExternal(stationDetail.station.url)}
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-white/[0.12] bg-white/[0.06] text-white/70 transition hover:bg-white/[0.1]"
-            >
-              <ExternalLink className="h-4 w-4" />
-            </button>
+            {stationDetail.station.url && (
+              <button
+                type="button"
+                aria-label="在 Apple Music 打开"
+                onClick={() => openExternal(stationDetail.station.url)}
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-white/[0.12] bg-white/[0.06] text-white/70 transition hover:bg-white/[0.1]"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </button>
+            )}
           </div>
           {!appleLoggedIn && <p className="mt-2 text-center text-xs text-white/40">登录后可收藏电台；播放直播需登录 Apple Music</p>}
         </div>
@@ -1792,7 +1853,13 @@ export function AppleExplorePanel({
   )
 
   return (
-    <div className="space-y-6">
+    <div
+      className="space-y-6"
+      data-apple-explore-panel
+      onDragStart={event => {
+        if (event.target instanceof HTMLImageElement) event.preventDefault()
+      }}
+    >
       {/* 未登录提示 */}
       {!appleLoggedIn && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-4 py-3">
@@ -1812,13 +1879,15 @@ export function AppleExplorePanel({
       )}
 
       {/* 页签 + 商店标识（商店 chip 放资料库右侧；刷新入口在探索页顶栏「换一批」位置） */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div role="tablist" aria-label="Apple Music 页面" className="no-scrollbar flex items-center gap-2 overflow-x-auto pb-1">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
+            role="tab"
+            aria-selected={tab === id}
             onClick={() => setTab(id)}
-            className={`flex h-10 items-center gap-2 rounded-full px-5 text-sm font-medium transition ${
+            className={`flex h-10 shrink-0 items-center gap-2 rounded-full px-5 text-sm font-medium transition ${
               tab === id
                 ? 'text-[#081017]'
                 : 'border border-white/[0.1] bg-white/[0.045] text-white/60 hover:bg-white/[0.09] hover:text-white'
@@ -1829,7 +1898,7 @@ export function AppleExplorePanel({
             {label}
           </button>
         ))}
-        <span className="rounded-full border border-white/[0.08] bg-white/[0.035] px-2.5 py-1 text-xs uppercase text-white/40">
+        <span className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.035] px-2.5 py-1 text-xs uppercase text-white/40">
           {storefront} 商店
         </span>
       </div>
@@ -1879,6 +1948,7 @@ export function AppleExplorePanel({
         <AppleSearchBrowse
           key={categoriesVersion}
           playerTheme={playerTheme}
+          storefront={storefront}
           onSongSelect={onSongSelect}
           playbackOrigin={appleOrigin({ category: true })}
           onOpenItem={activateItem}
@@ -1898,9 +1968,17 @@ export function AppleExplorePanel({
         skeleton
       ) : currentPage ? (
         <>
-          <div className="space-y-8">
-            {/* 主页主视觉大卡（web powerswoosh：动态封面优先） */}
-            {tab === 'home' && currentPage.hero && (
+          <div className="space-y-10">
+            {currentPage.fallbackReason && (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200/15 bg-amber-200/[0.06] px-4 py-3 text-sm text-amber-50/75">
+                <span>{currentPage.fallbackReason}</span>
+                {currentPage.requiresLogin && (
+                  <button type="button" onClick={onLoginClick} className="shrink-0 rounded-full bg-white px-3.5 py-1.5 text-xs font-semibold text-black">重新登录</button>
+                )}
+              </div>
+            )}
+            {/* 页面主视觉大卡（web powerswoosh：动态封面优先） */}
+            {currentPage.hero && (
               <section className="relative overflow-hidden rounded-[28px] border border-white/[0.09] shadow-2xl shadow-black/20">
                 <div className="absolute inset-0">
                   <DynamicCover item={currentPage.hero} className="h-full w-full object-cover" />
@@ -1909,7 +1987,7 @@ export function AppleExplorePanel({
                 <div className="relative flex min-h-[280px] flex-col justify-end p-6 md:p-9">
                   <div className="mb-auto flex items-center gap-2 text-xs font-medium text-white/65">
                     <Sparkles className="h-4 w-4" style={{ color: accentColor }} />
-                    Apple Music · 专属推荐
+                    Apple Music · {tab === 'radio' ? '广播精选' : tab === 'browse' ? '新发现' : '专属推荐'}
                   </div>
                   {currentPage.hero.artworkUrl || currentPage.hero.heroArtworkUrl ? (
                     <img
@@ -1970,6 +2048,7 @@ export function AppleExplorePanel({
         <AppleVideoModal
           item={videoItem}
           onClose={() => setVideoItem(null)}
+          onPlaybackStart={onVideoPlaybackStart}
         />
       )}
     </div>

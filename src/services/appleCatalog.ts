@@ -229,6 +229,8 @@ export interface AppleLibraryPlaylist {
   artworkUrl?: string
   curatorName?: string
   trackCount?: number
+  /** /me/library/playlists 始终属于当前登录用户。 */
+  ownedByMe: true
 }
 
 export interface AppleLibraryTrack {
@@ -245,10 +247,12 @@ export interface AppleLibraryTrack {
 }
 
 /** 带登录凭据的 amp-api「me」请求（需要 Developer Token + Media-User-Token） */
-const appleMeFetch = async (path: string): Promise<any | null> => {
+const appleMeFetch = async (path: string, strict = false): Promise<any | null> => {
   const credentials = getAppleCredentials()
   if (!credentials.developerToken || !credentials.mediaUserToken) {
-    forwardToBackend(`${path} 未配置凭据（developerToken/mediaUserToken 缺失）`)
+    const message = `${path} 未配置凭据（developerToken/mediaUserToken 缺失）`
+    forwardToBackend(message)
+    if (strict) throw Object.assign(new Error('Apple Music 登录状态无效，请重新登录'), { status: 401 })
     return null
   }
   const result = await appleApiRequest(path, {
@@ -263,6 +267,14 @@ const appleMeFetch = async (path: string): Promise<any | null> => {
       forwardToBackend(`${path} 网络错误：${result.error || ''}`)
     } else {
       forwardToBackend(`${path} HTTP ${result.status}`)
+    }
+    if (strict) {
+      const message = result.status === 401 || result.status === 403
+        ? 'Apple Music 登录或订阅状态无效，请重新登录'
+        : result.status === 0
+          ? 'Apple Music 网络连接失败，请重试'
+          : `Apple Music 请求失败（HTTP ${result.status}）`
+      throw Object.assign(new Error(message), { status: result.status })
     }
     return null
   }
@@ -280,14 +292,14 @@ const toAppleApiPath = (next: unknown): string | null => {
   }
 }
 
-async function fetchAppleMePages(path: string, requestedLimit: number): Promise<{ items: any[]; included: any[] }> {
+async function fetchAppleMePages(path: string, requestedLimit: number, strict = false): Promise<{ items: any[]; included: any[] }> {
   const target = Math.max(1, requestedLimit)
   const items: any[] = []
   const included: any[] = []
   const seen = new Set<string>()
   let next: string | null = path
   for (let page = 0; next && items.length < target && page < 100; page += 1) {
-    const data = await appleMeFetch(next)
+    const data = await appleMeFetch(next, strict)
     if (!data) break
     for (const item of Array.isArray(data.data) ? data.data : []) {
       const key = `${item?.type || ''}:${item?.id || ''}`
@@ -310,21 +322,28 @@ const withPageLimit = (path: string, limit: number): string => {
 /** 当前登录用户的歌单列表 */
 export async function getAppleLibraryPlaylists(limit = 100): Promise<AppleLibraryPlaylist[]> {
   // web 播放器同款（列表层不带 include=tracks；platform=web 为 me 接口的当前门槛参数）
-  const { items } = await fetchAppleMePages(
+  const { items, included } = await fetchAppleMePages(
     withPageLimit('/v1/me/library/playlists?platform=web&include=catalog&omit[resource]=autos', limit),
     limit,
   )
+  const includedById = new Map(included.filter(item => item?.id).map(item => [`${item.type}:${item.id}`, item]))
   return items
     .filter(item => item?.id && item?.attributes)
-    .map(item => ({
-      id: String(item.id),
-      catalogId: item?.relationships?.catalog?.data?.[0]?.id ? String(item.relationships.catalog.data[0].id) : undefined,
-      name: item.attributes.name || '',
-      description: item.attributes.description?.standard || undefined,
-      artworkUrl: toHighResArtwork(item.attributes.artwork?.url || ''),
-      curatorName: item.attributes.curatorName || undefined,
-      trackCount: item.attributes.trackCount ?? item.relationships?.tracks?.data?.length,
-    }))
+    .map(item => {
+      const catalogRef = item?.relationships?.catalog?.data?.[0]
+      const catalog = catalogRef?.id ? includedById.get(`${catalogRef.type || 'playlists'}:${catalogRef.id}`) : null
+      const artworkUrl = item.attributes.artwork?.url || catalog?.attributes?.artwork?.url || catalogRef?.attributes?.artwork?.url || ''
+      return {
+        id: String(item.id),
+        catalogId: catalogRef?.id ? String(catalogRef.id) : undefined,
+        name: item.attributes.name || catalog?.attributes?.name || catalogRef?.attributes?.name || '',
+        description: item.attributes.description?.standard || undefined,
+        artworkUrl: toHighResArtwork(artworkUrl),
+        curatorName: item.attributes.curatorName || undefined,
+        trackCount: item.attributes.trackCount ?? catalog?.attributes?.trackCount ?? item.relationships?.tracks?.data?.length,
+        ownedByMe: true as const,
+      }
+    })
     .filter(playlist => playlist.name)
 }
 
@@ -350,10 +369,11 @@ const mapAppleLibraryTrack = (item: any, includedById: Map<string, any>): AppleL
 }
 
 /** 用户歌单的曲目 */
-export async function getApplePlaylistTracks(playlistId: string, limit = 300): Promise<AppleLibraryTrack[]> {
+export async function getApplePlaylistTracks(playlistId: string, limit = 5000): Promise<AppleLibraryTrack[]> {
   const { items, included } = await fetchAppleMePages(
     withPageLimit(`/v1/me/library/playlists/${encodeURIComponent(playlistId)}/tracks?platform=web&include=catalog`, limit),
     limit,
+    true,
   )
   const includedById = new Map(included.filter(item => item?.id).map(item => [`${item.type}:${item.id}`, item]))
   return items
@@ -498,10 +518,11 @@ export async function getAppleLibraryArtists(limit = 200): Promise<AppleLibraryA
 }
 
 /** 单张库专辑曲目（include=catalog 带回目录 id 供播放） */
-export async function getAppleLibraryAlbumTracks(albumId: string, limit = 300): Promise<AppleLibraryTrack[]> {
+export async function getAppleLibraryAlbumTracks(albumId: string, limit = 5000): Promise<AppleLibraryTrack[]> {
   const { items, included } = await fetchAppleMePages(
     withPageLimit(`/v1/me/library/albums/${encodeURIComponent(albumId)}/tracks?platform=web&include=catalog`, limit),
     limit,
+    true,
   )
   const includedById = new Map(included.filter(item => item?.id).map(item => [`${item.type}:${item.id}`, item]))
   return items
@@ -719,21 +740,32 @@ export async function getAppleChartGroups(country = 'cn'): Promise<AppleChartGro
 
 // ─────────────────────────── 目录详情（amp-api，需 Developer Token） ───────────────────────────
 
-const appleCatalogFetch = async (path: string, timeoutMs = 8000): Promise<any | null> => {
+const appleCatalogFetch = async (path: string, timeoutMs = 8000, strict = false): Promise<any | null> => {
   const credentials = getAppleCredentials()
-  if (!credentials.developerToken) return null
+  if (!credentials.developerToken) {
+    if (strict) throw Object.assign(new Error('Apple Music Developer Token 不可用'), { status: 401 })
+    return null
+  }
   const result = await appleApiRequest(path, {
     developerToken: credentials.developerToken,
     timeoutMs,
   })
   if (!result.ok) {
     if (result.status === 0) console.warn('[AppleCatalog] 目录请求网络错误:', path, result.error)
+    if (strict) {
+      const message = result.status === 401 || result.status === 403
+        ? 'Apple Music 目录授权失败，请重新登录'
+        : result.status === 0
+          ? 'Apple Music 网络连接失败，请重试'
+          : `Apple Music 目录请求失败（HTTP ${result.status}）`
+      throw Object.assign(new Error(message), { status: result.status })
+    }
     return null
   }
   return result.data
 }
 
-async function fetchAppleCatalogPages(path: string, requestedLimit: number): Promise<any[]> {
+async function fetchAppleCatalogPages(path: string, requestedLimit: number, strict = false): Promise<any[]> {
   const target = Math.max(1, requestedLimit)
   const items: any[] = []
   const seenItems = new Set<string>()
@@ -742,7 +774,7 @@ async function fetchAppleCatalogPages(path: string, requestedLimit: number): Pro
   for (let page = 0; next && items.length < target && page < 100; page += 1) {
     if (seenPages.has(next)) break
     seenPages.add(next)
-    const data = await appleCatalogFetch(next, 10000)
+    const data = await appleCatalogFetch(next, 10000, strict)
     if (!data) break
     for (const item of Array.isArray(data.data) ? data.data : []) {
       const key = `${item?.type || ''}:${item?.id || ''}`
@@ -761,6 +793,7 @@ export async function getAppleCatalogPlaylistTracks(playlistId: string, country 
   const items = await fetchAppleCatalogPages(
     `/v1/catalog/${encodeURIComponent(country)}/playlists/${encodeURIComponent(playlistId)}/tracks?limit=${Math.min(100, Math.max(1, limit))}&include=artists,albums`,
     limit,
+    true,
   )
   return items
     .filter(item => item?.id && item?.attributes)
@@ -783,6 +816,7 @@ export async function getAppleCatalogPlaylistTracks(playlistId: string, country 
 export interface AppleAlbumDetail {
   album: AppleCatalogAlbum
   tracks: AppleCatalogSong[]
+  incomplete?: boolean
 }
 
 /** 专辑详情 + 曲目（iTunes Lookup entity=song，一次返回专辑信息与全部曲目） */
@@ -818,6 +852,7 @@ export async function getAppleAlbumDetail(albumId: string, country = 'cn'): Prom
         genres: albumItem.primaryGenreName ? [albumItem.primaryGenreName] : undefined,
       },
       tracks,
+      incomplete: tracks.length === 0 && Number(albumItem.trackCount) > 0,
     }
   } catch (error) {
     console.warn('[AppleCatalog] 专辑详情失败:', error)

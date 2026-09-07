@@ -1,5 +1,6 @@
 import type { MusicPlatform } from './platforms'
 import { getPlatformCookie } from './platforms'
+import { getApiBase } from './apiConfig'
 import type { Song } from './musicApi'
 import { getQQMusicSkillHeaders } from './qqMusicSkills'
 import { fetchAppleExplorePayload } from './appleExploreService'
@@ -8,7 +9,7 @@ import {
   getAppleCatalogPlaylistTracks,
 } from './appleCatalog'
 
-const API_BASES = ['http://localhost:3001/api']
+const API_BASES = [getApiBase()]
 const EXPLORE_MEMORY_CACHE_TTL = 9 * 60 * 1000
 
 const exploreHomeMemoryCache = new Map<string, { payload: ExplorePayload; expiresAt: number }>()
@@ -113,6 +114,44 @@ export interface ExploreChannel {
   song?: Song | null
 }
 
+export interface QQNativeExploreCard {
+  id: string
+  type: number
+  subtype: number
+  style: number
+  title: string
+  subtitle?: string
+  coverUrl?: string
+  reason?: string
+  songs: Song[]
+  playlist?: ExplorePlaylist | null
+}
+
+export interface QQNativeExploreModule {
+  id: string
+  title: string
+  style: number
+  personalized: true
+  source: 'qq-native-recommend-feed'
+  cards: QQNativeExploreCard[]
+}
+
+export interface QQNativeExploreFeed {
+  accountScoped: true
+  generatedAt: number
+  loadMark: number
+  hasMore: boolean
+  cursor: { page: number; shelfCount: number }
+  daily30?: {
+    playlistId: string
+    title: string
+    coverUrl?: string
+    dateKey: string
+    songs: Song[]
+  } | null
+  modules: QQNativeExploreModule[]
+}
+
 export interface ExplorePayload {
   code: number
   platform: ExplorePlatform
@@ -125,6 +164,7 @@ export interface ExplorePayload {
   charts: ExploreChart[]
   albums: ExploreAlbum[]
   channels: ExploreChannel[]
+  qqNative?: QQNativeExploreFeed | null
   meta: {
     source: string
     recommendationSource?: 'qq-guess-you-like' | 'qqmusic-skills-radio' | 'qq-daily' | 'public' | string
@@ -605,7 +645,8 @@ export async function fetchExploreHome(
     playlists: Array.isArray(data.playlists) ? data.playlists : [],
     charts: Array.isArray(data.charts) ? data.charts : [],
     albums: Array.isArray(data.albums) ? data.albums : [],
-    channels: Array.isArray(data.channels) ? data.channels : []
+    channels: Array.isArray(data.channels) ? data.channels : [],
+    qqNative: data.qqNative && Array.isArray(data.qqNative.modules) ? data.qqNative : null
   } as ExplorePayload
   exploreHomeMemoryCache.set(cacheKey, {
     payload: normalizedPayload,
@@ -626,6 +667,37 @@ export async function fetchExploreHome(
 
 export function prefetchExploreHome(platform: ExplorePlatform): Promise<ExplorePayload> {
   return fetchExploreHome(platform)
+}
+
+export async function fetchQQNativeFeedPage(
+  cursor: { page: number; shelfCount: number },
+  seen: { shelfIds?: string[]; feedKeys?: string[] } = {},
+  signal?: AbortSignal
+): Promise<Pick<QQNativeExploreFeed, 'modules' | 'hasMore' | 'loadMark' | 'cursor'>> {
+  const cookie = getExploreCookie('qq')
+  if (!cookie) throw new Error('需要登录 QQ 音乐')
+  await syncQQExploreCookie(cookie, signal)
+  const headers = { 'Content-Type': 'application/json', ...(await getQQMusicSkillHeaders()) }
+  const response = await fetch(`${API_BASES[0]}/explore/qq/native/feed`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      page: cursor.page,
+      direction: cursor.page > 1 ? 1 : 0,
+      shelfCount: cursor.shelfCount,
+      shelfIds: (seen.shelfIds || []).slice(-200),
+      feedKeys: (seen.feedKeys || []).slice(-100)
+    }),
+    signal,
+    cache: 'no-store'
+  })
+  const data = await ensureOk(response)
+  return {
+    modules: Array.isArray(data.modules) ? data.modules : [],
+    hasMore: data.hasMore === true,
+    loadMark: Number(data.loadMark ?? -1),
+    cursor: data.cursor || { page: cursor.page + 1, shelfCount: cursor.shelfCount }
+  }
 }
 
 export async function fetchQQGuessYouLikeBatch(
@@ -680,6 +752,8 @@ export async function fetchExplorePlaylist(playlist: ExplorePlaylist, signal?: A
     const songs = tracks.map(track => appleSongToSong(track, storefront))
     return {
       playlist: {
+        ...playlist,
+        creator: typeof playlist.creator === 'string' ? { nickname: playlist.creator } : playlist.creator,
         id: playlist.id,
         name: playlist.name,
         coverImgUrl: playlist.coverUrl,
@@ -697,6 +771,8 @@ export async function fetchExplorePlaylist(playlist: ExplorePlaylist, signal?: A
     const songs = tracks.map(spotifyTrackToSong)
     return {
       playlist: {
+        ...playlist,
+        creator: typeof playlist.creator === 'string' ? { nickname: playlist.creator } : playlist.creator,
         id: playlist.id,
         name: playlist.name,
         coverImgUrl: playlist.coverUrl,
@@ -722,6 +798,8 @@ export async function fetchExplorePlaylist(playlist: ExplorePlaylist, signal?: A
     const songs = tracks.map(kugouTrackToSong)
     return {
       playlist: {
+        ...playlist,
+        creator: typeof playlist.creator === 'string' ? { nickname: playlist.creator } : playlist.creator,
         id: playlist.id,
         name: playlist.name,
         coverImgUrl: playlist.coverUrl,
@@ -760,6 +838,8 @@ export async function fetchExplorePlaylist(playlist: ExplorePlaylist, signal?: A
     }
     return {
       playlist: {
+        ...playlist,
+        creator: typeof playlist.creator === 'string' ? { nickname: playlist.creator } : playlist.creator,
         id: playlist.id,
         name: name || playlist.name,
         coverImgUrl: coverUrl || playlist.coverUrl,
@@ -786,15 +866,16 @@ export async function fetchExplorePlaylist(playlist: ExplorePlaylist, signal?: A
     .filter((song: Song | null): song is Song => Boolean(song))
 
   return {
-    playlist: {
-      id: playlist.id,
-      name: data.playlist?.name || playlist.name,
+      playlist: {
+        ...playlist,
+        creator: data.playlist?.creator || (typeof playlist.creator === 'string' ? { nickname: playlist.creator } : playlist.creator),
+        id: playlist.id,
+        name: data.playlist?.name || playlist.name,
       coverImgUrl: data.playlist?.coverImgUrl || playlist.coverUrl,
       trackCount: Number(data.playlist?.trackCount || songs.length || playlist.trackCount || 0),
       description: data.playlist?.description || playlist.description || '',
       // 元数据透传：播放次数/创建者/标签（后端歌单详情已归一化；用于传统模式歌单页角标与创建者展示）
       playCount: Number(data.playlist?.playCount || playlist.playCount || 0),
-      creator: data.playlist?.creator || undefined,
       tags: Array.isArray(data.playlist?.tags) ? data.playlist.tags : [],
       isLike: Boolean((playlist as any).isLike),
       createTime: Number(data.playlist?.createTime || 0) || undefined,

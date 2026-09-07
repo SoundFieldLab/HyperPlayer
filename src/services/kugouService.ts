@@ -40,6 +40,8 @@ export interface KugouPlaylist {
   coverUrl?: string
   playcount?: number
   songcount?: number
+  /** 当前用户是否拥有该歌单 */
+  isMine?: boolean
   /** 列表页内嵌的部分歌曲（hash + filename） */
   songs?: Array<{ hash: string; filename: string }>
 }

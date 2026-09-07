@@ -36,6 +36,7 @@ export interface AppleSpectrum {
 
 let pollTimer: number | null = null
 let pollController: AbortController | null = null
+let pollGeneration = 0
 let polling = false
 let pollFailures = 0
 let cachedState: ApplePlaybackState = {
@@ -120,12 +121,14 @@ export async function ensureBridgeRunning(): Promise<boolean> {
 function startPolling() {
   if (polling) return
   polling = true
+  const generation = ++pollGeneration
   const poll = async () => {
-    if (!polling) return
-    pollController = new AbortController()
-    const timeout = window.setTimeout(() => pollController?.abort(), 3000)
+    if (!polling || generation !== pollGeneration) return
+    const controller = new AbortController()
+    pollController = controller
+    const timeout = window.setTimeout(() => controller.abort(), 3000)
     try {
-      const res = await bridgeFetch('/state', { signal: pollController.signal })
+      const res = await bridgeFetch('/state', { signal: controller.signal })
       if (res.ok) {
         const s: ApplePlaybackState = await res.json()
         const prev = cachedState
@@ -143,11 +146,11 @@ function startPolling() {
         markPollFailure()
       }
     } catch {
-      if (polling) markPollFailure()
+      if (polling && generation === pollGeneration) markPollFailure()
     } finally {
       window.clearTimeout(timeout)
-      pollController = null
-      if (polling) pollTimer = window.setTimeout(poll, POLL_INTERVAL)
+      if (pollController === controller) pollController = null
+      if (polling && generation === pollGeneration) pollTimer = window.setTimeout(poll, POLL_INTERVAL)
     }
   }
   void poll()
@@ -155,6 +158,7 @@ function startPolling() {
 
 function stopPolling() {
   polling = false
+  pollGeneration += 1
   if (pollTimer !== null) {
     clearTimeout(pollTimer)
     pollTimer = null

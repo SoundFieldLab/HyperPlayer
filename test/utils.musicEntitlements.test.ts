@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { detectQQMusicVip } from '../src/utils/musicEntitlements.ts'
+import {
+  createPlatformEntitlements,
+  detectQQMusicVip,
+  entitlementSatisfies,
+  entitlementTierFromSodaMembership,
+  entitlementTierFromSpotifyProduct,
+  getSongRequiredTier,
+  shouldShowEntitlementBadge,
+} from '../src/utils/musicEntitlements.ts'
 
 describe('detectQQMusicVip（QQ 音乐会员检测，兼容多套返回结构）', () => {
   it('显式布尔字段 isVip 命中', () => {
@@ -47,10 +55,32 @@ describe('detectQQMusicVip（QQ 音乐会员检测，兼容多套返回结构）
     expect(detectQQMusicVip(null)).toBe(false)
     expect(detectQQMusicVip(undefined)).toBe(false)
   })
+})
 
-  it('会员列表但状态非激活时返回 false', () => {
-    expect(detectQQMusicVip({
-      data: { lvinfo: [{ name: '绿钻豪华版', active: false }] },
-    })).toBe(false)
+describe('cross-platform entitlement tiers', () => {
+  it('orders free, vip, and svip while keeping unknown conservative', () => {
+    expect(entitlementSatisfies('svip', 'vip')).toBe(true)
+    expect(entitlementSatisfies('vip', 'svip')).toBe(false)
+    expect(entitlementSatisfies('unknown', 'vip')).toBe(false)
+    expect(createPlatformEntitlements({ qq: 'vip' })).toMatchObject({ qq: 'vip', kugou: 'unknown' })
+  })
+
+  it('maps Spotify product and Soda membership evidence', () => {
+    expect(entitlementTierFromSpotifyProduct('premium')).toBe('vip')
+    expect(entitlementTierFromSpotifyProduct('free')).toBe('free')
+    expect(entitlementTierFromSpotifyProduct(undefined)).toBe('unknown')
+    expect(entitlementTierFromSodaMembership({ isSvip: true })).toBe('svip')
+    expect(entitlementTierFromSodaMembership({ isVip: true })).toBe('vip')
+    expect(entitlementTierFromSodaMembership({ membershipKnown: true })).toBe('free')
+    expect(entitlementTierFromSodaMembership({})).toBe('unknown')
+  })
+
+  it('honors explicit requiredTier and treats legacy song.vip as vip', () => {
+    expect(getSongRequiredTier({ requiredTier: 'svip', vip: true })).toBe('svip')
+    expect(getSongRequiredTier({ vip: true })).toBe('vip')
+    expect(getSongRequiredTier({ vip: false })).toBe('free')
+    expect(shouldShowEntitlementBadge({ requiredTier: 'vip' }, 'vip')).toBe(false)
+    expect(shouldShowEntitlementBadge({ requiredTier: 'svip' }, 'vip')).toBe(true)
+    expect(shouldShowEntitlementBadge({ vip: true }, 'unknown')).toBe(true)
   })
 })

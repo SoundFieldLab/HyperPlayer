@@ -1,4 +1,5 @@
 import express from 'express'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'url'
 import { dirname, join, extname, resolve, sep } from 'path'
 import { readdir, stat, readFile } from 'fs/promises'
@@ -34,8 +35,13 @@ import { registerSodaAudioProxy } from './server/qishui-audio-decryptor.mjs'
 import { registerAppleArtworkRoutes } from './server/apple-artwork-api.mjs'
 import { ByteLruCache, readResponseWithLimit } from './server/byte-lru-cache.mjs'
 import { isAuthorizedLocalRequest } from './server/local-service-auth.mjs'
+import { LOCAL_API_PROTOCOL_VERSION, LOCAL_API_SERVICE } from './server/local-api-health.mjs'
+import { registerNeteaseNativeExploreRoutes } from './server/netease-native-explore.mjs'
 import dglabRelayModule from './server/dglab-relay.cjs'
 const { createDGLabRelay } = dglabRelayModule
+
+// 当前 Windows 网络的 IPv6 路由可能不可达；外部音乐 CDN/API 优先走 IPv4。
+dns.setDefaultResultOrder('ipv4first')
 
 const execFileAsync = promisify(execFile)
 
@@ -171,10 +177,14 @@ function parseQQCookie(cookie = qqMusicCookie) {
 function normalizeQQImageUrl(value) {
   const url = String(value || '').trim()
   if (!url) return ''
-  if (url.startsWith('//')) return `https:${url}`
-  if (url.startsWith('http://')) return `https://${url.slice(7)}`
-  if (url.startsWith('https://')) return url
-  return `https://y.gtimg.cn/music/photo_new/T015R640x360M000${url}.jpg`
+  const secureUrl = url.startsWith('//') ? `https:${url}` : url.startsWith('http://') ? `https://${url.slice(7)}` : url
+  if (secureUrl.startsWith('https://')) {
+    return secureUrl
+      .replace(/T002R(?:150|300)x(?:150|300)/, 'T002R500x500')
+      .replace(/T001R(?:150|300)x(?:150|300)/, 'T001R500x500')
+      .replace(/T011R(?:150|213|300)x(?:150|213|300)/, 'T011R436x436')
+  }
+  return `https://y.gtimg.cn/music/photo_new/T015R640x360M000${secureUrl}.jpg`
 }
 
 function requireQQLogin(res, cookie) {
@@ -731,7 +741,7 @@ async function getQQSongFavoriteState(songMid, cookie = '') {
   if (Number(requestResult?.code) !== 0) {
     lastQQFavoriteStateDiagnostic = {
       timestamp: new Date().toISOString(),
-      mid: String(songId),
+      mid: String(songMid),
       code: requestResult?.code,
       message: requestResult?.msg || requestResult?.errMsg || ''
     }
@@ -745,7 +755,7 @@ async function getQQSongFavoriteState(songMid, cookie = '') {
   const resolvedState = stateValue === true || stateValue === 1 || stateValue === '1'
   lastQQFavoriteStateDiagnostic = {
     timestamp: new Date().toISOString(),
-    mid: String(songId),
+    mid: String(songMid),
     code: requestResult?.code,
     rawValue: favoriteValue ?? null,
     resolvedState
@@ -764,10 +774,70 @@ const QQ_HEADERS = {
 const QQ_PLAYLIST_DETAIL_CACHE_TTL = 5 * 60 * 1000
 const QQ_PLAYLIST_DETAIL_CACHE_MAX = 50
 const qqPlaylistDetailCache = new Map()
+const QQ_FEEDBACK_CONTEXT_TTL = 30 * 60 * 1000
+const QQ_FEEDBACK_CONTEXT_MAX = 1200
+const qqFeedbackContexts = new Map()
+const qqAppendContexts = new Map()
 
-async function fetchQQPlaylistDetail(id, songNum = 10000) {
-  // 缓存键包含 songNum（它影响返回曲目数）；命中时按 LRU 刷新顺序并检查 TTL
-  const cacheKey = `${String(id)}:${String(songNum)}`
+const QQ_EXPOSED_CARD_FIELDS = new Set([
+  'abt', 'card_extra_info', 'group', 'cnt', 'cover', 'covertype', 'dynamicCover', 'dynamicCoverPlayType',
+  'dynamicCoverScore', 'extra_info', 'fb_switch', 'id', 'jumptype', 'mini_program_url', 'miscellany',
+  'overlap_card', 'scheme', 'track', 'style', 'subid', 'subtitle', 'subtype', 'type', 'tags', 'time',
+  'title', 'tjreport', 'trace', 'v_user'
+])
+
+function qqExposedCard(card) {
+  return Object.fromEntries(Object.entries(card || {}).filter(([key]) => QQ_EXPOSED_CARD_FIELDS.has(key)))
+}
+
+function rememberQQAppendContext(card, accountFingerprint) {
+  const canRequestSimilar = Boolean(card?.miscellany?.FeedbackTextSimilar) && String(card?.miscellany?.supportLongPress || '') === '1'
+  if (!card || typeof card !== 'object' || !canRequestSimilar) return ''
+  const token = randomUUID()
+  qqAppendContexts.set(token, { card: qqExposedCard(card), accountFingerprint, expiresAt: Date.now() + QQ_FEEDBACK_CONTEXT_TTL })
+  while (qqAppendContexts.size > QQ_FEEDBACK_CONTEXT_MAX) {
+    const oldest = qqAppendContexts.keys().next().value
+    if (oldest) qqAppendContexts.delete(oldest)
+  }
+  return token
+}
+
+function getQQAppendContext(token, cookie) {
+  const context = qqAppendContexts.get(String(token || ''))
+  if (!context || context.expiresAt <= Date.now()) {
+    if (context) qqAppendContexts.delete(String(token || ''))
+    return null
+  }
+  return context.accountFingerprint === qqHash33(cookie).toString(36) ? context : null
+}
+
+function rememberQQFeedbackContext(card, accountFingerprint) {
+  const feedbackOpen = Number(card?.fb_switch?.IsOpen) === 1 || Boolean(card?.miscellany?.FeedbackTextDislike)
+  if (!card || typeof card !== 'object' || !feedbackOpen) return ''
+  const token = randomUUID()
+  if (qqFeedbackContexts.size >= QQ_FEEDBACK_CONTEXT_MAX) {
+    const oldest = qqFeedbackContexts.keys().next().value
+    if (oldest) qqFeedbackContexts.delete(oldest)
+  }
+  qqFeedbackContexts.set(token, { card, accountFingerprint, expiresAt: Date.now() + QQ_FEEDBACK_CONTEXT_TTL, options: new Map() })
+  return token
+}
+
+function getQQFeedbackContext(token, cookie) {
+  const context = qqFeedbackContexts.get(String(token || ''))
+  if (!context || context.expiresAt <= Date.now()) {
+    if (context) qqFeedbackContexts.delete(String(token || ''))
+    return null
+  }
+  const accountFingerprint = qqHash33(cookie).toString(36)
+  return context.accountFingerprint === accountFingerprint ? context : null
+}
+
+async function fetchQQPlaylistDetail(id, songNum = 10000, cookie = '') {
+  // 私有歌单详情按账号隔离缓存；公共调用保留 guest 维度。
+  const requestCookie = cookie || qqMusicCookie
+  const accountFingerprint = requestCookie ? qqHash33(requestCookie).toString(36) : 'guest'
+  const cacheKey = `${accountFingerprint}:${String(id)}:${String(songNum)}`
   const cachedDetail = qqPlaylistDetailCache.get(cacheKey)
   if (cachedDetail) {
     if (cachedDetail.expiresAt > Date.now()) {
@@ -779,10 +849,12 @@ async function fetchQQPlaylistDetail(id, songNum = 10000) {
   }
 
   let legacyDetail = {}
-  try {
-    legacyDetail = await qqMusicApi.api('songlist', { id })
-  } catch (error) {
-    console.warn(`[QQ音乐歌单详情] 旧接口获取歌单 ${id} 失败，切换新版接口`, error.message)
+  if (!cookie) {
+    try {
+      legacyDetail = await qqMusicApi.api('songlist', { id })
+    } catch (error) {
+      console.warn(`[QQ音乐歌单详情] 旧接口获取歌单 ${id} 失败，切换新版接口`, error.message)
+    }
   }
 
   const legacyData = legacyDetail?.data || legacyDetail
@@ -813,7 +885,7 @@ async function fetchQQPlaylistDetail(id, songNum = 10000) {
       params: { format: 'json', data: JSON.stringify(payload) },
       headers: {
         ...QQ_HEADERS,
-        ...(qqMusicCookie ? { Cookie: qqMusicCookie } : {})
+        ...(requestCookie ? { Cookie: requestCookie } : {})
       },
       timeout: 15000
     })
@@ -1365,6 +1437,45 @@ const COVER_CACHE_ITEM_MAX_BYTES = 10 * 1024 * 1024
 const COVER_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const coverCache = new ByteLruCache({ maxBytes: COVER_CACHE_MAX_BYTES, maxEntries: 800, ttlMs: COVER_CACHE_TTL_MS })
 
+// 音频播放代理：浏览器直接访问 QQ/网易云临时地址时可能被 CDN 以 403 拒绝，
+// 由本地服务代为携带站点请求头，并透传 Range 以支持流式播放和拖动进度。
+app.get('/api/audio', async (req, res) => {
+  try {
+    const { url } = req.query
+    if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url) || await isBlockedFetchUrl(url)) {
+      return res.status(400).json({ error: 'Invalid audio url' })
+    }
+    const headers = {
+      'User-Agent': QQ_HEADERS['User-Agent'],
+      Referer: /163\.com|music\.126\.net/i.test(url) ? 'https://music.163.com/' : 'https://y.qq.com/',
+      Accept: 'audio/*,application/octet-stream;q=0.9,*/*;q=0.8',
+      ...(req.headers.range ? { Range: req.headers.range } : {}),
+    }
+    const response = await fetch(url, { headers, redirect: 'follow' })
+    if (!response.ok && response.status !== 206) {
+      return res.status(response.status).set('Access-Control-Allow-Origin', '*').send(`Audio upstream returned ${response.status}`)
+    }
+    const contentType = response.headers.get('content-type') || 'audio/mpeg'
+    const passthroughHeaders = {
+      'Content-Type': contentType,
+      'Access-Control-Allow-Origin': '*',
+      'Accept-Ranges': response.headers.get('accept-ranges') || 'bytes',
+      'Cache-Control': 'no-store',
+    }
+    for (const name of ['content-length', 'content-range']) {
+      const value = response.headers.get(name)
+      if (value) passthroughHeaders[name.replace(/(^|-)([a-z])/g, (_, prefix, char) => prefix + char.toUpperCase())] = value
+    }
+    res.status(response.status).set(passthroughHeaders)
+    if (!response.body) return res.end()
+    Readable.fromWeb(response.body).on('error', () => res.destroy()).pipe(res)
+  } catch (error) {
+    console.error('[AudioProxy] upstream request failed:', error?.message || error)
+    if (!res.headersSent) res.status(502).set('Access-Control-Allow-Origin', '*').send('Failed to load audio')
+    else res.destroy()
+  }
+})
+
 app.get('/api/cover', async (req, res) => {
   try {
     const { url, devMode } = req.query
@@ -1596,6 +1707,7 @@ async function initNeteaseAPI() {
 
 // 初始化
 initNeteaseAPI()
+registerNeteaseNativeExploreRoutes(app, { getNeteaseApi: () => NeteaseAPI })
 
 async function withTimeout(promise, timeoutMs, message = '请求超时') {
   let timeoutId
@@ -6566,7 +6678,10 @@ function normalizeNeteaseExploreSong(input, fallback = {}) {
 }
 
 function normalizeQQExploreSong(input, fallback = {}) {
-  const track = input?.songInfo || input?.song || input || {}
+  const normalizedInput = input && typeof input === 'object' && !input.name && (input.Name || input.MID || input.Mid || input.SingerName)
+    ? { ...input, id: input.ID ?? input.id, mid: input.MID ?? input.mid, name: input.Name ?? input.name, singerName: input.SingerName ?? input.singerName, cover: input.Cover ?? input.cover, album: { picUrl: input.Cover ?? input.cover ?? '' }, singer: input.SingerName ? [{ name: input.SingerName }] : [] }
+    : input
+  const track = normalizedInput?.songInfo || normalizedInput?.song || normalizedInput || {}
   const mid = String(
     track.mid || track.songmid || track.songMid || track.song_mid || fallback.mid || ''
   ).trim()
@@ -6590,6 +6705,12 @@ function normalizeQQExploreSong(input, fallback = {}) {
 
   if (!name || (!mid && !numericId)) return null
 
+  const privilege = track.privilege || track.action || {}
+  const pay = track.pay || {}
+  const playFlag = privilege.play ?? privilege.play_flag
+  const noCopyright = Number(privilege.st) < 0 || Number(privilege.playMaxbr ?? privilege.play_max_br) === 0 || playFlag === 0 || playFlag === '0'
+  const vip = Boolean(pay.pay_play || pay.paydownload || track.isonly === 1 || Number(privilege.pay_play) === 1)
+
   return {
     id: numericId || Number(fallback.id) || 0,
     mid: mid || undefined,
@@ -6610,17 +6731,18 @@ function normalizeQQExploreSong(input, fallback = {}) {
     duration: Number(track.interval || fallback.interval || 0) * 1000 || Number(track.duration || 0),
     platform: 'qq',
     songType: Number(track.type ?? track.songtype ?? track.songType ?? fallback.songType ?? fallback.type) || 0,
-    vip: Boolean(track.pay?.pay_play || track.pay?.paydownload || track.isonly === 1)
+    vip,
+    noCopyright
   }
 }
 
 function normalizeQQExplorePlaylist(item, source = 'community') {
-  const id = item?.dissId || item?.dissid || item?.content_id || item?.tid || item?.dirid || item?.id
+  const id = item?.dissId || item?.dissid || item?.diss_id || item?.playlistId || item?.playlist_id || item?.content_id || item?.tid || item?.dirid || item?.id
   if (!id) return null
 
   const albumPicMid = item?.album_pic_mid || item?.pic_mid || item?.cover_mid || ''
   const coverUrl = normalizeQQImageUrl(
-    item?.picUrl || item?.picurl || item?.cover || item?.coverUrl || item?.cover_url_big ||
+    item?.picUrl || item?.picurl || item?.pic_url || item?.cover || item?.coverUrl || item?.cover_url || item?.cover_url_big ||
     item?.cover_url_medium || item?.cover_url_small || item?.imgUrl || item?.imgurl ||
     item?.image || item?.logo || item?.album?.picUrl
   ) || (albumPicMid ? qqAlbumCover(String(albumPicMid).replace(/_\d+$/, ''), 500) : '')
@@ -6648,6 +6770,17 @@ const QQMUSIC_SKILL_ALLOWED_PATHS = new Set([
   '/me/report',
   '/assistant/ai_interpretation'
 ])
+
+async function requestQQMusicSkillPlaylistPages(key) {
+  const results = await Promise.allSettled([0, 1].map(page => requestQQMusicSkill(
+    '/discover/ai-playlists',
+    { reqType: 'all', page, pageSize: 12, num: 12 },
+    key
+  )))
+  const playlists = results.flatMap(result => result.status === 'fulfilled' && Array.isArray(result.value?.playlists) ? result.value.playlists : [])
+  const unique = Array.from(new Map(playlists.map(item => [String(item?.dissId || item?.dissid || item?.playlistId || item?.id || ''), item])).values())
+  return { playlists: unique.slice(0, 12) }
+}
 
 function normalizeQQMusicSkillKey(value) {
   const key = String(value || '').trim()
@@ -6713,6 +6846,472 @@ async function requestQQMusicSkillPages(path, params, key, listField, maxPages =
     item
   ])).values())
   return { ...firstPage, [listField]: uniqueItems, hasMore: false }
+}
+
+function buildQQNativeMusicUComm(cookie = '') {
+  const parsedCookie = parseQQCookie(cookie || qqMusicCookie)
+  const uin = String(parsedCookie.uin || parsedCookie.qqmusic_uin || '').replace(/\D/g, '')
+  const musicKey = parsedCookie.qm_keyst || parsedCookie.qqmusic_key || ''
+  return {
+    ct: 11,
+    cv: 20080008,
+    platform: 'android',
+    uin,
+    qq: uin,
+    authst: musicKey,
+    tmeLoginType: Number(parsedCookie.login_type) || undefined,
+    g_tk: musicKey ? qqHash33(musicKey) : undefined,
+    g_tk_new_20200303: musicKey ? qqHash33(musicKey) : undefined,
+    format: 'json'
+  }
+}
+
+async function requestQQNativeMusicUModule(cookie, module, method, param) {
+  const requestCookie = cookie || qqMusicCookie
+  if (!requestCookie) return null
+  const response = await axios.post(QQ_MUSICU_URL, {
+    comm: buildQQNativeMusicUComm(requestCookie),
+    req_0: { module, method, param }
+  }, {
+    headers: {
+      ...QQ_HEADERS,
+      Cookie: requestCookie,
+      'Content-Type': 'application/json',
+      'User-Agent': 'QQMusic 20.8.0.8 Android'
+    },
+    timeout: 20000,
+    validateStatus: () => true
+  })
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`QQ MusicU HTTP ${response.status}`)
+  }
+  const moduleResponse = response.data?.req_0
+  if (Number(moduleResponse?.code) !== 0) {
+    throw new Error(moduleResponse?.msg || moduleResponse?.message || `${module}.${method} 返回 ${moduleResponse?.code}`)
+  }
+  return moduleResponse?.data || null
+}
+
+function qqNativeFeedKey(card) {
+  const type = Number(card?.type)
+  if (!Number.isFinite(type)) return ''
+  return `${type}_${Number(card?.subtype) || 0}_${String(card?.id || '')}`
+}
+
+function getQQNativeCardSongs(card) {
+  const rawSongs = []
+  const visited = new Set()
+  const isTrack = value => {
+    if (!value || typeof value !== 'object') return false
+    const hasIdentity = Boolean(value.mid || value.MID || value.Mid || value.songmid || value.songMid || value.song_id || value.songid || value.songId || value.ID)
+    const hasTitle = Boolean(value.title || value.name || value.Name || value.songname || value.songName)
+    const hasArtist = Boolean(value.singer || value.singers || value.artist || value.artists || value.singername || value.singerName || value.SingerName)
+    return hasIdentity && hasTitle && hasArtist
+  }
+  const collect = (value, depth = 0) => {
+    if (!value || depth > 5) return
+    if (Array.isArray(value)) {
+      for (const item of value) collect(item, depth + 1)
+      return
+    }
+    if (typeof value !== 'object' || visited.has(value)) return
+    visited.add(value)
+    if (isTrack(value)) {
+      const normalized = normalizeQQExploreSong(value)
+      if (normalized) rawSongs.push(normalized)
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (/^(abt|trace|tjreport|scheme|miscellany|extra_info)$/i.test(key)) continue
+      collect(child, depth + 1)
+    }
+  }
+  collect(card?.track)
+  collect(card?.card_extra_info)
+  return Array.from(new Map(rawSongs.map(song => [String(song.mid || song.id), song])).values())
+}
+
+async function resolveQQNativeSongById(songId, cookie, fallback = {}) {
+  const numericId = Number(songId || 0)
+  if (!numericId) return null
+  const data = await requestQQNativeMusicUModule(cookie, 'music.pf_song_detail_svr', 'get_song_detail_yqq', { song_id: numericId })
+  return normalizeQQExploreSong(data?.track_info || data?.info, { id: numericId, ...fallback })
+}
+
+function extractAllowedQQSchemeUrl(value) {
+  const encoded = String(value || '').match(/[?&]p=([^&]+)/)?.[1]
+  if (!encoded) return ''
+  try {
+    const payload = JSON.parse(decodeURIComponent(encoded))
+    const url = String(payload?.url || '')
+    return isAllowedQQExploreUrl(url) ? url : ''
+  } catch {
+    return ''
+  }
+}
+
+function qqNativeAction(card) {
+  const id = String(card?.id || '')
+  const title = String(card?.title || '')
+  if (Number(card?.subtype) === 11) return { type: 'open-preferences' }
+  if (Number(card?.subtype) === 712) {
+    const url = extractAllowedQQSchemeUrl(card?.scheme)
+    if (url) return { type: 'open-external', url }
+  }
+  if (id === '99' || Number(card?.subtype) === 711) return { type: 'play-radio', radioId: 99 }
+  if (Number(card?.subtype) === 991 || id === '22000') {
+    let params = { Page: 1, ReqType: 0, EntranceSongs: [] }
+    const encoded = String(card?.scheme || '').match(/[?&]p=([^&]+)/)?.[1]
+    if (encoded) {
+      try { params = { ...params, ...JSON.parse(decodeURIComponent(encoded)) } } catch { /* ignore malformed upstream scheme */ }
+    }
+    return { type: 'play-radar', page: Number(params.Page) || 1, reqType: Number(params.ReqType) || 0, entranceSongs: Array.isArray(params.EntranceSongs) ? params.EntranceSongs : [] }
+  }
+  if (Number(card?.type) === 500 && /^\d+$/.test(id)) return { type: 'open-playlist', playlistId: id }
+  if (Number(card?.type) === 200 && /^\d+$/.test(id)) return { type: 'play-songs' }
+  if (/搜索/.test(title) && id) return { type: 'search', query: id }
+  return { type: 'unsupported' }
+}
+
+function renderQQNativeTitle(template, content) {
+  const titleTemplate = String(template || '')
+  const titleContent = String(content || '')
+  if (!titleTemplate) return titleContent
+  if (!titleTemplate.includes('{String}')) return titleTemplate
+  return titleTemplate.replaceAll('{String}', titleContent).trim()
+}
+
+function summarizeQQUnsupportedCards(modules) {
+  const counts = new Map()
+  for (const module of modules) {
+    for (const card of module.cards) {
+      if (card.action.type !== 'unsupported') continue
+      const key = `${card.type}:${card.subtype}:${card.style}:${card.jumpType}`
+      counts.set(key, (counts.get(key) || 0) + 1)
+    }
+  }
+  return Object.fromEntries(counts)
+}
+
+function logQQUnsupportedCardSummary(modules) {
+  const summary = summarizeQQUnsupportedCards(modules)
+  if (Object.keys(summary).length > 0) console.info('[探索模式][QQ音乐] 未映射卡型汇总:', summary)
+}
+
+function qqNativeDisplayBadges(card) {
+  const values = [
+    card?.miscellany?.title_ext,
+    card?.miscellany?.vip_label,
+    ...(Array.isArray(card?.tags) ? card.tags.flatMap(tag => [tag?.title, tag?.name, tag?.text]) : []),
+    ...(Array.isArray(card?.smallIcons) ? card.smallIcons.flatMap(icon => [icon?.title, icon?.name, icon?.text]) : [])
+  ]
+  return Array.from(new Set(values.map(value => String(value || '').trim()).filter(value => value && !/^https?:/i.test(value))))
+}
+
+function parseQQNativeDisplayValue(value) {
+  if (!value) return null
+  if (typeof value === 'object') return value
+  if (typeof value !== 'string') return null
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function qqNativePlaylistLayer(card) {
+  const extraInfo = parseQQNativeDisplayValue(card?.extra_info)
+  const playlistExt = parseQQNativeDisplayValue(extraInfo?.PlaylistExt)
+  const first = Array.isArray(playlistExt) ? parseQQNativeDisplayValue(playlistExt[0]) : null
+  return {
+    classification: String(extraInfo?.cardid ?? ''),
+    layerTitle: String(first?.LayerTitle ?? ''),
+    layerClassifyTitle: String(first?.LayerClassifyTitle ?? ''),
+    layerElementPic0: normalizeQQImageUrl(first?.LayerElementPic0),
+    layerElementPic1: normalizeQQImageUrl(first?.LayerElementPic1),
+    layerElementPic2: normalizeQQImageUrl(first?.LayerElementPic2)
+  }
+}
+
+function qqNativeLowerTags(card) {
+  const cardModel = parseQQNativeDisplayValue(card?.miscellany?.CardModel)
+  const tags = parseQQNativeDisplayValue(cardModel?.tags)
+  if (!Array.isArray(tags)) return []
+  return tags.map(item => {
+    const tag = parseQQNativeDisplayValue(item)
+    const rawExts = parseQQNativeDisplayValue(tag?.Exts)
+    const exts = rawExts && !Array.isArray(rawExts)
+      ? Object.fromEntries(Object.entries(rawExts).map(([key, value]) => [String(key), String(value ?? '')]))
+      : {}
+    return {
+      tag: String(tag?.Tag ?? ''),
+      link: isAllowedQQExploreUrl(tag?.Link) ? String(tag.Link) : '',
+      tagId: String(tag?.TagID ?? ''),
+      fromType: String(tag?.FromType ?? ''),
+      iconUrl: normalizeQQImageUrl(tag?.IconUrl),
+      exts
+    }
+  }).filter(tag => tag.tag || tag.iconUrl)
+}
+
+function qqNativeFavoriteCount(card) {
+  const miscellany = card?.miscellany || {}
+  if (Number(card?.style) === 302) return String(miscellany.fav_cnt_content ?? '')
+  if (Number(card?.type) === 200) return String(miscellany.fav_cnt_content ?? miscellany.song_cnt ?? miscellany.SongCnt ?? '')
+  return String(miscellany.fav_cnt_content ?? '')
+}
+
+function qqNativeModuleInstanceId(shelf, firstFeedKey) {
+  const rawIdentity = JSON.stringify([shelf?.layout ?? null, shelf?.position ?? null, firstFeedKey])
+  return `qq-native-${qqHash33(rawIdentity).toString(36)}`
+}
+
+async function normalizeQQNativeFeed(data, cookie) {
+  const shelves = Array.isArray(data?.v_shelf) ? data.v_shelf : []
+  const accountFingerprint = qqHash33(cookie).toString(36)
+  const modules = await Promise.all(shelves.map(async (shelf, shelfIndex) => {
+    const rawCards = (shelf?.v_niche || []).flatMap(niche => niche?.v_card || [])
+    const cards = await Promise.all(rawCards.map(async (card, cardIndex) => {
+      const id = String(card?.id || card?.subid || '')
+      const cardType = Number(card?.type) || 0
+      const cardStyle = Number(card?.style) || 0
+      const miscellany = card?.miscellany || {}
+      const playlistLayer = cardStyle === 202 ? qqNativePlaylistLayer(card) : {
+        classification: '', layerTitle: '', layerClassifyTitle: '',
+        layerElementPic0: '', layerElementPic1: '', layerElementPic2: ''
+      }
+      const songs = getQQNativeCardSongs(card)
+      const action = qqNativeAction(card)
+      return {
+        id: id || `${shelf?.id || shelfIndex}-${cardIndex}`,
+        feedKey: qqNativeFeedKey(card),
+        type: cardType,
+        subtype: Number(card?.subtype) || 0,
+        style: cardStyle,
+        jumpType: Number(card?.jumptype) || 0,
+        title: String(card?.title || ''),
+        subtitle: String(card?.subtitle || ''),
+        coverUrl: normalizeQQImageUrl(card?.cover || miscellany.foryou_headurl),
+        layerUrl: normalizeQQImageUrl(miscellany.layer_url),
+        reason: String(miscellany.rcmd_reason || ''),
+        content: String(miscellany.rcmdcontent || miscellany.rcmdtemplate || ''),
+        ...playlistLayer,
+        typeTag: cardStyle === 302 ? String(miscellany.typeTag ?? '') : '',
+        lowerTags: cardStyle === 302 ? qqNativeLowerTags(card) : [],
+        countContent: cardStyle === 302 ? String(miscellany.cnt_content ?? '') : String(cardType === 200 ? miscellany.song_cnt ?? miscellany.SongCnt ?? '' : ''),
+        twoColumn: ['1', 'true'].includes(String(miscellany.IsTwoColumnFlow || '').toLowerCase()),
+        isFavorite: String(miscellany.isFav || miscellany.IsFav || '') === '1',
+        favoriteCount: qqNativeFavoriteCount(card),
+        commentCount: String(miscellany.comment_cnt || miscellany.CommentCnt || miscellany.commentCount || ''),
+        badges: qqNativeDisplayBadges(card),
+        feedbackToken: rememberQQFeedbackContext(card, accountFingerprint),
+        appendToken: rememberQQAppendContext(card, accountFingerprint),
+        canRequestSimilar: Boolean(card?.miscellany?.FeedbackTextSimilar) && String(card?.miscellany?.supportLongPress || '') === '1',
+        songs,
+        action
+      }
+    }))
+    const refresh = shelf?.refresh_param || {}
+    return {
+      id: String(shelf?.id || `native-${shelfIndex}`),
+      instanceId: qqNativeModuleInstanceId(shelf, qqNativeFeedKey(rawCards[0])),
+      title: renderQQNativeTitle(shelf?.title_template, shelf?.title_content),
+      titleTemplate: String(shelf?.title_template || ''),
+      style: Number(shelf?.style) || 0,
+      source: 'qq-native-recommend-feed',
+      refresh: String(shelf?.content_refresh || '') === '1' ? {
+        moduleId: String(refresh.ModuleID || ''),
+        page: Number(refresh.Page) || 0,
+        layoutTrace: String(refresh.LayoutTrace || ''),
+        layoutSeq: String(refresh.LayoutSeq || ''),
+        shelfId: String(refresh.ShelfID || ''),
+        extraInfo: refresh.ExtraInfo && typeof refresh.ExtraInfo === 'object' ? refresh.ExtraInfo : {}
+      } : null,
+      cards
+    }
+  }))
+  const visibleModules = modules.filter(module => module.cards.length > 0)
+  logQQUnsupportedCardSummary(visibleModules)
+  return {
+    modules: visibleModules,
+    loadMark: Number(data?.load_mark ?? -1),
+    hasMore: shelves.length > 0 && Number(data?.load_mark ?? 0) >= 0
+  }
+}
+
+function isAllowedQQExploreUrl(value) {
+  try {
+    const url = new URL(String(value || ''))
+    if (url.protocol !== 'https:') return false
+    const host = url.hostname.toLowerCase()
+    return host === 'y.qq.com' || host.endsWith('.y.qq.com') || host === 'qq.com' || host.endsWith('.qq.com') || host === 'kugou.com' || host.endsWith('.kugou.com')
+  } catch {
+    return false
+  }
+}
+
+function qqMusicHallAction(card) {
+  const id = String(card?.id || '')
+  const subId = String(card?.subid || '')
+  const jumpType = Number(card?.jumptype) || 0
+  const title = String(card?.title || '')
+  if (jumpType === 10046 && /^\d+$/.test(id)) return { type: 'play-songs' }
+  if (jumpType === 10014 && /^\d+$/.test(id)) return { type: 'open-playlist', playlistId: id }
+  if (jumpType === 10002 && (subId || id)) return { type: 'open-album', albumId: subId || id }
+  if (jumpType === 10005 && /^\d+$/.test(id)) return { type: 'open-chart', chartId: id }
+  if (jumpType === 10012 && /^\d+$/.test(id)) return { type: 'open-mv', mvId: id }
+  if (jumpType === 2012 || title === '排行') return { type: 'open-section', section: 'charts' }
+  if (title === '歌单') return { type: 'open-section', section: 'playlists' }
+  if (isAllowedQQExploreUrl(id)) return { type: 'open-external', url: id }
+  return { type: 'unsupported' }
+}
+
+function qqNativeCardCover(card, songs = []) {
+  const miscellany = card?.miscellany || {}
+  const user = Array.isArray(card?.v_user) ? card.v_user[0] : card?.v_user
+  return normalizeQQImageUrl(
+    card?.cover || miscellany.foryou_headurl || miscellany.cover || miscellany.cover_url ||
+    miscellany.pic_url || miscellany.picUrl || miscellany.img_url || miscellany.imgUrl ||
+    songs[0]?.album?.picUrl || user?.avatar || user?.headurl || user?.pic_url
+  )
+}
+
+function normalizeQQNativeMusicHall(data) {
+  const shelves = Array.isArray(data?.v_shelf) ? data.v_shelf : []
+  return shelves.map((shelf, serverOrder) => {
+    const niches = Array.isArray(shelf?.v_niche) ? shelf.v_niche : []
+    const cards = niches.flatMap((niche, nicheIndex) => (Array.isArray(niche?.v_card) ? niche.v_card : []).map((card, cardIndex) => {
+      const songs = getQQNativeCardSongs(card)
+      return {
+      id: String(card?.id || `${shelf?.id || serverOrder}-${nicheIndex}-${cardIndex}`),
+      subId: String(card?.subid || ''),
+      type: Number(card?.type) || 0,
+      subtype: Number(card?.subtype) || 0,
+      style: Number(card?.style) || 0,
+      jumpType: Number(card?.jumptype) || 0,
+      nicheStyle: Number(niche?.style) || 0,
+      title: String(card?.title || ''),
+      subtitle: String(card?.subtitle || ''),
+      coverUrl: qqNativeCardCover(card, songs),
+      count: String(card?.cnt || ''),
+      songs,
+      action: qqMusicHallAction(card)
+    }}))
+    return {
+      id: String(shelf?.id || `music-hall-${serverOrder}`),
+      title: renderQQNativeTitle(shelf?.title_template, shelf?.title_content),
+      style: Number(shelf?.style) || 0,
+      nicheStyle: Number(niches[0]?.style) || 0,
+      serverOrder,
+      cards
+    }
+  }).filter(shelf => shelf.cards.length > 0)
+}
+
+async function fetchQQNativeMusicHall(cookie) {
+  const data = await requestQQNativeMusicUModule(cookie, 'music.musicHall.MusicHallHomePage', 'GetHomePage', {
+    ShelfId: [],
+    Style: 2,
+    IsSupportDolby: 0
+  })
+  return normalizeQQNativeMusicHall(data)
+}
+
+async function normalizeQQUnifiedShelf(data, cookie) {
+  const shelfList = Array.isArray(data?.v_shelf)
+    ? data.v_shelf
+    : Array.isArray(data?.Shelf)
+      ? data.Shelf
+      : data?.Shelf && typeof data.Shelf === 'object'
+        ? [data.Shelf]
+        : data?.shelf && typeof data.shelf === 'object'
+          ? [data.shelf]
+          : []
+  if (shelfList.length === 0) throw new Error('QQ 音乐返回了未知的推荐栏目结构')
+  const normalized = await normalizeQQNativeFeed({ v_shelf: shelfList, load_mark: -1 }, cookie)
+  if (normalized.modules.length === 0) throw new Error('QQ 音乐没有返回可用的推荐内容')
+  return normalized.modules
+}
+
+async function fetchQQNativeAppendShelf(cookie, context, action) {
+  const data = await requestQQNativeMusicUModule(cookie, 'music.recommend.RecommendFeedUnifiedEntrance', 'GetRecommendAppendShelf', {
+    Card: context.card,
+    Action: action,
+    ExtInfo: { is_20_style: '1', recommend_fetch_similar_song: '1' }
+  })
+  return normalizeQQUnifiedShelf(data, cookie)
+}
+
+async function fetchQQNativeSimilarShelf(cookie, context) {
+  const data = await requestQQNativeMusicUModule(cookie, 'music.recommend.RecommendFeedUnifiedEntrance', 'GetFeedSimilarShelf', {
+    Card: context.card
+  })
+  return normalizeQQUnifiedShelf(data, cookie)
+}
+
+async function fetchQQNativeRecommendFeed(cookie, options = {}) {
+  const page = Math.max(1, Math.floor(Number(options.page) || 1))
+  const direction = Math.max(0, Math.floor(Number(options.direction) || (page > 1 ? 1 : 0)))
+  const shelfCount = Math.max(0, Math.floor(Number(options.shelfCount) || 0))
+  const data = await requestQQNativeMusicUModule(cookie, 'music.recommend.RecommendFeed', 'get_recommend_feed', {
+    direction,
+    page,
+    s_num: shelfCount,
+    client_time: Math.floor(Date.now() / 1000),
+    v_cache: Array.isArray(options.shelfIds) ? options.shelfIds.slice(-200) : [],
+    v_uniq: Array.isArray(options.feedKeys) ? options.feedKeys.slice(-100) : [],
+    ext: {
+      has_login: '1',
+      is_20_style: '1',
+      first_req_time: page === 1 ? '1' : '0',
+      client_time_zone: String(options.timeZone || 'Asia/Shanghai')
+    },
+    ...(options.refresh ? {
+      refresh_info: {
+        ModuleID: String(options.refresh.moduleId || ''),
+        Page: Number(options.refresh.page) || 0,
+        LayoutTrace: String(options.refresh.layoutTrace || ''),
+        LayoutSeq: String(options.refresh.layoutSeq || ''),
+        ShelfID: String(options.refresh.shelfId || ''),
+        ExtraInfo: options.refresh.extraInfo && typeof options.refresh.extraInfo === 'object' ? options.refresh.extraInfo : {}
+      }
+    } : {})
+  })
+  const normalized = await normalizeQQNativeFeed(data, cookie)
+  return { ...normalized, cursor: { page: page + 1, shelfCount: shelfCount + normalized.modules.length } }
+}
+
+async function fetchQQNativeDaily30(cookie, nativeFeed) {
+  const cards = (nativeFeed?.modules || []).flatMap(module => module.cards || [])
+  const dailyCard = cards.find(card => card.subtype === 510 || /每日\s*30\s*首/.test(card.title))
+  if (!dailyCard?.id || !/^\d+$/.test(dailyCard.id)) return null
+  const detail = await fetchQQPlaylistDetail(dailyCard.id, 30, cookie)
+  const songs = (detail?.songlist || []).map(song => normalizeQQExploreSong(song)).filter(Boolean).slice(0, 30)
+  if (songs.length === 0) return null
+  const now = new Date(Date.now() + 8 * 60 * 60 * 1000)
+  return {
+    playlistId: dailyCard.id,
+    title: String(detail?.title || detail?.name || dailyCard.title || '每日30首'),
+    coverUrl: normalizeQQImageUrl(detail?.picurl || detail?.picurl2 || detail?.logo || dailyCard.coverUrl),
+    dateKey: now.toISOString().slice(0, 10),
+    songs
+  }
+}
+
+async function fetchQQNativeRadar(cookie, options = {}) {
+  const data = await requestQQNativeMusicUModule(cookie, 'music.recommend.RecommendFeedUnifiedEntrance', 'GetRecommendAppendSongs', {
+    Page: Math.max(1, Number(options.page) || 1),
+    ReqType: Math.max(0, Number(options.reqType) || 0),
+    NeedNum: Math.max(1, Math.min(Number(options.needNum) || 30, 60)),
+    EntranceSongs: Array.isArray(options.entranceSongs) ? options.entranceSongs.slice(0, 30) : [],
+    extra_info: options.extraInfo && typeof options.extraInfo === 'object' ? options.extraInfo : {}
+  })
+  const rawSongs = Array.isArray(data?.VecSongs) ? data.VecSongs : []
+  return {
+    songs: rawSongs.map(song => normalizeQQExploreSong(song)).filter(Boolean),
+    hasMore: data?.HasMore === true || Number(data?.HasMore) === 1,
+    page: Math.max(1, Number(options.page) || 1) + 1
+  }
 }
 
 // 部分 Skills 电台响应未返回 hasMore，但仍接受 page 参数并继续给出下一批。
@@ -6805,6 +7404,223 @@ async function fetchQQRadioBatches(id, targetCount = 30, maxBatches = 8, cookie 
 
   return { ...(firstResult || {}), tracks }
 }
+
+app.post('/api/explore/qq/native/bootstrap', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const [feed, musicHall] = await Promise.all([
+      fetchQQNativeRecommendFeed(requestCookie, { page: 1, direction: 0, timeZone: req.body?.timeZone }),
+      fetchQQNativeMusicHall(requestCookie).catch(error => {
+        console.warn('[探索模式][QQ音乐] MusicHall 加载失败，保留账号推荐流:', error?.message || error)
+        return []
+      })
+    ])
+    const daily30 = await fetchQQNativeDaily30(requestCookie, feed).catch(() => null)
+    res.setHeader('Cache-Control', 'private, no-store')
+    return res.json({ code: 200, accountScoped: true, generatedAt: Date.now(), feed, musicHall, daily30 })
+  } catch (error) {
+    console.error('[探索模式][QQ音乐] 原生推荐页初始化失败:', error)
+    return res.status(502).json({ code: 502, error: error?.message || '原生推荐页初始化失败' })
+  }
+})
+
+app.post('/api/explore/qq/native/card/append', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const context = getQQAppendContext(req.body?.appendToken, requestCookie)
+    if (!context) return res.status(410).json({ code: 410, error: '推荐卡片上下文已过期，请刷新后重试' })
+    const action = req.body?.action === 'like' ? 2 : req.body?.action === 'play' ? 1 : 0
+    if (!action) return res.status(400).json({ code: 400, error: '不支持的追加动作' })
+    const modules = await fetchQQNativeAppendShelf(requestCookie, context, action)
+    res.setHeader('Cache-Control', 'private, no-store')
+    return res.json({ code: 200, modules })
+  } catch (error) {
+    return res.status(502).json({ code: 502, error: error?.message || '追加推荐加载失败' })
+  }
+})
+
+app.post('/api/explore/qq/native/card/similar', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const context = getQQAppendContext(req.body?.appendToken, requestCookie)
+    if (!context) return res.status(410).json({ code: 410, error: '推荐卡片上下文已过期，请刷新后重试' })
+    const modules = await fetchQQNativeSimilarShelf(requestCookie, context)
+    res.setHeader('Cache-Control', 'private, no-store')
+    return res.json({ code: 200, modules })
+  } catch (error) {
+    return res.status(502).json({ code: 502, error: error?.message || '相似推荐加载失败' })
+  }
+})
+
+app.post('/api/explore/qq/native/feedback/options', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const context = getQQFeedbackContext(req.body?.feedbackToken, requestCookie)
+    if (!context) return res.status(410).json({ code: 410, error: '推荐反馈已过期，请刷新后重试' })
+    const card = context.card
+    const songs = getQQNativeCardSongs(card)
+    const data = await requestQQNativeMusicUModule(requestCookie, 'music.feedback.RecommendFeedback', 'GetRecommendConfigFeedBackItems', {
+      ItemType: Number(card?.type) || 0,
+      ItemSubType: Number(card?.subtype) || 0,
+      Id: Number(songs[0]?.id || card?.id || 0) || 0,
+      Card: card
+    })
+    const candidateArrays = [data?.ConfigOps, data?.Items, data?.List, data?.Ops, data?.FeedbackItems, data?.Result?.ConfigOps].filter(Array.isArray)
+    const rawOptions = candidateArrays[0] || []
+    context.options.clear()
+    const options = rawOptions.map(option => {
+      const token = randomUUID()
+      context.options.set(token, option)
+      return { token, title: String(option?.Title || option?.title || option?.Text || option?.text || '') }
+    }).filter(option => option.title)
+    res.setHeader('Cache-Control', 'private, no-store')
+    return res.json({ code: 200, options, affirmText: String(data?.AffirmText || '') })
+  } catch (error) {
+    return res.status(502).json({ code: 502, error: error?.message || '反馈选项加载失败' })
+  }
+})
+
+app.post('/api/explore/qq/native/feedback/submit', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const context = getQQFeedbackContext(req.body?.feedbackToken, requestCookie)
+    if (!context) return res.status(410).json({ code: 410, error: '推荐反馈已过期，请刷新后重试' })
+    const optionTokens = Array.isArray(req.body?.optionTokens) ? req.body.optionTokens.slice(0, 10) : []
+    const configOps = optionTokens.map(token => context.options.get(String(token))).filter(Boolean)
+    await requestQQNativeMusicUModule(requestCookie, 'music.feedback.RecommendFeedback', 'ReportConfigFb', {
+      Num: 1,
+      ConfigOps: configOps,
+      Card: context.card
+    })
+    qqFeedbackContexts.delete(String(req.body?.feedbackToken || ''))
+    res.setHeader('Cache-Control', 'private, no-store')
+    return res.json({ code: 200, success: true })
+  } catch (error) {
+    return res.status(502).json({ code: 502, error: error?.message || '推荐反馈提交失败' })
+  }
+})
+
+app.post('/api/explore/qq/native/preferences', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const data = await requestQQNativeMusicUModule(requestCookie, 'music.recommend.RecommendWidget', 'GetForyouConfigItems', {
+      Cmd: '0',
+      ext: { RadarNameShowCN: '1', RadarNameShowEnNew1: '1', RadarNameShowEnNew2: '1' }
+    })
+    const rawItems = [data?.Selections, data?.Items, data?.List, data?.ConfigItems].find(Array.isArray) || []
+    const items = rawItems.map(item => ({
+      id: String(item?.Id || ''),
+      title: String(item?.Title || ''),
+      coverUrl: normalizeQQImageUrl(item?.Cover),
+      selected: Number(item?.ChoseStatus) === 1,
+      itemType: Number(item?.ItemType) || 0,
+      itemSubtype: Number(item?.ItemSubType) || 0
+    })).filter(item => item.id && item.title)
+    res.setHeader('Cache-Control', 'private, no-store')
+    return res.json({ code: 200, items })
+  } catch (error) {
+    return res.status(502).json({ code: 502, error: error?.message || '推荐偏好加载失败' })
+  }
+})
+
+app.post('/api/explore/qq/native/preferences/save', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const selections = (Array.isArray(req.body?.items) ? req.body.items : []).slice(0, 100).map(item => ({
+      Id: String(item?.id || ''),
+      Title: String(item?.title || ''),
+      Cover: String(item?.coverUrl || ''),
+      ChoseStatus: item?.selected ? 1 : 0,
+      ItemType: Number(item?.itemType) || 0,
+      ItemSubType: Number(item?.itemSubtype) || 0
+    })).filter(item => item.Id && item.Title)
+    if (selections.length === 0) return res.json({ code: 200, saved: 0 })
+    const data = await requestQQNativeMusicUModule(requestCookie, 'music.recommend.RecommendWidget', 'SaveForyouConfigItems', { Selections: selections })
+    if (Number(data?.Code ?? 0) !== 0) throw new Error(`推荐偏好保存失败 (${data?.Code})`)
+    res.setHeader('Cache-Control', 'private, no-store')
+    return res.json({ code: 200, saved: selections.length })
+  } catch (error) {
+    return res.status(502).json({ code: 502, error: error?.message || '推荐偏好保存失败' })
+  }
+})
+
+app.post('/api/explore/qq/native/song', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const song = await resolveQQNativeSongById(req.body?.songId, requestCookie, {
+      name: String(req.body?.title || ''),
+      artist: String(req.body?.artist || ''),
+      coverUrl: String(req.body?.coverUrl || '')
+    })
+    if (!song) return res.status(404).json({ code: 404, error: '歌曲详情不存在' })
+    res.setHeader('Cache-Control', 'private, max-age=3600')
+    return res.json({ code: 200, song })
+  } catch (error) {
+    return res.status(502).json({ code: 502, error: error?.message || '歌曲详情加载失败' })
+  }
+})
+
+app.post('/api/explore/qq/native/songs', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const cards = Array.isArray(req.body?.cards) ? req.body.cards.slice(0, 36) : []
+    const songs = []
+    for (let offset = 0; offset < cards.length; offset += 6) {
+      const batch = await Promise.all(cards.slice(offset, offset + 6).map(card => resolveQQNativeSongById(card?.songId, requestCookie, {
+        name: String(card?.title || ''),
+        artist: String(card?.artist || ''),
+        coverUrl: String(card?.coverUrl || '')
+      }).catch(() => null)))
+      songs.push(...batch.filter(Boolean))
+    }
+    res.setHeader('Cache-Control', 'private, max-age=3600')
+    return res.json({ code: 200, songs })
+  } catch (error) {
+    return res.status(502).json({ code: 502, error: error?.message || '歌曲详情批量加载失败' })
+  }
+})
+
+app.post('/api/explore/qq/native/radar', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const radar = await fetchQQNativeRadar(requestCookie, req.body || {})
+    res.setHeader('Cache-Control', 'private, no-store')
+    return res.json({ code: 200, ...radar })
+  } catch (error) {
+    return res.status(502).json({ code: 502, error: error?.message || '雷达推荐加载失败' })
+  }
+})
+
+app.post('/api/explore/qq/native/feed', async (req, res) => {
+  try {
+    const requestCookie = resolveRequestCookie(String(req.body?.cookie || ''))
+    if (!requestCookie) return res.status(401).json({ code: 401, error: '需要登录 QQ 音乐' })
+    const feed = await fetchQQNativeRecommendFeed(requestCookie, {
+      page: req.body?.page,
+      direction: req.body?.direction,
+      shelfCount: req.body?.shelfCount,
+      shelfIds: Array.isArray(req.body?.shelfIds) ? req.body.shelfIds : [],
+      feedKeys: Array.isArray(req.body?.feedKeys) ? req.body.feedKeys : [],
+      refresh: req.body?.refresh,
+      timeZone: req.body?.timeZone
+    })
+    res.setHeader('Cache-Control', 'private, no-store')
+    return res.json({ code: 200, ...feed })
+  } catch (error) {
+    console.error('[探索模式][QQ音乐] 原生推荐流加载失败:', error)
+    return res.status(502).json({ code: 502, error: error?.message || '原生推荐流加载失败' })
+  }
+})
 
 app.get('/api/explore/qq/radio/next', async (req, res) => {
   try {
@@ -7292,7 +8108,7 @@ app.get('/api/explore/qq', async (req, res) => {
       hasOfficialSkill ? requestQQMusicSkillPages('/discover/daily-mix', {}, skillKey, 'songlist', 30) : Promise.resolve(null),
       // Skill 电台首批通常只有 5 首，且部分响应不会提供 hasMore。
       hasOfficialSkill ? requestQQMusicSkillBatches('/discover/radio', {}, skillKey, 'songlist', 30) : Promise.resolve(null),
-      hasOfficialSkill ? requestQQMusicSkill('/discover/ai-playlists', { reqType: 'all' }, skillKey) : Promise.resolve(null),
+      hasOfficialSkill ? requestQQMusicSkillPlaylistPages(skillKey) : Promise.resolve(null),
       hasOfficialSkill ? requestQQMusicSkill('/charts', {}, skillKey) : Promise.resolve(null)
     ]
     const [
@@ -10991,6 +11807,8 @@ app.post('/api/apple/license', async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
+    service: LOCAL_API_SERVICE,
+    protocolVersion: LOCAL_API_PROTOCOL_VERSION,
     neteaseAPI: NeteaseAPI ? 'loaded' : 'not loaded'
   })
 })

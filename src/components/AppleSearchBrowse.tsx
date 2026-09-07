@@ -11,7 +11,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ListMusic, Loader2, Music, Play, Radio } from 'lucide-react'
+import { ArrowLeft, ListMusic, Loader2, Music, Radio } from 'lucide-react'
 import {
   fetchAppleCuratorPage,
   fetchAppleSearchLanding,
@@ -26,6 +26,7 @@ import { useTvBack } from '../tv/tvCore'
 
 interface AppleSearchBrowseProps {
   playerTheme?: 'light' | 'dark'
+  storefront?: string
   onSongSelect: SongSelectHandler
   playbackOrigin?: import('../types/playbackNavigation').PlaybackOrigin
   /** 按资源真实类型交给探索页统一分派。 */
@@ -34,9 +35,10 @@ interface AppleSearchBrowseProps {
   onOpenPlaylist?: (playlist: { id: string; name: string; coverImgUrl: string; trackCount: number; creator: string; platform: 'apple' }) => void
 }
 
-export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, playbackOrigin, onOpenItem, onOpenPlaylist }: AppleSearchBrowseProps) {
+export default function AppleSearchBrowse({ playerTheme = 'dark', storefront, onSongSelect, playbackOrigin, onOpenItem, onOpenPlaylist }: AppleSearchBrowseProps) {
   const [curators, setCurators] = useState<AppleWebItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [landingError, setLandingError] = useState('')
   const [curatorPage, setCuratorPage] = useState<AppleCuratorPage | null>(null)
   const [curatorLoading, setCuratorLoading] = useState(false)
   const [curatorError, setCuratorError] = useState('')
@@ -47,15 +49,18 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
   const loadLanding = useCallback(() => {
     const requestId = ++landingRequestRef.current
     setLoading(true)
-    void fetchAppleSearchLanding().then(page => {
+    setLandingError('')
+    void fetchAppleSearchLanding(storefront).then(page => {
       if (requestId !== landingRequestRef.current) return
       const items = page.sections.find(section => section.kind === 'curators')?.items || []
       setCurators(items)
       setLoading(false)
-    }).catch(() => {
-      if (requestId === landingRequestRef.current) setLoading(false)
+    }).catch(error => {
+      if (requestId !== landingRequestRef.current) return
+      setLandingError(error instanceof Error ? error.message : '类别加载失败，请稍后重试')
+      setLoading(false)
     })
-  }, [])
+  }, [storefront])
 
   useEffect(() => {
     loadLanding()
@@ -71,7 +76,7 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
     setCuratorLoading(true)
     setCuratorError('')
     setCuratorPage(null)
-    void fetchAppleCuratorPage(curator.playId || curator.id).then(page => {
+    void fetchAppleCuratorPage(curator.playId || curator.id, storefront).then(page => {
       if (requestId !== curatorRequestRef.current) return
       setCuratorPage(page)
       if (!page) setCuratorError('分类内容加载失败，请稍后重试')
@@ -81,7 +86,7 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
       setCuratorError(error instanceof Error ? error.message : '分类内容加载失败，请稍后重试')
       setCuratorLoading(false)
     })
-  }, [])
+  }, [storefront])
 
   const closeCurator = useCallback(() => {
     curatorRequestRef.current += 1
@@ -99,7 +104,7 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
   const playSectionSongs = (section: AppleWebSection) => {
     const songs = section.items
       .filter(item => item.type === 'songs' && item.playId)
-      .map(item => appleWebItemToSong(item))
+      .map(item => appleWebItemToSong(item, storefront))
     if (songs.length > 0) onSongSelect(songs[0], songs, playbackOrigin)
   }
 
@@ -114,6 +119,12 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
         platform: 'apple',
       })
     }
+  }
+
+  const activateWithKeyboard = (event: React.KeyboardEvent, action: () => void) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    action()
   }
 
   const isDark = playerTheme === 'dark'
@@ -169,9 +180,13 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
                     data-tv-focus
                     className="group flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 outline-none transition hover:bg-white/[0.05] focus-visible:ring-2 focus-visible:ring-[#fa2d48]"
                     onClick={() => {
-                      const song = appleWebItemToSong(item)
-                      onSongSelect(song, section.items.filter(entry => entry.type === 'songs' && entry.playId).map(entry => appleWebItemToSong(entry)), playbackOrigin)
+                      const song = appleWebItemToSong(item, storefront)
+                      onSongSelect(song, section.items.filter(entry => entry.type === 'songs' && entry.playId).map(entry => appleWebItemToSong(entry, storefront)), playbackOrigin)
                     }}
+                    onKeyDown={event => activateWithKeyboard(event, () => {
+                      const song = appleWebItemToSong(item, storefront)
+                      onSongSelect(song, section.items.filter(entry => entry.type === 'songs' && entry.playId).map(entry => appleWebItemToSong(entry, storefront)), playbackOrigin)
+                    })}
                   >
                     <span className={`w-6 shrink-0 text-center text-sm tabular-nums ${index < 3 ? 'font-semibold' : textTertiary}`}>{index + 1}</span>
                     {item.artworkUrl ? (
@@ -191,7 +206,7 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
             ) : (
               <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {section.items.map(item => (
-                  <div key={`${section.id}-${item.id}`} className="group min-w-0 cursor-pointer" onClick={() => onOpenItem?.(item, section.items)}>
+                  <div key={`${section.id}-${item.id}`} tabIndex={0} role="button" data-tv-focus className="group min-w-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#fa2d48]" onClick={() => onOpenItem?.(item, section.items)} onKeyDown={event => activateWithKeyboard(event, () => onOpenItem?.(item, section.items))}>
                     <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.04]">
                       {item.artworkUrl ? (
                         <img src={item.artworkUrl} alt={item.name} loading="lazy" className="aspect-square w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
@@ -200,8 +215,8 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
                           <ListMusic className="h-7 w-7 opacity-40" />
                         </div>
                       )}
-                      <span className="absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#0a0f14] opacity-0 shadow-xl transition group-hover:opacity-100">
-                        <Play className="h-4 w-4 fill-current" />
+                      <span className="absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#0a0f14] opacity-0 [@media(hover:none)]:opacity-100 shadow-xl transition group-hover:opacity-100 group-focus-within:opacity-100">
+                        {item.type === 'stations' ? <Radio className="h-4 w-4" /> : <ListMusic className="h-4 w-4" />}
                       </span>
                     </div>
                     <p className="mt-2 truncate text-[13px] font-medium">{item.name}</p>
@@ -218,7 +233,7 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
             <h3 className="mb-3 text-lg font-semibold">歌单</h3>
             <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
               {playlists.map(item => (
-                <div key={item.id} className="group min-w-0 cursor-pointer" onClick={() => openPlaylist(item)}>
+                <div key={item.id} tabIndex={0} role="button" data-tv-focus className="group min-w-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#fa2d48]" onClick={() => openPlaylist(item)} onKeyDown={event => activateWithKeyboard(event, () => openPlaylist(item))}>
                   <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.04]">
                     {item.artworkUrl ? (
                       <img src={item.artworkUrl} alt={item.name} loading="lazy" className="aspect-square w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
@@ -227,8 +242,8 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
                         <ListMusic className="h-7 w-7 opacity-40" />
                       </div>
                     )}
-                    <span className="absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#0a0f14] opacity-0 shadow-xl transition group-hover:opacity-100">
-                      <Play className="h-4 w-4 fill-current" />
+                    <span className="absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#0a0f14] opacity-0 [@media(hover:none)]:opacity-100 shadow-xl transition group-hover:opacity-100 group-focus-within:opacity-100">
+                      <ListMusic className="h-4 w-4" />
                     </span>
                   </div>
                   <p className="mt-2 truncate text-[13px] font-medium">{item.name}</p>
@@ -244,11 +259,21 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
 
   // ── 类别浏览网格 ──
   return (
-    <div className={`${textPrimary}`}>
+    <div
+      className={`${textPrimary}`}
+      onDragStart={event => {
+        if (event.target instanceof HTMLImageElement) event.preventDefault()
+      }}
+    >
       <h2 className="mb-4 text-xl font-bold">类别浏览</h2>
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-20 text-sm text-white/45">
           <Loader2 className="h-4 w-4 animate-spin" /> 正在加载类别…
+        </div>
+      ) : landingError ? (
+        <div role="alert" className={`flex flex-col items-center justify-center gap-4 py-16 text-center ${textSecondary}`}>
+          <p>{landingError}</p>
+          <button type="button" onClick={loadLanding} className={`rounded-full border ${cardBorder} ${cardBg} px-4 py-2 text-sm`}>重试</button>
         </div>
       ) : curators.length === 0 ? (
         <div className={`flex flex-col items-center justify-center py-16 ${textTertiary}`}>
@@ -265,6 +290,7 @@ export default function AppleSearchBrowse({ playerTheme = 'dark', onSongSelect, 
               data-tv-focus
               className="group min-w-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#fa2d48]"
               onClick={() => openCurator(curator)}
+              onKeyDown={event => activateWithKeyboard(event, () => openCurator(curator))}
             >
               <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.04]">
                 {curator.artworkUrl ? (

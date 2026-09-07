@@ -2,26 +2,73 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const component = (name: string) => readFileSync(new URL(`../src/components/${name}`, import.meta.url), 'utf8')
+const service = (name: string) => readFileSync(new URL(`../src/services/${name}`, import.meta.url), 'utf8')
+const desktop = (name: string) => readFileSync(new URL(`../desktop/${name}`, import.meta.url), 'utf8')
 
 describe('Explore mode wiring regressions', () => {
   it('bypasses the hidden legacy Apple payload pipeline', () => {
-    const source = component('ExploreView.tsx')
-    expect(source.replace(/\r\n/g, '\n')).toContain("if (platform === 'apple') {\n      setLoading(false)\n      setError('')\n      return")
+    const source = component('ExploreView.tsx').replace(/\r\n/g, '\n')
+    expect(source).toContain("import { AppleExplorePanel } from './AppleExplorePanel'")
+    expect(source).toContain("{platform === 'apple' ? (")
+    expect(source).toContain('<AppleExplorePanel')
     expect(source).toContain('onOpenPlaylistPanel={handleApplePlaylist}')
   })
 
   it('guards Apple tab refreshes and supports catalog playlist removal', () => {
-    const source = component('AppleExplorePanel.tsx')
+    const source = component('AppleExplorePanel.tsx').replace(/\r\n/g, '\n')
     expect(source).toContain('++pageRequestRef.current[target]')
     expect(source).toContain('pageRequestRef.current[target] !== requestId')
     expect(source).toContain("if (appleLoggedIn) void loadTab('library')")
     expect(source).toContain('removeApplePlaylistFromLibrary(libraryId)')
     expect(source).toContain('removeAppleSongFromLibrary(item.playId)')
+    expect(source).toContain('if (!item.libraryId) continue')
+    expect(source).not.toContain('rotate-45')
+    expect(source).toContain('data-apple-explore-panel')
+    expect(source).toContain('if (event.target instanceof HTMLImageElement) event.preventDefault()')
     expect(source).toContain('setSavedPlaylists(new Set())')
     expect(source).toContain('setCatalogLibraryIds(new Map())')
     expect(source).toContain("item.type === 'music-videos'")
-    expect(source).toContain('disabled={isLibrarySaved}')
+    expect(source).toContain('section.items.every(item => item.type === section.items[0].type)')
+    expect(source).toContain('onClick={() => setChartDetail(section)}')
+    expect(source).toContain('disabled={libraryMutations.has(libraryKey)}')
+    expect(source).toContain('appleStationToSong(item, undefined, storefront)')
+    expect(source).toContain('void onSongSelect(song, [song]')
+    expect(source).not.toContain("if (!station?.playId)")
+    expect(component('../App.tsx')).toContain('const hasValidSongId = radioDescriptor || appleHlsStream')
+    expect(source).toContain('<motion.div\n        whileHover={{ y: -3 }}')
+    expect(source).toContain('aria-label={`播放${item.name}`}')
+    expect(source).toContain("aria-label={isSaved ? '从资料库移除' : '加入资料库'}")
+    expect(source).toContain('disabled={libraryMutations.has(`station:${item.playId}`)}')
+    expect(service('appleWebService.ts')).toContain('fields[stations]=name,url,artwork,editorialArtwork,editorialVideo,editorialNotes,playParams,isLive,airTime')
+    expect(source).not.toContain('<motion.button\n        type="button"\n        whileHover={{ y: -3 }}\n        data-tv-focus\n        aria-label={`播放${item.name}`}')
+    expect(source).toContain("onClick={(event) => { event.stopPropagation(); openSongMenu(event, item, items) }}")
+    expect(source).toContain('const showId = item.playId || item.id')
+    expect(source).toContain('const stationId = item.playId || item.id')
+    expect(source).toContain("split(/[?#]/, 1)[0].replace(/\\/+$/, '')")
+    expect(source).toContain('void getAppleLovedSongIds(visibleSongIds)')
+    expect(source).not.toContain('喜爱状态暂不可用')
+    expect(source).toContain("window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: '喜爱状态更新失败，请重试', type: 'error' } }))")
+    expect(source).toContain('if (!appleLoggedIn) {\n      onLoginClick()')
+    expect(component('ExploreView.tsx')).toContain('error={detailError}')
+    expect(component('ExploreView.tsx')).toContain('onRetry={() => detailRetryRef.current?.()}')
+    expect(component('../App.tsx')).toContain("storefront={selectedAlbumPlatform === 'apple' ? appleStorefront : undefined}")
+    expect(source).toContain('setArtistDrawer(null); void openAlbumDrawer(album)')
+    expect(source).toContain('{stationDetail.station.url && (')
+    expect(source).toContain('storefront={storefront}')
     expect(source).toContain('data-tv-scope')
+  })
+
+  it('keeps Apple radio retries scoped to the active station', () => {
+    const source = component('../App.tsx').replace(/\r\n/g, '\n')
+    expect(source).toContain("import { decideAppleRadioFailure, getAppleRadioReconnectKey } from './services/appleRadioReconnect'")
+    expect(source).toContain('if (appleRadioReconnectTimerRef.current !== null) {\n      window.clearTimeout(appleRadioReconnectTimerRef.current)')
+    expect(source).toContain('if (latestKey !== decision.reconnectKey) return')
+    expect(source).toContain("setAppleRadioError('Apple Music 电台未能启动播放，请重新连接')")
+  })
+
+  it('prefers the private Apple playback host for radio assets', () => {
+    const source = desktop('main.cjs')
+    expect(source).toContain("const APPLE_PLAY_ASSETS_HOSTS = ['https://amp-api.music.apple.com', 'https://api.music.apple.com']")
   })
 
   it('preserves nested Apple Explore playback origins', () => {
@@ -32,6 +79,17 @@ describe('Explore mode wiring regressions', () => {
     expect(panel).toContain("drawerType: 'album'")
     expect(panel).toContain("drawerType: 'artist'")
     expect(view).toContain('restorePlaybackOrigin={restorePlaybackOrigin}')
+  })
+
+  it('adds a shared return-to-top control to the Explore home scroll container', () => {
+    const source = component('ExploreView.tsx')
+    expect(source).toContain("import ScrollToTop from './ScrollToTop'")
+    expect(source).toContain('const exploreScrollRef = useRef<HTMLDivElement>(null)')
+    expect(source).toContain('ref={exploreScrollRef}')
+    expect(source).toContain('containerRef={exploreScrollRef}')
+    expect(source).toContain('threshold={200}')
+    expect(source).toContain('offsetBottom={currentSong ? 168 : 24}')
+    expect(source).toContain('{!moreSection && !detailOpen && !settingsOpen && (')
   })
 
   it('uses the normalized playlist search response and exposes local retry', () => {

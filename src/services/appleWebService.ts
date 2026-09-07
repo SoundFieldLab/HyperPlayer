@@ -32,6 +32,7 @@ import {
   getAppleLibraryArtists,
   getAppleLibraryPlaylists,
   getAppleLibraryMusicVideos,
+  getAppleRecentPlayed,
   getAppleLibraryAlbumTracks,
   getAppleLibraryArtistAlbums,
   getApplePlaylistTracks,
@@ -41,7 +42,7 @@ import {
   type AppleLibraryAlbum,
 } from './appleCatalog'
 import { toHighResArtwork } from './appleMusic'
-import type { AppleNativeStream, AppleRadioPlayParams } from './applePlayback'
+import { sanitizeAppleRadioPlayParams, type AppleNativeStream, type AppleRadioPlayParams } from './applePlayback'
 import { parseTTML } from '../utils/ttmlParser'
 import type { Song } from './musicApi'
 
@@ -154,6 +155,10 @@ export interface AppleWebPage {
   personalized: boolean
   /** 数据来源说明（展示用） */
   sourceLabel: string
+  /** 个性化内容不可用时的脱敏原因；页面仍可展示公开回退内容。 */
+  fallbackReason?: string
+  /** 当前失败是否需要用户重新登录 Apple Music。 */
+  requiresLogin?: boolean
 }
 
 /** 兼容旧引用 */
@@ -208,13 +213,7 @@ function itemize(resource: any, type: AppleWebItemType, preferredId?: string): A
   if (!name && !resource?.id) return null
   const playParams = attributes.playParams || {}
   const motion = extractMotionArtwork(resource)
-  const playParamsFields: AppleRadioPlayParams = {}
-  if (playParams.id !== undefined) playParamsFields.id = String(playParams.id)
-  if (playParams.kind !== undefined) playParamsFields.kind = String(playParams.kind)
-  if (playParams.format !== undefined) playParamsFields.format = String(playParams.format)
-  if (playParams.stationHash !== undefined) playParamsFields.stationHash = String(playParams.stationHash)
-  if (typeof playParams.hasDrm === 'boolean') playParamsFields.hasDrm = playParams.hasDrm
-  if (playParams.mediaType !== undefined) playParamsFields.mediaType = String(playParams.mediaType)
+  const playParamsFields = sanitizeAppleRadioPlayParams(playParams)
   return {
     id: String(resource.id || ''),
     playId: preferredId || catalogIdOf(resource),
@@ -300,13 +299,26 @@ function extractHeroArtwork(resource: any, size = 1200): string | undefined {
   }
 }
 
+type GemsFailure = {
+  status: number
+  message: string
+}
+
+let lastGemsFailure: GemsFailure | null = null
+
 async function gemsRequest(
   path: string,
   options?: { method?: string; body?: unknown; mediaUserToken?: boolean },
 ): Promise<any | null> {
   const credentials = getAppleCredentials()
-  if (!credentials.developerToken) return null
-  if (options?.mediaUserToken && !credentials.mediaUserToken) return null
+  if (!credentials.developerToken) {
+    lastGemsFailure = { status: 0, message: 'Apple Developer Token 缺失' }
+    return null
+  }
+  if (options?.mediaUserToken && !credentials.mediaUserToken) {
+    lastGemsFailure = { status: 401, message: 'Apple Music 登录凭据缺失' }
+    return null
+  }
   const result = await appleApiRequest(path, {
     method: options?.method || 'GET',
     developerToken: credentials.developerToken,
@@ -314,7 +326,16 @@ async function gemsRequest(
     body: options?.body,
     timeoutMs: 10000,
   })
-  if (!result.ok) return null
+  if (!result.ok) {
+    const message = result.status === 401 || result.status === 403
+      ? 'Apple Music 登录会话已过期'
+      : result.status === 0
+        ? '无法连接 Apple Music'
+        : `Apple Music 请求失败（HTTP ${result.status}）`
+    lastGemsFailure = { status: result.status, message }
+    return null
+  }
+  lastGemsFailure = null
   return result.data
 }
 
@@ -534,7 +555,7 @@ export async function fetchHomeRecentlyAdded(): Promise<AppleWebSection | null> 
 }
 
 /** 主页 Listen Now（1:1 web）：/v1/me/recommendations（实测 group 标题在 attributes.stringForDisplay） */
-async function fetchHomeListenNow(): Promise<{ sections: AppleWebSection[]; hero: AppleWebItem | null }> {
+async function fetchHomeListenNow(): Promise<{ sections: AppleWebSection[]; hero: AppleWebItem | null; failure?: GemsFailure }> {
   const data = await gemsRequest(
     '/v1/me/recommendations?platform=web&types=albums,playlists,stations'
     + '&include[albums]=artists&include[library-playlists]=catalog&include[stations]=radio-show'
@@ -542,10 +563,13 @@ async function fetchHomeListenNow(): Promise<{ sections: AppleWebSection[]; hero
     + '&omit[resource]=autos&extend[stations]=airTime,supportsAirTimeUpdates&meta[stations]=inflectionPoints',
     { mediaUserToken: true },
   )
-  if (!data) return { sections: [], hero: null }
+  if (!data) return { sections: [], hero: null, failure: lastGemsFailure || { status: 0, message: 'Apple Music 推荐接口未返回数据' } }
   const resourceMap = data.resources || {}
+  const included: any[] = Array.isArray(data.included) ? data.included : []
+  const includedMap = new Map<string, any>()
+  included.forEach(resource => includedMap.set(`${resource?.type}:${resource?.id}`, resource))
   const findResource = (id: string, type: string): any =>
-    resourceMap?.[id] || resourceMap?.[type]?.[id] || null
+    resourceMap?.[id] || resourceMap?.[type]?.[id] || includedMap.get(`${type}:${id}`) || null
   const groups: any[] = Array.isArray(data.data) ? data.data : []
   const sections: AppleWebSection[] = []
   let hero: AppleWebItem | null = null
@@ -555,16 +579,20 @@ async function fetchHomeListenNow(): Promise<{ sections: AppleWebSection[]; hero
     const relations = group?.relationships || {}
     const refs: any[] = []
     const seen = new Set<string>()
-    for (const key of Object.keys(relations)) {
-      const node = relations[key]?.data
-      if (!Array.isArray(node)) continue
-      for (const ref of node) {
+    const appendRefs = (value: unknown) => {
+      const nodes = Array.isArray(value) ? value : value && typeof value === 'object' ? [value] : []
+      for (const ref of nodes) {
         const refKey = `${ref?.type}:${ref?.id}`
-        if (seen.has(refKey)) continue
+        if (!ref?.id || seen.has(refKey)) continue
         seen.add(refKey)
         refs.push(ref)
       }
     }
+    for (const key of Object.keys(relations)) appendRefs(relations[key]?.data)
+    appendRefs(group?.attributes?.contents)
+    appendRefs(group?.attributes?.primaryContent)
+    appendRefs(group?.contents)
+    appendRefs(group?.primaryContent)
     refs.forEach((ref: any) => {
       const type = String(ref?.type || '')
       if (!['albums', 'playlists', 'stations', 'songs'].includes(type)) return
@@ -598,11 +626,34 @@ async function fetchHomeListenNow(): Promise<{ sections: AppleWebSection[]; hero
       })
     })
   })
-  // 主页辅助 shelf（最近添加）与本组并行竞速：3.5s 内到才展示，避免拖慢主页
+  // 主页辅助 shelf 与推荐组并行竞速，避免慢接口拖住首屏。
   const extras = await Promise.race([
     (async () => {
-      const added = await fetchHomeRecentlyAdded().catch(() => null)
-      return added ? [added] : []
+      const [recent, added] = await Promise.allSettled([
+        getAppleRecentPlayed(40),
+        fetchHomeRecentlyAdded(),
+      ])
+      const extraSections: AppleWebSection[] = []
+      if (recent.status === 'fulfilled' && recent.value.length > 0) {
+        extraSections.push({
+          id: 'home-recent-played',
+          kind: 'row',
+          title: '最近播放',
+          subtitle: '继续收听你最近播放的内容',
+          items: recent.value.map((song): AppleWebItem => ({
+            id: song.id,
+            playId: song.id,
+            type: 'songs',
+            name: song.name,
+            subtitle: song.artistName,
+            artworkUrl: song.artworkUrl,
+            artistName: song.artistName,
+            durationMs: song.durationMs,
+          })),
+        })
+      }
+      if (added.status === 'fulfilled' && added.value) extraSections.push(added.value)
+      return extraSections
     })(),
     new Promise<AppleWebSection[]>(resolve => setTimeout(() => resolve([]), 3500)),
   ])
@@ -666,9 +717,18 @@ export async function fetchAppleHomePage(storefront?: string): Promise<AppleWebP
     const result = await fetchHomeListenNow()
     forwardToMainLog('[AppleWeb] home listen-now: sections=' + result.sections.length + ' hero=' + (result.hero ? 'yes' : 'no'))
     if (result.sections.length > 0) {
-      return { sections: result.sections, hero: result.hero, personalized: true, sourceLabel: 'apple-api listen-now' }
+      return { sections: result.sections, hero: result.hero, personalized: true, sourceLabel: 'Apple Music · 主页' }
     }
-    return { sections: [], hero: null, personalized: false, sourceLabel: 'listen-now 暂无数据（已登录）' }
+    const fallbackSections = await fetchHomeFallback(sf)
+    const failure = result.failure || { status: 200, message: 'Apple Music 暂未返回可展示的个性化推荐' }
+    return {
+      sections: fallbackSections,
+      hero: null,
+      personalized: false,
+      sourceLabel: fallbackSections.length > 0 ? 'Apple Music · 公开推荐' : 'Apple Music · 暂无内容',
+      fallbackReason: `${failure.message}，已显示公开内容`,
+      requiresLogin: failure.status === 401 || failure.status === 403,
+    }
   }
   forwardToMainLog('[AppleWeb] home: 无 mediaUserToken → RSS 兜底')
   return { sections: await fetchHomeFallback(sf), hero: null, personalized: false, sourceLabel: 'apple-rss（未登录）' }
@@ -690,31 +750,40 @@ export async function fetchAppleTopCharts(storefront?: string): Promise<AppleWeb
   if (!result) return []
   const sections: AppleWebSection[] = []
   const results = result?.results || {}
-  const pushChart = (chart: any) => {
+  const pushChart = (chart: any, fallbackType?: AppleWebItemType) => {
     const items: any[] = Array.isArray(chart?.data) ? chart.data : []
-    const firstType = String(items[0]?.type || '')
-    const type: AppleWebItemType = CONTENT_TYPES.includes(firstType) ? firstType as AppleWebItemType : 'songs'
     const mapped: AppleWebItem[] = []
     items.forEach((item: any) => {
+      const type = normalizeContentType(String(item?.type || '')) || fallbackType
+      if (!type) return
       const mappedItem = itemize(item, type)
       if (mappedItem) mapped.push(mappedItem)
     })
     if (mapped.length > 0) {
+      const sectionType = mapped.every(item => item.type === mapped[0].type)
+        ? mapped[0].type
+        : 'mixed'
       sections.push({
-        id: `chart-${type}-${chart?.chart || 'most-played'}`,
+        id: `chart-${sectionType}-${chart?.chart || 'most-played'}`,
         kind: 'chart',
         title: chart?.shortName || chart?.name || '排行榜',
         chartType: chart?.chart,
-        items: mapped.slice(0, 50),
+        items: mapped,
       })
     }
   }
-  if (Array.isArray(results?.songs?.[0]?.data)) pushChart(results.songs[0])
-  if (Array.isArray(results?.dailyGlobalTopCharts?.[0]?.data)) pushChart(results.dailyGlobalTopCharts[0])
-  if (Array.isArray(results?.albums?.[0]?.data)) pushChart(results.albums[0])
-  if (Array.isArray(results?.playlists?.[0]?.data)) pushChart(results.playlists[0])
-  if (Array.isArray(results?.['music-videos']?.[0]?.data)) pushChart(results['music-videos'][0])
-  if (Array.isArray(results?.cityCharts?.[0]?.data)) pushChart(results.cityCharts[0])
+  const pushCharts = (value: unknown, fallbackType: AppleWebItemType) => {
+    if (!Array.isArray(value)) return
+    value.forEach(chart => {
+      if (Array.isArray(chart?.data)) pushChart(chart, fallbackType)
+    })
+  }
+  pushCharts(results?.songs, 'songs')
+  pushCharts(results?.dailyGlobalTopCharts, 'playlists')
+  pushCharts(results?.albums, 'albums')
+  pushCharts(results?.playlists, 'playlists')
+  pushCharts(results?.['music-videos'], 'music-videos')
+  pushCharts(results?.cityCharts, 'playlists')
   return sections
 }
 
@@ -1028,7 +1097,7 @@ export async function fetchAppleStationDetail(stationId: string, storefront?: st
   if (!stationId) return null
   const sf = storefront || getStorefront()
   const data = await gemsRequest(
-    `/v1/catalog/${encodeURIComponent(sf)}/stations/${encodeURIComponent(stationId)}?extend=editorialVideo,editorialArtwork&include=radio-show`,
+    `/v1/catalog/${encodeURIComponent(sf)}/stations/${encodeURIComponent(stationId)}?extend=editorialVideo,editorialArtwork&include=radio-show&fields[stations]=name,url,artwork,editorialArtwork,editorialVideo,editorialNotes,playParams,isLive,airTime`,
   )
   const resource = Array.isArray(data?.data) ? data.data[0] : null
   if (!resource?.attributes?.name) return null
@@ -1049,9 +1118,9 @@ export async function fetchAppleLibraryPage(_storefront?: string): Promise<Apple
   }
   const [recentlyAdded, songs, albums, artists, playlists, videos, listenNow] = await Promise.allSettled([
     fetchHomeRecentlyAdded(),
-    getAppleLibrarySongs(100),
-    getAppleLibraryAlbums(80),
-    getAppleLibraryArtists(60),
+    getAppleLibrarySongs(5000),
+    getAppleLibraryAlbums(2000),
+    getAppleLibraryArtists(1000),
     fetchAppleLibraryPlaylistsSection(),
     fetchAppleLibraryVideosSection(),
     fetchHomeListenNow(),
@@ -1066,7 +1135,7 @@ export async function fetchAppleLibraryPage(_storefront?: string): Promise<Apple
         return {
           id: artist.id, playId: catalogId || artist.id, libraryId: artist.id, catalogId,
           type: 'artists', name: artist.name,
-          subtitle: artist.genreName, artworkUrl: artist.artworkUrl, isLibrary: !catalogId,
+          subtitle: artist.genreName, artworkUrl: artist.artworkUrl, isLibrary: true,
         }
       }),
     })
@@ -1079,7 +1148,7 @@ export async function fetchAppleLibraryPage(_storefront?: string): Promise<Apple
         id: album.id, playId: album.catalogId || album.id, libraryId: album.id, catalogId: album.catalogId,
         type: 'albums', name: album.name,
         subtitle: album.artistName, artworkUrl: album.artworkUrl, artistName: album.artistName,
-        releaseDate: album.releaseDate, trackCount: album.trackCount, isLibrary: !album.catalogId,
+        releaseDate: album.releaseDate, trackCount: album.trackCount, isLibrary: true,
       })),
     })
   }
@@ -1104,7 +1173,22 @@ export async function fetchAppleLibraryPage(_storefront?: string): Promise<Apple
       sections.push({ id: 'library-made-for-you', kind: 'row', title: '专属推荐', subtitle: 'Apple Music 根据你的口味生成', items: madeForYou })
     }
   }
-  return { sections, hero: null, personalized: true, sourceLabel: 'apple-api（资料库）' }
+  const failedLabels = [
+    { label: '最近添加', result: recentlyAdded },
+    { label: '歌曲', result: songs },
+    { label: '专辑', result: albums },
+    { label: '艺人', result: artists },
+    { label: '播放列表', result: playlists },
+    { label: '音乐视频', result: videos },
+    { label: '专属推荐', result: listenNow },
+  ].filter(entry => entry.result.status === 'rejected').map(entry => entry.label)
+  return {
+    sections,
+    hero: null,
+    personalized: true,
+    sourceLabel: 'apple-api（资料库）',
+    fallbackReason: failedLabels.length > 0 ? `部分资料库内容加载失败：${failedLabels.join('、')}。可刷新重试。` : undefined,
+  }
 }
 
 /** 库专辑曲目 → 可播放 Song（catalogId 优先，走统一播放链路） */
@@ -1138,23 +1222,33 @@ export function appleWebItemToSong(item: AppleWebItem, storefront?: string): Son
   return song
 }
 
-/**
- * 电台 → 可播放 Song（携带已取好的直播流）。
- * 播放链路：loadAndPlaySong 检测到 appleRadio 后直接用其流（/v1/play/assets HLS），
- * 不再走 webPlayback 或网易云/QQ 载体匹配（电台没有"同款歌曲"可回退）。
- */
-export function appleStationToSong(station: AppleWebItem, stream: AppleNativeStream, _storefront?: string): Song {
+/** 电台 → 播放描述 Song。流不进入队列；每次播放由 App 重新请求 /v1/play/assets。 */
+export function appleStationToSong(station: AppleWebItem, _stream?: AppleNativeStream, storefront = getStorefront()): Song {
   const stationId = station.playId || station.id
+  const timeline = station.isLive === true ? 'live' : station.isLive === false ? 'vod' : 'unknown'
   return {
     id: 0,
     appleId: stationId,
+    appleStorefront: storefront,
     name: station.name || 'Apple Music 电台',
     artists: [{ name: station.showName || 'Apple Music 电台' }],
-    album: { name: '', picUrl: station.artworkUrl || '' },
-    duration: 0,
+    album: { name: station.showName || 'Apple Music 电台', picUrl: station.artworkUrl || station.motionPosterUrl || station.heroArtworkUrl || '' },
+    duration: station.durationMs || 0,
     platform: 'apple',
     vip: false,
-    appleRadio: { stream, stationId, isLive: Boolean(station.isLive) },
+    appleRadio: {
+      stationId,
+      storefront,
+      playParams: station.playParams,
+      timeline,
+      showName: station.showName,
+      description: station.description,
+      airTime: station.airTime,
+      artworkUrl: station.artworkUrl,
+      motionArtworkUrl: station.motionArtworkUrl,
+      motionPosterUrl: station.motionPosterUrl,
+      heroArtworkUrl: station.heroArtworkUrl,
+    },
   }
 }
 
@@ -1196,6 +1290,33 @@ export async function removeApplePlaylistFromLibrary(playlistId: string): Promis
   const credentials = getAppleCredentials()
   if (!credentials.developerToken || !credentials.mediaUserToken) return false
   const result = await appleApiRequest(`/v1/me/library/playlists/${encodeURIComponent(playlistId)}`, {
+    method: 'DELETE',
+    developerToken: credentials.developerToken,
+    mediaUserToken: credentials.mediaUserToken,
+    timeoutMs: 10000,
+  })
+  return result.ok
+}
+
+export async function removeAppleResourceFromLibrary(
+  type: 'albums' | 'music-videos' | 'stations',
+  id: string,
+  libraryId?: string,
+): Promise<boolean> {
+  const credentials = getAppleCredentials()
+  if (!credentials.developerToken || !credentials.mediaUserToken || !id) return false
+  let resolvedLibraryId = libraryId || ''
+  if (!resolvedLibraryId) {
+    const lookup = await appleApiRequest(`/v1/me/library/${type}?filter[catalog-id]=${encodeURIComponent(id)}&limit=1`, {
+      developerToken: credentials.developerToken,
+      mediaUserToken: credentials.mediaUserToken,
+      timeoutMs: 10000,
+    })
+    const item = Array.isArray(lookup.data?.data) ? lookup.data.data[0] : null
+    resolvedLibraryId = item?.id ? String(item.id) : ''
+  }
+  if (!resolvedLibraryId) return false
+  const result = await appleApiRequest(`/v1/me/library/${type}/${encodeURIComponent(resolvedLibraryId)}`, {
     method: 'DELETE',
     developerToken: credentials.developerToken,
     mediaUserToken: credentials.mediaUserToken,
@@ -1253,7 +1374,7 @@ export function addAppleMusicVideoToLibrary(videoId: string): Promise<boolean> {
 
 /** 资料库「播放列表」分区（web 侧栏 播放列表/所有播放列表 同款） */
 export async function fetchAppleLibraryPlaylistsSection(): Promise<AppleWebSection | null> {
-  const playlists = await getAppleLibraryPlaylists(100).catch(() => [])
+  const playlists = await getAppleLibraryPlaylists(2000)
   if (playlists.length === 0) return null
   return {
     id: 'library-playlists',
@@ -1279,7 +1400,7 @@ export async function fetchAppleLibraryPlaylistsSection(): Promise<AppleWebSecti
 
 /** 资料库「音乐视频」分区（web 侧栏 音乐视频 同款） */
 export async function fetchAppleLibraryVideosSection(): Promise<AppleWebSection | null> {
-  const videos = await getAppleLibraryMusicVideos(60).catch(() => [])
+  const videos = await getAppleLibraryMusicVideos(1000)
   if (videos.length === 0) return null
   return {
     id: 'library-videos',
