@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion'
-import { memo, useState, useEffect } from 'react'
+import { memo, useState, useEffect, type CSSProperties } from 'react'
 import { SlidersHorizontal, Plus, Minus, X } from 'lucide-react'
 import { useTvBack } from '../tv/tvCore'
 
@@ -9,6 +9,8 @@ interface QuickSettingsProps {
   isPureMusic?: boolean
   /** 自定义触发按钮 className（如摩登模式的 modeng-btn-chip 玻璃按钮）；不传用默认圆钮 */
   triggerClassName?: string
+  /** 自定义触发按钮内联样式（如沉浸模式统一玻璃阴影） */
+  triggerStyle?: CSSProperties
   /** 触发按钮宽/高（px，自定义样式时配合 chip 尺寸用） */
   triggerWidth?: number
   triggerHeight?: number
@@ -31,6 +33,7 @@ export default memo(function QuickSettings({
   playerTheme = 'dark',
   isPureMusic = false,
   triggerClassName,
+  triggerStyle,
   triggerWidth,
   triggerHeight,
   triggerIconSize = 24,
@@ -363,7 +366,7 @@ export default memo(function QuickSettings({
         whileHover={{ scale: 1.06, x: -1 }}
         whileTap={{ scale: 0.9 }}
         onClick={() => setIsOpen(!isOpen)}
-        style={{ width: triggerWidth, height: triggerHeight }}
+        style={{ width: triggerWidth, height: triggerHeight, ...triggerStyle }}
         className={
           triggerClassName ??
           `p-3 rounded-full backdrop-blur-md border transition-colors ${

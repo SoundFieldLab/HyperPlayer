@@ -555,6 +555,8 @@ interface LyricsDisplayProps {
   singlePlacementMode?: 'dynamic' | 'centered'
   immersiveEffect?: ImmersiveLyricEffect
   immersiveAvoidTopLeft?: boolean
+  /** 单行模式：当前句下方是否显示下一句预览（更淡更小）。默认关闭——桌面播放器的「现代」单行样式不受影响，仅播放页沉浸模式显式开启 */
+  singleNextLinePreview?: boolean
   backgroundEffect?: BackgroundEffect
   isTransitioning?: boolean
   trackId?: string | number
@@ -586,6 +588,7 @@ export default memo(function LyricsDisplay({
   singlePlacementMode = 'dynamic',
   immersiveEffect,
   immersiveAvoidTopLeft = true,
+  singleNextLinePreview = false,
   backgroundEffect = 'blur',
   isTransitioning = false,
   trackId,
@@ -2007,6 +2010,9 @@ export default memo(function LyricsDisplay({
       singleIndex = fallbackIndex >= 0 ? fallbackIndex : currentIndex
     }
     const singleLyric = singleIndex >= 0 ? displayLyricsData[singleIndex] : null
+    // 下一句预览：略过空行/间奏占位，仅展示真实歌词文本
+    const nextSingleLyric = singleIndex >= 0 ? displayLyricsData[singleIndex + 1] : null
+    const showNextLinePreview = singleNextLinePreview && Boolean(nextSingleLyric?.text?.trim()) && !nextSingleLyric?.isGeneratedInterlude
     const singleLyricFontSize = singlePlacementMode === 'centered'
       ? Math.max(2.15, effectiveLyricSize * 1.3)
       : Math.max(3.2, effectiveLyricSize * 1.65)
@@ -2159,6 +2165,24 @@ export default memo(function LyricsDisplay({
                     )}
                   </SmoothPlaybackTime>
                 ) : null}
+                {showNextLinePreview && nextSingleLyric?.text?.trim() && (
+                  <motion.p
+                    key={`next-${singleIndex + 1}-${nextSingleLyric.time}-${nextSingleLyric.text}`}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5, delay: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                    className="mt-[0.55em] font-medium leading-snug whitespace-normal break-words [overflow-wrap:anywhere] pointer-events-none"
+                    style={{
+                      fontSize: `clamp(0.95rem, ${singleLyricFontSize * immersiveEffectConfig.fontScale * 0.42}rem, min(4.6vw, 7.2vh))`,
+                      color: isLightTheme ? 'rgba(28,28,30,0.42)' : 'rgba(235,235,245,0.5)',
+                      textShadow: '0 3px 14px rgba(0,0,0,0.55)',
+                      maxWidth: '100%',
+                      letterSpacing: '0.01em',
+                    }}
+                  >
+                    {nextSingleLyric.text}
+                  </motion.p>
+                )}
               </motion.div>
             </motion.div>
           )}

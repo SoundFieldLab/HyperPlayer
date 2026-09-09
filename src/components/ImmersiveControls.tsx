@@ -1,10 +1,14 @@
 import { motion } from 'framer-motion'
-import { AudioLines, Captions, Film, Home, Languages } from 'lucide-react'
+import { AudioLines, Captions, ChevronDown, Film, Home, Languages } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import QuickSettings from './QuickSettings'
 import { useTvMode, useRemoteCursorMode } from '../tv/tvCore'
 
 interface ImmersiveControlsProps {
+  /** 播放页封面主色（预留，目前未参与按钮渲染） */
+  coverColor?: string
+  /** 布局变体：left = 沉浸模式专属——按钮列移到左上角，顶部带可收起的向下箭头；不传 = 传统右上角布局 */
+  variant?: 'default' | 'left'
   onHomeClick: () => void
   onOpenMixingStudio?: (anchorRect?: DOMRect) => void
   onTranslationToggle: () => void
@@ -20,9 +24,13 @@ interface ImmersiveControlsProps {
   isPureMusic?: boolean // 新增：是否为纯音乐
   /** 隐藏右上角 Home 按钮（摩登模式改用自身左下角页脚的 Home，避免重复） */
   hideHome?: boolean
+  /** 人声/伴奏分离控制句柄（App 侧未提交功能预留，当前布局暂未消费） */
+  stemControl?: unknown
 }
 
 export default function ImmersiveControls({
+  coverColor: _coverColor,
+  variant = 'default',
   onHomeClick,
   onOpenMixingStudio,
   onTranslationToggle,
@@ -46,6 +54,16 @@ export default function ImmersiveControls({
   // TV 紧凑布局：按钮/间距更小、更适配遥控器排版（手机遥控器连上时用 PC 式布局）
   const tvCompact = tvMode && !remoteCursorMode
 
+  // 左上角布局（沉浸模式专属）：按钮列贴左，顶部多一个可收起的向下箭头，
+  // 其余按钮整体下移一行给箭头让位；收起后仅剩箭头常驻。
+  const leftLayout = variant === 'left'
+  const [collapsed, setCollapsed] = useState(false)
+  const buttonsVisible = isVisible && !collapsed
+  const sideCls = leftLayout ? 'left-0' : 'right-6'
+  const hideX = leftLayout ? -60 : 60
+  const featureHideX = leftLayout ? -44 : 44
+  const hoverShiftX = leftLayout ? 3 : -3
+
   const [accentColor, setAccentColor] = useState(() => {
     const saved = localStorage.getItem('accentColor')
     return saved || '#3B82F6'
@@ -65,7 +83,8 @@ export default function ImmersiveControls({
   }, [])
 
   useEffect(() => {
-    // 当鼠标离开后3秒自动隐藏（TV 模式常驻，不自动隐藏）
+    // 进入播放页默认显示，3 秒无操作整组渐隐（含箭头本身）；鼠标靠近（hover）立即唤醒，离开后再计 3 秒。
+    // 依赖 collapsed：触屏点箭头展开后（无 hover 事件）也重新计时。TV 模式常驻不自动隐藏。
     if (!effectiveHovered) {
       const hideTimer = setTimeout(() => {
         setIsVisible(false)
@@ -73,7 +92,7 @@ export default function ImmersiveControls({
 
       return () => clearTimeout(hideTimer)
     }
-  }, [effectiveHovered])
+  }, [effectiveHovered, collapsed])
 
   const handleMouseEnter = () => {
     setIsHovered(true)
@@ -87,13 +106,18 @@ export default function ImmersiveControls({
   const showMvButton = typeof onMvBackgroundToggle === 'function'
   const featureButtonCount = (hasTranslation ? 1 : 0) + (hasRoman ? 1 : 0) + (showMvButton ? 1 : 0) // MV 背景按钮常驻
   const rowRem = tvCompact ? 3.2 : 4 // 每个按钮行占位高度（rem），TV 紧凑更小
+  // 左上角布局：箭头独占第一行，其余按钮整体下移一行
+  const rowOffsetRem = leftLayout ? rowRem : 0
+  const shiftTop = (top: string) => (leftLayout ? `calc(${top} + ${rowOffsetRem}rem)` : top)
   // 各按钮顶位置都按同一行高网格计算（不能混用 Tailwind top-16=4rem：TV 紧凑档会错位/重叠）
-  const translationButtonTop = `${(tvCompact ? 3.2 : 4)}rem`
-  const romanButtonTop = hasTranslation ? `${(tvCompact ? 6.4 : 8)}rem` : `${(tvCompact ? 3.2 : 4)}rem`
+  // 左上角布局行序：箭头(0) → Home(4rem) → 翻译(8rem) → …整体比右上角布局多让出一行给箭头
+  const homeButtonTop = leftLayout ? `${(tvCompact ? 3.2 : 4)}rem` : undefined
+  const translationButtonTop = shiftTop(`${(tvCompact ? 3.2 : 4)}rem`)
+  const romanButtonTop = shiftTop(hasTranslation ? `${(tvCompact ? 6.4 : 8)}rem` : `${(tvCompact ? 3.2 : 4)}rem`)
   // MV 背景按钮：紧跟翻译/罗马音功能行的下一行
-  const mvButtonTop = `${(tvCompact ? 3.2 : 4) + (featureButtonCount - 1) * rowRem}rem`
-  const quickSettingsTop = `${(tvCompact ? 3.2 : 4) + featureButtonCount * rowRem}rem`
-  const mixingStudioTop = `${(tvCompact ? 6.4 : 8) + featureButtonCount * rowRem}rem`
+  const mvButtonTop = shiftTop(`${(tvCompact ? 3.2 : 4) + (featureButtonCount - 1) * rowRem}rem`)
+  const quickSettingsTop = shiftTop(`${(tvCompact ? 3.2 : 4) + featureButtonCount * rowRem}rem`)
+  const mixingStudioTop = shiftTop(`${(tvCompact ? 6.4 : 8) + featureButtonCount * rowRem}rem`)
   const btnPad = tvCompact ? 'p-2.5' : 'p-3' // 按钮内边距
   const iconCls = tvCompact ? 'w-5 h-5' : 'w-6 h-6' // 图标尺寸
   const featureButtonTransition = {
@@ -101,20 +125,128 @@ export default function ImmersiveControls({
     ease: [0.22, 1, 0.36, 1] as const,
   }
 
+  // 统一按钮外观：左上角布局全部按钮（含收起箭头）用同款低透明度玻璃胶囊（AMLL 悬浮控件风格）；
+  // 右上角默认布局维持原来的深色实底圆钮，互不影响。
+  const unifiedGlassCls = leftLayout
+    ? `rounded-full border backdrop-blur-md transition-colors duration-300 ${
+        playerTheme === 'dark'
+          ? 'border-white/10 bg-white/[0.06] hover:border-white/20 hover:bg-white/[0.13]'
+          : 'border-black/10 bg-black/[0.05] hover:border-black/20 hover:bg-black/[0.10]'
+      }`
+    : `rounded-full backdrop-blur-md border transition-colors ${
+        playerTheme === 'dark'
+          ? 'bg-black/40 hover:bg-black/60 border-white/20'
+          : 'bg-white/50 hover:bg-white/70 border-black/20'
+      }`
+  const unifiedGlassShadow = leftLayout
+    ? playerTheme === 'dark'
+      ? 'inset 0 1px 0 rgba(255,255,255,0.10), 0 2px 12px rgba(0,0,0,0.28)'
+      : 'inset 0 1px 0 rgba(255,255,255,0.55), 0 2px 12px rgba(0,0,0,0.12)'
+    : undefined
+  // 功能开关按钮表面：启用态保留主题色高亮，未启用态（仅左布局）退成玻璃底
+  const featureSurfaceStyle = (enabled: boolean) =>
+    leftLayout && !enabled
+      ? { boxShadow: unifiedGlassShadow }
+      : {
+          backgroundColor: enabled
+            ? accentColor
+            : playerTheme === 'dark'
+              ? 'rgba(0,0,0,0.4)'
+              : 'rgba(255,255,255,0.5)',
+          borderColor: enabled
+            ? `${accentColor}66`
+            : playerTheme === 'dark'
+              ? 'rgba(255,255,255,0.2)'
+              : 'rgba(0,0,0,0.2)',
+          boxShadow: enabled
+            ? `0 0 20px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
+            : '0 4px 12px rgba(0,0,0,0.15)',
+        }
+  const featureIconColor = (enabled: boolean) =>
+    enabled
+      ? '#fff'
+      : leftLayout
+        ? playerTheme === 'dark' ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)'
+        : playerTheme === 'dark' ? '#fff' : '#000'
+  const neutralIconCls = playerTheme === 'dark'
+    ? leftLayout ? 'text-white/90' : 'text-white'
+    : leftLayout ? 'text-black/80' : 'text-black'
+
   return (
     <div
-      className="fixed top-[34px] right-0 z-40"
+      className={`fixed top-[34px] z-40 ${leftLayout ? 'left-6' : 'right-0'}`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      style={{ width: tvCompact ? '104px' : '120px', height: tvCompact ? `${158 + featureButtonCount * 38}px` : `${214 + featureButtonCount * 50}px` }}
+      style={leftLayout
+        ? { width: tvCompact ? '52px' : '60px', height: collapsed ? (tvCompact ? '56px' : '64px') : (tvCompact ? `${158 + featureButtonCount * 38 + rowOffsetRem * 16}px` : `${214 + featureButtonCount * 50 + rowOffsetRem * 16}px`) }
+        : { width: tvCompact ? '104px' : '120px', height: tvCompact ? `${158 + featureButtonCount * 38}px` : `${214 + featureButtonCount * 50}px` }}
     >
+      {/* 鼠标靠近感应区（隐形，仅左上角布局）：比按钮列大一圈，靠近即唤醒整组按钮 */}
+      {leftLayout && (
+        <div aria-hidden="true" className="absolute -left-8 -right-8 -top-8 -bottom-4" />
+      )}
+
+      {/* 收起箭头（仅沉浸模式左上角布局）：参考 AMLL/Apple 悬浮控件风格的低透明度玻璃胶囊——
+          静置时若隐若现，hover 亮起并浮出小提示；展开态箭头轻微下浮引导收起。
+          箭头随整组一起 3 秒渐隐、鼠标靠近重现——收起态闲置时画面完全干净 */}
+      {leftLayout && (
+        <motion.button
+          type="button"
+          onClick={() => {
+            if (collapsed) setIsVisible(true)
+            setCollapsed(c => !c)
+          }}
+          aria-label={collapsed ? '展开控制按钮' : '收起控制按钮'}
+          initial={{ opacity: 1 }}
+          animate={{
+            opacity: isVisible ? 1 : 0,
+            y: isVisible && !collapsed ? [0, 2.5, 0] : 0,
+          }}
+          transition={{
+            opacity: { duration: 0.45, ease: 'easeOut' },
+            y: { duration: 2.4, repeat: Infinity, ease: 'easeInOut' },
+          }}
+          whileHover={{ scale: 1.06 }}
+          whileTap={{ scale: 0.88 }}
+          className={`group absolute top-3 ${sideCls} flex items-center justify-center ${unifiedGlassCls}`}
+          style={{
+            padding: tvCompact ? 7 : 9,
+            boxShadow: unifiedGlassShadow,
+          }}
+        >
+          <motion.span
+            className="block"
+            initial={false}
+            animate={{ rotate: collapsed ? 180 : 0 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <ChevronDown
+              className={`${tvCompact ? 'h-4 w-4' : 'h-[18px] w-[18px]'} ${playerTheme === 'dark' ? 'text-white/90' : 'text-black/80'}`}
+              strokeWidth={2.25}
+            />
+          </motion.span>
+          {/* 悬停提示：延迟出现防闪烁（开源播放器 tooltip 惯例） */}
+          <span
+            aria-hidden="true"
+            className={`pointer-events-none absolute left-full top-1/2 ml-2.5 -translate-y-1/2 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] leading-none opacity-0 backdrop-blur-md transition-opacity duration-200 delay-500 group-hover:opacity-100 ${
+              playerTheme === 'dark'
+                ? 'border-white/10 bg-black/70 text-white/90'
+                : 'border-black/10 bg-white/85 text-black/80'
+            }`}
+            style={{ boxShadow: '0 4px 14px rgba(0,0,0,0.22)' }}
+          >
+            {collapsed ? '展开控制' : '收起控制'}
+          </span>
+        </motion.button>
+      )}
+
       {/* Home按钮 */}
       {!hideHome && (
       <motion.button
         initial={{ x: 0, opacity: 1 }}
         animate={{
-          x: isVisible ? 0 : 60,
-          opacity: isVisible ? 1 : 0,
+          x: buttonsVisible ? 0 : hideX,
+          opacity: buttonsVisible ? 1 : 0,
         }}
         transition={{
           type: 'spring',
@@ -122,16 +254,13 @@ export default function ImmersiveControls({
           stiffness: 300,
           mass: 0.8,
         }}
-        whileHover={{ scale: 1.1, x: -2 }}
+        whileHover={{ scale: 1.1, x: hoverShiftX }}
         whileTap={{ scale: 0.9 }}
         onClick={onHomeClick}
-        className={`absolute top-0 right-6 ${btnPad} rounded-full backdrop-blur-md border transition-colors ${
-          playerTheme === 'dark'
-            ? 'bg-black/40 hover:bg-black/60 border-white/20'
-            : 'bg-white/50 hover:bg-white/70 border-black/20'
-        }`}
+        className={`absolute ${sideCls} ${leftLayout ? '' : 'top-0'} ${btnPad} ${unifiedGlassCls}`}
+        style={{ ...(homeButtonTop ? { top: homeButtonTop } : {}), boxShadow: unifiedGlassShadow }}
       >
-        <Home className={`${iconCls} ${playerTheme === 'dark' ? 'text-white' : 'text-black'}`} />
+        <Home className={`${iconCls} ${neutralIconCls}`} />
       </motion.button>
       )}
 
@@ -139,48 +268,33 @@ export default function ImmersiveControls({
       {hasTranslation && (
         <motion.button
           key="translation-button"
-          initial={{ x: 44, opacity: 0, scale: 0.96, filter: 'blur(6px)' }}
+          initial={{ x: featureHideX, opacity: 0, scale: 0.96, filter: 'blur(6px)' }}
           animate={{
-            x: isVisible ? 0 : 44,
-            opacity: isVisible ? 1 : 0,
-            scale: isVisible ? 1 : 0.96,
-            filter: isVisible ? 'blur(0px)' : 'blur(6px)',
+            x: buttonsVisible ? 0 : featureHideX,
+            opacity: buttonsVisible ? 1 : 0,
+            scale: buttonsVisible ? 1 : 0.96,
+            filter: buttonsVisible ? 'blur(0px)' : 'blur(6px)',
           }}
           transition={featureButtonTransition}
-          whileHover={{ scale: 1.06, x: -3, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } }}
+          whileHover={{ scale: 1.06, x: hoverShiftX, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } }}
           whileTap={{ scale: 0.96 }}
           onClick={onTranslationToggle}
-          className={`absolute right-6 ${btnPad} rounded-full backdrop-blur-md border transition-colors overflow-hidden`}
-          style={{
-            top: translationButtonTop,
-            backgroundColor: translationEnabled
-              ? accentColor
-              : playerTheme === 'dark' 
-                ? 'rgba(0,0,0,0.4)' 
-                : 'rgba(255,255,255,0.5)',
-            borderColor: translationEnabled
-              ? `${accentColor}66`
-              : playerTheme === 'dark'
-                ? 'rgba(255,255,255,0.2)'
-                : 'rgba(0,0,0,0.2)',
-            boxShadow: translationEnabled
-              ? `0 0 20px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
-              : '0 4px 12px rgba(0,0,0,0.15)',
-          }}
+          className={`absolute ${sideCls} ${btnPad} ${unifiedGlassCls} overflow-hidden`}
+          style={{ top: translationButtonTop, ...featureSurfaceStyle(translationEnabled) }}
         >
           {/* 液态玻璃光泽层 */}
           {translationEnabled && (
-            <div 
+            <div
               className="absolute inset-0 pointer-events-none"
               style={{
                 background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.3) 0%, transparent 60%)',
               }}
             />
           )}
-          <Languages 
-            className={`${iconCls} relative z-10`} 
+          <Languages
+            className={`${iconCls} relative z-10`}
             style={{
-              color: translationEnabled ? '#fff' : playerTheme === 'dark' ? '#fff' : '#000'
+              color: featureIconColor(translationEnabled)
             }}
           />
         </motion.button>
@@ -190,34 +304,19 @@ export default function ImmersiveControls({
       {hasRoman && (
         <motion.button
           key="roman-button"
-          initial={{ x: 44, opacity: 0, scale: 0.96, filter: 'blur(6px)' }}
+          initial={{ x: featureHideX, opacity: 0, scale: 0.96, filter: 'blur(6px)' }}
           animate={{
-            x: isVisible ? 0 : 44,
-            opacity: isVisible ? 1 : 0,
-            scale: isVisible ? 1 : 0.96,
-            filter: isVisible ? 'blur(0px)' : 'blur(6px)',
+            x: buttonsVisible ? 0 : featureHideX,
+            opacity: buttonsVisible ? 1 : 0,
+            scale: buttonsVisible ? 1 : 0.96,
+            filter: buttonsVisible ? 'blur(0px)' : 'blur(6px)',
           }}
           transition={featureButtonTransition}
-          whileHover={{ scale: 1.06, x: -3, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } }}
+          whileHover={{ scale: 1.06, x: hoverShiftX, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } }}
           whileTap={{ scale: 0.96 }}
           onClick={onRomanToggle}
-          className={`absolute right-6 ${btnPad} rounded-full backdrop-blur-md border transition-colors overflow-hidden`}
-          style={{
-            top: romanButtonTop,
-            backgroundColor: romanEnabled
-              ? accentColor
-              : playerTheme === 'dark'
-                ? 'rgba(0,0,0,0.4)'
-                : 'rgba(255,255,255,0.5)',
-            borderColor: romanEnabled
-              ? `${accentColor}66`
-              : playerTheme === 'dark'
-                ? 'rgba(255,255,255,0.2)'
-                : 'rgba(0,0,0,0.2)',
-            boxShadow: romanEnabled
-              ? `0 0 20px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
-              : '0 4px 12px rgba(0,0,0,0.15)',
-          }}
+          className={`absolute ${sideCls} ${btnPad} ${unifiedGlassCls} overflow-hidden`}
+          style={{ top: romanButtonTop, ...featureSurfaceStyle(romanEnabled) }}
         >
           {romanEnabled && (
             <div
@@ -230,7 +329,7 @@ export default function ImmersiveControls({
           <Captions
             className={`${iconCls} relative z-10`}
             style={{
-              color: romanEnabled ? '#fff' : playerTheme === 'dark' ? '#fff' : '#000'
+              color: featureIconColor(romanEnabled)
             }}
           />
         </motion.button>
@@ -240,35 +339,20 @@ export default function ImmersiveControls({
       {showMvButton && (
       <motion.button
         key="mv-background-button"
-        initial={{ x: 44, opacity: 0, scale: 0.96, filter: 'blur(6px)' }}
+        initial={{ x: featureHideX, opacity: 0, scale: 0.96, filter: 'blur(6px)' }}
         animate={{
-          x: isVisible ? 0 : 44,
-          opacity: isVisible ? 1 : 0,
-          scale: isVisible ? 1 : 0.96,
-          filter: isVisible ? 'blur(0px)' : 'blur(6px)',
+          x: buttonsVisible ? 0 : featureHideX,
+          opacity: buttonsVisible ? 1 : 0,
+          scale: buttonsVisible ? 1 : 0.96,
+          filter: buttonsVisible ? 'blur(0px)' : 'blur(6px)',
         }}
         transition={featureButtonTransition}
-        whileHover={{ scale: 1.06, x: -3, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } }}
+        whileHover={{ scale: 1.06, x: hoverShiftX, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } }}
         whileTap={{ scale: 0.96 }}
         onClick={onMvBackgroundToggle}
         aria-label="MV 背景"
-        className={`absolute right-6 ${btnPad} rounded-full backdrop-blur-md border transition-colors overflow-hidden`}
-        style={{
-          top: mvButtonTop,
-          backgroundColor: mvBackgroundEnabled
-            ? accentColor
-            : playerTheme === 'dark'
-              ? 'rgba(0,0,0,0.4)'
-              : 'rgba(255,255,255,0.5)',
-          borderColor: mvBackgroundEnabled
-            ? `${accentColor}66`
-            : playerTheme === 'dark'
-              ? 'rgba(255,255,255,0.2)'
-              : 'rgba(0,0,0,0.2)',
-          boxShadow: mvBackgroundEnabled
-            ? `0 0 20px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.3)`
-            : '0 4px 12px rgba(0,0,0,0.15)',
-        }}
+        className={`absolute ${sideCls} ${btnPad} ${unifiedGlassCls} overflow-hidden`}
+        style={{ top: mvButtonTop, ...featureSurfaceStyle(mvBackgroundEnabled) }}
       >
         {mvBackgroundEnabled && (
           <div
@@ -281,7 +365,7 @@ export default function ImmersiveControls({
         <Film
           className={`${iconCls} relative z-10`}
           style={{
-            color: mvBackgroundEnabled ? '#fff' : playerTheme === 'dark' ? '#fff' : '#000'
+            color: featureIconColor(mvBackgroundEnabled)
           }}
         />
       </motion.button>
@@ -291,8 +375,8 @@ export default function ImmersiveControls({
       <motion.div
         initial={{ x: 0, opacity: 1 }}
         animate={{
-          x: isVisible ? 0 : 60,
-          opacity: isVisible ? 1 : 0,
+          x: buttonsVisible ? 0 : hideX,
+          opacity: buttonsVisible ? 1 : 0,
         }}
         transition={{
           type: 'spring',
@@ -301,13 +385,16 @@ export default function ImmersiveControls({
           mass: 0.8,
           delay: 0.1,
         }}
-        className="absolute right-6"
+        className={`absolute ${sideCls}`}
         style={{ top: quickSettingsTop }}
       >
-        <QuickSettings 
-          forceClose={!isVisible}
+        <QuickSettings
+          forceClose={!buttonsVisible}
           playerTheme={playerTheme}
           isPureMusic={isPureMusic} // 传递纯音乐标识
+          triggerClassName={leftLayout ? `${unifiedGlassCls} ${btnPad}` : undefined}
+          triggerStyle={leftLayout ? { boxShadow: unifiedGlassShadow } : undefined}
+          triggerIconColor={leftLayout ? (playerTheme === 'dark' ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)') : undefined}
         />
       </motion.div>
 
@@ -315,20 +402,16 @@ export default function ImmersiveControls({
       {onOpenMixingStudio && (
         <motion.button
           initial={{ x: 0, opacity: 1 }}
-          animate={{ x: isVisible ? 0 : 60, opacity: isVisible ? 1 : 0 }}
+          animate={{ x: buttonsVisible ? 0 : hideX, opacity: buttonsVisible ? 1 : 0 }}
           transition={{ type: 'spring', damping: 25, stiffness: 300, mass: 0.8, delay: 0.16 }}
-          whileHover={{ scale: 1.1, x: -2 }}
+          whileHover={{ scale: 1.1, x: hoverShiftX }}
           whileTap={{ scale: 0.9 }}
           onClick={(e) => onOpenMixingStudio?.(e.currentTarget.getBoundingClientRect())}
-          className={`absolute right-6 ${btnPad} rounded-full backdrop-blur-md border transition-colors ${
-            playerTheme === 'dark'
-              ? 'bg-black/40 hover:bg-black/60 border-white/20'
-              : 'bg-white/50 hover:bg-white/70 border-black/20'
-          }`}
-          style={{ top: mixingStudioTop }}
+          className={`absolute ${sideCls} ${btnPad} ${unifiedGlassCls}`}
+          style={{ top: mixingStudioTop, boxShadow: unifiedGlassShadow }}
           aria-label="打开调音室"
         >
-          <AudioLines className={`${iconCls} ${playerTheme === 'dark' ? 'text-white' : 'text-black'}`} />
+          <AudioLines className={`${iconCls} ${neutralIconCls}`} />
         </motion.button>
       )}
     </div>

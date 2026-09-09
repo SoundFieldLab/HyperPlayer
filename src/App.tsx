@@ -7820,6 +7820,7 @@ function App() {
               <MaybePortal active={lyricDisplayMode === 'video'}>
                 <LazyImmersiveControls
                   coverColor={playbackCoverColor}
+                  variant={lyricDisplayMode === 'immersive' ? 'left' : 'default'}
                   onHomeClick={handlePlayerHome}
                   hideHome={lyricDisplayMode === 'modeng'}
                 onOpenMixingStudio={(anchorRect) => {
@@ -8259,6 +8260,7 @@ function App() {
                       onSeek={audioPlayer.seek}
                       romanEnabled={romanEnabled}
                       displayMode="single"
+                      singleNextLinePreview
                       isTransitioning={isVisualTransitioning}
                       trackId={currentSong?.id || currentSong?.mid}
                       playerTheme={playerTheme}
@@ -8408,8 +8410,22 @@ function App() {
                     trackId={currentSong.id || currentSong.mid}
                     translationEnabled={translationEnabled}
                     romanEnabled={romanEnabled}
+                    hasTranslation={hasTranslation}
+                    hasRoman={hasRoman}
                     onTranslationToggle={handleTranslationToggle}
                     onRomanToggle={handleRomanToggle}
+                    onOpenComments={() => handleViewComments(currentSong)}
+                    onHomeClick={handlePlayerHome}
+                    onMvBackgroundToggle={handleMvBackgroundToggle}
+                    mvBackgroundEnabled={mvBackgroundEnabled}
+                    mvBackgroundActive={mvBackgroundActive}
+                    onOpenMixingStudio={(anchorRect?: DOMRect) => {
+                      if (anchorRect) {
+                        mixingStudioAnchorRef.current = { x: anchorRect.x, y: anchorRect.y, width: anchorRect.width, height: anchorRect.height }
+                      }
+                      setShowMixingStudio(true)
+                    }}
+                    isPureMusic={isPureMusic}
                     isTransitioning={isVisualTransitioning}
                     onSeek={audioPlayer.seek}
                     onPlayPause={handlePlayPause}
@@ -8603,7 +8619,7 @@ function App() {
           )}
 
           {/* 全局播放器固定在底部；真正无视频/失败时通过 portal 恢复音频控制。 */}
-          {currentSong && !showHome && lyricDisplayMode !== 'modeng' && ((lyricDisplayMode !== 'video' && lyricDisplayMode !== 'modeng') || watchSearchFailed) && (
+          {currentSong && !showHome && lyricDisplayMode !== 'modeng' && (lyricDisplayMode !== 'video' || watchSearchFailed) && (
             <MaybePortal active={lyricDisplayMode === 'video'}>
             <LivePlayerControls
                       playbackTimeStore={audioPlayer.playbackTimeStore}

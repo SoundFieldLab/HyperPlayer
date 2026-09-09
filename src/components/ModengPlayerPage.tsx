@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   AudioLines,
+  Captions,
   Eye,
   EyeOff,
   Film,
@@ -1958,15 +1959,11 @@ export default function ModengPlayerPage({
                   height: 28 * s,
                   background: romanEnabled && hasRoman ? c.barFill : c.chip,
                   color: romanEnabled && hasRoman ? (dark ? '#ffffff' : '#1c1c1e') : c.sub,
-                  fontFamily: FONT_STACK,
-                  fontWeight: 700,
-                  fontSize: 13 * s,
-                  lineHeight: 1,
                   zIndex: 4,
                   pointerEvents: 'auto',
                 }}
               >
-                A
+                <Captions style={{ width: 14 * s, height: 14 * s }} />
               </button>
               {/* MV 背景按钮：与全局 MV 背景设置同步 */}
               <button

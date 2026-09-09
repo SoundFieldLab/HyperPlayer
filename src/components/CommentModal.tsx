@@ -411,7 +411,12 @@ function CommentVirtualRow({ index, style, ...data }: RowComponentProps<CommentR
     )
   }
   if (row.kind === 'divider') {
-    return <div style={style} className="border-t border-white/5 my-3" />
+    // 分隔线用内边距撑行高：外边距不进 ResizeObserver 测量，动态行高会按 1px 边框计，导致与相邻行重叠
+    return (
+      <div style={style} className="px-2 py-3">
+        <div className="border-t border-white/5" />
+      </div>
+    )
   }
   if (row.kind === 'all-header') {
     return (
@@ -1302,7 +1307,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
         data-tv-scope
         onClick={onClose}
       >
@@ -1314,19 +1319,31 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
           className="relative w-[92vw] max-w-3xl max-h-[88vh] rounded-2xl shadow-2xl overflow-hidden border border-white/10 flex flex-col"
           onClick={(e) => e.stopPropagation()}
           style={{
-            background: resourceCoverUrl
-              ? `linear-gradient(rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.9)), url(${resourceCoverUrl})`
-              : 'rgba(0, 0, 0, 0.9)',
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            backgroundBlendMode: 'darken'
+            // 全不透明底色：弹窗常盖在播放中的 MV 视频/动态页面上，半透明底 +
+            // 滤镜层会制造多层合成边界，诱发 Chromium 光栅化闪烁
+            background: '#0a0a0c',
           }}
         >
-          {/* 内部模糊背景层 */}
-          <div className="absolute inset-0 backdrop-blur-[100px] -z-10" />
+          {/* 内部模糊封面层：用元素自身 filter 预先把封面糊化（内容静态，合成器只算一次）。
+              不要改回 backdrop-filter——弹窗盖在持续动画的播放页（摩登动态封面/逐字歌词）上时，
+              backdrop-filter 每帧重采样背景会触发 Chromium 合成器出陈旧帧，评论区肉眼可见地闪。 */}
+          {resourceCoverUrl && (
+            <div className="absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
+              <div
+                className="absolute -inset-20"
+                style={{
+                  backgroundImage: `url(${resourceCoverUrl})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                  filter: 'blur(80px)',
+                }}
+              />
+              <div className="absolute inset-0" style={{ background: 'linear-gradient(rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0.86))' }} />
+            </div>
+          )}
           
           {/* 头部 */}
-          <div className="flex-shrink-0 bg-black/20 backdrop-blur-xl border-b border-white/10 px-6 py-4">
+          <div className="flex-shrink-0 bg-black/40 border-b border-white/10 px-6 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 {resourceCoverUrl && (
@@ -1437,7 +1454,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
-                className="flex-shrink-0 bg-black/30 backdrop-blur-xl border-b border-white/10 px-6 py-4 overflow-hidden"
+                className="flex-shrink-0 bg-black/30 border-b border-white/10 px-6 py-4 overflow-hidden"
               >
                 {replyingTo && (
                   <div className="mb-2 flex items-center justify-between text-xs text-blue-400 bg-blue-500/10 px-3 py-2 rounded-lg">
