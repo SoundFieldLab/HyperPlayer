@@ -5,8 +5,12 @@ const MIN_RELEASE_VMP_DAYS = 30
 
 /** 探测 Python 是否带 castlabs_evs 的超时（快速失败，避免卡住构建） */
 const PROBE_TIMEOUT_MS = 30 * 1000
-/** 单次 EVS 命令超时上限。上传 233MB 的 Electron 二进制较慢，但不应无限等待。 */
-const RUN_TIMEOUT_MS = 30 * 60 * 1000
+/**
+ * 单次 EVS 命令超时上限。
+ * 实测：222.6MB 的 Electron 二进制在 0.6 MB/s 下上传耗时约 402s；慢网/重试会显著更久。
+ * 取 90 分钟（含失败后刷新授权并重试一次的总预算），避免中途误杀签名进程。
+ */
+const RUN_TIMEOUT_MS = 90 * 60 * 1000
 
 /**
  * Python 解释器候选。按序探测，第一个能 `import castlabs_evs` 的胜出。
@@ -47,9 +51,29 @@ function findPython() {
   return null
 }
 
-/** 凭据是否就位（CLI 会自动从这两个环境变量读取；缺任一则无法在无人值守环境下签名） */
+/**
+ * 是否具备签名凭据。
+ *
+ * EVS 客户端可直接用两种凭据来源：
+ *   1. 环境变量 EVS_ACCOUNT_NAME + EVS_PASSWD（CI / 无人值守场景）
+ *   2. 已缓存的登录令牌 ~/.config/evs/config.json（本机注册并登录过一次后即存在）
+ * 任一可用即可签名——只查环境变量会把本机开发流程误拦。
+ */
+function evsConfigPath() {
+  return process.env.EVS_CONFIG_FILE
+    || require('node:path').join(require('node:os').homedir(), '.config', 'evs', 'config.json')
+}
+
 function hasCredentials() {
-  return Boolean(process.env.EVS_ACCOUNT_NAME && process.env.EVS_PASSWD)
+  if (process.env.EVS_ACCOUNT_NAME && process.env.EVS_PASSWD) return true
+  try {
+    const raw = require('node:fs').readFileSync(evsConfigPath(), 'utf8')
+    const auth = JSON.parse(raw)?.Auth
+    // 缓存的刷新令牌足以换取新的访问令牌；访问令牌本身会过期，不能作为判据
+    return Boolean(auth?.RefreshToken && (auth?.AccountName || process.env.EVS_ACCOUNT_NAME))
+  } catch {
+    return false
+  }
 }
 
 function runEvs(command, packageDir, { required = false } = {}) {
