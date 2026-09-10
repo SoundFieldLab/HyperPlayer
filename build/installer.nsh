@@ -4,6 +4,13 @@
 !include "WinMessages.nsh"
 !include "FileFunc.nsh"
 
+; 本文件被 electron-builder 拼在模板脚本**之前**（NsisTarget: scriptGenerator.build() + originalScript），
+; 而模板里的 multiUser.nsh 才定义 INSTALL_REGISTRY_KEY。因此直接引用它会触发
+; NSIS warning 6000「unknown variable/constant」，而 electron-builder 默认传 -WX（警告即错误），
+; 导致 NSIS 打包失败。这里按 multiUser.nsh 的原语义补一份定义（值完全一致）；
+; 下游 multiUser.nsh 用的是 `!define /ifndef`，会因已定义而跳过，不会重复定义。
+!define /ifndef INSTALL_REGISTRY_KEY "Software\${APP_GUID}"
+
 !define WF_W 880
 !define WF_H 580
 !define WF_CX 280
@@ -1721,10 +1728,6 @@ Function un.WaveUnInstFilesShow
   System::Call "user32::SetWindowPos(p $UnWaveBackground, p 1, i 0, i 0, i 0, i 0, i 0x0013)"
   StrCpy $UnWaveProgressActive 1
   ${NSD_CreateTimer} un.WaveTick 250
-FunctionEnd
-Function un.WaveUnInstFilesLeave
-  StrCpy $UnWaveProgressActive 0
-  Call un.WaveReleasePageImages
 FunctionEnd
 
 Function un.WaveUnFinishCreate

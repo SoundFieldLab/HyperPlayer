@@ -124,6 +124,12 @@ jobs:
     if: needs.prepare.outputs.has_changes == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
+    # EVS 凭据用于 Widevine VMP 签名（仅 Apple Music 原生 DRM 需要）。
+    # 未配置 secrets 时自动降级为未签名构建，不阻断流水线。
+    env:
+      EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+      EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+      HAS_EVS: ${{ secrets.EVS_ACCOUNT_NAME != '' && secrets.EVS_PASSWD != '' }}
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
@@ -149,15 +155,22 @@ jobs:
       - name: 下载 Electron 运行时（npm ci 跳过其安装脚本）
         run: node node_modules/electron/install.js
 
-      - name: 安装 castLabs EVS（Widevine VMP 签名）
+      - name: 安装 castLabs EVS（仅当配置了 EVS 凭据）
+        if: env.HAS_EVS == 'true'
         run: py -3 -m pip install castlabs-evs==1.3.2
 
-      - name: 构建 Windows 安装包（生产 VMP 必需）
+      - name: 构建安装包（已签名，Apple Music 原生 DRM 可用）
+        if: env.HAS_EVS == 'true'
         env:
-          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
-          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
           EVS_NO_ASK: "1"
         run: npm run build:electron
+        timeout-minutes: 40
+
+      - name: 构建安装包（未签名：未配置 EVS 凭据，跳过 Widevine VMP）
+        if: env.HAS_EVS != 'true'
+        run: |
+          Write-Host '::warning::未配置 EVS_ACCOUNT_NAME / EVS_PASSWD，本次为未签名构建；Apple Music 原生 DRM 不可用（会自动回退网易云/QQ 载体匹配），其余功能不受影响。'
+          npm run build:electron:unsigned
         timeout-minutes: 40
 
       - name: 上传安装包
