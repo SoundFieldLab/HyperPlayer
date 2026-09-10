@@ -1,34 +1,75 @@
 const { spawnSync } = require('node:child_process')
 
+/** 发布构建要求的 VMP 最低剩余有效期（低于此值会重新签名） */
 const MIN_RELEASE_VMP_DAYS = 30
 
+/** 探测 Python 是否带 castlabs_evs 的超时（快速失败，避免卡住构建） */
+const PROBE_TIMEOUT_MS = 30 * 1000
+/** 单次 EVS 命令超时上限。上传 233MB 的 Electron 二进制较慢，但不应无限等待。 */
+const RUN_TIMEOUT_MS = 30 * 60 * 1000
+
+/**
+ * Python 解释器候选。按序探测，第一个能 `import castlabs_evs` 的胜出。
+ *
+ * 不硬编码机器专属路径（历史版本写死了 D:\Python\python.exe，换机即失效）；
+ * 需要指定时用环境变量 HYPERPLAYER_EVS_PYTHON 或 EVS_PYTHON。
+ */
 function pythonCandidates() {
   return [
     process.env.HYPERPLAYER_EVS_PYTHON,
+    process.env.EVS_PYTHON,
     process.env.PYTHON,
-    'D:\\Python\\python.exe',
     'python',
+    'python3',
     'py',
   ].filter(Boolean)
 }
 
+/** 解析候选可执行文件与其前缀参数（Windows 的 `py` 启动器需要 -3） */
+function candidateArgs(candidate) {
+  const isPyLauncher = /(^|[\\/])py(\.exe)?$/i.test(candidate)
+  return isPyLauncher ? ['-3', '-c', 'import castlabs_evs'] : ['-c', 'import castlabs_evs']
+}
+
+function prefixOf(candidate) {
+  return /(^|[\\/])py(\.exe)?$/i.test(candidate) ? ['-3'] : []
+}
+
 function findPython() {
   for (const candidate of pythonCandidates()) {
-    const args = candidate === 'py' ? ['-3', '-c', 'import castlabs_evs'] : ['-c', 'import castlabs_evs']
-    const result = spawnSync(candidate, args, { stdio: 'ignore', windowsHide: true })
-    if (result.status === 0) return { exe: candidate, prefix: candidate === 'py' ? ['-3'] : [] }
+    const result = spawnSync(candidate, candidateArgs(candidate), {
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: PROBE_TIMEOUT_MS,
+    })
+    if (result.status === 0) return { exe: candidate, prefix: prefixOf(candidate) }
   }
   return null
+}
+
+/** 凭据是否就位（CLI 会自动从这两个环境变量读取；缺任一则无法在无人值守环境下签名） */
+function hasCredentials() {
+  return Boolean(process.env.EVS_ACCOUNT_NAME && process.env.EVS_PASSWD)
 }
 
 function runEvs(command, packageDir, { required = false } = {}) {
   const python = findPython()
   if (!python) {
     const message = '[EVS/VMP] castlabs-evs 未安装或 Python 不可用'
+      + '（安装：python -m pip install castlabs-evs；或用 HYPERPLAYER_EVS_PYTHON 指定解释器）'
     if (required) throw new Error(message)
     console.warn(message + '，跳过非发布构建签名')
     return false
   }
+
+  if (command === 'sign-pkg' && !hasCredentials()) {
+    const message = '[EVS/VMP] 缺少 EVS_ACCOUNT_NAME / EVS_PASSWD，无法签名'
+      + '（EVS 账号免费注册：https://github.com/castlabs/electron-releases/wiki/EVS）'
+    if (required) throw new Error(message)
+    console.warn(message + '，跳过签名')
+    return false
+  }
+
   const args = [...python.prefix, '-m', 'castlabs_evs.vmp', command, '--streaming',
     '--min-days', String(MIN_RELEASE_VMP_DAYS),
     ...(command === 'sign-pkg' ? ['--multipart-part-size', '20', '--multipart-max-concurrency', '4', '--multipart-retries', '5'] : []),
@@ -38,18 +79,23 @@ function runEvs(command, packageDir, { required = false } = {}) {
     stdio: 'inherit',
     windowsHide: true,
     env,
+    timeout: RUN_TIMEOUT_MS,
   })
   console.log(`[EVS/VMP] ${command}: ${packageDir}`)
   let result = execute()
+  if (result.error && result.error.code === 'ETIMEDOUT') {
+    console.warn(`[EVS/VMP] ${command} 超过 ${RUN_TIMEOUT_MS / 60000} 分钟未完成`)
+  }
+  // 令牌过期/上传槽失效时，刷新账户授权后重试一次
   if (result.status !== 0 && command === 'sign-pkg') {
     console.warn('[EVS/VMP] 首次签名失败，刷新账户授权并重新获取上传槽后重试一次')
     spawnSync(python.exe, [...python.prefix, '-m', 'castlabs_evs.account', '-n', 'refresh'], {
-      stdio: 'inherit', windowsHide: true, env,
+      stdio: 'inherit', windowsHide: true, env, timeout: RUN_TIMEOUT_MS,
     })
     result = execute()
   }
   if (result.status !== 0) {
-    const message = `[EVS/VMP] ${command} 失败（exit=${result.status})`
+    const message = `[EVS/VMP] ${command} 失败（exit=${result.status}${result.error ? `, ${result.error.code || result.error.message}` : ''}）`
     if (required) throw new Error(message)
     console.warn(message)
     return false
@@ -62,4 +108,5 @@ function runEvs(command, packageDir, { required = false } = {}) {
 // 不依赖 electron-builder afterSign（无 Authenticode 时该 hook 会被跳过）。
 exports.MIN_RELEASE_VMP_DAYS = MIN_RELEASE_VMP_DAYS
 exports.findPython = findPython
+exports.hasCredentials = hasCredentials
 exports.runEvs = runEvs
