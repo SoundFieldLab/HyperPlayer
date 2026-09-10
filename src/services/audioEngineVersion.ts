@@ -1,7 +1,7 @@
 /**
  * 音效引擎版本入口
  *
- * 引擎版本号是字符串（如 'v1'/'v2'/'v3'，未来可扩展 'v4'...），由适配层注册表
+ * 引擎版本号是字符串（当前为 'v3'，未来可扩展 'v4'...），由适配层注册表
  * 动态决定哪些可用（见 src/services/audio-engine/）。本模块只管版本号的存取与默认值，
  * 不写死具体有哪些版本——新增引擎无需改此文件。
  *
@@ -15,8 +15,8 @@
  */
 export type AudioEngineVersion = string
 
-/** 默认引擎版本（注册表的第一个引擎，通常是 v1） */
-const DEFAULT_VERSION = 'v1'
+/** 默认引擎版本（注册表的第一个引擎，当前唯一引擎为 v3） */
+const DEFAULT_VERSION = 'v3'
 
 const VERSION_KEY = 'waveforge:audio-engine-version'
 /** 已移除的旧版 v3（机型预设版）残留存储键：与新 v3（waveforge:v3-*）无关联，顺带清理 */
