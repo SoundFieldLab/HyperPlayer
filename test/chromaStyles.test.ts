@@ -108,7 +108,8 @@ describe('Chroma frames', () => {
     }
   })
 
-  it('renders every extended keyboard style as a legal and distinct frame', () => {
+  // 逐样式渲染 14 个 132 键帧，单独跑约 0.5s；全量并发下会争抢 CPU，故显式放宽超时。
+  it('renders every extended keyboard style as a legal and distinct frame', { timeout: 30000 }, () => {
     const styles: KeyboardChromaStyle[] = [
       'spectrum-cycle', 'spectrum-static', 'spectrum-gradient', 'wave', 'radial-pulse',
       'ripple', 'breath', 'starlight', 'fire', 'rain', 'vu-meter', 'static', 'bars', 'pulse',
