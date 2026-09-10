@@ -1,0 +1,2 @@
+# Canonical dependency lock for the embedded Beat This service.
+-r ../requirements.txt

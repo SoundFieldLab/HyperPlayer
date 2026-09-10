@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+  html, body { background: transparent; overflow: hidden; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+
+  #root {
+    position: absolute; left: 0; right: 0; bottom: 0; top: 0;
+    display: flex; align-items: center; padding: 0 8px; gap: 8px;
+    color: #fff; font-size: var(--fs, 13px);
+    background: var(--scrim, transparent);
+    transition: opacity 0.15s;
+  }
+  body.light #root { color: #1a1a1a; }
+  body.idle #root { opacity: 0.5; }
+
+  .cover {
+    width: 40px; height: 40px; min-width: 40px; border-radius: 10px; flex-shrink: 0;
+    background: rgba(127,127,127,0.18); overflow: hidden;
+  }
+  .cover img { width: 100%; height: 100%; border-radius: 10px; object-fit: cover; }
+  .cover .placeholder { width: 55%; height: 55%; color: inherit; opacity: 0.55; }
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+  /* 歌词滚动：长歌词用 marquee 动画而非省略号 */
+  .lyric-wrap { overflow: hidden; white-space: nowrap; position: relative; }
+  .lyric-wrap .lyric-inner { display: inline-block; white-space: nowrap; }
+  .lyric-wrap.marquee .lyric-inner { animation: lyric-scroll 12s linear infinite; }
+  @keyframes lyric-scroll {
+    0% { transform: translateX(0); }
+    20% { transform: translateX(0); }
+    100% { transform: translateX(calc(-100% + 100%)); }
+  }
+  .line-primary {
+    font-size: calc(var(--fs, 13px) * 1.22); font-weight: 700;
+    color: inherit; line-height: 1.3;
+  }
+  body.pure .line-primary { font-size: calc(var(--fs, 13px) * 1.5); text-align: center; }
+  .line-secondary {
+    font-size: calc(var(--fs, 13px) * 0.82); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: inherit; opacity: 0.55; line-height: 1.25;
+  }
+  body.pure .line-secondary { display: none; }
+  body.pure .cover { display: none; }
+
+  /* 逐字 karaoke */
+  .kw { position: relative; display: inline-block; }
+  .kw-base { display: inline-block; }
+  .kw-fill { position: absolute; left: 0; top: 50%; transform: translateY(-50%); overflow: hidden; white-space: nowrap; pointer-events: none; }
+  .kw-space { display: inline-block; }
+
+  .progress { position: absolute; left: 4px; right: 4px; bottom: 2px; height: 2px; border-radius: 1px; background: rgba(127,127,127,0.25); }
+  .progress .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 1px; background: linear-gradient(90deg, var(--accent, #FB7299), var(--accent, #FB7299) 88%); }
+
+  /* 播控按钮（在歌词右侧） */
+  .controls { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  body.pure .controls { display: none; }
+  body.hide-ctl .controls { display: none; }
+  .ctl {
+    width: 30px; height: 30px; min-width: 30px; border: none; border-radius: 50%; cursor: pointer;
+    background: transparent; color: inherit; display: flex; align-items: center; justify-content: center;
+    opacity: 0.85; transition: background 0.12s, opacity 0.12s, transform 0.08s;
+  }
+  .ctl:hover { background: rgba(127,127,127,0.22); opacity: 1; }
+  .ctl:active { transform: scale(0.9); }
+  .ctl.play { width: 34px; height: 34px; min-width: 34px; background: var(--accent); color: #fff; box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 45%, transparent); opacity: 1; }
+  body.live #prev, body.live #next, body.live #progress { display: none; }
+  body.live #controls { justify-content: center; }
+  .ctl svg { width: 55%; height: 55%; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div class="cover" id="cover">
+    <svg class="placeholder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+  </div>
+  <div class="main">
+    <div class="lyric-wrap" id="lyricWrap"><span class="lyric-inner line-primary" id="linePrimary">未在播放</span></div>
+    <div class="line-secondary" id="lineSecondary"></div>
+  </div>
+  <div class="controls" id="controls">
+    <button class="ctl" id="prev" title="上一首"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM20 6l-10 6 10 6z"/></svg></button>
+    <button class="ctl play" id="play" title="播放/暂停">
+      <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      <svg id="pauseIcon" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+    </button>
+    <button class="ctl" id="next" title="下一首"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4 6l10 6-10 6z"/></svg></button>
+  </div>
+  <div class="progress" id="progress"><div class="fill" id="fill"></div></div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id)
+  const bridge = window.taskbarWidget
+  const state = { playing: false, live: false, title: '', artist: '', cover: '', cur: 0, dur: 0, muted: false, lyric: null, theme: 'dark', accent: '#FB7299' }
+  let mode = 'normal'
+
+  // ── 逐字时序归一化 ──
+  const FALLBACK_FIRST_WORD_DURATION_MS = 140; const clamp01 = (v) => Math.max(0, Math.min(1, v))
+  const reconcileBoundaryParentheses = (lineText, sourceTokens) => {
+    if (!lineText || sourceTokens.length === 0) return sourceTokens.slice()
+    let tokens = sourceTokens.map(t => ({ ...t }))
+    const leading = (text) => text.trimStart().match(/^[（(]+/u)?.[0] || ''
+    const trailing = (text) => text.trimEnd().match(/[）)]+$/u)?.[0] || ''
+    const completeLeading = Array.from(leading(lineText))
+    const timedLeading = Array.from(leading(tokens.map(t => t.word).join('')))
+    const missingLeading = completeLeading.slice(0, Math.max(0, completeLeading.length - timedLeading.length))
+    if (missingLeading.length > 0) tokens = [...missingLeading.map(word => ({ word, startTime: 0, duration: 0 })), ...tokens]
+    const completeTrailing = Array.from(trailing(lineText))
+    const timedTrailing = Array.from(trailing(tokens.map(t => t.word).join('')))
+    const missingTrailingCount = Math.max(0, completeTrailing.length - timedTrailing.length)
+    if (missingTrailingCount > 0) {
+      const lastToken = tokens[tokens.length - 1]
+      tokens.push(...completeTrailing.slice(completeTrailing.length - missingTrailingCount).map(word => ({ word, startTime: Math.max(0, lastToken.startTime + Math.max(0, lastToken.duration)), duration: 0 })))
+    }
+    return tokens
+  }
+  const normalizeAbsoluteStarts = (words, lineTimeSeconds) => {
+    const lineStartMs = Math.max(0, lineTimeSeconds * 1000)
+    const visibleStarts = words.filter(w => w.word && w.word.trim() && Number.isFinite(w.startTime)).map(w => w.startTime)
+    if (visibleStarts.length === 0 || lineStartMs < 1000) return words
+    const firstStart = visibleStarts[0]
+    return (firstStart > 1000 && Math.abs(firstStart - lineStartMs) < 15000) ? words.map(w => ({ ...w, startTime: Math.max(0, w.startTime - lineStartMs) })) : words
+  }
+  const restoreLyricWordSpacing = (words, lineText) => {
+    const expandedWords = words.flatMap(word => {
+      if (/^\s+$/u.test(word.word)) return [{ ...word, duration: 0 }]
+      const leading = word.word.match(/^\s+/u)?.[0] || '', trailing = word.word.match(/\s+$/u)?.[0] || ''
+      const content = word.word.slice(leading.length, Math.max(leading.length, word.word.length - trailing.length))
+      const result = []
+      if (leading) result.push({ word: leading, startTime: word.startTime, duration: 0 })
+      if (content) result.push({ ...word, word: content })
+      if (trailing) result.push({ word: trailing, startTime: word.startTime + Math.max(0, word.duration), duration: 0 })
+      return result.length > 0 ? result : [word]
+    })
+    const normalizedLineText = lineText.trim().replace(/\s+/gu, ' ')
+    const visibleIndices = expandedWords.map((w, i) => w.word.trim() ? i : -1).filter(i => i >= 0)
+    const insertSpaceAfter = new Set(); let lineCursor = 0
+    visibleIndices.forEach((wordIndex, visibleIndex) => {
+      const token = expandedWords[wordIndex].word.trim()
+      const tokenIndex = normalizedLineText.indexOf(token, lineCursor)
+      if (tokenIndex < 0) return
+      const tokenEnd = tokenIndex + token.length
+      const separator = normalizedLineText.slice(tokenEnd).match(/^\s+/u)?.[0] || ''
+      lineCursor = tokenEnd + separator.length
+      const nextVisibleIndex = visibleIndices[visibleIndex + 1]
+      if (!separator || nextVisibleIndex === undefined) return
+      if (!expandedWords.slice(wordIndex + 1, nextVisibleIndex).some(nextWord => /^\s+$/u.test(nextWord.word))) insertSpaceAfter.add(wordIndex)
+    })
+    return expandedWords.flatMap((word, index) => insertSpaceAfter.has(index) ? [word, { word: ' ', startTime: word.startTime + Math.max(0, word.duration), duration: 0 }] : [word])
+  }
+  const normalizeSequentialWordTiming = (words) => {
+    if (words.length === 0) return words
+    const visibleIndices = words.map((w, i) => w.word && w.word.trim() ? i : -1).filter(i => i >= 0)
+    if (visibleIndices.length === 0) return words
+    const starts = []
+    visibleIndices.forEach((wordIndex, visibleIndex) => {
+      const rawStart = Number.isFinite(words[wordIndex].startTime) ? Math.max(0, words[wordIndex].startTime) : 0
+      if (visibleIndex === 0) { starts.push(rawStart); return }
+      const previousStart = starts[visibleIndex - 1], previousWord = words[visibleIndices[visibleIndex - 1]]
+      const hasUsablePreviousDuration = Number.isFinite(previousWord.duration) && previousWord.duration > 8
+      starts.push(rawStart >= previousStart + (rawStart <= previousStart || !hasUsablePreviousDuration ? FALLBACK_FIRST_WORD_DURATION_MS : 1) ? rawStart : previousStart + (rawStart <= previousStart || !hasUsablePreviousDuration ? FALLBACK_FIRST_WORD_DURATION_MS : 1))
+    })
+    const normalized = words.map(w => ({ ...w }))
+    visibleIndices.forEach((wordIndex, visibleIndex) => {
+      const startTime = starts[visibleIndex], nextStart = starts[visibleIndex + 1]
+      const rawDuration = Number.isFinite(words[wordIndex].duration) && words[wordIndex].duration > 8 ? words[wordIndex].duration : FALLBACK_FIRST_WORD_DURATION_MS
+      normalized[wordIndex] = { ...words[wordIndex], startTime, duration: nextStart !== undefined ? Math.max(1, Math.min(rawDuration, nextStart - startTime)) : Math.max(1, rawDuration) }
+    })
+    let previousEnd = 0
+    normalized.forEach((word, index) => { if (word.word && word.word.trim()) previousEnd = word.startTime + word.duration; else normalized[index] = { ...word, startTime: previousEnd, duration: 0 } })
+    return normalized
+  }
+
+  const KARAOKE_DELAY_MS = 200, KARAOKE_FILL_EXTENSION = 42
+  let karaokeWords = null, karaokeLineStartMs = 0, karaokeWordEls = [], karaokeLineKey = '', lastCur = 0, lastCurAt = 0, karaokeRaf = 0
+  const softFillStyle = (fillWidth) => {
+    const extendedWidth = Math.min(100, fillWidth + KARAOKE_FILL_EXTENSION)
+    const fillEdge = extendedWidth > 0 ? fillWidth / extendedWidth * 100 : 0
+    const featherStart = Math.max(0, fillEdge - 18), featherShoulder = Math.max(featherStart, fillEdge - 6), featherTail = fillEdge + (100 - fillEdge) * 0.54
+    const fillMask = `linear-gradient(90deg, black 0%, black ${featherStart}%, rgba(0,0,0,0.94) ${featherShoulder}%, rgba(0,0,0,0.76) ${fillEdge}%, rgba(0,0,0,0.28) ${featherTail}%, transparent 100%)`
+    return { width: `${extendedWidth}%`, WebkitMaskImage: fillMask, maskImage: fillMask }
+  }
+  function rebuildKaraoke(lyric) {
+    const line = lyric.line || ''
+    const words = Array.isArray(lyric.words) ? lyric.words.filter(w => w && Number.isFinite(w.startTime) && Number.isFinite(w.duration)).map(w => ({ word: String(w.word ?? ''), startTime: w.startTime, duration: w.duration })) : []
+    const key = line + '|' + words.length + '|' + (words[0] ? words[0].startTime : '')
+    if (key === karaokeLineKey) return; karaokeLineKey = key
+    const primary = $('linePrimary')
+    if (words.length === 0) { primary.textContent = line; karaokeWords = null; karaokeWordEls = []; return }
+    const fixedWords = reconcileBoundaryParentheses(line, words), relativeWords = normalizeAbsoluteStarts(fixedWords, Number(lyric.lineStart) || 0)
+    const spacedWords = restoreLyricWordSpacing(relativeWords, line)
+    karaokeWords = normalizeSequentialWordTiming(spacedWords); karaokeLineStartMs = (Number(lyric.lineStart) || 0) * 1000
+    primary.textContent = ''; karaokeWordEls = []
+    for (const word of karaokeWords) {
+      const isSpace = !word.word || word.word.trim() === ''
+      if (isSpace) { const el = document.createElement('span'); el.className = 'kw-space'; el.textContent = word.word || ' '; el.style.width = `${Math.max(1, Array.from(word.word || ' ').length) * 0.24}em`; primary.appendChild(el); karaokeWordEls.push({ el, isSpace: true, startTime: 0, duration: 0 }); continue }
+      const el = document.createElement('span'); el.className = 'kw'; const baseEl = document.createElement('span'); baseEl.className = 'kw-base'; baseEl.textContent = word.word
+      const fillEl = document.createElement('span'); fillEl.className = 'kw-fill'; fillEl.textContent = word.word
+      el.appendChild(baseEl); el.appendChild(fillEl); primary.appendChild(el)
+      karaokeWordEls.push({ el, baseEl, fillEl, isSpace: false, startTime: word.startTime, duration: Math.max(1, word.duration) })
+    }
+  }
+  function renderKaraokeFill(curSec) {
+    if (!karaokeWords || karaokeWordEls.length === 0) return
+    const currentMs = Math.max(0, curSec * 1000 - karaokeLineStartMs - KARAOKE_DELAY_MS)
+    const dark = !document.body.classList.contains('light'), dim = dark ? 'rgba(255,255,255,0.42)' : 'rgba(0,0,0,0.45)', accent = state.accent || '#FB7299'
+    for (const item of karaokeWordEls) { if (item.isSpace) continue
+      const fillProgress = clamp01((currentMs - item.startTime) / item.duration), fillWidth = fillProgress * 100, fullyFilled = currentMs >= item.startTime + item.duration
+      item.baseEl.style.color = fullyFilled ? 'transparent' : dim; item.fillEl.style.color = accent
+      if (fullyFilled) { item.fillEl.style.width = '100%'; item.fillEl.style.WebkitMaskImage = 'none'; item.fillEl.style.maskImage = 'none' }
+      else if (fillWidth > 0) { const style = softFillStyle(fillWidth); item.fillEl.style.width = style.width; item.fillEl.style.WebkitMaskImage = style.WebkitMaskImage; item.fillEl.style.maskImage = style.maskImage }
+      else { item.fillEl.style.width = '0%'; item.fillEl.style.WebkitMaskImage = 'none'; item.fillEl.style.maskImage = 'none' }
+    }
+  }
+  function startKaraokeRaf() { if (karaokeRaf) return; const step = () => { if (!state.playing || !karaokeWords || karaokeWords.length === 0 || document.hidden) { karaokeRaf = 0; return } karaokeRaf = requestAnimationFrame(step); const cur = state.playing && lastCurAt ? lastCur + Math.max(0, (performance.now() - lastCurAt) / 1000) : lastCur; renderKaraokeFill(cur) }; karaokeRaf = requestAnimationFrame(step) }
+
+  function layout(targetH) { const h = targetH || window.innerHeight || 40; const fs = Math.max(11, Math.min(16, h * 0.3)); document.documentElement.style.setProperty('--fs', fs + 'px') }
+  function fmt(sec) { if (!Number.isFinite(sec) || sec < 0) return '0:00'; const m = Math.floor(sec / 60); const s = Math.floor(sec % 60); return m + ':' + String(s).padStart(2, '0') }
+
+  function apply() {
+    const hasSong = Boolean(state.title); document.body.classList.toggle('idle', !hasSong); document.body.classList.toggle('live', state.live === true)
+    const coverEl = $('cover'); coverEl.innerHTML = ''
+    if (hasSong) {
+      coverEl.innerHTML = ''
+      if (state.cover) { const img = document.createElement('img'); img.src = state.cover; img.onerror = () => { coverEl.innerHTML = '<svg class="placeholder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>' }; coverEl.appendChild(img) }
+      else coverEl.innerHTML = '<svg class="placeholder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>'
+    } else {
+      coverEl.innerHTML = '<svg class="placeholder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>'
+      const primary = $('linePrimary'); primary.textContent = ''; const span = document.createElement('span')
+      span.textContent = 'WaveForge 音澜工坊'; span.style.background = 'linear-gradient(90deg, #FB7299, #7c6cff, #49d6e8, #FB7299)'; span.style.backgroundClip = 'text'; span.style.webkitBackgroundClip = 'text'; span.style.webkitTextFillColor = 'transparent'; span.style.backgroundSize = '300% 100%'; span.style.animation = 'brand-shimmer 3s linear infinite'; primary.appendChild(span)
+      if (!document.getElementById('brand-keyframes')) { const s = document.createElement('style'); s.id = 'brand-keyframes'; s.textContent = '@keyframes brand-shimmer { 0% { background-position: 0% 50% } 100% { background-position: 300% 50% } }'; document.head.appendChild(s) }
+      $('lineSecondary').textContent = ''; $('fill').style.width = '0%'; return
+    }
+    const lyric = state.lyric, primary = $('linePrimary'), secondary = $('lineSecondary')
+    if (hasSong && lyric && lyric.line) { rebuildKaraoke(lyric); if (karaokeWords) { secondary.textContent = '' } else { primary.textContent = lyric.line; secondary.textContent = '' } }
+    else if (state.live) { primary.textContent = state.title || 'Apple Music 广播'; secondary.textContent = '正在直播'; karaokeWords = null; karaokeWordEls = [] }
+    else { primary.textContent = state.title || '未在播放'; secondary.textContent = state.artist || '' }
+    // 歌词滚动：非逐字模式且文本超长时启用 marquee
+    const wrap = $('lyricWrap'); wrap.classList.remove('marquee')
+    if (!karaokeWords && primary.textContent.length > 25) { wrap.classList.add('marquee'); primary.style.width = 'auto' }
+    else { primary.style.width = '' }
+    $('playIcon').style.display = state.playing ? 'none' : 'block'; $('pauseIcon').style.display = state.playing ? 'block' : 'none'
+    const ratio = state.dur > 0 ? Math.min(1, Math.max(0, state.cur / state.dur)) : 0; $('fill').style.width = (ratio * 100) + '%'
+    document.documentElement.style.setProperty('--accent', state.accent || '#FB7299')
+    $('fill').style.background = `linear-gradient(90deg, ${state.accent || '#FB7299'}, ${state.accent || '#FB7299'}88)`
+    lastCur = Number(state.cur) || 0; lastCurAt = performance.now(); if (karaokeWords) startKaraokeRaf()
+  }
+
+  bridge.onState((next) => { Object.assign(state, next || {}); apply() })
+  function applySettings(settings) {
+    if (!settings) return; if (typeof settings.mode === 'string') mode = settings.mode
+    const darken = settings.darken === true, darkenVal = Number(settings.darkenLevel) || 0.5
+    document.documentElement.style.setProperty('--scrim', darken ? `rgba(12, 14, 20, ${darkenVal})` : 'transparent')
+    document.body.classList.toggle('pure', mode === 'pure')
+    document.body.classList.toggle('hide-ctl', settings.hideControls === true)
+    layout(); apply()
+  }
+  bridge.onSettings((settings) => { applySettings(settings) })
+  void bridge.getSettings().then((settings) => { applySettings(settings) }).catch(() => layout())
+
+  // 事件：仅播控按钮可点击，其余区域鼠标穿透（保留任务栏原本功能）
+  const barAction = (action) => (e) => { e.stopPropagation(); bridge.action(action) }
+  $('play').addEventListener('click', barAction('toggle'))
+  $('prev').addEventListener('click', (e) => { if (state.live) return; barAction('prev')(e) })
+  $('next').addEventListener('click', (e) => { if (state.live) return; barAction('next')(e) })
+  $('progress').addEventListener('click', (e) => { if (state.live) return; e.stopPropagation(); const rect = $('progress').getBoundingClientRect(); bridge.action('seek', Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * (state.dur || 0)) })
+
+  window.addEventListener('resize', () => layout())
+  layout(); apply()
+</script>
+</body>
+</html>
