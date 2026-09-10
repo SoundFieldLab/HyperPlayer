@@ -19,8 +19,6 @@ interface AudioQualitySettingsModalProps {
   neteaseLoggedIn: boolean
   qqLoggedIn: boolean
   spotifyLoggedIn?: boolean
-  kugouLoggedIn?: boolean
-  sodaLoggedIn?: boolean
   appleLoggedIn?: boolean
 }
 
@@ -114,8 +112,6 @@ export default function AudioQualitySettingsModal({
   neteaseLoggedIn,
   qqLoggedIn,
   spotifyLoggedIn = false,
-  kugouLoggedIn = false,
-  sodaLoggedIn = false,
   appleLoggedIn = false,
 }: AudioQualitySettingsModalProps) {
   // TV 遥控器 BACK：关闭音质设置弹窗
@@ -224,9 +220,7 @@ export default function AudioQualitySettingsModal({
               {renderPlatform('netease', '网易云音乐', <Music2 className="w-5 h-5" />, NETEASE_OPTIONS, neteaseVip, neteaseLoggedIn)}
               {renderPlatform('apple', 'Apple Music', <span className="font-bold text-sm">AM</span>, APPLE_OPTIONS, appleLoggedIn, appleLoggedIn)}
               {renderPlatform('spotify', 'Spotify', <span className="font-bold text-sm">S</span>, GENERIC_OPTIONS, false, spotifyLoggedIn)}
-              {renderPlatform('kugou', '酷狗音乐', <span className="font-bold text-sm">狗</span>, GENERIC_OPTIONS, false, kugouLoggedIn)}
-              {renderPlatform('soda', '汽水音乐', <span className="font-bold text-sm">汽</span>, GENERIC_OPTIONS, false, sodaLoggedIn)}
-              <p className={`${textTertiary} text-xs leading-relaxed`}>设置会立即保存，并作用于播放、下一首预加载及新的播放链接缓存。Apple Music 的无损与空间音频只会在实际播放资产和当前设备均支持时开放；曲目支持标签不会被当作本次播放音质。Spotify/酷狗/汽水自身直源受限时，播放自动降级到网易云/QQ 载体。</p>
+              <p className={`${textTertiary} text-xs leading-relaxed`}>设置会立即保存，并作用于播放、下一首预加载及新的播放链接缓存。Apple Music 的无损与空间音频只会在实际播放资产和当前设备均支持时开放；曲目支持标签不会被当作本次播放音质。Spotify 自身直源受限时，播放自动降级到网易云/QQ 载体。</p>
             </div>
           </motion.div>
         </>

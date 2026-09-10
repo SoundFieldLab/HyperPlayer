@@ -28,7 +28,6 @@ interface SearchPanelProps {
   qqLoggedIn?: boolean
   appleLoggedIn?: boolean
   spotifyLoggedIn?: boolean
-  kugouLoggedIn?: boolean
   currentSong?: Song | null
   onPlayNext?: (song: Song) => void
   onAddToFavorites?: (song: Song) => void
@@ -48,8 +47,6 @@ const SEARCH_HISTORY_KEY_NETEASE = 'waveforge_search_history_netease'
 const SEARCH_HISTORY_KEY_QQ = 'waveforge_search_history_qq'
 const SEARCH_HISTORY_KEY_APPLE = 'waveforge_search_history_apple'
 const SEARCH_HISTORY_KEY_SPOTIFY = 'waveforge_search_history_spotify'
-const SEARCH_HISTORY_KEY_KUGOU = 'waveforge_search_history_kugou'
-const SEARCH_HISTORY_KEY_SODA = 'waveforge_search_history_soda'
 const SEARCH_HISTORY_KEY_FUSED = 'waveforge_search_history_fused'
 const MAX_HISTORY = 5
 // 搜索结果缓存上限：每次搜索缓存完整结果集（约 100 首歌对象），面板是常驻单例，
@@ -64,8 +61,6 @@ const getSearchHistoryKey = (platform: SearchPlatform): string => {
   if (platform === 'qq') return SEARCH_HISTORY_KEY_QQ
   if (platform === 'apple') return SEARCH_HISTORY_KEY_APPLE
   if (platform === 'spotify') return SEARCH_HISTORY_KEY_SPOTIFY
-  if (platform === 'kugou') return SEARCH_HISTORY_KEY_KUGOU
-  if (platform === 'soda') return SEARCH_HISTORY_KEY_SODA
   return SEARCH_HISTORY_KEY_NETEASE
 }
 
@@ -116,7 +111,6 @@ export default function SearchPanel({
   qqLoggedIn = false,
   appleLoggedIn = false,
   spotifyLoggedIn = false,
-  kugouLoggedIn = false,
   currentSong = null,
   onPlayNext,
   onAddToFavorites,
@@ -222,20 +216,17 @@ export default function SearchPanel({
       return
     }
     // 右键菜单歌单列表按歌曲自身平台解析归属键，禁止跨平台兜底：
-    // - spotify（token）/ 汽水（cookie）：数据源不依赖 userId，空值也照常拉取；
-    // - kugou：需 kugou_user_id（getUserPlaylists 对非 spotify/soda 平台按 userId 门禁）；
+    // - spotify（token）：数据源不依赖 userId，空值也照常拉取；
     // - qq/netease：各自 user_id + username。
     const playlistUserId = (() => {
       switch (songPlatform) {
         case 'qq': return localStorage.getItem('qq_user_id') || ''
-        case 'kugou': return localStorage.getItem('kugou_user_id') || ''
         case 'spotify':
-        case 'soda':
           return ''
         default: return localStorage.getItem('netease_user_id') || ''
       }
     })()
-    if (songPlatform !== 'spotify' && songPlatform !== 'soda' && !playlistUserId) return
+    if (songPlatform !== 'spotify' && !playlistUserId) return
     const username = songPlatform === 'qq' ? (localStorage.getItem('qq_username') || '') : ''
     void getUserPlaylists(songPlatform, playlistUserId, username)
       .then(setContextUserPlaylists)
@@ -245,13 +236,13 @@ export default function SearchPanel({
   // 从 sessionStorage 读取会话内的平台和搜索模式，否则从 localStorage 读取
   const [platform, setPlatform] = useState<SearchPlatform>(() => {
     const sessionSaved = sessionStorage.getItem('waveforge_search_platform')
-    if (sessionSaved === 'qq' || sessionSaved === 'netease' || sessionSaved === 'apple' || sessionSaved === 'spotify' || sessionSaved === 'kugou' || sessionSaved === 'soda') {
+    if (sessionSaved === 'qq' || sessionSaved === 'netease' || sessionSaved === 'apple' || sessionSaved === 'spotify') {
       if (sessionSaved !== 'netease' && !isPlatformVisible(sessionSaved)) return 'netease'
       return sessionSaved
     }
     if (sessionSaved === 'fused') return 'fused'
     const saved = localStorage.getItem('waveforge_last_search_platform')
-    if (saved === 'qq' || saved === 'netease' || saved === 'apple' || saved === 'spotify' || saved === 'kugou' || saved === 'soda') {
+    if (saved === 'qq' || saved === 'netease' || saved === 'apple' || saved === 'spotify') {
       if (saved !== 'netease' && !isPlatformVisible(saved)) return 'netease'
       return saved
     }
@@ -591,8 +582,8 @@ export default function SearchPanel({
     
     try {
       if (platform === 'fused') {
-        // 融合搜索覆盖全部可搜索平台（汽水已接入逆向 Web API 搜索）
-        const platforms: MusicPlatform[] = ['netease', 'qq', 'apple', 'spotify', 'kugou', 'soda']
+        // 融合搜索覆盖全部可搜索平台
+        const platforms: MusicPlatform[] = ['netease', 'qq', 'apple', 'spotify']
         const requests = platforms.flatMap(sourcePlatform => ([
           { sourcePlatform, kind: 'songs' as const, promise: withSearchTimeout(searchSongs(finalKeyword, 100, sourcePlatform)) },
           { sourcePlatform, kind: 'artists' as const, promise: withSearchTimeout(searchArtists(finalKeyword, sourcePlatform)) },
@@ -623,8 +614,6 @@ export default function SearchPanel({
             qq: { loggedIn: qqSessionActive, vip: qqVip },
             apple: { loggedIn: appleLoggedIn, vip: appleLoggedIn },
             spotify: { loggedIn: spotifyLoggedIn, vip: false },
-            kugou: { loggedIn: kugouLoggedIn, vip: false },
-            soda: { loggedIn: Boolean(localStorage.getItem('soda_token')), vip: false },
           },
         })
         setFusionUnavailablePlatforms(unavailable)
@@ -1099,34 +1088,6 @@ export default function SearchPanel({
               }`}
             >
               Spotify
-            </button>
-            )}
-            {isPlatformVisible('kugou') && (
-            <button
-              onClick={() => setPlatform('kugou')}
-              className={`px-6 py-3 rounded-2xl text-sm font-medium transition-all backdrop-blur-xl shadow-lg ${
-                platform === 'kugou'
-                  ? 'bg-orange-500/90 text-white hover:bg-orange-500'
-                  : playerTheme === 'dark'
-                    ? 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
-                    : 'bg-black/10 text-black/60 hover:bg-black/15 hover:text-black'
-              }`}
-            >
-              酷狗音乐
-            </button>
-            )}
-            {isPlatformVisible('soda') && (
-            <button
-              onClick={() => setPlatform('soda')}
-              className={`px-6 py-3 rounded-2xl text-sm font-medium transition-all backdrop-blur-xl shadow-lg ${
-                platform === 'soda'
-                  ? 'bg-sky-500/90 text-white hover:bg-sky-500'
-                  : playerTheme === 'dark'
-                    ? 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
-                    : 'bg-black/10 text-black/60 hover:bg-black/15 hover:text-black'
-              }`}
-            >
-              汽水音乐
             </button>
             )}
             <div className="flex-1 min-w-4" />
@@ -1730,9 +1691,7 @@ export default function SearchPanel({
         onViewArtist={(song) => {
           const songPlatform = song.platform || 'netease'
           const artist = song.artists?.[0]
-          // 汽水无艺人 ID，约定传歌手名
-        const artistId = songPlatform === 'soda' ? (artist?.name || artist?.mid || artist?.id)
-          : songPlatform === 'qq' ? (artist?.mid || artist?.id)
+          const artistId = songPlatform === 'qq' ? (artist?.mid || artist?.id)
             : songPlatform === 'apple' ? (artist?.appleId || artist?.id) : (artist?.mid || artist?.id)
           if (artistId) onOpenArtist?.(String(artistId), songPlatform)
         }}

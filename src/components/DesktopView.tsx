@@ -18,12 +18,10 @@ import ModeSelectionPanel, { MODE_SELECTION_CLOSE_MS, MODE_SELECTION_PANEL_HEIGH
 import GlobalToast from './GlobalToast'
 import LyricsDisplay from './LyricsDisplay'
 import DesktopWidgetZone from './DesktopWidgetZone'
-import DesktopFocusAlarmOverlay from './DesktopFocusAlarmOverlay'
 import { Song, LyricLine, isSameSong } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
-import { getPlatformCapabilities, getPlatformCookie, getVisiblePlatforms, getPlatformVisualMetadata, PLATFORM_ORDER_EVENT, PLATFORM_VISIBILITY_EVENT } from '../services/platforms'
+import { getPlatformCapabilities, getVisiblePlatforms, getPlatformVisualMetadata, PLATFORM_ORDER_EVENT, PLATFORM_VISIBILITY_EVENT } from '../services/platforms'
 import { getAppleLibraryPlaylists, getAppleLibrarySongs, getAppleFavoriteSongs, getAppleRecentPlayed, appleLibraryTrackToSong, getApplePlaylistTracks, getAppleCatalogPlaylistTracks, appleSongToSong, updateApplePlaylist, deleteApplePlaylist, removeAppleTracksFromPlaylist, getLastAppleMutationResult, APPLE_FAVORITES_ID, APPLE_LIBRARY_ID } from '../services/appleCatalog'
-import { sodaMediaToSong } from '../services/sodaService'
 import { mergeAppleRecentPlayback } from '../services/appleRecentPlayback'
 import { desktopWallpaperManager, DesktopLiveWallpaperSource, toWallpaperUrl } from '../services/desktopWallpaperManager'
 import { deletePlaylist, getPlaylistDetail, getUserPlaylists, removeSongFromPlaylist, streamNeteasePlaylistTracks, subscribePlaylist, updatePlaylist } from '../services/playlistService'
@@ -33,20 +31,13 @@ import {
   DesktopCustomizationSettings,
   loadDesktopCustomization,
 } from '../services/desktopCustomization'
-import { useDesktopFocusTimer } from '../hooks/useDesktopFocusTimer'
 import { getReadableDesktopAccentColor } from '../utils/desktopAccentColor'
-import { parseStoredArray, parseStoredBoolean } from '../utils/storage'
+import { parseStoredBoolean } from '../utils/storage'
 import { preloadOnIdle } from '../utils/lazyPreload'
 import { createPlaybackTimeStore, type PlaybackTimeStore } from '../audio/playbackTimeStore'
 import type { PlaybackOrigin, SongSelectHandler } from '../types/playbackNavigation'
 import { addDesktopListeningSeconds, recordDesktopSongStart } from '../services/desktopMusicActivity'
 import type { DesktopMusicWidgetContext } from './DesktopExtraWidgets'
-import {
-  loadWallpaperEngineRotationSettings,
-  saveWallpaperEngineRotationSettings,
-  type WallpaperEngineRotationSettings,
-  type WallpaperEngineWallpaper,
-} from '../services/wallpaperEngineRotation'
 
 const LazyDesktopSettingsModal = lazy(() => import('./DesktopSettingsModal'))
 const LazySearchPanel = lazy(() => import('./SearchPanel'))
@@ -93,12 +84,6 @@ interface DesktopViewProps {
   spotifyLoggedIn?: boolean
   spotifyUserId?: string
   spotifyUsername?: string
-  kugouLoggedIn?: boolean
-  kugouUserId?: string
-  kugouUsername?: string
-  sodaLoggedIn?: boolean
-  sodaUserId?: string
-  sodaUsername?: string
   
   // VIP状态
   neteaseVip: boolean
@@ -108,8 +93,6 @@ interface DesktopViewProps {
   onNeteaseLogin: (cookie: string) => void
   onQQLogin: (cookie: string) => void
   onSpotifyLogin?: (cookie: string, username?: string) => void
-  onKugouLogin?: (cookie: string, username?: string) => void
-  onSodaLogin?: (cookie: string, username?: string) => void
 
   onPlayNext?: (song: Song) => void
   onAddToFavorites?: (song: Song) => void
@@ -199,19 +182,11 @@ function DesktopView({
   spotifyLoggedIn = false,
   spotifyUserId = '',
   spotifyUsername = '',
-  kugouLoggedIn = false,
-  kugouUserId = '',
-  kugouUsername = '',
-  sodaLoggedIn = false,
-  sodaUserId = '',
-  sodaUsername = '',
   neteaseVip,
   qqVip,
   onNeteaseLogin,
   onQQLogin,
   onSpotifyLogin,
-  onKugouLogin,
-  onSodaLogin,
   onPlayNext,
   onAddToFavorites,
   onRemoveFromFavorites,
@@ -356,10 +331,6 @@ function DesktopView({
   const [showDesktopCustomizer, setShowDesktopCustomizer] = useState(false)
   const [customizerModuleMounted, setCustomizerModuleMounted] = useState(false)
   const [widgetOverlaySide, setWidgetOverlaySide] = useState<'left' | 'right' | null>(null)
-  const focusTimer = useDesktopFocusTimer(false)
-  const alarmContextRef = useRef<AudioContext | null>(null)
-  const alarmIntervalRef = useRef<number | null>(null)
-  const playbackWasActiveRef = useRef(isPlaying)
   const [showLogin, setShowLogin] = useState(false) // 登录面板
   const [loginPlatform, setLoginPlatform] = useState<MusicPlatform>('netease') // 登录平台
 
@@ -411,49 +382,6 @@ function DesktopView({
     return () => window.removeEventListener(DESKTOP_CUSTOMIZATION_EVENT, handleCustomizationChange)
   }, [])
 
-  useEffect(() => {
-    playbackWasActiveRef.current = isPlaying
-  }, [isPlaying])
-
-  const stopAlarmSound = useCallback(() => {
-    if (alarmIntervalRef.current !== null) {
-      window.clearInterval(alarmIntervalRef.current)
-      alarmIntervalRef.current = null
-    }
-    const context = alarmContextRef.current
-    alarmContextRef.current = null
-    if (context && context.state !== 'closed') void context.close()
-  }, [])
-
-  const startAlarmSound = useCallback(() => {
-    stopAlarmSound()
-    const AudioContextConstructor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!AudioContextConstructor) return
-    const context = new AudioContextConstructor()
-    alarmContextRef.current = context
-
-    const playPulse = () => {
-      if (context.state === 'suspended') void context.resume()
-      const startAt = context.currentTime + 0.03
-      ;[0, 0.22].forEach((offset, index) => {
-        const oscillator = context.createOscillator()
-        const gain = context.createGain()
-        oscillator.type = 'sine'
-        oscillator.frequency.setValueAtTime(index === 0 ? 880 : 1174.66, startAt + offset)
-        gain.gain.setValueAtTime(0.0001, startAt + offset)
-        gain.gain.exponentialRampToValueAtTime(0.22, startAt + offset + 0.025)
-        gain.gain.exponentialRampToValueAtTime(0.0001, startAt + offset + 0.18)
-        oscillator.connect(gain)
-        gain.connect(context.destination)
-        oscillator.start(startAt + offset)
-        oscillator.stop(startAt + offset + 0.2)
-      })
-    }
-
-    playPulse()
-    alarmIntervalRef.current = window.setInterval(playPulse, 1150)
-  }, [stopAlarmSound])
-
   // 自动隐藏歌单栏的定时器
   const hideCarouselTimerRef = useRef<number | null>(null)
   const playlistLoadSignatureRef = useRef('')
@@ -464,11 +392,6 @@ function DesktopView({
   const [wallpaperKey, setWallpaperKey] = useState(0) // 用于触发切换动画
   const wallpaperSourceRef = useRef('')
   
-  // Wallpaper Engine 同步状态
-  const [wallpaperSyncEnabled, setWallpaperSyncEnabled] = useState(() => {
-    const saved = localStorage.getItem('wallpaperSyncEnabled')
-    return parseStoredBoolean(saved, false)
-  })
   
   // 卡片模糊度
   const [cardBlurAmount, setCardBlurAmount] = useState(() => {
@@ -487,10 +410,6 @@ function DesktopView({
   const [toastType, setToastType] = useState<'success' | 'error' | 'info' | 'warning'>('info')
   const toastTimerRef = useRef<number | null>(null)
   const transientTimersRef = useRef<Set<number>>(new Set())
-  const wallpaperScanControllerRef = useRef<AbortController | null>(null)
-  const wallpaperRotationTimerRef = useRef<number | null>(null)
-  const wallpaperRotationApplyingRef = useRef(false)
-  const selectWeWallpaperRef = useRef<((wallpaper: WallpaperEngineWallpaper, source?: 'manual' | 'rotation') => Promise<void>) | null>(null)
   
   // 视频音量控制
   const [videoMuted, setVideoMuted] = useState(() => {
@@ -530,7 +449,7 @@ function DesktopView({
     const syncVideoPlayback = () => {
       const video = videoRef.current
       if (!video) return
-      if (document.visibilityState !== 'visible' || focusTimer.timer.status === 'ringing') {
+      if (document.visibilityState !== 'visible') {
         video.pause()
         return
       }
@@ -540,45 +459,8 @@ function DesktopView({
     syncVideoPlayback()
     document.addEventListener('visibilitychange', syncVideoPlayback)
     return () => document.removeEventListener('visibilitychange', syncVideoPlayback)
-  }, [desktopVideoUrl, focusTimer.timer.status])
+  }, [desktopVideoUrl])
 
-  useEffect(() => {
-    if (focusTimer.timer.status !== 'ringing') {
-      stopAlarmSound()
-      return
-    }
-    if (playbackWasActiveRef.current) {
-      playbackWasActiveRef.current = false
-      onPlayPause()
-    }
-    if (videoRef.current && !videoMuted) {
-      videoRef.current.pause()
-    }
-    startAlarmSound()
-    return stopAlarmSound
-  }, [focusTimer.timer.status, onPlayPause, startAlarmSound, stopAlarmSound, videoMuted])
-  
-  // WallpaperEngine 壁纸列表
-  const [weWallpapers, setWeWallpapers] = useState<WallpaperEngineWallpaper[]>(() => {
-    // 从缓存加载壁纸列表
-    const cached = localStorage.getItem('weWallpapersCache')
-    return parseStoredArray<WallpaperEngineWallpaper>(cached)
-  })
-  const [weLoading, setWeLoading] = useState(false)
-  const [weError, setWeError] = useState<string | null>(null)
-  const [selectedWeWallpaper, setSelectedWeWallpaper] = useState<string | null>(() => {
-    return localStorage.getItem('selectedWeWallpaper')
-  })
-  const [wallpaperRotation, setWallpaperRotation] = useState<WallpaperEngineRotationSettings>(() => loadWallpaperEngineRotationSettings())
-  const weWallpapersRef = useRef(weWallpapers)
-  const selectedWeWallpaperRef = useRef(selectedWeWallpaper)
-  const wallpaperRotationRef = useRef(wallpaperRotation)
-  const wallpaperSyncEnabledRef = useRef(wallpaperSyncEnabled)
-  weWallpapersRef.current = weWallpapers
-  selectedWeWallpaperRef.current = selectedWeWallpaper
-  wallpaperRotationRef.current = wallpaperRotation
-  wallpaperSyncEnabledRef.current = wallpaperSyncEnabled
-  
   // 显示 Toast
   const scheduleTransientTimer = (callback: () => void, delay: number) => {
     const timer = window.setTimeout(() => {
@@ -603,15 +485,6 @@ function DesktopView({
     }, 3000)
   }
 
-  const updateWallpaperRotation = (next: WallpaperEngineRotationSettings) => {
-    if (next.enabled && next.selectedWallpaperIds.length < 2) {
-      showToastNotification('请至少选择 2 张参与轮换的壁纸', 'warning')
-    }
-    const normalized = saveWallpaperEngineRotationSettings(next)
-    wallpaperRotationRef.current = normalized
-    setWallpaperRotation(normalized)
-  }
-  
   // 切换视频静音
   const toggleVideoMute = () => {
     const newMuted = !videoMuted
@@ -630,237 +503,6 @@ function DesktopView({
     }
   }
 
-  // 扫描 WallpaperEngine 壁纸
-  const scanWeWallpapers = async () => {
-    wallpaperScanControllerRef.current?.abort()
-    const scanController = new AbortController()
-    wallpaperScanControllerRef.current = scanController
-    setWeLoading(true)
-    setWeError(null)
-    try {
-      const response = await fetch('http://localhost:3001/api/wallpaper-engine/scan', { signal: scanController.signal, cache: 'no-store' })
-      const data = await response.json()
-      if (scanController.signal.aborted || wallpaperScanControllerRef.current !== scanController) return
-      
-      if (data.success) {
-        // 从 localStorage 读取上次的扫描结果
-        const cachedWallpapersStr = localStorage.getItem('weWallpapersCache')
-        const cachedWallpapers = cachedWallpapersStr ? JSON.parse(cachedWallpapersStr) : []
-        
-        // 对比变化（比较壁纸 ID）
-        const newCount = data.wallpapers.length
-        const oldCount = cachedWallpapers.length
-        
-        if (oldCount > 0) {
-          // 深度对比：比较壁纸 ID 集合
-          const oldIds = new Set(cachedWallpapers.map((w: any) => w.id))
-          const newIds = new Set(data.wallpapers.map((w: any) => w.id))
-          
-          // 计算新增和删除
-          const addedIds = data.wallpapers.filter((w: any) => !oldIds.has(w.id))
-          const removedIds = cachedWallpapers.filter((w: any) => !newIds.has(w.id))
-          
-          const addedCount = addedIds.length
-          const removedCount = removedIds.length
-          
-          if (addedCount > 0 && removedCount > 0) {
-            showToastNotification(`新增 ${addedCount} 张，减少 ${removedCount} 张壁纸`, 'info')
-          } else if (addedCount > 0) {
-            showToastNotification(`新增 ${addedCount} 张壁纸`, 'success')
-          } else if (removedCount > 0) {
-            showToastNotification(`减少 ${removedCount} 张壁纸`, 'info')
-          } else {
-            showToastNotification(`找到 ${data.count} 个壁纸（无变化）`, 'info')
-          }
-        } else {
-          // 首次扫描
-          showToastNotification(`找到 ${data.count} 个壁纸`, 'success')
-        }
-        
-        const nextWallpapers = Array.isArray(data.wallpapers)
-          ? data.wallpapers as WallpaperEngineWallpaper[]
-          : []
-
-        // 保存到缓存并剔除已失效的轮换条目。
-        localStorage.setItem('weWallpapersCache', JSON.stringify(nextWallpapers))
-        setWeWallpapers(nextWallpapers)
-        weWallpapersRef.current = nextWallpapers
-
-        const validIds = new Set(nextWallpapers.map(item => item.id))
-        const currentRotation = wallpaperRotationRef.current
-        const selectedWallpaperIds = currentRotation.selectedWallpaperIds.filter(id => validIds.has(id))
-        if (selectedWallpaperIds.length !== currentRotation.selectedWallpaperIds.length) {
-          updateWallpaperRotation({
-            ...currentRotation,
-            enabled: currentRotation.enabled && selectedWallpaperIds.length >= 2,
-            selectedWallpaperIds,
-          })
-        }
-      } else {
-        setWeError(data.message)
-        showToastNotification(data.message, 'error')
-      }
-    } catch (error) {
-      if ((error as Error).name !== 'AbortError') {
-        console.error('扫描壁纸失败:', error)
-        setWeError('扫描失败，请确保 WallpaperEngine 已安装')
-        showToastNotification('扫描失败', 'error')
-      }
-    } finally {
-      if (wallpaperScanControllerRef.current === scanController) {
-        wallpaperScanControllerRef.current = null
-        setWeLoading(false)
-      }
-    }
-  }
-
-  const selectWeWallpaper = async (
-    wallpaper: WallpaperEngineWallpaper,
-    source: 'manual' | 'rotation' = 'manual',
-  ) => {
-    if (wallpaperSyncEnabledRef.current) {
-      if (source === 'manual') showToastNotification('请先关闭同步功能', 'warning')
-      return
-    }
-    if (!wallpaper?.id || ((wallpaper.type === 'video' || wallpaper.type === 'image') && !wallpaper.file)) {
-      showToastNotification('该壁纸文件已失效，请重新扫描壁纸库', 'warning')
-      return
-    }
-
-    try {
-      selectedWeWallpaperRef.current = wallpaper.id
-      setSelectedWeWallpaper(wallpaper.id)
-      localStorage.setItem('selectedWeWallpaper', wallpaper.id)
-
-      // 手动和自动轮换共用同一应用通道。
-      desktopWallpaperManager.saveSettings({ lastWallpaperSource: 'wallpaper-engine-manual' })
-      setVideoUnsupported(false)
-
-      if (wallpaper.type === 'video') {
-        const mediaUrl = `http://localhost:3001/api/wallpaper-engine/media?id=${encodeURIComponent(wallpaper.id)}&file=${encodeURIComponent(wallpaper.file)}`
-        console.log('[DesktopView] 应用视频壁纸:', mediaUrl)
-        setDesktopLiveWallpaper({
-          kind: 'wallpaper-engine',
-          sourceType: 'video',
-          url: mediaUrl,
-          path: wallpaper.path || '',
-          title: wallpaper.title,
-          id: wallpaper.id,
-        })
-        setDesktopWallpaper(null)
-      } else if (wallpaper.type === 'image') {
-        setDesktopWallpaper(`http://localhost:3001/api/wallpaper-engine/media?id=${encodeURIComponent(wallpaper.id)}&file=${encodeURIComponent(wallpaper.file)}`)
-        setDesktopLiveWallpaper(null)
-      } else if (wallpaper.preview) {
-        setDesktopWallpaper(`http://localhost:3001${wallpaper.preview}`)
-        setDesktopLiveWallpaper(null)
-      } else {
-        throw new Error('Wallpaper has no playable media')
-      }
-
-      setWallpaperKey(key => key + 1)
-      showToastNotification(
-        source === 'rotation' ? `已自动切换壁纸：${wallpaper.title}` : `已应用壁纸：${wallpaper.title}`,
-        'success',
-      )
-    } catch (error) {
-      console.error('应用壁纸失败:', error)
-      showToastNotification('应用壁纸失败，请重新扫描壁纸库', 'error')
-    }
-  }
-  selectWeWallpaperRef.current = selectWeWallpaper
-
-  const rotateWallpaperEngine = useCallback(async () => {
-    if (wallpaperRotationApplyingRef.current) return
-    const settings = wallpaperRotationRef.current
-    if (!settings.enabled || wallpaperSyncEnabledRef.current) return
-
-    const selectedSet = new Set(settings.selectedWallpaperIds)
-    const candidates = weWallpapersRef.current.filter(item =>
-      selectedSet.has(item.id)
-      && Boolean(item.id)
-      && Boolean(item.file || item.preview),
-    )
-    if (candidates.length < 2) return
-
-    const currentId = selectedWeWallpaperRef.current
-    let nextWallpaper: WallpaperEngineWallpaper
-    if (settings.mode === 'random') {
-      const alternatives = candidates.filter(item => item.id !== currentId)
-      nextWallpaper = alternatives[Math.floor(Math.random() * alternatives.length)]
-    } else {
-      const currentIndex = candidates.findIndex(item => item.id === currentId)
-      nextWallpaper = candidates[currentIndex < 0 ? 0 : (currentIndex + 1) % candidates.length]
-    }
-
-    wallpaperRotationApplyingRef.current = true
-    try {
-      await selectWeWallpaperRef.current?.(nextWallpaper, 'rotation')
-    } finally {
-      wallpaperRotationApplyingRef.current = false
-    }
-  }, [])
-
-  useEffect(() => {
-    if (wallpaperRotationTimerRef.current !== null) {
-      window.clearInterval(wallpaperRotationTimerRef.current)
-      wallpaperRotationTimerRef.current = null
-    }
-    if (
-      !wallpaperRotation.enabled
-      || wallpaperRotation.selectedWallpaperIds.length < 2
-      || wallpaperSyncEnabled
-    ) return
-
-    wallpaperRotationTimerRef.current = window.setInterval(
-      () => void rotateWallpaperEngine(),
-      wallpaperRotation.intervalMinutes * 60_000,
-    )
-
-    return () => {
-      if (wallpaperRotationTimerRef.current !== null) {
-        window.clearInterval(wallpaperRotationTimerRef.current)
-        wallpaperRotationTimerRef.current = null
-      }
-    }
-  }, [
-    rotateWallpaperEngine,
-    wallpaperRotation.enabled,
-    wallpaperRotation.intervalMinutes,
-    wallpaperRotation.mode,
-    wallpaperRotation.selectedWallpaperIds.join('|'),
-    wallpaperSyncEnabled,
-  ])
-
-  // 跳到下一个支持的壁纸（当视频格式不支持时）
-  const skipToNextWallpaper = () => {
-    if (!selectedWeWallpaper || weWallpapers.length === 0) return
-    const currentIndex = weWallpapers.findIndex(wallpaper => wallpaper.id === selectedWeWallpaper)
-    if (currentIndex === -1) return
-
-    for (let offset = 1; offset <= weWallpapers.length; offset += 1) {
-      const nextWallpaper = weWallpapers[(currentIndex + offset) % weWallpapers.length]
-      if (nextWallpaper.id && (nextWallpaper.file || nextWallpaper.preview)) {
-        void selectWeWallpaper(nextWallpaper)
-        return
-      }
-    }
-    showToastNotification('未找到支持的壁纸格式', 'error')
-  }
-
-  // 处理 Wallpaper Engine 同步开关
-  const handleWallpaperSyncToggle = (enabled: boolean) => {
-    if (enabled && wallpaperRotationRef.current.enabled) {
-      updateWallpaperRotation({ ...wallpaperRotationRef.current, enabled: false })
-    }
-    wallpaperSyncEnabledRef.current = enabled
-    setWallpaperSyncEnabled(enabled)
-    localStorage.setItem('wallpaperSyncEnabled', JSON.stringify(enabled))
-    desktopWallpaperManager.saveSettings({ wallpaperEngineEnabled: enabled })
-    window.dispatchEvent(new CustomEvent('wallpaperSyncChanged', { detail: enabled }))
-    window.dispatchEvent(new Event('desktopWallpaperChanged'))
-  }
-
   useEffect(() => {
     const refreshPlaylists = (event: Event) => {
       const detail = (event as CustomEvent<{ platform?: MusicPlatform }>).detail
@@ -877,18 +519,14 @@ function DesktopView({
   useEffect(() => {
     const requestId = ++playlistListRequestRef.current
     const isCurrentRequest = () => playlistListRequestRef.current === requestId
-    const activeUserId = currentPlatform === 'netease' ? neteaseUserId : currentPlatform === 'qq' ? qqUserId : currentPlatform === 'spotify' ? (spotifyUserId || '') : currentPlatform === 'kugou' ? (kugouUserId || '') : currentPlatform === 'soda' ? (sodaUserId || '') : ''
+    const activeUserId = currentPlatform === 'netease' ? neteaseUserId : currentPlatform === 'qq' ? qqUserId : currentPlatform === 'spotify' ? (spotifyUserId || '') : ''
     const isPlatformLoggedIn = currentPlatform === 'netease'
       ? Boolean(neteaseLoggedIn && neteaseUserId)
       : currentPlatform === 'qq'
         ? Boolean(qqLoggedIn && qqUserId)
         : currentPlatform === 'apple'
           ? Boolean(appleLoggedIn)
-          : currentPlatform === 'spotify'
-            ? Boolean(spotifyLoggedIn)
-            : currentPlatform === 'kugou'
-              ? Boolean(kugouLoggedIn)
-              : Boolean(sodaLoggedIn)
+          : Boolean(spotifyLoggedIn)
     const loadSignature = `${currentPlatform}:${isPlatformLoggedIn ? activeUserId : 'logged-out'}:${authRevision}:${playlistContentRevision}`
     playlistLoadSignatureRef.current = loadSignature
 
@@ -1007,7 +645,7 @@ function DesktopView({
     return () => {
       if (playlistListRequestRef.current === requestId) playlistListRequestRef.current += 1
     }
-  }, [currentPlatform, neteaseLoggedIn, qqLoggedIn, appleLoggedIn, spotifyLoggedIn, kugouLoggedIn, sodaLoggedIn, neteaseUserId, qqUserId, spotifyUserId, kugouUserId, sodaUserId, neteaseUsername, qqUsername, spotifyUsername, authRevision, playlistContentRevision])
+  }, [currentPlatform, neteaseLoggedIn, qqLoggedIn, appleLoggedIn, spotifyLoggedIn, neteaseUserId, qqUserId, spotifyUserId, neteaseUsername, qqUsername, spotifyUsername, authRevision, playlistContentRevision])
   // 加载最近播放歌曲（桌面模式仅显示歌曲，与简约模式同源）
   useEffect(() => {
     const isPlatformLoggedIn = currentPlatform === 'netease'
@@ -1016,11 +654,7 @@ function DesktopView({
         ? Boolean(qqLoggedIn && qqUserId)
         : currentPlatform === 'apple'
           ? Boolean(appleLoggedIn)
-          : currentPlatform === 'spotify'
-            ? Boolean(spotifyLoggedIn)
-            : currentPlatform === 'soda'
-              ? Boolean(sodaLoggedIn)
-              : false
+          : Boolean(spotifyLoggedIn)
     const loadSignature = `${currentPlatform}:${isPlatformLoggedIn ? 'in' : 'out'}:${authRevision}`
     if (recentLoadSignatureRef.current === loadSignature) return
     recentLoadSignatureRef.current = loadSignature
@@ -1067,23 +701,6 @@ function DesktopView({
           const { fetchSpotifyRecentlyPlayed, spotifyTrackToSong } = await import('../services/spotifyService')
           const tracks = await fetchSpotifyRecentlyPlayed(50)
           const songs = tracks.map(spotifyTrackToSong)
-          if (controller.signal.aborted) return
-          const covers = songs.map(song => song.album.picUrl || '').filter(Boolean).slice(0, 4)
-          setRecentSongs(songs)
-          setRecentCovers(covers)
-          recentSongsRef.current = songs
-          recentCoversRef.current = covers
-          return
-        }
-        if (currentPlatform === 'soda') {
-          const cookie = getPlatformCookie('soda')
-          const response = await fetch(`http://localhost:3001/api/soda/recent?limit=50${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`, {
-            cache: 'no-store',
-            signal: controller.signal,
-          })
-          const payload = await response.json()
-          if (!response.ok || payload?.error) throw new Error(payload?.error || '汽水最近播放加载失败')
-          const songs: Song[] = (Array.isArray(payload?.songs) ? payload.songs : []).map(sodaMediaToSong).filter((song: Song) => Boolean(song.mid))
           if (controller.signal.aborted) return
           const covers = songs.map(song => song.album.picUrl || '').filter(Boolean).slice(0, 4)
           setRecentSongs(songs)
@@ -1202,25 +819,8 @@ function DesktopView({
       controller.abort()
       window.removeEventListener('waveforge-recent-playback-reported', handleReported)
     }
-  }, [currentPlatform, neteaseLoggedIn, qqLoggedIn, appleLoggedIn, spotifyLoggedIn, sodaLoggedIn, neteaseUserId, qqUserId, sodaUserId, authRevision])
+  }, [currentPlatform, neteaseLoggedIn, qqLoggedIn, appleLoggedIn, spotifyLoggedIn, neteaseUserId, qqUserId, spotifyUserId, authRevision])
 
-  // 监听 Wallpaper Engine 同步设置变化
-  useEffect(() => {
-    const handleWallpaperSyncChange = (e: Event) => {
-      const enabled = Boolean((e as CustomEvent).detail)
-      wallpaperSyncEnabledRef.current = enabled
-      if (enabled && wallpaperRotationRef.current.enabled) {
-        updateWallpaperRotation({ ...wallpaperRotationRef.current, enabled: false })
-      }
-      setWallpaperSyncEnabled(enabled)
-      desktopWallpaperManager.saveSettings({ wallpaperEngineEnabled: enabled })
-      window.dispatchEvent(new Event('desktopWallpaperChanged'))
-    }
-    
-    window.addEventListener('wallpaperSyncChanged', handleWallpaperSyncChange)
-    return () => window.removeEventListener('wallpaperSyncChanged', handleWallpaperSyncChange)
-  }, [])
-  
   // 监听卡片模糊度变化
   useEffect(() => {
     const handleBlurChange = (e: Event) => {
@@ -1363,97 +963,13 @@ function DesktopView({
     }
     
     window.addEventListener('desktopWallpaperChanged', handleWallpaperChange)
-    
-    // 监听来自 Electron 的壁纸变化（用于 Wallpaper Engine 同步）
-    const unsubscribeWallpaper = window.electron?.wallpaper?.onWallpaperChange
-      ? window.electron.wallpaper.onWallpaperChange((wallpaper) => {
-        console.log('🖼️ 系统壁纸已变化:', wallpaper)
-        const settings = desktopWallpaperManager.getSettings()
-        const engine = typeof wallpaper === 'string' ? null : wallpaper.wallpaperEngine
-        
-        // 检查是否是不支持的壁纸类型
-        if (settings.wallpaperEngineEnabled && engine?.unsupported) {
-          console.warn('[DesktopView] Unsupported wallpaper type:', engine.sourceType)
-          const typeMessages: Record<string, string> = {
-            scene: '3D 场景壁纸',
-            application: '程序壁纸',
-            web: '网页壁纸',
-            unknown: '动态壁纸',
-          }
-          const label = typeMessages[engine.sourceType] || '动态壁纸'
-          const name = engine.title ? `「${engine.title}」` : ''
-          showToastNotification(`Wallpaper Engine ${name}${label}无法实时同步，已显示静态预览`, 'warning')
-          // 回退到系统壁纸
-          const nextWallpaper = typeof wallpaper === 'string'
-            ? wallpaper
-            : wallpaper.dataUrl || wallpaper.fileUrl || wallpaper.path
-          if (nextWallpaper) {
-            const nextSignature = `image:${nextWallpaper}`
-            if (wallpaperSourceRef.current === nextSignature) return
-            wallpaperSourceRef.current = nextSignature
-            setDesktopLiveWallpaper(null)
-            setDesktopWallpaper(nextWallpaper)
-            setWallpaperKey(prev => prev + 1)
-          }
-          return
-        }
-        
-        // 检查是否是 Wallpaper Engine 的 video 类型（支持动态壁纸）
-        if (settings.wallpaperEngineEnabled && engine && engine.sourceType === 'video') {
-          const nextLiveWallpaper = {
-            kind: 'wallpaper-engine',
-            sourceType: engine.sourceType,
-            url: engine.mediaUrl || engine.fileUrl,
-            path: engine.path,
-            title: engine.title || '动态壁纸'
-          } as DesktopLiveWallpaperSource
-          const nextSignature = `live:${nextLiveWallpaper.sourceType}:${nextLiveWallpaper.url}:${nextLiveWallpaper.path}`
-          if (wallpaperSourceRef.current === nextSignature) return
-          wallpaperSourceRef.current = nextSignature
-          setDesktopWallpaper(null)
-          setDesktopLiveWallpaper(prev => {
-            if (prev && prev.sourceType === nextLiveWallpaper.sourceType && prev.url === nextLiveWallpaper.url && prev.path === nextLiveWallpaper.path) {
-              return prev
-            }
-            return nextLiveWallpaper
-          })
-          
-          // 如果音乐正在播放，自动静音壁纸音频
-          if (isPlaying) {
-            console.log('[DesktopView] Music is playing, auto-muting video wallpaper from Wallpaper Engine')
-            setVideoMuted(true)
-            localStorage.setItem('desktopVideoMuted', JSON.stringify(true))
-            scheduleTransientTimer(() => {
-              if (videoRef.current) {
-                videoRef.current.muted = true
-              }
-            }, 100)
-          }
-          return
-        }
-        
-        // 处理静态图片壁纸
-        const nextWallpaper = typeof wallpaper === 'string'
-          ? wallpaper
-          : wallpaper.dataUrl || wallpaper.fileUrl || wallpaper.path
-        if (settings.wallpaperEngineEnabled && nextWallpaper) {
-          const nextSignature = `image:${nextWallpaper}`
-          if (wallpaperSourceRef.current === nextSignature) return
-          wallpaperSourceRef.current = nextSignature
-          setDesktopLiveWallpaper(null)
-          setDesktopWallpaper(toWallpaperUrl(nextWallpaper))
-          setWallpaperKey(prev => prev + 1)
-        }
-      })
-      : undefined
-    
+
     // 启动自动切换
     desktopWallpaperManager.startAutoSwitch()
     desktopWallpaperManager.switchOnStartup()
     
     return () => {
       window.removeEventListener('desktopWallpaperChanged', handleWallpaperChange)
-      unsubscribeWallpaper?.()
       desktopWallpaperManager.stopAutoSwitch()
     }
   }, [])
@@ -1575,12 +1091,9 @@ function DesktopView({
       }
       transientTimersRef.current.forEach(timer => window.clearTimeout(timer))
       transientTimersRef.current.clear()
-      wallpaperScanControllerRef.current?.abort()
-      wallpaperScanControllerRef.current = null
       playlistLoadControllerRef.current?.abort()
-      stopAlarmSound()
     }
-  }, [stopAlarmSound])
+  }, [])
 
   const notifyPlaylistChange = useCallback((platform: MusicPlatform, playlistId?: string) => {
     window.dispatchEvent(new CustomEvent('playlist-content-changed', {
@@ -1753,7 +1266,7 @@ function DesktopView({
         console.log(`✅ [DesktopView] 设置了 ${songs.length} 首歌曲到 playlistSongs`)
         setPlaylistSongs(songs)
         }
-      } else if (playlistPlatform === 'spotify' || playlistPlatform === 'soda' || playlistPlatform === 'kugou') {
+      } else if (playlistPlatform === 'spotify') {
         const data = await getPlaylistDetail(String(playlist.id || ''), playlistPlatform)
         if (playlistLoadController.signal.aborted || playlistLoadControllerRef.current !== playlistLoadController) return
         const detailed = { ...playlist, ...data?.playlist, platform: playlistPlatform, isCollected: playlist.isCollected }
@@ -1799,9 +1312,7 @@ function DesktopView({
     const playlistPlatform = selectedPlaylist.platform || currentPlatform
     const userId = playlistPlatform === 'netease' ? neteaseUserId
       : playlistPlatform === 'qq' ? qqUserId
-        : playlistPlatform === 'spotify' ? spotifyUserId
-          : playlistPlatform === 'kugou' ? kugouUserId
-            : playlistPlatform === 'soda' ? sodaUserId : ''
+        : playlistPlatform === 'spotify' ? spotifyUserId : ''
     // Apple：从资料库歌单移除曲目（amp-api）
     if (playlistPlatform === 'apple') {
       try {
@@ -1850,11 +1361,7 @@ function DesktopView({
       ? qqUserId
       : selectedPlaylistPlatform === 'spotify'
         ? spotifyUserId
-        : selectedPlaylistPlatform === 'kugou'
-          ? kugouUserId
-          : selectedPlaylistPlatform === 'soda'
-            ? sodaUserId
-            : ''
+        : ''
   const selectedPlaylistOwnerId = selectedPlaylist?.userId == null ? '' : String(selectedPlaylist.userId)
   const ownsSelectedPlaylist = Boolean(selectedPlaylist) && !selectedPlaylist?.isCollected && (
     selectedPlaylist?.ownedByMe === true
@@ -1875,9 +1382,7 @@ function DesktopView({
   const contextCapabilities = getPlatformCapabilities(contextPlaylistPlatform)
   const contextUserId = contextPlaylistPlatform === 'netease' ? neteaseUserId
     : contextPlaylistPlatform === 'qq' ? qqUserId
-      : contextPlaylistPlatform === 'spotify' ? spotifyUserId
-        : contextPlaylistPlatform === 'kugou' ? kugouUserId
-          : contextPlaylistPlatform === 'soda' ? sodaUserId : ''
+      : contextPlaylistPlatform === 'spotify' ? spotifyUserId : ''
   const contextOwnerId = contextPlaylist?.userId == null ? '' : String(contextPlaylist.userId)
   const contextIsOwner = Boolean(contextPlaylist) && !contextPlaylist?.isCollected && (
     contextPlaylist?.ownedByMe === true
@@ -1936,11 +1441,7 @@ function DesktopView({
       ? Boolean(qqLoggedIn && qqUserId)
       : currentPlatform === 'apple'
         ? Boolean(appleLoggedIn)
-        : currentPlatform === 'spotify'
-          ? Boolean(spotifyLoggedIn)
-          : currentPlatform === 'kugou'
-            ? Boolean(kugouLoggedIn)
-            : Boolean(sodaLoggedIn)
+        : Boolean(spotifyLoggedIn)
   const recentEntry: Playlist | null = recentLoggedIn && recentSongs.length > 0
     ? {
         id: '__recent__',
@@ -1962,7 +1463,6 @@ function DesktopView({
     || playlistContextMenu.show
     || showEditPlaylist
     || showDeletePlaylist
-    || focusTimer.timer.status === 'ringing'
 
   // 桌面融合穿透：光标悬停在组件上时窗口可交互，空区域点击穿透到真实桌面。
   // 利用 setIgnoreMouseEvents(true,{forward:true}) 的 mousemove 转发，由页面实时判定交互区。
@@ -2115,11 +1615,7 @@ function DesktopView({
                       readyState: video.readyState
                     })
                     setVideoUnsupported(true)
-                    showToastNotification('该视频格式不受设备支持 (H.265)，正在切换到下一个壁纸...', 'warning')
-                    // 延迟 1 秒后切换到下一个壁纸
-                    scheduleTransientTimer(() => {
-                      skipToNextWallpaper()
-                    }, 1500)
+                    showToastNotification('该视频格式不受设备支持 (H.265)', 'warning')
                   } else {
                     console.log('[DesktopView] 视频加载成功:', {
                       videoWidth: video.videoWidth,
@@ -2132,10 +1628,7 @@ function DesktopView({
                 onError={(e) => {
                   console.error('[DesktopView] 视频加载错误:', e)
                   setVideoUnsupported(true)
-                  showToastNotification('视频加载失败，正在切换到下一个壁纸...', 'error')
-                  scheduleTransientTimer(() => {
-                    skipToNextWallpaper()
-                  }, 1500)
+                  showToastNotification('视频加载失败', 'error')
                 }}
               />
             ) : (
@@ -2453,33 +1946,7 @@ function DesktopView({
                     </motion.button>
                   </>
                 )}
-                {currentPlatform === 'kugou' && !kugouLoggedIn && (
-                  <>
-                    <p className="text-white/60 mb-2">请先登录酷狗音乐</p>
-                    <motion.button
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => { setLoginPlatform('kugou'); setShowLogin(true) }}
-                      className="px-6 py-2 rounded-full bg-orange-500/90 hover:bg-orange-500 text-white transition-all"
-                    >
-                      登录酷狗音乐
-                    </motion.button>
-                  </>
-                )}
-                {currentPlatform === 'soda' && !sodaLoggedIn && (
-                  <>
-                    <p className="text-white/60 mb-2">请先登录汽水音乐</p>
-                    <motion.button
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => { setLoginPlatform('soda'); setShowLogin(true) }}
-                      className="px-6 py-2 rounded-full bg-sky-500/90 hover:bg-sky-500 text-white transition-all"
-                    >
-                      登录汽水音乐
-                    </motion.button>
-                  </>
-                )}
-                {((currentPlatform === 'netease' && neteaseLoggedIn) || (currentPlatform === 'qq' && qqLoggedIn) || (currentPlatform === 'apple' && appleLoggedIn) || (currentPlatform === 'spotify' && spotifyLoggedIn) || (currentPlatform === 'kugou' && kugouLoggedIn) || (currentPlatform === 'soda' && sodaLoggedIn)) && (
+                {((currentPlatform === 'netease' && neteaseLoggedIn) || (currentPlatform === 'qq' && qqLoggedIn) || (currentPlatform === 'apple' && appleLoggedIn) || (currentPlatform === 'spotify' && spotifyLoggedIn)) && (
                   <p className="text-white/60">暂无歌单</p>
                 )}
               </div>
@@ -2710,7 +2177,6 @@ function DesktopView({
             qqLoggedIn={qqLoggedIn}
             appleLoggedIn={appleLoggedIn}
             spotifyLoggedIn={spotifyLoggedIn}
-            kugouLoggedIn={kugouLoggedIn}
             currentSong={currentSong}
             onPlayNext={onPlayNext}
             onAddToFavorites={onAddToFavorites}
@@ -2742,16 +2208,6 @@ function DesktopView({
           <LazyDesktopSettingsModal
         show={showSettings}
         onClose={() => setShowSettings(false)}
-        weWallpapers={weWallpapers}
-        weLoading={weLoading}
-        weError={weError}
-        selectedWeWallpaper={selectedWeWallpaper}
-        wallpaperSyncEnabled={wallpaperSyncEnabled}
-        onScanWeWallpapers={scanWeWallpapers}
-        onSelectWeWallpaper={selectWeWallpaper}
-        wallpaperRotation={wallpaperRotation}
-        onWallpaperRotationChange={updateWallpaperRotation}
-        onWallpaperSyncToggle={handleWallpaperSyncToggle}
         neteaseLoggedIn={neteaseLoggedIn}
         qqLoggedIn={qqLoggedIn}
         neteaseVip={neteaseVip}
@@ -2773,15 +2229,6 @@ function DesktopView({
       />
         </Suspense>
       )}
-
-      <DesktopFocusAlarmOverlay
-        open={focusTimer.timer.status === 'ringing'}
-        accentColor={desktopAccentColor}
-        onRepeat={focusTimer.repeat}
-        onStop={focusTimer.stop}
-        title={focusTimer.timer.phase === 'focus' ? '专注时间结束' : '休息时间结束'}
-        detail={focusTimer.timer.phase === 'focus' ? `${focusTimer.timer.label || '本轮任务'} · 已完成 ${focusTimer.timer.completedSessions} 个番茄` : '休息完成，可以开始下一轮专注'}
-      />
 
       {/* 桌面迷你播放器 */}
       <AnimatePresence>
@@ -3012,10 +2459,6 @@ function DesktopView({
                 onQQLogin(cookie)
               } else if (loginPlatform === 'spotify') {
                 onSpotifyLogin?.(cookie, username)
-              } else if (loginPlatform === 'kugou') {
-                onKugouLogin?.(cookie, username)
-              } else if (loginPlatform === 'soda') {
-                onSodaLogin?.(cookie, username)
               }
               setShowLogin(false)
             }}

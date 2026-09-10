@@ -27,15 +27,9 @@ export function getFavoriteUserId(platform: FavoritePlatform): string {
     return token ? `apple-${stableCredentialKey(token)}` : ''
   }
   if (platform === 'qq') return localStorage.getItem('qq_user_id') || ''
-  // 汽水：归属键用自身登录态
-  if (platform === 'soda') return localStorage.getItem('soda_user_id') || ''
-  // 酷狗/Spotify：各用各的登录归属键；旧会话未落 userId 时凭凭据存在性给固定键兜底
-  // （与 apple 同款策略）。绝不回落到其它平台的归属键——曾把酷狗 id 当网易云 uid 打错接口，
+  // Spotify：用自己的登录归属键；旧会话未落 userId 时凭凭据存在性给固定键兜底
+  // （与 apple 同款策略）。绝不回落到其它平台的归属键——曾把外部平台 id 当网易云 uid 打错接口，
   // 喜欢缓存也跨平台互染。
-  if (platform === 'kugou') {
-    return localStorage.getItem('kugou_user_id')
-      || (localStorage.getItem('kugou_cookie') ? 'kugou-user' : '')
-  }
   if (platform === 'spotify') {
     return localStorage.getItem('spotify_user_id')
       || (localStorage.getItem('spotify_access_token') ? 'spotify-user' : '')

@@ -22,9 +22,8 @@ interface QuickSettingsProps {
   expandUp?: boolean
 }
 
-type CoverPulseMode = 'dynamic' | 'soft' | 'restless'
 type WordByWordEffectMode = 'clear' | 'soft' | 'apple'
-type LyricDisplayMode = 'modern' | 'immersive' | 'wallpaper' | 'glorious' | 'modeng' | 'video' | 'pv'
+type LyricDisplayMode = 'modern' | 'immersive' | 'video' | 'pv'
 
 // 大体积设置面板（约 900 行 JSX）：props 均为原语（forceClose/playerTheme/isPureMusic），
 // memo 让 1Hz 播放重渲染（经 ImmersiveControls 传递）不再连带重渲染整个面板
@@ -82,7 +81,7 @@ export default memo(function QuickSettings({
       }
 
       const saved = localStorage.getItem('lyricDisplayMode')
-      setLyricDisplayMode(saved === 'immersive' || saved === 'wallpaper' || saved === 'glorious' || saved === 'modeng' || saved === 'video' || saved === 'pv' ? saved : 'modern')
+      setLyricDisplayMode(saved === 'immersive' || saved === 'video' || saved === 'pv' ? saved : 'modern')
     }
 
     window.addEventListener('lyricDisplayModeChanged', handleLyricDisplayModeChange)
@@ -118,17 +117,6 @@ export default memo(function QuickSettings({
   const [lyricScrollTransition, setLyricScrollTransition] = useState<'classic' | 'amodern'>(() => {
     const saved = localStorage.getItem('lyricScrollTransitionStyle')
     return saved === 'amodern' ? 'amodern' : 'classic'
-  })
-
-  const [coverPulseEnabled, setCoverPulseEnabled] = useState(() => {
-    const saved = localStorage.getItem('coverPulseEnabled')
-    return saved !== null ? JSON.parse(saved) : false
-  })
-
-  const [coverPulseMode, setCoverPulseMode] = useState<CoverPulseMode>(() => {
-    const saved = localStorage.getItem('coverPulseMode')
-    if (saved === 'precise') return 'restless'
-    return saved === 'dynamic' || saved === 'restless' ? saved : 'soft'
   })
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -168,7 +156,7 @@ export default memo(function QuickSettings({
 
   const [lyricDisplayMode, setLyricDisplayMode] = useState<LyricDisplayMode>(() => {
     const saved = localStorage.getItem('lyricDisplayMode')
-    return saved === 'immersive' || saved === 'wallpaper' || saved === 'glorious' || saved === 'modeng' || saved === 'video' || saved === 'pv' ? saved : 'modern'
+    return saved === 'immersive' || saved === 'video' || saved === 'pv' ? saved : 'modern'
   })
 
   // PV 歌词模式切换入口（全自动编排，无设置面板）
@@ -177,17 +165,6 @@ export default memo(function QuickSettings({
     const saved = localStorage.getItem('modernAudioVisualizerEnabled')
     return saved !== null ? JSON.parse(saved) : true
   })
-
-  // 摩登模式"左右交替歌词"（独立 key waveforge_modeng_side_align，仅 modeng 显示该项，不影响其它模式）
-  const [modengSideAlign, setModengSideAlign] = useState<boolean>(() => {
-    try { return localStorage.getItem('waveforge_modeng_side_align') === 'true' } catch { return false }
-  })
-  const handleModengSideAlignToggle = () => {
-    const next = !modengSideAlign
-    setModengSideAlign(next)
-    try { localStorage.setItem('waveforge_modeng_side_align', JSON.stringify(next)) } catch { /* noop */ }
-    window.dispatchEvent(new CustomEvent('waveforge:modeng-side-align', { detail: next }))
-  }
 
   const [hideImmersiveSongInfo, setHideImmersiveSongInfo] = useState(() => {
     const saved = localStorage.getItem('hideImmersiveSongInfo')
@@ -233,19 +210,6 @@ export default memo(function QuickSettings({
     setLyricScrollTransition(style)
     localStorage.setItem('lyricScrollTransitionStyle', style)
     window.dispatchEvent(new CustomEvent('lyricScrollTransitionStyleChanged', { detail: style }))
-  }
-
-  const handleCoverPulseToggle = () => {
-    const newValue = !coverPulseEnabled
-    setCoverPulseEnabled(newValue)
-    localStorage.setItem('coverPulseEnabled', JSON.stringify(newValue))
-    window.dispatchEvent(new CustomEvent('coverPulseChanged', { detail: newValue }))
-  }
-
-  const handleCoverPulseModeChange = (mode: CoverPulseMode) => {
-    setCoverPulseMode(mode)
-    localStorage.setItem('coverPulseMode', mode)
-    window.dispatchEvent(new CustomEvent('coverPulseModeChanged', { detail: mode }))
   }
 
   const handleThemeChange = (newTheme: 'dark' | 'light') => {
@@ -548,76 +512,6 @@ export default memo(function QuickSettings({
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between">
-                      <span className={`text-sm ${playerTheme === 'dark' ? 'text-white/80' : 'text-black/80'}`}>
-                        背景律动
-                      </span>
-                      <button
-                        onClick={handleCoverPulseToggle}
-                        className="relative w-12 h-7 rounded-full transition-all duration-300"
-                        style={{
-                          backgroundColor: coverPulseEnabled
-                            ? accentColor
-                            : playerTheme === 'dark'
-                            ? 'rgba(255,255,255,0.15)'
-                            : 'rgba(0,0,0,0.15)',
-                          boxShadow: coverPulseEnabled
-                            ? `0 0 12px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.2)`
-                            : 'inset 0 1px 2px rgba(0,0,0,0.1)',
-                        }}
-                      >
-                        <motion.div
-                          animate={{
-                            x: coverPulseEnabled ? 22 : 2,
-                            scale: coverPulseEnabled ? 1 : 0.9,
-                          }}
-                          transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                          className="absolute top-1 w-5 h-5 bg-white rounded-full"
-                          style={{
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.2), 0 0 2px rgba(0,0,0,0.1)',
-                          }}
-                        />
-                      </button>
-                    </div>
-
-                    {coverPulseEnabled && (
-                      <div className="flex flex-col gap-2">
-                        <span className={`text-xs ${playerTheme === 'dark' ? 'text-white/60' : 'text-black/60'}`}>
-                          律动效果
-                        </span>
-                        <div className="grid grid-cols-3 gap-2">
-                          {([
-                            ['dynamic', '动感'],
-                            ['soft', '柔和'],
-                            ['restless', '躁动'],
-                          ] as const).map(([mode, label]) => (
-                            <button
-                              key={mode}
-                              onClick={() => handleCoverPulseModeChange(mode)}
-                              className="py-1.5 rounded-lg text-xs font-medium transition-all"
-                              style={{
-                                backgroundColor:
-                                  coverPulseMode === mode
-                                    ? accentColor
-                                    : playerTheme === 'dark'
-                                    ? 'rgba(255,255,255,0.1)'
-                                    : 'rgba(0,0,0,0.1)',
-                                color:
-                                  coverPulseMode === mode
-                                    ? '#fff'
-                                    : playerTheme === 'dark'
-                                    ? 'rgba(255,255,255,0.65)'
-                                    : 'rgba(0,0,0,0.65)',
-                                boxShadow: coverPulseMode === mode ? `0 0 8px ${accentColor}30` : 'none',
-                              }}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
                     <div className="flex flex-col gap-2">
                       <span className={`text-sm ${playerTheme === 'dark' ? 'text-white/80' : 'text-black/80'}`}>
                         背景效果
@@ -862,35 +756,6 @@ export default memo(function QuickSettings({
                         </button>
                       </div>
                     </div>
-
-                    {localStorage.getItem('lyricDisplayMode') === 'modeng' && (
-                      <div className="flex items-center justify-between">
-                        <span className={`text-sm ${playerTheme === 'dark' ? 'text-white/80' : 'text-black/80'}`}>
-                          左右交替歌词
-                        </span>
-                        <button
-                          onClick={handleModengSideAlignToggle}
-                          className="relative w-12 h-7 rounded-full transition-all duration-300"
-                          style={{
-                            backgroundColor: modengSideAlign
-                              ? accentColor
-                              : playerTheme === 'dark'
-                              ? 'rgba(255,255,255,0.15)'
-                              : 'rgba(0,0,0,0.15)',
-                            boxShadow: modengSideAlign
-                              ? `0 0 12px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.2)`
-                              : 'inset 0 1px 2px rgba(0,0,0,0.1)',
-                          }}
-                        >
-                          <motion.div
-                            animate={{ x: modengSideAlign ? 22 : 2, scale: modengSideAlign ? 1 : 0.9 }}
-                            transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                            className="absolute top-1 w-5 h-5 bg-white rounded-full"
-                            style={{ boxShadow: '0 2px 4px rgba(0,0,0,0.2), 0 0 2px rgba(0,0,0,0.1)' }}
-                          />
-                        </button>
-                      </div>
-                    )}
 
                     {!isPureMusic && (
                       <>

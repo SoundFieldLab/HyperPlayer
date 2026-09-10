@@ -6,7 +6,6 @@ import type { MusicPlatform } from '../services/platforms'
 import { getPlatformCapabilities } from '../services/platforms'
 import { subscribePlaylist } from '../services/playlistService'
 import { APPLE_LIBRARY_ID, getLastAppleMutationResult, removeAppleTracksFromPlaylist } from '../services/appleCatalog'
-import { isSodaLoggedIn } from '../services/sodaService'
 import SongContextMenu from './SongContextMenu'
 
 type Playlist = {
@@ -142,15 +141,8 @@ function TraditionalPlaylistDetail({
     if (!playlist || collecting || !canSubscribePlaylist) return
     setCollecting(true)
     try {
-      if (platform === 'soda') {
-        // 汽水：抖音收藏网关（通用 subscribePlaylist 不覆盖汽水），成功后本地翻转状态
-        const { collectSodaPlaylist } = await import('../services/sodaService')
-        const ok = await collectSodaPlaylist(String(playlist.id || playlist.dirId || ''), !collected)
-        if (!ok) throw new Error(collected ? '汽水取消收藏失败' : '汽水收藏歌单失败')
-      } else {
-        const result = await subscribePlaylist(String(playlist.id || playlist.dirId || ''), !collected, platform)
-        if (result?.error || result?.errMsg) throw new Error(result.error || result.errMsg)
-      }
+      const result = await subscribePlaylist(String(playlist.id || playlist.dirId || ''), !collected, platform)
+      if (result?.error || result?.errMsg) throw new Error(result.error || result.errMsg)
       setCollected(value => !value)
       window.dispatchEvent(new CustomEvent('showToast', { detail: { message: collected ? '已取消收藏歌单' : '已收藏歌单', type: 'success' } }))
     } catch (error) {
@@ -230,7 +222,7 @@ function TraditionalPlaylistDetail({
               <div className="inline-block border-b-2 pb-2 text-base font-semibold" style={{ borderColor: accentColor, color: accentColor }}>歌曲 {songs.length || playlist?.trackCount || 0}</div>
             </div>
             <div className={`grid grid-cols-[minmax(0,1fr)_44px_minmax(110px,.7fr)_58px] items-center gap-3 px-4 pb-2 text-xs ${muted}`}><span>歌名 / 歌手</span><span /><span className="hidden sm:block">专辑</span><span className="flex justify-end"><Clock3 className="h-3.5 w-3.5" /></span></div>
-            {songs.length === 0 ? <div className={`rounded-xl border p-12 text-center text-sm ${muted} ${dark ? 'border-white/10' : 'border-slate-200'}`}>{platform === 'soda' && !isSodaLoggedIn() ? '登录汽水音乐后查看歌单歌曲' : '这个歌单还没有可播放的歌曲'}</div> : (
+            {songs.length === 0 ? <div className={`rounded-xl border p-12 text-center text-sm ${muted} ${dark ? 'border-white/10' : 'border-slate-200'}`}>这个歌单还没有可播放的歌曲</div> : (
               <div className="relative" style={{ height: virtualListHeight }}>
                 {visibleSongs.map(({ song, index }) => {
                   const active = currentSong ? isSameSong(song, currentSong) : false

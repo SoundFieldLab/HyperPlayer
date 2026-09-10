@@ -45,9 +45,11 @@ export type GlobalSettingsGroupId =
 export type MirrorActionId =
   | 'audio-quality'   // 打开"各平台播放音质"弹窗（各模式自备弹窗挂载）
   | 'cache-clear'     // 打开缓存清理弹窗
-  | 'remote-settings' // 打开遥控器个性化弹窗
   | 'check-update'    // 检查更新（注册表内实现）
-  | 'proxy-rescan'    // 重新扫描代理（注册表内实现）
+  // 以下两个 actionId 对应的设置项已随减配移除，联合类型成员保留仅为不破坏
+  // 其它模式（传统/探索）既有调用点的类型兼容；注册表内不再产生这两个 action。
+  | 'remote-settings' // （已废弃）遥控器个性化弹窗
+  | 'proxy-rescan'    // （已废弃）重新扫描代理
 
 export type SettingControl =
   | { kind: 'toggle' }
@@ -120,7 +122,6 @@ interface DesktopBridgeCache {
   taskbarWidget: TaskbarWidgetSettings
   gpu: { acceleration: boolean; preference: 'auto' | 'discrete' | 'integrated' }
   highRefresh: { enabled: boolean; hz: number | null }
-  proxy: { enabled: boolean; scanning: boolean; target: string | null }
 }
 
 const electron = () => (typeof window !== 'undefined' ? (window as any).electron : undefined)
@@ -137,7 +138,6 @@ const desktopCache: DesktopBridgeCache = {
   },
   gpu: { acceleration: readBool('gpuAcceleration', true), preference: 'auto' },
   highRefresh: { enabled: false, hz: null },
-  proxy: { enabled: false, scanning: false, target: null },
 }
 
 let desktopBridgeLoading = false
@@ -180,11 +180,6 @@ export function ensureDesktopBridgeSettings(): void {
           if (info) desktopCache.highRefresh = { enabled: Boolean(info.highRefreshEnabled), hz: info.highRefreshHz ?? null }
         }).catch(() => undefined))
       }
-      if (api.proxyManager?.getState) {
-        jobs.push(Promise.resolve(api.proxyManager.getState()).then((s: any) => {
-          if (s) desktopCache.proxy = { ...desktopCache.proxy, enabled: Boolean(s.enabled), target: s.proxy ? `127.0.0.1:${s.proxy.port}` : null }
-        }).catch(() => undefined))
-      }
       await Promise.all(jobs)
       desktopCache.loaded = true
       notifyGlobalSettingChanged()
@@ -213,24 +208,21 @@ const hasDesktopPlayerBridge = () => typeof window !== 'undefined' && typeof ele
 const hasTaskbarBridge = () => typeof window !== 'undefined' && !!electron()?.taskbarWidget
 const hasSystemBridge = () => typeof window !== 'undefined' && !!electron()?.system?.getHardwareAcceleration
 const hasDisplayBridge = () => typeof window !== 'undefined' && !!electron()?.display?.getInfo
-const hasProxyBridge = () => typeof window !== 'undefined' && !!electron()?.proxyManager
 
 // ─────────────────────────── 各域写入逻辑（与 SettingsPanel 逐一对齐） ───────────────────────────
 
-// 播放过渡三开关互斥：开启其一则关闭另外两个
-const setTransitionModeExclusive = (target: 'crossfade' | 'gapless' | 'autoMix', value: boolean) => {
+// 播放过渡两开关互斥：开启其一则关闭另一个
+const setTransitionModeExclusive = (target: 'crossfade' | 'gapless', value: boolean) => {
   const keys = {
     crossfade: 'crossfadeEnabled',
     gapless: 'gaplessEnabled',
-    autoMix: 'autoMixEnabled',
   } as const
   const events = {
     crossfade: 'crossfadeSettingsChanged',
     gapless: 'gaplessSettingsChanged',
-    autoMix: 'autoMixSettingsChanged',
   } as const
   if (value) {
-    for (const mode of ['crossfade', 'gapless', 'autoMix'] as const) {
+    for (const mode of ['crossfade', 'gapless'] as const) {
       if (mode === target) continue
       writeBool(keys[mode], false)
       window.dispatchEvent(new Event(events[mode]))
@@ -272,35 +264,6 @@ const updateTaskbarWidget = (partial: Partial<TaskbarWidgetSettings>) => {
       notifyGlobalSettingChanged()
     })
     .catch(() => notifyGlobalSettingChanged())
-}
-
-// 代理自动配置（扫描本地端口 → 自动选最优）
-const proxyScanAndEnable = (rescan: boolean) => {
-  desktopCache.proxy.scanning = true
-  notifyGlobalSettingChanged()
-  void (async () => {
-    try {
-      const list = await electron()?.proxyManager?.scan?.()
-      const found = list || []
-      if (found.length > 0) {
-        const best = found[0]
-        const state = await electron()?.proxyManager?.enable?.(best.port)
-        desktopCache.proxy = {
-          enabled: true,
-          scanning: false,
-          target: state?.proxy ? `127.0.0.1:${state.proxy.port}` : `127.0.0.1:${best.port}`,
-        }
-        toast(rescan ? `已切换代理 ${desktopCache.proxy.target}（延迟 ${best.latency}ms）` : `已自动配置代理 ${desktopCache.proxy.target}（延迟 ${best.latency}ms）`)
-      } else {
-        desktopCache.proxy = { enabled: rescan ? desktopCache.proxy.enabled : false, scanning: false, target: null }
-        toast(rescan ? '未检测到可用的本地代理' : '未检测到可用的本地代理，请确认代理软件已开启', 'error')
-      }
-    } catch {
-      desktopCache.proxy = { ...desktopCache.proxy, scanning: false }
-      toast('代理扫描失败', 'error')
-    }
-    notifyGlobalSettingChanged()
-  })()
 }
 
 // 检查更新：多源清单 → 比版本 → 有更新交给全局 UpdateManager 弹详情
@@ -410,7 +373,7 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
       {
         id: 'crossfadeEnabled',
         label: '渐入渐出 (Crossfade)',
-        description: '两首歌之间交叉淡入淡出，与无缝衔接 / AutoMix 互斥',
+        description: '两首歌之间交叉淡入淡出，与无缝衔接互斥',
         control: { kind: 'toggle' },
         read: () => readBool('crossfadeEnabled', false),
         write: (value) => setTransitionModeExclusive('crossfade', Boolean(value)),
@@ -431,7 +394,7 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
       {
         id: 'gaplessEnabled',
         label: '无缝衔接 (Gapless)',
-        description: '取消歌曲间过渡空隙，与渐入渐出 / AutoMix 互斥',
+        description: '取消歌曲间过渡空隙，与渐入渐出互斥',
         control: { kind: 'toggle' },
         read: () => readBool('gaplessEnabled', false),
         write: (value) => setTransitionModeExclusive('gapless', Boolean(value)),
@@ -447,90 +410,6 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
           window.dispatchEvent(new Event('albumGaplessSettingsChanged'))
           notifyGlobalSettingChanged()
         },
-      },
-      {
-        id: 'autoMixEnabled',
-        label: 'AutoMix 智能混音',
-        description: '按歌曲节奏自动混音过渡，与渐入渐出 / 无缝衔接互斥',
-        control: { kind: 'toggle' },
-        read: () => readBool('autoMixEnabled', false),
-        write: (value) => setTransitionModeExclusive('autoMix', Boolean(value)),
-      },
-      {
-        id: 'autoMixBeatMatching',
-        label: '节拍匹配',
-        description: '对齐两首歌的 BPM 再做过渡',
-        control: { kind: 'toggle' },
-        read: () => readBool('autoMixBeatMatching', true),
-        write: (value) => { writeBool('autoMixBeatMatching', Boolean(value)); window.dispatchEvent(new Event('autoMixSettingsChanged')); notifyGlobalSettingChanged() },
-        visibleIf: () => readBool('autoMixEnabled', false),
-      },
-      {
-        id: 'autoMixSkipSilence',
-        label: '跳过首尾静音',
-        control: { kind: 'toggle' },
-        read: () => readBool('autoMixSkipSilence', true),
-        write: (value) => { writeBool('autoMixSkipSilence', Boolean(value)); window.dispatchEvent(new Event('autoMixSettingsChanged')); notifyGlobalSettingChanged() },
-        visibleIf: () => readBool('autoMixEnabled', false),
-      },
-      {
-        id: 'autoMixTransitionIntensity',
-        label: '过渡强度',
-        control: {
-          kind: 'choice',
-          options: [
-            { value: 'subtle', label: '轻柔' },
-            { value: 'standard', label: '标准' },
-            { value: 'strong', label: '强烈' },
-          ],
-        },
-        read: () => readStr('autoMixTransitionIntensity', 'standard'),
-        write: (value) => {
-          localStorage.setItem('autoMixTransitionIntensity', String(value))
-          window.dispatchEvent(new Event('autoMixSettingsChanged'))
-          electron()?.automixLog?.('settings-toggle', `autoMixTransitionIntensity=${value}`).catch?.(() => undefined)
-          notifyGlobalSettingChanged()
-        },
-        visibleIf: () => readBool('autoMixEnabled', false),
-      },
-      {
-        id: 'autoMixEnhanced',
-        label: 'AutoMix 增强版',
-        description: '使用分轨混音（HTDemucs 可选）与增强 DSP；模型未安装时自动使用 DSP 兼容模式',
-        control: { kind: 'toggle' },
-        read: () => readBool('autoMixEnhanced', false),
-        write: (value) => {
-          writeBool('autoMixEnhanced', Boolean(value))
-          window.dispatchEvent(new Event('autoMixSettingsChanged'))
-          electron()?.automixLog?.('settings-toggle', `autoMixEnhanced=${value}`).catch?.(() => undefined)
-          notifyGlobalSettingChanged()
-        },
-        visibleIf: () => readBool('autoMixEnabled', false),
-      },
-      {
-        id: 'autoMixAiMix',
-        label: 'DJTransGAN 实验扩展',
-        description: '可选学习式推子/EQ与60秒长混音；关闭时不会启动 Torch，AutoMix 增强版仍正常工作',
-        control: { kind: 'toggle' },
-        read: () => readBool('autoMixAiMix', false),
-        write: (value) => {
-          const requested = Boolean(value)
-          if (!requested) {
-            writeBool('autoMixAiMix', false)
-            window.dispatchEvent(new Event('autoMixSettingsChanged'))
-            electron()?.automixLog?.('settings-toggle', 'autoMixAiMix=false').catch?.(() => undefined)
-            notifyGlobalSettingChanged()
-            return
-          }
-          void electron()?.render?.aiMixStatus?.().then((status: { available?: boolean } | null | undefined) => {
-            const effective = status?.available === true
-            writeBool('autoMixAiMix', effective)
-            window.dispatchEvent(new Event('autoMixSettingsChanged'))
-            electron()?.automixLog?.('settings-toggle', `autoMixAiMix=${effective}`).catch?.(() => undefined)
-            notifyGlobalSettingChanged()
-          }).catch(() => undefined)
-        },
-        visibleIf: () => readBool('autoMixEnabled', false) && readBool('autoMixEnhanced', false),
       },
       {
         id: 'videoEndBehavior',
@@ -936,13 +815,6 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
           notifyGlobalSettingChanged()
         },
       },
-      {
-        id: 'remoteSettings',
-        label: '遥控器个性化',
-        description: '外观 · 右上角按钮 · 触摸板手势',
-        control: { kind: 'action', actionId: 'remote-settings' },
-        read: () => true,
-      },
     ],
   },
   {
@@ -1058,44 +930,6 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
     ],
   },
   {
-    id: 'network',
-    label: '网络',
-    description: '代理自动配置（仅桌面端）：扫描本地代理端口，下载 / 更新走代理',
-    entries: [
-      {
-        id: 'proxyEnabled',
-        label: '代理自动配置',
-        description: '开启后自动扫描本地代理端口并选择最快节点',
-        control: { kind: 'toggle' },
-        read: () => desktopCache.proxy.enabled,
-        write: (value) => {
-          if (!value) {
-            desktopCache.proxy = { ...desktopCache.proxy, enabled: false, target: null }
-            void electron()?.proxyManager?.disable?.().then((state: any) => {
-              if (state) desktopCache.proxy = { ...desktopCache.proxy, enabled: Boolean(state.enabled) }
-              notifyGlobalSettingChanged()
-            }).catch(() => notifyGlobalSettingChanged())
-            notifyGlobalSettingChanged()
-            return
-          }
-          desktopCache.proxy = { ...desktopCache.proxy, enabled: true }
-          notifyGlobalSettingChanged()
-          proxyScanAndEnable(false)
-        },
-        available: hasProxyBridge,
-      },
-      {
-        id: 'proxyRescan',
-        label: '重新扫描代理节点',
-        description: '重新扫描本地代理端口并切换到最快节点',
-        control: { kind: 'action', actionId: 'proxy-rescan' },
-        read: () => true,
-        available: hasProxyBridge,
-        visibleIf: () => desktopCache.proxy.enabled,
-      },
-    ],
-  },
-  {
     id: 'advanced',
     label: '高级',
     description: '跨平台回退 / 开发者选项 / 缓存管理',
@@ -1183,7 +1017,7 @@ export function isEntryVisible(entry: GlobalSettingEntry): boolean {
 // 事件名集中列出（写侧 dispatch 的自定义事件 + 镜像自身的通用事件）
 const REGISTRY_WATCHED_EVENTS = [
   GLOBAL_SETTING_CHANGED_EVENT,
-  'crossfadeSettingsChanged', 'gaplessSettingsChanged', 'albumGaplessSettingsChanged', 'autoMixSettingsChanged',
+  'crossfadeSettingsChanged', 'gaplessSettingsChanged', 'albumGaplessSettingsChanged',
   'videoEndBehaviorChanged', 'wordByWordLyricsChanged', 'translationSettingsChanged', 'translationPositionChanged',
   'upNextEnabledChanged', 'showUpNextOutsidePlayerChanged', 'upNextSecondsChanged',
   'playerThemeChanged', 'accentColorChanged', 'developerModeChanged', 'audioAnalyzerEnabledChanged',
@@ -1239,8 +1073,7 @@ export function useGlobalSettings() {
     },
     runAction: (actionId: MirrorActionId) => {
       if (actionId === 'check-update') checkForUpdate()
-      if (actionId === 'proxy-rescan') proxyScanAndEnable(true)
-      // audio-quality / cache-clear / remote-settings 由各模式的渲染器打开自己的弹窗
+      // 已减配：proxy-rescan 不再实现；audio-quality / cache-clear 由各模式渲染器打开自己的弹窗
     },
   }), [version])
 }

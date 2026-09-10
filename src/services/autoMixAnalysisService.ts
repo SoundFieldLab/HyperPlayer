@@ -58,17 +58,11 @@ export interface TrackAnalysisInput {
 }
 
 const ANALYSIS_VERSION = 'fallback-dsp-v1'
-const PYTHON_ANALYSIS_VERSIONS = new Set(['librosa-dsp-v3', 'beat-this-dsp-v1'])
 /** 低于该置信度的 browser-fallback 结果视为节拍网格不可信，不缓存/不复用 */
 const BROWSER_FALLBACK_MIN_PERSIST_CONFIDENCE = 0.4
 const memoryCache = new Map<string, TrackAnalysis>()
 const inFlightAnalyses = new Map<string, Promise<TrackAnalysis>>()
 const MAX_MEMORY_CACHE_ENTRIES = 32
-const PYTHON_BEAT_SERVICE_URL = 'http://localhost:3002'
-const PYTHON_ANALYSIS_TIMEOUT_MS = 120_000
-const PYTHON_HEALTH_TIMEOUT_MS = 2_000
-const PYTHON_HEALTHY_CACHE_MS = 30_000
-const PYTHON_UNAVAILABLE_RETRY_MS = 5_000
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
 
@@ -91,7 +85,8 @@ function cacheInMemory(key: string, analysis: TrackAnalysis): void {
 }
 
 function isSupportedAnalysis(analysis: TrackAnalysis): boolean {
-  return analysis.analysisVersion === ANALYSIS_VERSION || PYTHON_ANALYSIS_VERSIONS.has(analysis.analysisVersion)
+  // 仅认本地浏览器回退分析产物（独立 Python 分析服务已移除）。
+  return analysis.analysisVersion === ANALYSIS_VERSION
 }
 
 /**
@@ -825,170 +820,6 @@ function analyzeBuffer(input: TrackAnalysisInput, buffer: AudioBuffer, format?: 
 }
 
 class AutoMixAnalysisService {
-  private pythonServiceAvailable: boolean | null = null
-  private pythonServiceCheckedAt = 0
-  private pythonHealthCheck: Promise<boolean> | null = null
-  
-  async checkPythonService(): Promise<boolean> {
-    const cacheDuration = this.pythonServiceAvailable
-      ? PYTHON_HEALTHY_CACHE_MS
-      : PYTHON_UNAVAILABLE_RETRY_MS
-    if (this.pythonServiceAvailable !== null && Date.now() - this.pythonServiceCheckedAt < cacheDuration) {
-      return this.pythonServiceAvailable
-    }
-    if (this.pythonHealthCheck) return this.pythonHealthCheck
-
-    const check = this.probePythonService()
-    this.pythonHealthCheck = check
-    try {
-      return await check
-    } finally {
-      if (this.pythonHealthCheck === check) this.pythonHealthCheck = null
-    }
-  }
-
-  private async probePythonService(): Promise<boolean> {
-    try {
-      if (window.electron?.localPython && !await window.electron.localPython.ensure('beat')) {
-        this.pythonServiceAvailable = false
-        return false
-      }
-      const controller = new AbortController()
-      const timeoutId = window.setTimeout(() => controller.abort(), PYTHON_HEALTH_TIMEOUT_MS)
-      try {
-        const response = await fetch(`${PYTHON_BEAT_SERVICE_URL}/health`, {
-          signal: controller.signal
-        })
-
-        if (response.ok) {
-          const data = await response.json()
-          this.pythonServiceAvailable = data.status === 'ok'
-          if (this.pythonServiceAvailable) debugLog('✅ [AutoMix] Python Beat Service 可用:', data.version)
-        } else {
-          this.pythonServiceAvailable = false
-        }
-      } finally {
-        window.clearTimeout(timeoutId)
-      }
-    } catch {
-      this.pythonServiceAvailable = false
-    } finally {
-      this.pythonServiceCheckedAt = Date.now()
-    }
-
-    return this.pythonServiceAvailable === true
-  }
-  
-  async tryPythonBeatService(input: TrackAnalysisInput): Promise<TrackAnalysis | null> {
-    const isAvailable = await this.checkPythonService()
-    if (!isAvailable) {
-      return null
-    }
-    
-    const controller = new AbortController()
-    let timedOut = false
-    const abortFromCaller = () => controller.abort(input.signal?.reason)
-    if (input.signal?.aborted) throw abortReason(input.signal)
-    input.signal?.addEventListener('abort', abortFromCaller, { once: true })
-    const timeoutId = window.setTimeout(() => {
-      timedOut = true
-      controller.abort(new DOMException('Python analysis timed out', 'TimeoutError'))
-    }, PYTHON_ANALYSIS_TIMEOUT_MS)
-
-    try {
-      let audioPath = input.url
-      
-      // 如果是 URL，先下载到本地缓存
-      if (input.url.startsWith('http://') || input.url.startsWith('https://')) {
-        debugLog('⏳ [AutoMix] 下载音频文件到本地缓存...')
-        
-        // 使用 Electron 的音频下载服务
-        if (window.electron?.audioDownload) {
-          try {
-            audioPath = await window.electron.audioDownload.prepare(input.url, input.trackKey)
-            debugLog('✅ [AutoMix] 音频文件已缓存:', audioPath)
-          } catch (error) {
-            const identity = parseRefreshIdentity(input.trackKey)
-            if (identity && isHttp403(error)) {
-              const refreshedUrl = await refreshSongUrlOnce(identity.id, identity.platform, input.url).catch(() => null)
-              if (refreshedUrl && refreshedUrl !== input.url) {
-                try {
-                  audioPath = await window.electron.audioDownload.prepare(refreshedUrl, input.trackKey)
-                  debugLog('✅ [AutoMix] 刷新签名后音频已缓存:', audioPath)
-                } catch (retryError) {
-                  console.warn('⚠️ [AutoMix] 刷新签名后音频下载仍失败:', retryError)
-                  return null
-                }
-              } else {
-                console.warn('⚠️ [AutoMix] 音频下载被 403 冷却，跳过重复请求')
-                return null
-              }
-            } else {
-              console.warn('⚠️ [AutoMix] 音频下载失败:', error)
-              return null
-            }
-          }
-        } else {
-          console.warn('⚠️ [AutoMix] Electron 音频下载服务不可用')
-          return null
-        }
-      }
-      
-      const response = await fetch(`${PYTHON_BEAT_SERVICE_URL}/analyze`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          trackKey: input.trackKey,
-          audioPath: audioPath,
-          duration: input.duration || 0,
-          sourceSignature: input.sourceSignature || '',
-        }),
-        signal: controller.signal
-      })
-      
-      if (response.ok) {
-        const result = await response.json()
-        if (!isSupportedAnalysis(result)) {
-          console.warn('⚠️ [AutoMix] Python 分析版本已过期，忽略结果:', result.analysisVersion)
-          return null
-        }
-        debugLog('✅ [AutoMix] Python 分析完成:', {
-          trackKey: result.trackKey,
-          bpm: result.estimatedBpm,
-          beats: result.beats?.length || 0,
-          confidence: result.confidence
-        })
-        return result
-      } else {
-        const errorData = await response.json().catch(() => ({}))
-        console.error('❌ [AutoMix] Python 服务错误:', response.status)
-        console.error('   错误信息:', errorData.error)
-        console.error('   音频路径:', errorData.audioPath)
-        if (errorData.traceback) {
-          console.error('   堆栈跟踪:')
-          console.error(errorData.traceback)
-        }
-        return null
-      }
-    } catch (error) {
-      if (input.signal?.aborted) throw abortReason(input.signal)
-      if (timedOut) {
-        console.warn(`⚠️ [AutoMix] Python 分析超过 ${PYTHON_ANALYSIS_TIMEOUT_MS / 1000} 秒，使用回退分析`)
-        return null
-      }
-      console.warn('⚠️ [AutoMix] Python 服务调用失败:', error)
-      // A request failure is not a permanent service verdict; health will be retried.
-      this.pythonServiceAvailable = null
-      this.pythonServiceCheckedAt = 0
-      return null
-    } finally {
-      window.clearTimeout(timeoutId)
-      input.signal?.removeEventListener('abort', abortFromCaller)
-    }
-  }
-
   /** 同步快查首尾静音边界（仅内存层，不触发磁盘/网络）：
    *  无缝衔接的确定性裁剪触发用——分析由 AutoMix 正常产生后无缝免费复用，
    *  无缓存时返回 null，消费方维持原有运行时探测行为。 */
@@ -1025,11 +856,9 @@ class AutoMixAnalysisService {
   }
 
   /**
-   * 浏览器端整曲分析（Chromium decodeAudioData 原生支持 m4a/aac——Python/librosa
-   * 侧 libsndfile 打不开这些格式，是桌面端分析失败的主要原因）。
-   * 优先解码已下载的本地文件（waveforge-media://），失败再回退直接抓取原始 URL。
-   * 桌面端仅当 Python/Electron 分析产出空节拍网格时才走此路径；结果会正常缓存，
-   * 同一首歌只解码一次。
+   * 浏览器端整曲分析（Chromium decodeAudioData 原生支持 m4a/aac）。这是移除独立
+   * Python 分析服务后的唯一分析路径。优先解码已下载的本地文件（waveforge-media://），
+   * 失败再回退直接抓取原始 URL；结果会正常缓存，同一首歌只解码一次。
    */
   private async analyzeInBrowser(input: TrackAnalysisInput): Promise<TrackAnalysis> {
     let audioPath: string | null = null
@@ -1072,72 +901,26 @@ class AutoMixAnalysisService {
     }
 
     let analysis: TrackAnalysis
-    // Transient failures (Python service down/timed out, Electron analysis
-    // empty) must not be cached or persisted; doing so would permanently
-    // replace a later good analysis until cache eviction.
+    // 独立 Python 分析服务与 Electron 分析 runtime 已移除：分析只走本地浏览器
+    // 整曲解码（Chromium decodeAudioData，原生支持 m4a/aac）。分析失败属瞬时性，
+    // 不缓存/不持久化，避免把歌曲永久钉在空节拍网格上。
     let isTransientFallback = false
     try {
-      // 优先尝试独立的 Python API 服务
-      debugLog('🔍 [AutoMix] 尝试使用 Python Beat Service...')
-      const pythonResult = await this.tryPythonBeatService(input)
-      if (pythonResult && hasUsableBeats(pythonResult)) {
-        debugLog('✅ [AutoMix] Python Beat Service 分析成功')
-        analysis = pythonResult
+      if (isTvModeActive()) {
+        // TV 弱机：浏览器整曲 decodeAudioData 在 WebView 里是数百 MB 级开销
+        //（每次 AutoMix 过渡都会触发）。直接元数据回退，保持 fixed-crossfade 可用。
+        debugLog('⚠️ [AutoMix] TV 端跳过浏览器整曲解码，使用元数据回退')
+        isTransientFallback = true
+        analysis = metadataOnly(input, 'metadata-only')
       } else {
-        // 回退到 Electron 内置分析
-        const runtime = await window.electron?.analysis?.getStatus()
-        if (runtime?.available || runtime?.pythonAvailable) {
-          debugLog('⚠️ [AutoMix] Python Beat Service 不可用，使用 Electron 内置分析')
-          const job = await window.electron?.analysis?.startTrackAnalysis({
-            trackKey: input.trackKey,
-            audioPath: input.url,
-            duration: input.duration,
-            sourceSignature: input.sourceSignature,
-          })
-          if (job?.result && hasUsableBeats(job.result)) {
-            analysis = job.result
-          } else {
-            // Electron/Python 分析失败或产出空节拍网格（常见：m4a/aac 等
-            // libsndfile 不支持格式解码失败 → worker 返回 metadata-only）。
-            // 回退浏览器整曲解码分析——Chromium 原生支持 m4a/aac。
-            // 该分析结果会正常缓存，同一首歌只解码一次；正常歌曲不触发此路径。
-            debugLog('⚠️ [AutoMix] Electron 分析结果无效，回退浏览器本地检测')
-            try {
-              analysis = await this.analyzeInBrowser(input)
-            } catch (browserError) {
-              debugLog('⚠️ [AutoMix] 浏览器分析失败，使用元数据回退:', browserError)
-              isTransientFallback = true
-              analysis = metadataOnly(input, 'electron-unavailable')
-            }
-          }
-        } else if (window.electron?.analysis) {
-          debugLog('⚠️ [AutoMix] Electron 分析不可用，回退浏览器本地检测')
-          try {
-            analysis = await this.analyzeInBrowser(input)
-          } catch (browserError) {
-            debugLog('⚠️ [AutoMix] 浏览器分析失败，使用元数据回退:', browserError)
-            isTransientFallback = true
-            analysis = metadataOnly(input, 'electron-unavailable')
-          }
-        } else if (isTvModeActive()) {
-          // TV 弱机：没有独立分析进程，且浏览器整曲 decodeAudioData 在 WebView 里
-          // 是数百 MB 级开销（每次 AutoMix 过渡都会触发）。直接元数据回退，
-          // 保持 fixed-crossfade 可用，不再走渲染进程整曲解码。
-          debugLog('⚠️ [AutoMix] TV 端跳过浏览器整曲解码，使用元数据回退')
-          isTransientFallback = true
-          analysis = metadataOnly(input, 'metadata-only')
-        } else {
-          // Web 版没有独立分析进程，才使用浏览器本地检测。
-          debugLog('⚠️ [AutoMix] 使用浏览器本地节拍检测')
-          const decoded = await decodeAudioUrl(input.url, input.signal)
-          analysis = analyzeBuffer(input, decoded.buffer, decoded.format)
-        }
+        debugLog('⚠️ [AutoMix] 使用浏览器本地节拍检测')
+        analysis = await this.analyzeInBrowser(input)
       }
     } catch (error) {
       if (input.signal?.aborted) throw error
-      console.warn('⚠️ [AutoMix] 所有分析方法失败，使用保守回退方案', error)
+      console.warn('⚠️ [AutoMix] 本地分析失败，使用保守回退方案', error)
       isTransientFallback = true
-      analysis = metadataOnly(input, window.electron?.analysis ? 'electron-unavailable' : 'metadata-only')
+      analysis = metadataOnly(input, 'metadata-only')
     }
 
     // Only cache/persist genuine analyses. A transient metadata-only fallback

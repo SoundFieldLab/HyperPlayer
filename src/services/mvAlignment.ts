@@ -12,7 +12,7 @@
  *
  * 本服务为每个 (歌曲, MV) 计算一个带置信度的偏移量：
  * - 字幕对齐（快/准）：MV 的 B 站 CC 字幕行时间 ↔ 本地歌词行时间做文本匹配，取偏移中位数
- * - 节拍对齐（通用/慢）：Python beat 服务分析 MV 音频轨的节拍点，与歌曲节拍点做互相关峰值
+ * - 节拍对齐（通用/慢）：本地浏览器解码分析 MV 音频轨的节拍点，与歌曲节拍点做互相关峰值
  * - 置信度不足（现场版/翻唱/完全对不上）→ 返回 null，调用方"不操作"（自由循环播放）
  *
  * 结果按 (songKey, bvid) 持久化（localStorage），同一对只算一次。
@@ -511,7 +511,7 @@ async function detectAlignment(input: MvAlignmentInput, signal?: AbortSignal): P
     const subResult = await detectViaSubtitles(input, signal)
     if (subResult) return subResult
   }
-  // 2. 节拍对齐（通用）：Python beat 服务分析 MV 音频轨 ↔ 歌曲节拍互相关
+  // 2. 节拍对齐（通用）：本地浏览器解码分析 MV 音频轨 ↔ 歌曲节拍互相关
   return detectViaBeats(input, signal)
 }
 
@@ -818,9 +818,8 @@ async function detectViaBeats(input: MvAlignmentInput, signal?: AbortSignal): Pr
     }
     mvLog(`歌曲分析：${input.songKey} beats=${songBeats.length} 首拍=${songBeats[0].toFixed(2)}s BPM=${songAnalysis?.estimatedBpm} provider=${songAnalysis?.provider} 有rmsEnvelope=${Array.isArray(songAnalysis?.rmsEnvelope) && (songAnalysis?.rmsEnvelope?.length || 0) > 0}`)
 
-    // 2. MV 音频轨节拍：走 analyze 全链路（Python → Electron worker → 浏览器
-    //    decodeAudioData，最后者原生支持 m4a/aac——B站 DASH 音频轨是 m4s/aac，
-    //    Python/librosa 打不开，必须靠浏览器解码兜底）。
+    // 2. MV 音频轨节拍：走 analyze 本地路径（浏览器 decodeAudioData，原生支持
+    //    m4a/aac——B站 DASH 音频轨是 m4s/aac，必须靠浏览器解码）。
     //    传 bpmHint=歌曲 BPM + beatTimesHint=歌曲真实拍点：MV 与歌曲同源，直接按
     //    歌曲拍点模式在 MV onset 上滑动相关求偏移——规则网格在歌曲变速/漂移时失配
     //    （实测累积漂移可达 4s+），真实拍点模式对变速鲁棒。

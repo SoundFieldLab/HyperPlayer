@@ -7,15 +7,12 @@ import type { KeyboardEvent, ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import {
   AlertTriangle,
-  AlarmClock,
   CalendarDays,
   CloudSun,
   Droplets,
   Hourglass,
   LocateFixed,
   MapPin,
-  Pause,
-  Play,
   Wind,
   Waves,
   Activity,
@@ -36,8 +33,7 @@ import { WeatherSimpleCard } from './WeatherSimpleCard'
 import { createAppleWeatherSceneModel } from './weatherScene/weatherSceneModel'
 const WeatherDetailsModal = lazy(() => import('./WeatherDetailsModal'))
 const AppleWeatherCompactScene = lazy(() => import('./weatherScene/AppleWeatherCompactScene'))
-import DesktopTimeCenter, { formatRemaining } from './DesktopTimeCenter'
-import { useDesktopFocusTimer } from '../hooks/useDesktopFocusTimer'
+import DesktopTimeCenter from './DesktopTimeCenter'
 import { getCalendarFestivals } from '../utils/calendarFestivals'
 import { CountdownWidget, HabitsWidget, MemoWidget, NotesWidget } from './DesktopProductivityWidgets'
 import DesktopExtraWidget, { type DesktopMusicWidgetContext } from './DesktopExtraWidgets'
@@ -95,11 +91,9 @@ function WidgetShell({
   )
 }
 
-function DateTimeWidget({ cardBlurAmount, accentColor, onOverlayOpenChange, focusOnly = false, replaceTimeDuringFocus = false }: { cardBlurAmount: number; accentColor: string; onOverlayOpenChange?: (open: boolean) => void; focusOnly?: boolean; replaceTimeDuringFocus?: boolean }) {
+function DateTimeWidget({ cardBlurAmount, accentColor, onOverlayOpenChange }: { cardBlurAmount: number; accentColor: string; onOverlayOpenChange?: (open: boolean) => void }) {
   const [now, setNow] = useState(() => new Date())
   const [showTimeCenter, setShowTimeCenter] = useState(false)
-  const [timeCenterTab, setTimeCenterTab] = useState<'world' | 'focus'>('world')
-  const { timer: focusTimer, remainingMs, pause, resume, stop } = useDesktopFocusTimer()
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000)
@@ -112,19 +106,15 @@ function DateTimeWidget({ cardBlurAmount, accentColor, onOverlayOpenChange, focu
     weekday: 'long',
   }).format(now)
 
-  const focusActive = focusTimer.status === 'running' || focusTimer.status === 'paused'
-  const openTimeCenter = (tab: 'world' | 'focus') => {
-    setTimeCenterTab(tab)
+  const openTimeCenter = () => {
     onOverlayOpenChange?.(true)
     setShowTimeCenter(true)
   }
 
-  if (focusOnly && !focusActive) return null
-
   return (
     <>
       <div className="w-full space-y-2.5">
-        {!focusOnly && !(focusActive && replaceTimeDuringFocus) && <button type="button" onClick={() => openTimeCenter('world')} className="block w-full text-left outline-none transition-transform hover:scale-[1.018] focus-visible:ring-2 focus-visible:ring-white/70 active:scale-[0.99]" aria-label="打开时间、日历与世界时钟">
+        <button type="button" onClick={() => openTimeCenter()} className="block w-full text-left outline-none transition-transform hover:scale-[1.018] focus-visible:ring-2 focus-visible:ring-white/70 active:scale-[0.99]" aria-label="打开时间、日历与世界时钟">
           <WidgetShell cardBlurAmount={cardBlurAmount} accentColor={accentColor} className="px-5 py-4">
             <div>
               <div className="text-[3.35rem] font-semibold leading-none tracking-[-0.05em] tabular-nums drop-shadow-xl">
@@ -133,29 +123,10 @@ function DateTimeWidget({ cardBlurAmount, accentColor, onOverlayOpenChange, focu
               <div className="mt-3 text-sm font-medium tracking-[0.16em] text-white/65">{dateText}</div>
             </div>
           </WidgetShell>
-        </button>}
+        </button>
 
-        <AnimatePresence initial={false}>
-          {focusActive && (
-            <motion.div initial={{ opacity: 0, height: 0, y: -8 }} animate={{ opacity: 1, height: 'auto', y: 0 }} exit={{ opacity: 0, height: 0, y: -8 }} className="overflow-hidden rounded-[28px] outline-none transition-transform hover:scale-[1.018] focus-visible:ring-2 focus-visible:ring-white/70" role="button" tabIndex={0} aria-label="打开专注计时" onClick={() => openTimeCenter('focus')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openTimeCenter('focus') } }}>
-              <WidgetShell cardBlurAmount={cardBlurAmount} accentColor={accentColor} className="cursor-pointer px-4 py-3.5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-xs font-medium text-white/55"><AlarmClock className="h-3.5 w-3.5" style={{ color: accentColor }} />{focusTimer.status === 'paused' ? '专注已暂停' : '正在专注'}</div>
-                    <div className="mt-2 text-2xl font-semibold tabular-nums text-white">{formatRemaining(remainingMs)}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button type="button" onClick={event => { event.stopPropagation(); focusTimer.status === 'running' ? pause() : resume() }} aria-label={focusTimer.status === 'running' ? '暂停专注计时' : '继续专注计时'} className="flex h-10 w-10 items-center justify-center rounded-full text-slate-950" style={{ background: accentColor }}>{focusTimer.status === 'running' ? <Pause className="h-4 w-4" fill="currentColor" /> : <Play className="h-4 w-4" fill="currentColor" />}</button>
-                    <button type="button" onClick={event => { event.stopPropagation(); stop() }} aria-label="结束专注计时" className="flex h-10 w-10 items-center justify-center rounded-full border border-white/12 bg-white/5 text-white/60"><X className="h-4 w-4" /></button>
-                  </div>
-                </div>
-                <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/8"><div className="h-full rounded-full transition-[width]" style={{ width: `${Math.min(100, ((focusTimer.durationMs - remainingMs) / focusTimer.durationMs) * 100)}%`, background: accentColor }} /></div>
-              </WidgetShell>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </div>
-      <DesktopTimeCenter open={showTimeCenter} onClose={() => { setShowTimeCenter(false); onOverlayOpenChange?.(false) }} accentColor={accentColor} initialTab={timeCenterTab} />
+      <DesktopTimeCenter open={showTimeCenter} onClose={() => { setShowTimeCenter(false); onOverlayOpenChange?.(false) }} accentColor={accentColor} initialTab="world" />
     </>
   )
 }
@@ -616,15 +587,7 @@ function WeatherWidget({ settings, cardBlurAmount, accentColor, onOverlayOpenCha
 function DesktopWidgetZone({ side, settings, cardBlurAmount, accentColor, onOverlayOpenChange, layerState = 'base', musicContext }: DesktopWidgetZoneProps) {
   const widgets = useMemo(() => settings[side], [settings, side])
   const zoneRef = useRef<HTMLDivElement>(null)
-  const baseHeightRef = useRef(0)
-  const [replaceTimeDuringFocus, setReplaceTimeDuringFocus] = useState(false)
   const [scrollFades, setScrollFades] = useState({ top: false, bottom: false })
-  const { timer: focusTimer } = useDesktopFocusTimer(false)
-  const focusActive = focusTimer.status === 'running' || focusTimer.status === 'paused'
-  const hasDateTimeHere = widgets.includes('datetime')
-  const hasDateTimeAnywhere = settings.left.includes('datetime') || settings.right.includes('datetime')
-  const temporaryFocusSide: DesktopWidgetSide = settings.left.length <= settings.right.length ? 'left' : 'right'
-  const renderTemporaryFocus = focusActive && !hasDateTimeAnywhere && side === temporaryFocusSide
   const updateScrollFades = useCallback(() => {
     const zone = zoneRef.current
     if (!zone) return
@@ -634,28 +597,6 @@ function DesktopWidgetZone({ side, settings, cardBlurAmount, accentColor, onOver
     }
     setScrollFades(current => current.top === next.top && current.bottom === next.bottom ? current : next)
   }, [])
-
-  useLayoutEffect(() => {
-    const measure = () => {
-      const zone = zoneRef.current
-      if (!zone) return
-      if (!focusActive) {
-        baseHeightRef.current = zone.scrollHeight
-        setReplaceTimeDuringFocus(false)
-        return
-      }
-      if (!hasDateTimeHere) {
-        setReplaceTimeDuringFocus(false)
-        return
-      }
-      const availableHeight = window.innerHeight - zone.getBoundingClientRect().top - 24
-      const baseHeight = baseHeightRef.current || Math.max(0, zone.scrollHeight - 128)
-      setReplaceTimeDuringFocus(baseHeight + 128 > availableHeight)
-    }
-    measure()
-    window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
-  }, [focusActive, hasDateTimeHere, widgets])
 
   useLayoutEffect(() => {
     const frame = window.requestAnimationFrame(updateScrollFades)
@@ -669,10 +610,10 @@ function DesktopWidgetZone({ side, settings, cardBlurAmount, accentColor, onOver
     }
   }, [updateScrollFades, widgets])
 
-  if (widgets.length === 0 && !renderTemporaryFocus) return null
+  if (widgets.length === 0) return null
 
   const renderWidget = (widget: DesktopWidgetType) => {
-    if (widget === 'datetime') return <DateTimeWidget key={widget} cardBlurAmount={cardBlurAmount} accentColor={accentColor} onOverlayOpenChange={onOverlayOpenChange} replaceTimeDuringFocus={replaceTimeDuringFocus} />
+    if (widget === 'datetime') return <DateTimeWidget key={widget} cardBlurAmount={cardBlurAmount} accentColor={accentColor} onOverlayOpenChange={onOverlayOpenChange} />
     if (widget === 'weather') return <WeatherWidget key={widget} settings={settings} cardBlurAmount={cardBlurAmount} accentColor={accentColor} onOverlayOpenChange={onOverlayOpenChange} />
     if (widget === 'dayProgress') return <DayProgressWidget key={widget} cardBlurAmount={cardBlurAmount} accentColor={accentColor} onOverlayOpenChange={onOverlayOpenChange} />
     if (widget === 'calendar') return <CalendarWidget key={widget} cardBlurAmount={cardBlurAmount} accentColor={accentColor} onOverlayOpenChange={onOverlayOpenChange} />
@@ -695,7 +636,6 @@ function DesktopWidgetZone({ side, settings, cardBlurAmount, accentColor, onOver
         style={{ maxHeight: 'calc(100vh - 24px)', overscrollBehavior: 'contain', scrollbarWidth: 'none', msOverflowStyle: 'none' }}
       >
         {widgets.map(renderWidget)}
-        {renderTemporaryFocus && <DateTimeWidget key="temporary-focus" focusOnly cardBlurAmount={cardBlurAmount} accentColor={accentColor} onOverlayOpenChange={onOverlayOpenChange} />}
       </div>
       <AnimatePresence>
         {scrollFades.top && <motion.div aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="pointer-events-none absolute left-3 right-3 top-0 z-10 h-14" style={{ background: 'linear-gradient(to bottom, rgba(8,10,28,.29), rgba(8,10,28,.12) 42%, transparent)', maskImage: 'linear-gradient(to bottom, #000 5%, rgba(0,0,0,.72) 48%, transparent)', WebkitMaskImage: 'linear-gradient(to bottom, #000 5%, rgba(0,0,0,.72) 48%, transparent)' }} />}

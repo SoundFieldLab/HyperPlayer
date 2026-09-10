@@ -24,8 +24,6 @@ interface ImmersiveControlsProps {
   isPureMusic?: boolean // 新增：是否为纯音乐
   /** 隐藏右上角 Home 按钮（摩登模式改用自身左下角页脚的 Home，避免重复） */
   hideHome?: boolean
-  /** 人声/伴奏分离控制句柄（App 侧未提交功能预留，当前布局暂未消费） */
-  stemControl?: unknown
 }
 
 export default function ImmersiveControls({

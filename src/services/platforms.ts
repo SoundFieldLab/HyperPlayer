@@ -9,17 +9,15 @@
  * 3. 平台级工具函数（标签 / cookie / 播放载体判定）
  */
 
-export type MusicPlatform = 'netease' | 'qq' | 'apple' | 'spotify' | 'kugou' | 'soda'
+export type MusicPlatform = 'netease' | 'qq' | 'apple' | 'spotify'
 
-export const MUSIC_PLATFORMS: readonly MusicPlatform[] = ['netease', 'qq', 'apple', 'spotify', 'kugou', 'soda']
+export const MUSIC_PLATFORMS: readonly MusicPlatform[] = ['netease', 'qq', 'apple', 'spotify']
 
 export const PLATFORM_LABELS: Record<MusicPlatform, string> = {
   netease: '网易云音乐',
   qq: 'QQ音乐',
   apple: 'Apple Music',
   spotify: 'Spotify',
-  kugou: '酷狗音乐',
-  soda: '汽水音乐',
 }
 
 export interface PlatformVisualMetadata {
@@ -35,8 +33,6 @@ export const PLATFORM_VISUAL_METADATA: Record<MusicPlatform, PlatformVisualMetad
   qq: { label: 'QQ音乐', shortLabel: 'QQ', color: '#102a1d', background: '#31c27c' },
   apple: { label: 'Apple Music', shortLabel: 'AM', color: '#fff', background: '#fa2d48' },
   spotify: { label: 'Spotify', shortLabel: 'S', color: '#082515', background: '#1db954' },
-  kugou: { label: '酷狗音乐', shortLabel: '酷', color: '#fff', background: '#ff7a00' },
-  soda: { label: '汽水音乐', shortLabel: '汽', color: '#06263a', background: '#38bdf8' },
 }
 
 export function getPlatformVisualMetadata(platform: MusicPlatform): PlatformVisualMetadata {
@@ -240,91 +236,11 @@ const SPOTIFY_CAPABILITIES: PlatformCapabilities = {
   audioQuality: false,
 }
 
-const KUGOU_CAPABILITIES: PlatformCapabilities = {
-  login: true,
-  profile: true,
-  userPlaylists: true, // H5 签名网关
-  createPlaylist: false, // 创建歌单网关未接入
-  updatePlaylist: false,
-  deletePlaylist: false,
-  searchPlaylists: false,
-  sharePlaylist: false,
-  removeTracksFromPlaylist: false,
-  addTracksToPlaylist: true, // /v6/add_song
-  subscribePlaylist: false,
-  likedSongs: true, // "我喜欢"歌单
-  likeSong: true, // /v6/add_song
-  explore: true,
-  exploreSections: ['discover', 'playlists', 'charts', 'newSongs', 'albums'],
-  search: true,
-  searchSuggest: false,
-  lyrics: true,
-  comments: false,
-  dailyRecommend: true,
-  charts: true,
-  channels: false,
-  newSongs: true,
-  albums: true, // mobilecdn /api/v3/album/list + album/info + album/song
-  mv: false,
-  signin: false,
-  social: false,
-  rank: false,
-  cloudDisk: false,
-  recentPlayed: false,
-  artistDetail: true, // mobilecdn /api/v3/singer/info + singer/song
-  albumDetail: true,
-  similarSongs: true, // 同歌手热门歌曲（singer/song）+ 榜单相关探索
-  radio: false,
-  playAsCarrier: true, // H5 签名网关可原生播放（需登录）；未登录时由上层匹配播放
-  audioQuality: false,
-}
-
-const SODA_CAPABILITIES: PlatformCapabilities = {
-  login: true,
-  profile: true,
-  userPlaylists: true, // 逆向 Web API：用户歌单获取（含虚拟歌单）
-  createPlaylist: false, // 逆向接口未提供创建歌单
-  updatePlaylist: false,
-  deletePlaylist: false,
-  searchPlaylists: false,
-  sharePlaylist: false,
-  removeTracksFromPlaylist: false,
-  addTracksToPlaylist: true, // me/playlist/media/append 加歌
-  subscribePlaylist: true, // collection 收藏/取消收藏歌单
-  likedSongs: true, // "我喜欢"虚拟歌单 qishui-liked
-  likeSong: true, // collection/media 喜欢写入
-  explore: true,
-  exploreSections: ['discover', 'playlists', 'charts', 'newSongs'],
-  search: true,
-  searchSuggest: false,
-  lyrics: true,
-  comments: true, // luna/pc/comments 读取与发表
-  dailyRecommend: true, // 登录 feed 日推；未登录回退公开热歌
-  charts: true,
-  channels: false,
-  newSongs: true,
-  albums: true, // 按专辑名聚合的尽力而为实现
-  mv: false,
-  signin: false,
-  social: false,
-  rank: false,
-  cloudDisk: false,
-  recentPlayed: true, // 登录态 recent 接口
-  artistDetail: true, // 按歌手名检索热门歌曲（无独立艺人 ID）
-  albumDetail: true,
-  similarSongs: true, // 同歌手热门 + 日推组合的相关探索
-  radio: false,
-  playAsCarrier: true, // 逆向 Web API 音源（免费/试听流可播）；失败时上层降级网易云/QQ
-  audioQuality: false,
-}
-
 export const PLATFORM_CAPABILITIES: Record<MusicPlatform, PlatformCapabilities> = {
   netease: NETEASE_CAPABILITIES,
   qq: QQ_CAPABILITIES,
   apple: APPLE_CAPABILITIES,
   spotify: SPOTIFY_CAPABILITIES,
-  kugou: KUGOU_CAPABILITIES,
-  soda: SODA_CAPABILITIES,
 }
 
 export function getPlatformCapabilities(platform: MusicPlatform): PlatformCapabilities {
@@ -342,8 +258,6 @@ const PLATFORM_FAVORITE_LABELS: Record<MusicPlatform, PlatformFavoriteLabels> = 
   qq: { add: '我喜欢', remove: '从喜欢歌单中移除', collection: '我喜欢的歌曲' },
   apple: { add: '喜爱歌曲', remove: '从喜爱歌曲中移除', collection: '喜爱歌曲' },
   spotify: { add: '保存到音乐库', remove: '从音乐库中移除', collection: '音乐库歌曲' },
-  kugou: { add: '我喜欢', remove: '从喜欢歌单中移除', collection: '我喜欢' },
-  soda: { add: '我喜欢', remove: '从喜欢中移除', collection: '我喜欢' },
 }
 
 /** 收藏/资料库在各平台的用户可见名称，避免菜单各自硬编码。 */
@@ -438,7 +352,5 @@ export function getPlatformCookie(platform: MusicPlatform): string {
   }
   if (platform === 'apple') return ''
   if (platform === 'spotify') return localStorage.getItem('spotify_access_token') || ''
-  if (platform === 'kugou') return localStorage.getItem('kugou_cookie') || ''
-  if (platform === 'soda') return localStorage.getItem('soda_token') || ''
   return localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
 }

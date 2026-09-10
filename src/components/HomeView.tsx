@@ -10,7 +10,7 @@ import type { MusicPlatform } from '../services/platforms'
 import { getVisiblePlatforms, PLATFORM_VISIBILITY_EVENT, PLATFORM_ORDER_EVENT } from '../services/platforms'
 import PlaylistDetailPanel from './PlaylistDetailPanel'
 import ModeSelectionPanel, { MODE_SELECTION_CLOSE_MS, MODE_SELECTION_PANEL_HEIGHT } from './ModeSelectionPanel'
-import { getCachedUserPlaylists, getPlaylistDetail, getUserPlaylists, streamNeteasePlaylistTracks } from '../services/playlistService'
+import { getCachedUserPlaylists, getUserPlaylists, streamNeteasePlaylistTracks } from '../services/playlistService'
 import { getAppleLibraryPlaylists, enrichApplePlaylistTrackCounts, getAppleFavoriteSongs, getAppleRecentPlayed, getApplePlaylistTracks, getAppleCatalogPlaylistTracks, getAppleLibrarySongs, appleSongToSong, appleLibraryTrackToSong, createApplePlaylist, deleteApplePlaylist, updateApplePlaylist, removeAppleTracksFromPlaylist, getLastAppleMutationResult, APPLE_FAVORITES_ID, APPLE_LIBRARY_ID } from '../services/appleCatalog'
 import CachedImage from './CachedImage'
 import { imageCache } from '../utils/imageCache'
@@ -59,25 +59,15 @@ interface HomeViewProps {
   spotifyUsername?: string
   spotifyAvatar?: string
   spotifyUserId?: string
-  kugouLoggedIn?: boolean
-  kugouUsername?: string
-  kugouAvatar?: string
-  kugouUserId?: string
-  sodaLoggedIn?: boolean
-  sodaUsername?: string
-  sodaAvatar?: string
-  sodaUserId?: string
   onSpotifyLogout?: () => void
-  onKugouLogout?: () => void
-  onSodaLogout?: () => void
   onNeteaseLoginClick: () => void
   onQQLoginClick: () => void
-  /** 通用登录入口（新平台：Spotify/酷狗/汽水） */
+  /** 通用登录入口（新平台：Spotify） */
   onLoginClick?: (platform: MusicPlatform) => void
   onProfileClick: (platform: MusicPlatform, initialTab?: 'created' | 'subscribed' | 'detail' | 'recent') => void
   onSearchClick: () => void
   onRemoteClick: () => void
-  /** 播放设备控制（音频输出设备 / AirPlay 投送）弹窗 */
+  /** 播放设备控制（音频输出设备）弹窗 */
   onOpenDeviceControl: () => void
   onSettingsClick: () => void
   onOpenArtist?: (artistId: string, platform: MusicPlatform) => void
@@ -201,7 +191,7 @@ interface HomeModuleIdentity {
 
 /**
  * 首页模块会话缓存的归属键：按模块自身平台显式查表解析登录态与用户 ID。
- * 根因修复：此前除 netease 外的一切模块（含汽水/Spotify/酷狗/Apple）都窜到 QQ 分支，
+ * 根因修复：此前除 netease 外的一切模块（含 Spotify/Apple）都窜到 QQ 分支，
  * 导致 QQ 登录/登出误使这些平台的缓存翻新、而其自身登录变化反而不影响 key。
  */
 const getHomeModuleSessionKey = (
@@ -247,17 +237,7 @@ function HomeView({
   spotifyUsername = '',
   spotifyAvatar,
   spotifyUserId = '',
-  kugouLoggedIn = false,
-  kugouUsername = '',
-  kugouAvatar,
-  kugouUserId = '',
-  sodaLoggedIn = false,
-  sodaUsername = '',
-  sodaAvatar,
-  sodaUserId = '',
   onSpotifyLogout,
-  onKugouLogout,
-  onSodaLogout,
   onNeteaseLoginClick,
   onQQLoginClick,
   onLoginClick,
@@ -413,30 +393,14 @@ function HomeView({
     return saved ? sanitizeHomeModules(saved, 'apple') : getDefaultHomeModules('apple', appleLoggedIn || false)
   })
 
-  // Spotify / 酷狗 / 汽水：暂无平台专属模块，state 保持空数组（首页主卡区自动降级）
+  // Spotify：暂无平台专属模块时 state 保持空数组（首页主卡区自动降级）
   const [spotifyModules] = useState<HomeModuleType[]>(() => {
     const saved = localStorage.getItem('homeModules_spotify')
     return saved ? sanitizeHomeModules(saved, 'spotify') : getDefaultHomeModules('spotify', false)
   })
-  const [kugouModules] = useState<HomeModuleType[]>(() => {
-    const saved = localStorage.getItem('homeModules_kugou')
-    return saved ? sanitizeHomeModules(saved, 'kugou') : getDefaultHomeModules('kugou', false)
-  })
-  const [sodaModules] = useState<HomeModuleType[]>(() => {
-    const saved = localStorage.getItem('homeModules_soda')
-    return saved ? sanitizeHomeModules(saved, 'soda') : getDefaultHomeModules('soda', false)
-  })
   const [currentSpotifyIndex] = useState(0)
-  const [currentKugouIndex] = useState(0)
   // 单模块平台的占位 setter：Tab 映射统一引用，平台未来加模块时无需再改
   const setCurrentSpotifyIndex = (v: number) => { void v }
-  const setCurrentKugouIndex = (v: number) => { void v }
-  const [currentSodaIndex, setCurrentSodaIndex] = useState(() => {
-    const saved = localStorage.getItem('homeModuleIndex_soda')
-    const savedIndex = saved ? parseInt(saved, 10) : 0
-    const modules = sanitizeHomeModules(localStorage.getItem('homeModules_soda'), 'soda')
-    return savedIndex < modules.length ? savedIndex : 0
-  })
   
   // 恢复上次选择的卡片索引（会话级别，重启后重置为0）
   const [currentNeteaseIndex, setCurrentNeteaseIndex] = useState(() => {
@@ -466,13 +430,9 @@ function HomeView({
       ? qqModules[currentQQIndex]
       : platform === 'apple'
         ? appleModules[currentAppleIndex]
-        : platform === 'spotify'
-          ? spotifyModules[currentSpotifyIndex]
-          : platform === 'kugou'
-            ? kugouModules[currentKugouIndex]
-            : sodaModules[currentSodaIndex]
+        : spotifyModules[currentSpotifyIndex]
   // 当前平台生效的首页模块（简约模式主卡循环）
-  const activeModules = platform === 'netease' ? neteaseModules : platform === 'qq' ? qqModules : platform === 'apple' ? appleModules : platform === 'spotify' ? spotifyModules : platform === 'kugou' ? kugouModules : sodaModules
+  const activeModules = platform === 'netease' ? neteaseModules : platform === 'qq' ? qqModules : platform === 'apple' ? appleModules : spotifyModules
   // 各平台登录身份：模块会话缓存按 HOME_MODULE_BY_ID[moduleId].platform 取对应平台身份，
   // Apple 模块为 storefront 级内容（无账号维度），固定匿名归属
   const homeModuleIdentities: Partial<Record<MusicPlatform, HomeModuleIdentity>> = {
@@ -480,8 +440,6 @@ function HomeView({
     qq: { loggedIn: qqLoggedIn, userId: qqUserId },
     apple: { loggedIn: false },
     spotify: { loggedIn: spotifyLoggedIn, userId: spotifyUserId },
-    kugou: { loggedIn: kugouLoggedIn, userId: kugouUserId },
-    soda: { loggedIn: sodaLoggedIn, userId: sodaUserId },
   }
   const initialModuleSnapshot = initialModuleId
     ? getHomeModuleSessionSnapshot(getHomeModuleSessionKey(initialModuleId, homeModuleIdentities))
@@ -525,7 +483,7 @@ function HomeView({
   const remoteCursorMode = useRemoteCursorMode()
   // TV 遥控器（无鼠标）：药丸变成单个可聚焦单元，左右键循环切换平台；PC/光标模式仍走拖拽
   const pillTvAdjust = tvMode && !remoteCursorMode
-  const platformLabel = { netease: '网易云', qq: 'QQ音乐', apple: 'Apple', spotify: 'Spotify', kugou: '酷狗', soda: '汽水' } as Record<MusicPlatform, string>
+  const platformLabel = { netease: '网易云', qq: 'QQ音乐', apple: 'Apple', spotify: 'Spotify' } as Record<MusicPlatform, string>
   const cyclePlatform = (dir: 1 | -1) => {
     setPlatform(prev => {
       const idx = Math.max(0, visiblePlatforms.indexOf(prev))
@@ -651,10 +609,6 @@ function HomeView({
   useEffect(() => {
     localStorage.setItem('homeModuleIndex_qq', currentQQIndex.toString())
   }, [currentQQIndex])
-
-  useEffect(() => {
-    localStorage.setItem('homeModuleIndex_soda', currentSodaIndex.toString())
-  }, [currentSodaIndex])
 
   useEffect(() => {
     if (moduleLoading) {
@@ -820,20 +774,6 @@ function HomeView({
         const firstSong = songs[0]
         if (firstSong) {
           void getSongUrl(firstSong.platform === 'qq' ? (firstSong.mid || firstSong.id) : firstSong.id, firstSong.platform || 'netease').catch(() => null)
-        }
-        return songs
-      }
-
-      // 汽水：统一详情（分页全量），此前会误入 QQ 分支导致悬停播放/预取失败
-      if (playlistPlatform === 'soda') {
-        const sodaData = await getPlaylistDetail(String(playlist.id || ''), 'soda')
-        const songs = Array.isArray(sodaData?.tracks) ? sodaData.tracks : []
-        if (songs.length > 0) {
-          setPlaylistPlaybackCache(cacheKey, songs)
-        }
-        const firstSong = songs[0]
-        if (firstSong) {
-          void getSongUrl(firstSong.mid || firstSong.id, 'soda').catch(() => null)
         }
         return songs
       }
@@ -1026,46 +966,6 @@ function HomeView({
           : tracks.map(track => appleLibraryTrackToSong(track as Parameters<typeof appleLibraryTrackToSong>[0]))
         setSelectedPlaylist({ ...playlist, platform: 'apple', trackCount: songs.length })
         setPlaylistSongs(songs)
-        return
-      }
-
-      // 汽水：经 playlistService 统一详情（分页合并全量曲目，支持 qishui-liked 等虚拟歌单 id）。
-      // 此前缺失该分支时，汽水歌单点击后不发起任何请求，详情面板永远为空列表。
-      if (playlistPlatform === 'soda') {
-        const data = await getPlaylistDetail(String(playlist.id || ''), 'soda')
-        if (!isCurrentRequest()) return
-        const detailed = {
-          ...playlist,
-          ...data?.playlist,
-          name: data?.playlist?.name || playlist.name,
-          coverImgUrl: data?.playlist?.coverImgUrl || playlist.coverImgUrl,
-          trackCount: data?.playlist?.trackCount || playlist.trackCount,
-          platform: 'soda',
-          isLike: playlist.isLike,
-          isCollected: playlist.isCollected,
-        }
-        setSelectedPlaylist(detailed)
-        setPlaylistSongs(Array.isArray(data?.tracks) ? data.tracks : [])
-        return
-      }
-
-      // 酷狗：经 playlistService 统一详情（公开详情失败回退用户歌单曲目接口）。
-      // 此前缺失该分支时，酷狗歌单（含「我喜欢」）点击后不发起任何请求，详情面板永远为空列表。
-      if (playlistPlatform === 'kugou') {
-        const data = await getPlaylistDetail(String(playlist.id || ''), 'kugou')
-        if (!isCurrentRequest()) return
-        const detailed = {
-          ...playlist,
-          ...data?.playlist,
-          name: data?.playlist?.name || playlist.name,
-          coverImgUrl: data?.playlist?.coverImgUrl || playlist.coverImgUrl,
-          trackCount: data?.playlist?.trackCount || playlist.trackCount,
-          platform: 'kugou',
-          isLike: playlist.isLike,
-          isCollected: playlist.isCollected,
-        }
-        setSelectedPlaylist(detailed)
-        setPlaylistSongs(Array.isArray(data?.tracks) ? data.tracks : [])
         return
       }
 
@@ -1359,16 +1259,13 @@ function HomeView({
     showPlaylistToast('歌单链接已复制', 'success')
   }
 
-  // 按平台显式解析「歌单归属用户 id」：汽水等新平台不复用网易/QQ 身份（否则 owner 校验会
+  // 按平台显式解析「歌单归属用户 id」：新平台不复用网易/QQ 身份（否则 owner 校验会
   // 被别的平台 userId 误命中/静默 no-op），无对应身份的平台返回空串，绝不兜底窜台。
-  // 汽水以 localStorage['soda_user_id'] 为归属键（sodaUserId prop 为 App 会话快照，兜底一致）。
   const getPlaylistOwnerUserId = (plat: MusicPlatform): string => {
     switch (plat) {
       case 'netease': return neteaseUserId || ''
       case 'qq': return qqUserId || ''
       case 'spotify': return spotifyUserId || ''
-      case 'kugou': return kugouUserId || ''
-      case 'soda': return sodaUserId || (() => { try { return localStorage.getItem('soda_user_id') || '' } catch { return '' } })()
       default: return ''
     }
   }
@@ -1398,7 +1295,7 @@ function HomeView({
       }
       return
     }
-    // 归属校验按当前平台显式取自有 userId（此前 else 窜到 neteaseUserId，汽水/spotify/kugou 必然静默 no-op）
+    // 归属校验按当前平台显式取自有 userId（此前 else 窜到 neteaseUserId，spotify 必然静默 no-op）
     const userId = getPlaylistOwnerUserId(platform)
     if (
       !selectedPlaylist ||
@@ -1467,14 +1364,13 @@ function HomeView({
         if (showFeedback) showPlaylistToast('歌单列表已刷新', 'success')
         return
       }
-      // 归属身份按平台显式解析（此前 else 落到 qqUserId：QQ 未登录时汽水歌单刷新被静默短路，
-      // QQ 登录时又会把汽水缓存键错挂在 QQ 身份上）
+      // 归属身份按平台显式解析（此前 else 落到 qqUserId，导致缓存键错挂身份）
       const currentUserId = getPlaylistOwnerUserId(platform)
       if (!currentUserId) return
       const playlists = await getUserPlaylists(
         platform,
         currentUserId,
-        platform === 'netease' ? neteaseUsername : platform === 'qq' ? qqUsername : platform === 'soda' ? (sodaUsername || '') : '',
+        platform === 'netease' ? neteaseUsername : platform === 'qq' ? qqUsername : '',
         { forceRefresh: true }
       )
       if (loadId !== playlistLoadIdRef.current) return
@@ -1648,12 +1544,12 @@ function HomeView({
   ) => {
     const definition = HOME_MODULE_BY_ID[moduleId]
     const modulePlatform = definition.platform
-    const loggedIn = modulePlatform === 'netease' ? neteaseLoggedIn : modulePlatform === 'qq' ? qqLoggedIn : modulePlatform === 'apple' ? (appleLoggedIn || false) : modulePlatform === 'spotify' ? (spotifyLoggedIn || false) : modulePlatform === 'kugou' ? (kugouLoggedIn || false) : (sodaLoggedIn || false)
+    const loggedIn = modulePlatform === 'netease' ? neteaseLoggedIn : modulePlatform === 'qq' ? qqLoggedIn : modulePlatform === 'apple' ? (appleLoggedIn || false) : (spotifyLoggedIn || false)
 
     if (definition.loginRequired && !loggedIn) {
       setModuleSongs([])
       setModulePlaylists([])
-      setModuleError(`登录${modulePlatform === 'netease' ? '网易云音乐' : modulePlatform === 'qq' ? 'QQ 音乐' : modulePlatform === 'apple' ? 'Apple Music' : modulePlatform === 'spotify' ? 'Spotify' : modulePlatform === 'kugou' ? '酷狗音乐' : '汽水音乐（抖音）'}后即可加载${definition.name}`)
+      setModuleError(`登录${modulePlatform === 'netease' ? '网易云音乐' : modulePlatform === 'qq' ? 'QQ 音乐' : modulePlatform === 'apple' ? 'Apple Music' : 'Spotify'}后即可加载${definition.name}`)
       return
     }
 
@@ -1731,11 +1627,9 @@ function HomeView({
       case 'netease_rising_songs':
       case 'qq_hot_songs':
       case 'qq_rising_songs':
-      case 'kugou_hot_songs':
-      case 'soda_hot_songs':
       case 'spotify_hot_songs': {
         const rising = moduleId.endsWith('rising_songs')
-        const pattern = rising ? /飙升|上升/ : /热歌|TOP500|流行指数|热门|抖音/
+        const pattern = rising ? /飙升|上升/ : /热歌|TOP500|流行指数|热门/
         const chart = payload.charts.find(item => pattern.test(item.name)) || payload.charts[rising ? 1 : 0]
         if (chart) {
           songs = (await fetchExploreChart(chart, signal)).songs
@@ -1743,12 +1637,9 @@ function HomeView({
         }
         break
       }
-      case 'kugou_new_songs':
-      case 'soda_new_songs':
       case 'spotify_new_songs':
         songs = payload.newSongs.length > 0 ? payload.newSongs : payload.dailySongs
         break
-      case 'kugou_playlists':
       case 'spotify_playlists':
         playlists = payload.playlists
         break
@@ -1800,10 +1691,6 @@ function HomeView({
         await loadModuleData(appleModules[currentAppleIndex], abortController.signal, shouldForceRefresh)
       } else if (platform === 'spotify' && spotifyModules.length > 0) {
         await loadModuleData(spotifyModules[currentSpotifyIndex], abortController.signal, shouldForceRefresh)
-      } else if (platform === 'kugou' && kugouModules.length > 0) {
-        await loadModuleData(kugouModules[currentKugouIndex], abortController.signal, shouldForceRefresh)
-      } else if (platform === 'soda' && sodaModules.length > 0) {
-        await loadModuleData(sodaModules[currentSodaIndex], abortController.signal, shouldForceRefresh)
       }
     }
     
@@ -1819,23 +1706,17 @@ function HomeView({
     currentQQIndex,
     currentAppleIndex,
     currentSpotifyIndex,
-    currentKugouIndex,
-    currentSodaIndex,
     forceReload,
     neteaseLoggedIn,
     qqLoggedIn,
     appleLoggedIn,
     spotifyLoggedIn,
-    kugouLoggedIn,
-    sodaLoggedIn,
     neteaseUserId,
     qqUserId,
     neteaseModules,
     qqModules,
     appleModules,
     spotifyModules,
-    kugouModules,
-    sodaModules,
     authRevision
   ])
 
@@ -1920,8 +1801,8 @@ function HomeView({
 
 
   const loadUserPlaylists = async (forceRefresh = false) => {
-    const loggedIn = platform === 'netease' ? neteaseLoggedIn : platform === 'qq' ? qqLoggedIn : platform === 'apple' ? (appleLoggedIn || false) : platform === 'spotify' ? (spotifyLoggedIn || false) : platform === 'kugou' ? (kugouLoggedIn || false) : (sodaLoggedIn || false)
-    const currentUserId = platform === 'netease' ? neteaseUserId : platform === 'qq' ? qqUserId : platform === 'spotify' ? (spotifyUserId || '') : platform === 'kugou' ? (kugouUserId || '') : platform === 'soda' ? (sodaUserId || '') : ''
+    const loggedIn = platform === 'netease' ? neteaseLoggedIn : platform === 'qq' ? qqLoggedIn : platform === 'apple' ? (appleLoggedIn || false) : (spotifyLoggedIn || false)
+    const currentUserId = platform === 'netease' ? neteaseUserId : platform === 'qq' ? qqUserId : (spotifyUserId || '')
     const currentUsername = platform === 'netease' ? neteaseUsername : qqUsername
 
     if (!loggedIn) {
@@ -2024,7 +1905,7 @@ function HomeView({
   const currentHomeModule = currentHomeModuleId ? HOME_MODULE_BY_ID[currentHomeModuleId] : undefined
   const currentHomeModuleNeedsLogin = Boolean(
     currentHomeModule?.loginRequired && (
-      platform === 'netease' ? !neteaseLoggedIn : platform === 'qq' ? !qqLoggedIn : platform === 'apple' ? !(appleLoggedIn || false) : platform === 'spotify' ? !(spotifyLoggedIn || false) : platform === 'kugou' ? !(kugouLoggedIn || false) : !(sodaLoggedIn || false)
+      platform === 'netease' ? !neteaseLoggedIn : platform === 'qq' ? !qqLoggedIn : platform === 'apple' ? !(appleLoggedIn || false) : !(spotifyLoggedIn || false)
     )
   )
 
@@ -2035,11 +1916,7 @@ function HomeView({
         ? qqModules[currentQQIndex]
         : platform === 'apple'
           ? appleModules[currentAppleIndex]
-          : platform === 'spotify'
-            ? spotifyModules[currentSpotifyIndex]
-            : platform === 'kugou'
-              ? kugouModules[currentKugouIndex]
-              : sodaModules[currentSodaIndex]
+          : spotifyModules[currentSpotifyIndex]
     if (!currentModule) return
 
     // 取消上一次刷新的在途请求，避免旧响应覆盖新内容
@@ -2070,10 +1947,10 @@ function HomeView({
     }
   }
 
-  const isLoggedIn = platform === 'netease' ? neteaseLoggedIn : platform === 'qq' ? qqLoggedIn : platform === 'apple' ? (appleLoggedIn || false) : platform === 'spotify' ? (spotifyLoggedIn || false) : platform === 'kugou' ? (kugouLoggedIn || false) : (sodaLoggedIn || false)
-  const username = platform === 'netease' ? neteaseUsername : platform === 'qq' ? qqUsername : platform === 'apple' ? (appleUsername || '') : platform === 'spotify' ? (spotifyUsername || '') : platform === 'kugou' ? (kugouUsername || '') : (sodaUsername || '')
-  const avatar = platform === 'netease' ? neteaseAvatar : platform === 'qq' ? qqAvatar : platform === 'apple' ? appleAvatar : platform === 'spotify' ? spotifyAvatar : platform === 'kugou' ? kugouAvatar : sodaAvatar
-  const userId = platform === 'netease' ? neteaseUserId : platform === 'qq' ? qqUserId : platform === 'kugou' ? (kugouUserId || '') : platform === 'spotify' ? (spotifyUserId || '') : platform === 'soda' ? (sodaUserId || '') : ''
+  const isLoggedIn = platform === 'netease' ? neteaseLoggedIn : platform === 'qq' ? qqLoggedIn : platform === 'apple' ? (appleLoggedIn || false) : (spotifyLoggedIn || false)
+  const username = platform === 'netease' ? neteaseUsername : platform === 'qq' ? qqUsername : platform === 'apple' ? (appleUsername || '') : (spotifyUsername || '')
+  const avatar = platform === 'netease' ? neteaseAvatar : platform === 'qq' ? qqAvatar : platform === 'apple' ? appleAvatar : spotifyAvatar
+  const userId = platform === 'netease' ? neteaseUserId : platform === 'qq' ? qqUserId : (spotifyUserId || '')
   const isVip = platform === 'netease' ? neteaseVip : platform === 'qq' ? qqVip : false
 
   // 平台登录入口：netease/qq 走原有点击回调，新平台走通用 onLoginClick（打开对应登录面板）
@@ -2084,8 +1961,8 @@ function HomeView({
     onLoginClick?.(platform)
   }
   // 平台登录按钮文案/配色
-  const platformLoginLabel = platform === 'netease' ? '网易云登录' : platform === 'qq' ? 'QQ音乐登录' : platform === 'apple' ? 'Apple Music 登录' : platform === 'spotify' ? 'Spotify 登录' : platform === 'kugou' ? '酷狗音乐登录' : '汽水音乐登录'
-  const platformLoginColor = platform === 'netease' ? 'bg-red-600 hover:bg-red-700' : platform === 'qq' ? 'bg-green-600 hover:bg-green-700' : platform === 'apple' ? 'bg-pink-600 hover:bg-pink-700' : platform === 'spotify' ? 'bg-[#1DB954] hover:bg-[#17a74b]' : platform === 'kugou' ? 'bg-orange-500 hover:bg-orange-600' : 'bg-sky-500 hover:bg-sky-600'
+  const platformLoginLabel = platform === 'netease' ? '网易云登录' : platform === 'qq' ? 'QQ音乐登录' : platform === 'apple' ? 'Apple Music 登录' : 'Spotify 登录'
+  const platformLoginColor = platform === 'netease' ? 'bg-red-600 hover:bg-red-700' : platform === 'qq' ? 'bg-green-600 hover:bg-green-700' : platform === 'apple' ? 'bg-pink-600 hover:bg-pink-700' : 'bg-[#1DB954] hover:bg-[#17a74b]'
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -2096,34 +1973,9 @@ function HomeView({
     const controller = new AbortController()
     const loadSummary = async () => {
       try {
-        // 新三平台中 Spotify/酷狗无最近播放汇总，置空展示；汽水走本地只读聚合路由填充
-        if (platform === 'spotify' || platform === 'kugou') {
+        // Spotify：无最近播放汇总，置空展示
+        if (platform === 'spotify') {
           setRecentPlaybackSummary({ covers: [], count: 0 })
-          return
-        }
-        // 汽水：/api/soda/recent 复用后端账号库聚合缓存（recently-played-media），
-        // 返回 mapSodaMedia 映射歌曲（id/name/artist/album/coverUrl/durationMs...），不新造字段
-        if (platform === 'soda') {
-          const sdCookie = localStorage.getItem('soda_token') || ''
-          if (!sdCookie) {
-            setRecentPlaybackSummary({ covers: [], count: 0 })
-            return
-          }
-          const query = new URLSearchParams({ limit: '50', cookie: sdCookie })
-          const response = await fetch(`http://localhost:3001/api/soda/recent?${query.toString()}`, {
-            cache: 'no-store',
-            signal: controller.signal,
-          })
-          const payload = await response.json().catch(() => null)
-          if (!response.ok || payload?.error) throw new Error(payload?.error || 'recent playback unavailable')
-          if (!payload?.loggedIn) {
-            setRecentPlaybackSummary({ covers: [], count: 0 })
-            return
-          }
-          const rows = Array.isArray(payload?.songs) ? payload.songs : []
-          // 汇总位仅取封面四宫格 + 条数，song 字段无需完整 Song 结构
-          const covers = rows.map((row: any) => String(row?.coverUrl || '')).filter(Boolean).slice(0, 4)
-          setRecentPlaybackSummary({ covers, count: rows.length })
           return
         }
         // Apple：最近播放走 amp-api（需登录 token）
@@ -2495,8 +2347,8 @@ function HomeView({
               {activeModules.map((moduleId, index) => {
                 const moduleInfo = HOME_MODULE_BY_ID[moduleId]
                 
-                const currentIndex = platform === 'netease' ? currentNeteaseIndex : platform === 'qq' ? currentQQIndex : platform === 'apple' ? currentAppleIndex : platform === 'spotify' ? currentSpotifyIndex : platform === 'kugou' ? currentKugouIndex : currentSodaIndex
-                const setCurrentIndex = platform === 'netease' ? setCurrentNeteaseIndex : platform === 'qq' ? setCurrentQQIndex : platform === 'apple' ? setCurrentAppleIndex : platform === 'spotify' ? setCurrentSpotifyIndex : platform === 'kugou' ? setCurrentKugouIndex : setCurrentSodaIndex
+                const currentIndex = platform === 'netease' ? currentNeteaseIndex : platform === 'qq' ? currentQQIndex : platform === 'apple' ? currentAppleIndex : currentSpotifyIndex
+                const setCurrentIndex = platform === 'netease' ? setCurrentNeteaseIndex : platform === 'qq' ? setCurrentQQIndex : platform === 'apple' ? setCurrentAppleIndex : setCurrentSpotifyIndex
                 
                 return (
                   <button
@@ -2999,8 +2851,8 @@ function HomeView({
                 {...(pillTvAdjust ? { 'data-tv-skip': '' } : {})}
               >
                 {visiblePlatforms.map(key => {
-                  const dotColor = key === 'netease' ? 'bg-red-500' : key === 'qq' ? 'bg-green-500' : key === 'apple' ? 'bg-pink-500' : key === 'spotify' ? 'bg-[#1DB954]' : key === 'kugou' ? 'bg-orange-500' : 'bg-sky-500'
-                  const label = key === 'netease' ? '网易云' : key === 'qq' ? 'QQ音乐' : key === 'apple' ? 'Apple' : key === 'spotify' ? 'Spotify' : key === 'kugou' ? '酷狗' : '汽水'
+                  const dotColor = key === 'netease' ? 'bg-red-500' : key === 'qq' ? 'bg-green-500' : key === 'apple' ? 'bg-pink-500' : 'bg-[#1DB954]'
+                  const label = key === 'netease' ? '网易云' : key === 'qq' ? 'QQ音乐' : key === 'apple' ? 'Apple' : 'Spotify'
                   const active = platform === key
                   return (
                     <motion.button
@@ -3028,8 +2880,8 @@ function HomeView({
             <div className={`mt-2 text-center text-[10px] tracking-wide transition-opacity duration-1000 ${switcherHintVisible ? 'opacity-100' : 'opacity-0'} ${playerTheme === 'dark' ? 'text-white/25' : 'text-black/25'}`}>{pillTvAdjust ? '左右键切换平台' : '左右拖动切换平台'}</div>
           </div>
 
-          {/* 已播歌曲汇总卡：网易/QQ/Apple 原生记录 + 汽水（/api/soda/recent 聚合），酷狗/Spotify 无数据不展示 */}
-          {isLoggedIn && (platform === 'netease' || platform === 'qq' || platform === 'apple' || platform === 'soda') && (
+          {/* 已播歌曲汇总卡：网易/QQ/Apple 原生记录，Spotify 无数据不展示 */}
+          {isLoggedIn && (platform === 'netease' || platform === 'qq' || platform === 'apple') && (
             <div className="px-6 pt-5">
               <motion.button
                 type="button"
@@ -3107,9 +2959,7 @@ function HomeView({
                     {platform === 'netease' ? '网易云ID'
                       : platform === 'qq' ? 'QQ号'
                       : platform === 'apple' ? 'AppleID'
-                      : platform === 'kugou' ? '酷狗ID'
-                      : platform === 'spotify' ? 'Spotify ID'
-                      : '抖音ID'}: {platform === 'apple' ? appleEmail : userId}
+                      : 'Spotify ID'}: {platform === 'apple' ? appleEmail : userId}
                   </p>
                 )}
 
@@ -3156,7 +3006,7 @@ function HomeView({
 
 
                   <button
-                    onClick={platform === 'netease' ? onNeteaseLogout : platform === 'qq' ? onQQLogout : platform === 'apple' ? (onAppleLogout || (() => {})) : platform === 'spotify' ? (onSpotifyLogout || (() => {})) : platform === 'kugou' ? (onKugouLogout || (() => {})) : (onSodaLogout || (() => {}))}
+                    onClick={platform === 'netease' ? onNeteaseLogout : platform === 'qq' ? onQQLogout : platform === 'apple' ? (onAppleLogout || (() => {})) : (onSpotifyLogout || (() => {}))}
                     className={`w-full px-6 py-3 rounded-full font-medium transition-all flex items-center justify-center gap-2 ${playerTheme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-black/10 hover:bg-black/15 text-black/80'}`}
                   >
                     <LogOut className="w-4 h-4" />
@@ -3358,10 +3208,8 @@ function HomeView({
         onViewArtist={(song) => {
           const songPlatform = song.platform || platform
           const artist = song.artists?.[0]
-          // 汽水无艺人 ID，约定传歌手名
-          const artistId = songPlatform === 'soda' ? (artist?.name || artist?.id)
-            : songPlatform === 'qq' ? (artist?.mid || artist?.id)
-              : songPlatform === 'apple' ? (artist?.appleId || artist?.id) : artist?.id
+          const artistId = songPlatform === 'qq' ? (artist?.mid || artist?.id)
+            : songPlatform === 'apple' ? (artist?.appleId || artist?.id) : artist?.id
           if (onOpenArtist && artistId) onOpenArtist(String(artistId), songPlatform)
           setContextMenuVisible(false)
         }}

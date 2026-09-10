@@ -10,16 +10,6 @@ import {
 /** 对数频谱段数（45Hz~12kHz 按对数均分），供频谱可视化按频段取能。 */
 export const ANALYZER_SPECTRUM_BANDS = 24
 
-/** 单声道（左/右）频段能量：供 DG-LAB 立体声 A/B 映射使用。 */
-export interface ChannelBands {
-  bass: number
-  mid: number
-  high: number
-  overall: number
-}
-
-const EMPTY_CHANNEL: ChannelBands = Object.freeze({ bass: 0, mid: 0, high: 0, overall: 0 })
-
 export interface AudioAnalyzerData {
   bass: number
   mid: number
@@ -30,10 +20,6 @@ export interface AudioAnalyzerData {
   flux: number
   /** 24 段对数频谱（低→高，对数压缩到 0..1）。分析器未启用时为全零。 */
   spectrum: Float32Array
-  /** 左声道频段能量（音效后最终听感信号；无 L/R 分析器时为全零）。 */
-  left: ChannelBands
-  /** 右声道频段能量。 */
-  right: ChannelBands
 }
 
 export interface AudioAnalyzerStore {
@@ -47,8 +33,6 @@ export interface AudioAnalyzerStore {
 const EMPTY_ANALYSIS: AudioAnalyzerData = Object.freeze({
   bass: 0, mid: 0, high: 0, overall: 0, beat: 0, accent: 0, flux: 0,
   spectrum: new Float32Array(ANALYZER_SPECTRUM_BANDS),
-  left: EMPTY_CHANNEL,
-  right: EMPTY_CHANNEL,
 })
 const clamp = (value: number) => Math.min(1, Math.max(0, value))
 const logCompress = (value: number, amount = 6) => Math.log1p(amount * clamp(value)) / Math.log1p(amount)
@@ -121,8 +105,10 @@ function createAnalyzerStore(): AudioAnalyzerStore & {
 export function useAudioAnalyzer(
   analyser: AnalyserNode | null,
   enabled = true,
-  leftAnalyser?: AnalyserNode | null,
-  rightAnalyser?: AnalyserNode | null,
+  // leftAnalyser/rightAnalyser 参数保留仅为兼容既有按位置传参的调用方（App.tsx）；
+  // 左右声道分析（DG-LAB 立体声映射）已随唯一消费者移除，参数被忽略。
+  _leftAnalyser?: AnalyserNode | null,
+  _rightAnalyser?: AnalyserNode | null,
   external?: ExternalAnalyzerSource,
 ): AudioAnalyzerStore {
   const storeRef = useRef<ReturnType<typeof createAnalyzerStore> | null>(null)
@@ -221,24 +207,15 @@ export function useAudioAnalyzer(
           const smoothed = applyTimedAttackRelease(smoothedSpectrum, spectrum, deltaMs, 48, 210)
           smoothedSpectrum.set(smoothed)
 
-          // loopback 为混音单声道：L/R 用同一份能量（DG-LAB 立体声映射退化为同相）
-          const mono: ChannelBands = {
+          store.publish({
             bass: logCompress(rawBass * 1.14),
             mid: logCompress(rawMid * 1.08),
             high: logCompress(rawHigh * 1.12),
             overall: logCompress(rawOverall * 1.1),
-          }
-          store.publish({
-            bass: mono.bass,
-            mid: mono.mid,
-            high: mono.high,
-            overall: mono.overall,
             beat: beatPulse,
             accent: beatPulse * 0.85,
             flux: logCompress(rawFlux * 12, 4),
             spectrum: smoothed,
-            left: mono,
-            right: mono,
           })
         }
         if (shouldRunAudioAnalyzer(document.visibilityState, store.hasListeners(), store.hasBackgroundConsumers())) {
@@ -273,8 +250,6 @@ export function useAudioAnalyzer(
     }
 
     const data = new Uint8Array(analyser.frequencyBinCount)
-    const leftData = leftAnalyser ? new Uint8Array(leftAnalyser.frequencyBinCount) : null
-    const rightData = rightAnalyser ? new Uint8Array(rightAnalyser.frequencyBinCount) : null
     const updateInterval = 1000 / 30
     let animationFrame = 0
     let lastUpdateTime = 0
@@ -318,36 +293,6 @@ export function useAudioAnalyzer(
       }
       const count = Math.max(1, end - start)
       return (sum / count) * 0.42 + Math.sqrt(squares / count) * 0.43 + peak * 0.15
-    }
-
-    /** DG-LAB 左右声道频段能量（音效后最终听感信号）。 */
-    const measureChannel = (node: AnalyserNode, buf: Uint8Array): ChannelBands => {
-      const nyquist = node.context.sampleRate / 2
-      const band = (f0: number, f1: number) => {
-        const start = Math.max(1, Math.floor(f0 / nyquist * buf.length))
-        const end = Math.min(buf.length, Math.max(start + 1, Math.ceil(f1 / nyquist * buf.length)))
-        let sum = 0
-        let squares = 0
-        let peak = 0
-        for (let i = start; i < end; i += 1) {
-          const v = buf[i] / 255
-          sum += v
-          squares += v * v
-          if (v > peak) peak = v
-        }
-        const count = Math.max(1, end - start)
-        return (sum / count) * 0.42 + Math.sqrt(squares / count) * 0.43 + peak * 0.15
-      }
-      const bass = band(45, 190)
-      const mid = band(190, 2600)
-      const high = band(2600, 12000)
-      const overall = bass * 0.38 + mid * 0.42 + high * 0.2
-      return {
-        bass: logCompress(bass * 1.14),
-        mid: logCompress(mid * 1.08),
-        high: logCompress(high * 1.12),
-        overall: logCompress(overall * 1.1),
-      }
     }
 
     const analyze = (now: number) => {
@@ -432,16 +377,6 @@ export function useAudioAnalyzer(
         previousOverall = rawOverall
         analyzedFrames += 1
 
-        // DG-LAB 左右声道频段能量（音效后最终听感信号；无 L/R 分析器时保持全零）
-        let chLeft: ChannelBands = EMPTY_CHANNEL
-        let chRight: ChannelBands = EMPTY_CHANNEL
-        if (leftData && rightData && leftAnalyser && rightAnalyser) {
-          leftAnalyser.getByteFrequencyData(leftData)
-          rightAnalyser.getByteFrequencyData(rightData)
-          chLeft = measureChannel(leftAnalyser, leftData)
-          chRight = measureChannel(rightAnalyser, rightData)
-        }
-
         store.publish({
           bass: logCompress(rawBass * 1.14),
           mid: logCompress(rawMid * 1.08),
@@ -451,8 +386,6 @@ export function useAudioAnalyzer(
           accent: accentPulse,
           flux: logCompress(fluxOnset * 12, 4),
           spectrum: smoothed,
-          left: chLeft,
-          right: chRight,
         })
       }
       // 仅在有订阅者且窗口可见时续帧（无消费者 = 无脉冲组件挂载，如桌面模式/首页）
@@ -483,7 +416,7 @@ export function useAudioAnalyzer(
       store.setStartCallback(null)
       if (store.getSnapshot() !== EMPTY_ANALYSIS) store.publish(EMPTY_ANALYSIS)
     }
-  }, [analyser, enabled, leftAnalyser, rightAnalyser, external?.active])
+  }, [analyser, enabled, external?.active])
 
   return storeRef.current
 }

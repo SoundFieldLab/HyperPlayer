@@ -7,9 +7,7 @@ import { isPerfModeEnhanced } from '../tv/perfMode'
 import GlobalToast from './GlobalToast'
 
 // 新平台登录面板（组件外声明，避免条件内 lazy 造成重挂载）
-const KugouLoginPanel = lazy(() => import('./KugouLoginPanel').then(m => ({ default: m.default })))
 const SpotifyLoginPanel = lazy(() => import('./SpotifyLoginPanel').then(m => ({ default: m.default })))
-const SodaLoginPanel = lazy(() => import('./SodaLoginPanel').then(m => ({ default: m.default })))
 
 interface LoginViewProps {
   platform: MusicPlatform
@@ -282,25 +280,11 @@ export default function LoginView({ platform, onCancel, onLoginSuccess }: LoginV
     }
   }
 
-  // 新三平台（Spotify/酷狗/汽水）：复用各自登录面板（简化登录）
-  if (platform === 'kugou' || platform === 'spotify' || platform === 'soda') {
-    if (platform === 'kugou') {
-      return (
-        <Suspense fallback={null}>
-          <KugouLoginPanel onClose={onCancel} onLoginSuccess={(cookie: string) => onLoginSuccess(cookie)} />
-        </Suspense>
-      )
-    }
-    if (platform === 'spotify') {
-      return (
-        <Suspense fallback={null}>
-          <SpotifyLoginPanel onClose={onCancel} onLoginSuccess={(username?: string) => onLoginSuccess('spotify-logged', username)} />
-        </Suspense>
-      )
-    }
+  // Spotify：复用其登录面板（简化登录）
+  if (platform === 'spotify') {
     return (
       <Suspense fallback={null}>
-        <SodaLoginPanel onClose={onCancel} onLoginSuccess={(token: string, username?: string) => onLoginSuccess(token, username)} />
+        <SpotifyLoginPanel onClose={onCancel} onLoginSuccess={(username?: string) => onLoginSuccess('spotify-logged', username)} />
       </Suspense>
     )
   }

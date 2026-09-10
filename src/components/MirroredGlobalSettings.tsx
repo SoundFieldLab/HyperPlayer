@@ -394,7 +394,7 @@ export function MirroredGlobalSettings({ skin, variant, groupId, onOpenModal, cl
   const handleAction = useCallback((entry: GlobalSettingEntry) => {
     const actionId = entry.control.kind === 'action' ? entry.control.actionId : null
     if (!actionId) return
-    if (actionId === 'audio-quality' || actionId === 'cache-clear' || actionId === 'remote-settings') {
+    if (actionId === 'audio-quality' || actionId === 'cache-clear') {
       onOpenModal?.(actionId)
       return
     }
@@ -522,8 +522,6 @@ const PLATFORM_ICONS: Partial<Record<MusicPlatform, { src: string; fallback: str
   qq: { src: 'https://y.qq.com/favicon.ico', fallback: 'QQ', bg: '#31c27c' },
   apple: { src: 'https://www.apple.com/favicon.ico', fallback: '苹', bg: '#fa2d48' },
   spotify: { src: '', fallback: 'S', bg: '#1DB954' },
-  kugou: { src: '', fallback: 'K', bg: '#FF7A00' },
-  soda: { src: '', fallback: '汽', bg: '#38BDF8' },
 }
 
 export function PlatformOrderEditor({ skin, className }: { skin: MirrorSkin; className?: string }) {

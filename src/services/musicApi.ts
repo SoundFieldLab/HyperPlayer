@@ -216,8 +216,6 @@ export function isSameSong(a: Song | null | undefined, b: Song | null | undefine
 export function getLocalAlbumIdentifier(song: Song, platform: MusicPlatform): string | null {
   const raw = song as any
   const album = raw.album || raw.al || {}
-  // 汽水：无专辑 ID 体系，约定用「专辑名」作标识（艺人/专辑弹窗按名查询）
-  if (platform === 'soda') return album.name ? String(album.name) : null
   const id = platform === 'qq'
     ? (album.mid || raw.albummid || album.pmid || album.id || raw.albumid)
     : (album.id || raw.albumid || raw.al?.id)
@@ -238,8 +236,6 @@ export async function resolveSongAlbumIdentifier(song: Song, platform: MusicPlat
       return null
     }
   }
-  // 汽水：直接返回专辑名标识，不向网易云/QQ 查询详情
-  if (platform === 'soda') return getLocalAlbumIdentifier(song, 'soda')
   const localId = getLocalAlbumIdentifier(song, platform)
   if (localId) return localId
 
@@ -424,23 +420,11 @@ export async function searchSongs(keywords: string, limit = 30, platform: MusicP
       const songs = await searchAppleSongsAsSongs(keywords, storefront, limit)
       return { songs, songCount: songs.length }
     }
-    // 酷狗：前端直连搜索接口（kugouService）
-    if (platform === 'kugou') {
-      const { searchKugouSongs, kugouTrackToSong } = await import('./kugouService')
-      const tracks = await searchKugouSongs(keywords, limit)
-      return { songs: tracks.map(kugouTrackToSong), songCount: tracks.length }
-    }
     // Spotify：前端直连官方 API
     if (platform === 'spotify') {
       const { searchSpotifySongs, spotifyTrackToSong } = await import('./spotifyService')
       const tracks = await searchSpotifySongs(keywords, limit)
       return { songs: tracks.map(spotifyTrackToSong), songCount: tracks.length }
-    }
-    // 汽水音乐：走逆向 Web API 搜索（后端 /api/soda/search，签名在服务端完成）
-    if (platform === 'soda') {
-      const { searchSodaSongs } = await import('./sodaService')
-      const songs = await searchSodaSongs(keywords, limit)
-      return { songs, songCount: songs.length }
     }
     const endpoint = platform === 'qq' ? '/qq/search' : '/netease/search'
     const response = await fetch(`${API_BASE}${endpoint}?keywords=${encodeURIComponent(keywords)}&limit=${limit}&devMode=${devMode}`)
@@ -505,8 +489,6 @@ export async function searchSongs(keywords: string, limit = 30, platform: MusicP
 // 搜索建议
 export async function searchSuggest(keywords: string, platform: MusicPlatform = 'netease'): Promise<SearchSuggestion[]> {
   try {
-    // 汽水：逆向接口无搜索建议端点，返回空（避免误用网易云建议造成串台）
-    if (platform === 'soda') return []
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/suggest?keywords=${encodeURIComponent(keywords)}`)
       const data = await response.json()
@@ -598,8 +580,6 @@ export async function searchArtists(keywords: string, platform: MusicPlatform = 
         platform: 'spotify' as const,
       }))
     }
-    // 酷狗/汽水：暂不支持独立艺人搜索
-    if (platform === 'kugou' || platform === 'soda') return []
     const devMode = localStorage.getItem('developerMode') === 'true'
     if (platform === 'qq') {
       const url = `${API_BASE}/qq/search?keywords=${encodeURIComponent(keywords)}&type=singer&devMode=${devMode}`
@@ -688,8 +668,6 @@ export async function searchAlbums(keywords: string, platform: MusicPlatform = '
         platform: 'spotify' as const,
       }))
     }
-    // 酷狗/汽水：暂不支持独立专辑搜索
-    if (platform === 'kugou' || platform === 'soda') return []
     const devMode = localStorage.getItem('developerMode') === 'true'
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/search?keywords=${encodeURIComponent(keywords)}&type=album&devMode=${devMode}`)
@@ -754,22 +732,6 @@ export async function getSongUrl(id: number | string, platform: MusicPlatform = 
         const { preference, isVip } = getAudioQualityRequest('qq')
         apiUrl = `${API_BASE}/qq/song/url?mid=${encodeURIComponent(String(id))}&quality=${encodeURIComponent(preference)}&vip=${isVip ? 'true' : 'false'}${cookie ? '&cookie=' + encodeURIComponent(cookie) : ''}`
         readUrl = data => data.url || null
-      } else if (platform === 'kugou') {
-        // 酷狗：签名网关四层策略（H5→Mobile→Web），付费歌曲返回 null → 上层降级网易云/QQ
-        const kgCookie = localStorage.getItem('kugou_cookie') || ''
-        apiUrl = `${API_BASE}/kugou/song/url?hash=${encodeURIComponent(String(id))}${kgCookie ? `&cookie=${encodeURIComponent(kgCookie)}` : ''}`
-        readUrl = data => data.url || null
-      } else if (platform === 'soda') {
-        // 汽水音乐：逆向 Web API 音源（VIP/SVIP 分层过滤在服务端完成；
-        // 未登录或无可用流时 url 为空 → 返回 null 走上层网易云/QQ 降级匹配）
-        const { preference } = getAudioQualityRequest('soda')
-        apiUrl = `${API_BASE}/soda/song/url?id=${encodeURIComponent(String(id))}&quality=${encodeURIComponent(preference)}${
-          (() => {
-            const sdCookie = localStorage.getItem('soda_token') || ''
-            return sdCookie ? '&cookie=' + encodeURIComponent(sdCookie) : ''
-          })()
-        }`
-        readUrl = data => data.url || null
       } else if (platform === 'spotify') {
         // Spotify：未登录无自源音源，返回 null → 上层降级网易云/QQ
         return null
@@ -821,41 +783,6 @@ export async function getSongUrl(id: number | string, platform: MusicPlatform = 
     if (songUrlPending.get(cacheKey) === request) {
       songUrlPending.delete(cacheKey)
     }
-  }
-}
-
-/**
- * 汽水播放地址详情（结构化不可播原因）：
- * 与 getSongUrl 汽水分支同口径（音质偏好 + soda_token cookie 一致），替代裸调直取 URL，
- * 不可播时带回顶层 requiredTier/vipLabel/reason（/api/soda/song/url playable:false 时的结构化原因），
- * 供上层换源提示文案使用；请求失败统一降级为 { url: null }，不向调用方抛错。
- */
-export async function getSodaPlaybackInfo(id: number | string): Promise<{
-  url: string | null
-  requiredTier?: 'free' | 'vip' | 'svip'
-  vipLabel?: string
-  reason?: string
-}> {
-  if (!String(id).trim()) return { url: null }
-  const { preference } = getAudioQualityRequest('soda')
-  const query = new URLSearchParams({ id: String(id), quality: preference })
-  const sdCookie = localStorage.getItem('soda_token') || ''
-  if (sdCookie) query.set('cookie', sdCookie)
-  try {
-    const response = await fetchSongUrlResponse(`${API_BASE}/soda/song/url?${query.toString()}`)
-    // 401 = 登录态缺失（sodaRequireLogin）：按后端约定的 login_required 原因口径回传；其余失败不带 reason
-    if (!response.ok) {
-      return { url: null, reason: response.status === 401 ? 'login_required' : undefined }
-    }
-    const data: any = await response.json().catch(() => ({}))
-    return {
-      url: data?.url ? String(data.url) : null,
-      requiredTier: data?.requiredTier,
-      vipLabel: data?.vipLabel ? String(data.vipLabel) : undefined,
-      reason: data?.reason ? String(data.reason) : undefined,
-    }
-  } catch {
-    return { url: null }
   }
 }
 
@@ -1355,11 +1282,10 @@ export async function getLyrics(
     
     // 默认策略：流式加载 - 先显示基础歌词，再逐步增强
     type LyricsSourceResult = { source: string; lyrics: LyricLine[]; hasWW: boolean; hasTrans: boolean; hasRom: boolean }
-    const platformSourceName = platform === 'qq' ? 'QQ音乐' : isApplePlatform ? 'Apple Music' : platform === 'spotify' ? 'Spotify' : platform === 'kugou' ? '酷狗' : platform === 'soda' ? '汽水' : '网易云'
+    const platformSourceName = platform === 'qq' ? 'QQ音乐' : isApplePlatform ? 'Apple Music' : platform === 'spotify' ? 'Spotify' : '网易云'
     
     // 平台互斥：QQ音乐歌曲不请求网易云API，网易云歌曲不请求QQ音乐API。
-    // Apple 曲目不请求网易云/QQ 平台源；Spotify 无官方歌词接口（酷狗登录时除外；
-    // 汽水已接入逆向歌词管线，走 getPlatformLyrics 内部含网易云同名匹配兜底）。
+    // Apple/Spotify 曲目不请求网易云/QQ 平台源。
     const platformSourcePromise = isApplePlatform
       ? Promise.resolve([])
       : platform === 'spotify'
@@ -1674,45 +1600,6 @@ export async function getLyrics(
 // 获取平台原生歌词（内部函数）
 async function getPlatformLyrics(id: number | string, platform: MusicPlatform, songName?: string, artistName?: string): Promise<LyricLine[]> {
   try {
-    if (platform === 'kugou') {
-      // 酷狗：krcs 歌词接口（无需登录；失败走 Lrclib/AMLL 兜底）
-      const url = new URL(`${API_BASE}/kugou/lyric`)
-      url.searchParams.set('hash', String(id))
-      const response = await fetch(url.toString(), { signal: AbortSignal.timeout(5000) })
-      if (!response.ok) return []
-      const data = await response.json()
-      const lyricText = data.lyric || ''
-      if (!lyricText) return []
-      return parseLyric(lyricText)
-    }
-    if (platform === 'soda') {
-      // 汽水：逆向歌词管线（SEO → track_v2 → 公开目录）；getSodaLyrics 已随原文对齐挂载汽水自带翻译（tlyric）
-      const { getSodaLyrics } = await import('./sodaService')
-      const lines = await getSodaLyrics(String(id))
-      if (lines.length) return lines
-      // 汽水曲库缺词（纯音乐/翻唱常见）→ 网易云同名匹配兜底，保证"自动拉歌词"体验；
-      // 命中时参考网易云主路径把 tlyric 翻译一并合并，避免兜底歌词丢翻译。
-      const keyword = [songName, artistName].filter(Boolean).join(' ').trim()
-      if (keyword) {
-        try {
-          const res = await searchSongs(keyword, 5, 'netease')
-          const target = res.songs && res.songs[0]
-          if (target && target.id) {
-            const resp = await fetch(`${API_BASE}/netease/lyric?id=${encodeURIComponent(String(target.id))}`, { signal: AbortSignal.timeout(8000) })
-            if (resp.ok) {
-              const data = await resp.json().catch(() => null)
-              const lrc = String(data?.lrc?.lyric || data?.lyric || '')
-              if (lrc.includes('[')) {
-                const lyrics = parseLyric(lrc)
-                const translations = parseLyric(String(data?.tlyric?.lyric || ''))
-                return mergeLyricsWithTranslationAndRoman(lyrics, translations)
-              }
-            }
-          }
-        } catch { /* 匹配失败静默 */ }
-      }
-      return []
-    }
     if (platform === 'qq') {
       const qqCookie = localStorage.getItem('qq_cookie') || ''
       const url = new URL(`${API_BASE}/qq/lyric`)
@@ -1967,8 +1854,8 @@ async function fetchFirstValidAMLL(endpoints: AMLLEndpoint[]): Promise<{ lyrics:
 // 获取真正的 TTML，而不是仓库生成的普通 LRC；逐字、翻译和罗马音来自同一文档。
 async function getAMLLTTMLLyrics(id: number | string, platform: MusicPlatform): Promise<LyricLine[]> {
   const startTime = Date.now()
-  // Spotify/汽水：曲目 ID 与 AMLL 库（网易云/QQ 目录）不兼容，直接返回空避免无效请求
-  if (platform === 'spotify' || platform === 'soda') return []
+  // Spotify：曲目 ID 与 AMLL 库（网易云/QQ 目录）不兼容，直接返回空避免无效请求
+  if (platform === 'spotify') return []
   const folder = platform === 'qq' ? 'qq-lyrics' : 'ncm-lyrics'
   const encodedId = encodeURIComponent(String(id))
   const primaryEndpoints: AMLLEndpoint[] = [
@@ -2141,35 +2028,6 @@ export async function getArtistDetail(id: number | string, platform: MusicPlatfo
         platform: 'spotify' as const,
       }
     }
-    // 酷狗：mobilecdn 歌手详情（singer/info）
-    if (platform === 'kugou') {
-      const { fetchKugouSingerDetail } = await import('./kugouService')
-      const singer = await fetchKugouSingerDetail(String(id))
-      if (!singer) return null
-      return {
-        id: Number(parseInt(String(singer.singerid).slice(0, 12), 10)) || 0,
-        mid: singer.singerid,
-        name: singer.singername,
-        picUrl: singer.imgurl || '',
-        albumSize: undefined,
-        musicSize: singer.songcount,
-        description: singer.intro,
-        platform: 'kugou' as const,
-      }
-    }
-    // 汽水：没有独立艺人实体，使用歌手名作为稳定标识。
-    if (platform === 'soda') {
-      const { fetchSodaArtistSongs } = await import('./sodaService')
-      const songs = await fetchSodaArtistSongs(String(id), 1)
-      return {
-        id: 0,
-        mid: String(id),
-        name: songs[0]?.artists?.[0]?.name || String(id),
-        picUrl: songs[0]?.album?.picUrl || '',
-        musicSize: undefined,
-        platform: 'soda',
-      }
-    }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/artist?mid=${id}`)
       const data = await response.json()
@@ -2240,16 +2098,6 @@ export async function getArtistTopSongs(id: number | string, platform: MusicPlat
       const { fetchSpotifyArtistTopTracks, spotifyTrackToSong } = await import('./spotifyService')
       const tracks = await fetchSpotifyArtistTopTracks(String(id), 'CN', 20)
       return tracks.map(spotifyTrackToSong)
-    }
-    // 酷狗：mobilecdn 歌手热门歌曲（singer/song）
-    if (platform === 'kugou') {
-      const { fetchKugouSingerSongs, kugouTrackToSong } = await import('./kugouService')
-      const tracks = await fetchKugouSingerSongs(String(id), 1, 50)
-      return tracks.map(kugouTrackToSong)
-    }
-    if (platform === 'soda') {
-      const { fetchSodaArtistSongs } = await import('./sodaService')
-      return fetchSodaArtistSongs(String(id), 50)
     }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/artist/songs?mid=${id}`)
@@ -2345,27 +2193,6 @@ export async function getAlbumDetail(id: number | string, platform: MusicPlatfor
         platform: 'spotify' as const,
       }
     }
-    // 酷狗：mobilecdn 专辑详情（album/info）
-    if (platform === 'kugou') {
-      const { fetchKugouAlbumDetail, kugouAlbumToAlbum } = await import('./kugouService')
-      const detail = await fetchKugouAlbumDetail(String(id))
-      return detail ? kugouAlbumToAlbum(detail.album) : null
-    }
-    // 汽水：按名称/数字 ID 聚合专辑信息。
-    if (platform === 'soda') {
-      const { fetchSodaAlbumTracks } = await import('./sodaService')
-      const detail = await fetchSodaAlbumTracks(String(id))
-      if (!detail.album.name && detail.tracks.length === 0) return null
-      return {
-        id: Number(detail.album.id) || 0,
-        mid: detail.album.id || String(id),
-        name: detail.album.name || String(id),
-        picUrl: detail.album.coverUrl || detail.tracks[0]?.album?.picUrl || '',
-        artist: { name: detail.tracks[0]?.artists?.[0]?.name || '' },
-        size: detail.tracks.length,
-        platform: 'soda',
-      }
-    }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/album?mid=${id}`)
       const data = await response.json()
@@ -2427,10 +2254,6 @@ export async function getAlbumSongs(id: number | string, platform: MusicPlatform
       const detail = await fetchSpotifyAlbum(String(id))
       return (detail?.songs || []).map(spotifyTrackToSong)
     }
-    if (platform === 'soda') {
-      const { fetchSodaAlbumTracks } = await import('./sodaService')
-      return (await fetchSodaAlbumTracks(String(id))).tracks
-    }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/album?mid=${id}`)
       const data = await response.json()
@@ -2449,12 +2272,6 @@ export async function getAlbumSongs(id: number | string, platform: MusicPlatform
         platform: 'qq' as const,
         vip: item.pay?.payplay === 1
       }))
-    }
-    // 酷狗：mobilecdn 专辑歌曲（album/song）
-    if (platform === 'kugou') {
-      const { fetchKugouAlbumDetail, kugouTrackToSong } = await import('./kugouService')
-      const detail = await fetchKugouAlbumDetail(String(id))
-      return detail ? detail.songs.map(kugouTrackToSong) : []
     }
     
     const response = await fetch(`${API_BASE}/netease/album?id=${id}`)
@@ -2496,11 +2313,6 @@ export async function getArtistAllSongs(id: number | string, platform: MusicPlat
       const songs = tracks.map(spotifyTrackToSong)
       return { songs: songs.slice(offset, offset + limit), total: songs.length }
     }
-    if (platform === 'soda') {
-      const { fetchSodaArtistSongs } = await import('./sodaService')
-      const songs = await fetchSodaArtistSongs(String(id), Math.max(offset + limit, limit))
-      return { songs: songs.slice(offset, offset + limit), total: songs.length }
-    }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/artist/songs?mid=${id}&limit=${limit}&offset=${offset}`)
       const data = await response.json()
@@ -2523,21 +2335,6 @@ export async function getArtistAllSongs(id: number | string, platform: MusicPlat
         songs,
         total: data.total || 0
       }
-    }
-    // 酷狗：mobilecdn 歌手全部歌曲（singer/song 分页，单页 50）
-    if (platform === 'kugou') {
-      const { fetchKugouSingerSongs, kugouTrackToSong } = await import('./kugouService')
-      const all: Song[] = []
-      const pageSize = 50
-      const startPage = Math.floor(offset / pageSize) + 1
-      const pagesToFetch = Math.max(1, Math.ceil(limit / pageSize))
-      for (let p = startPage; p < startPage + pagesToFetch; p += 1) {
-        const tracks = await fetchKugouSingerSongs(String(id), p, pageSize)
-        if (tracks.length === 0) break
-        all.push(...tracks.map(kugouTrackToSong))
-        if (tracks.length < pageSize) break
-      }
-      return { songs: all, total: all.length }
     }
     
     // 网易云暂时不支持分页，返回热门歌曲
@@ -2587,14 +2384,6 @@ export async function getArtistAlbums(id: number | string, platform: MusicPlatfo
         }
       })
     }
-    // 酷狗：mobilecdn 歌手专辑（singer/album）
-    if (platform === 'kugou') {
-      const { fetchKugouSingerAlbums, kugouAlbumToAlbum } = await import('./kugouService')
-      const albums = await fetchKugouSingerAlbums(String(id), 1, Math.min(Math.max(limit, 20), 200))
-      return albums.map(kugouAlbumToAlbum)
-    }
-    // 汽水：暂不支持艺人专辑
-    if (platform === 'soda') return []
     if (platform === 'qq') {
       const page = Math.floor(offset / limit) + 1
       const response = await fetch(`${API_BASE}/qq/artist/albums?mid=${id}&page=${page}&pageSize=${limit}`)
@@ -3249,7 +3038,6 @@ export interface PlaylistSearchResult {
 /** 搜索歌单；所有平台返回统一结构，不支持的平台显式标记。 */
 export async function searchPlaylists(keywords: string, platform: MusicPlatform = 'netease', limit: number = 20): Promise<PlaylistSearchResult> {
   try {
-    if (platform === 'kugou' || platform === 'soda') return { playlists: [], unsupported: true }
     if (platform === 'spotify') {
       const { searchSpotifyPlaylists } = await import('./spotifyService')
       const playlists = await searchSpotifyPlaylists(keywords, limit)

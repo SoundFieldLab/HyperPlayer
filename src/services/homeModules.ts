@@ -17,11 +17,6 @@ export type HomeModuleType =
   | 'apple_hot_songs'
   | 'apple_new_songs'
   | 'apple_playlists'
-  | 'kugou_hot_songs'
-  | 'kugou_new_songs'
-  | 'kugou_playlists'
-  | 'soda_hot_songs'
-  | 'soda_new_songs'
   | 'spotify_hot_songs'
   | 'spotify_new_songs'
   | 'spotify_playlists'
@@ -56,11 +51,6 @@ export const HOME_MODULES: HomeModuleDefinition[] = [
   { id: 'apple_hot_songs', name: '热歌榜', description: 'Apple Music 各地区热门歌曲', platform: 'apple', type: 'song-list' },
   { id: 'apple_new_songs', name: '最新音乐', description: 'Apple Music 热门新歌', platform: 'apple', type: 'song-list' },
   { id: 'apple_playlists', name: '推荐歌单', description: 'Apple 编辑精选与热门歌单', platform: 'apple', type: 'playlist-grid' },
-  { id: 'kugou_hot_songs', name: '热歌榜', description: '酷狗 TOP500 实时榜单', platform: 'kugou', type: 'song-list' },
-  { id: 'kugou_new_songs', name: '新歌榜', description: '酷狗近期新歌', platform: 'kugou', type: 'song-list' },
-  { id: 'kugou_playlists', name: '推荐歌单', description: '酷狗热门歌单', platform: 'kugou', type: 'playlist-grid' },
-  { id: 'soda_hot_songs', name: '抖音热歌', description: '抖音热门音乐', platform: 'soda', type: 'song-list' },
-  { id: 'soda_new_songs', name: '抖音新歌', description: '抖音近期热门新歌', platform: 'soda', type: 'song-list' },
   { id: 'spotify_hot_songs', name: 'Spotify 热歌', description: 'Spotify 当前热门歌曲', platform: 'spotify', type: 'song-list', loginRequired: true },
   { id: 'spotify_new_songs', name: 'Spotify 新发行', description: 'Spotify 最新发行', platform: 'spotify', type: 'song-list', loginRequired: true },
   { id: 'spotify_playlists', name: 'Spotify 歌单', description: 'Spotify 编辑精选歌单', platform: 'spotify', type: 'playlist-grid', loginRequired: true },
@@ -98,17 +88,11 @@ export const getDefaultHomeModules = (platform: MusicPlatform, loggedIn: boolean
   if (platform === 'apple') {
     return ['apple_hot_songs', 'apple_new_songs', 'apple_playlists']
   }
-  // 新三平台：未登录也能看到平台公开热门内容（Spotify 需登录，显示登录引导）
+  // 未登录也能看到平台公开热门内容（Spotify 需登录，显示登录引导）
   if (platform === 'spotify') {
     return loggedIn
       ? ['spotify_new_songs', 'spotify_hot_songs', 'spotify_playlists']
       : ['spotify_hot_songs', 'spotify_new_songs']
-  }
-  if (platform === 'kugou') {
-    return ['kugou_hot_songs', 'kugou_new_songs', 'kugou_playlists']
-  }
-  if (platform === 'soda') {
-    return ['soda_hot_songs', 'soda_new_songs']
   }
   return loggedIn
     ? ['qq_guess_you_like', 'qq_daily_30', 'qq_playlists']

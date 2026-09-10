@@ -1,16 +1,14 @@
 /**
  * 插件系统全局挂载层：在 App 中只渲染一次。
- * - 导入内置 DG_LAB 插件（模块副作用注册）；
- * - 按宿主状态渲染：使用须知 / 插件中心 / 详情 / 导入 / DG_LAB 控制台；
+ * - 导入内置插件（模块副作用注册）；
+ * - 按宿主状态渲染：使用须知 / 插件中心 / 详情 / 导入 / Chroma / SignalRGB 控制台；
  * - 启动「启用状态 → 生命周期回调」桥接（导入插件的 onEnable/onDisable）。
  */
 
 import { useEffect } from 'react'
-import '../plugins/DGLabPlugin'
 import '../plugins/ChromaPlugin'
 import '../plugins/SignalRgbPlugin'
 import { getAllPluginManifests, getPluginRuntime, buildPluginContext } from '../plugins/registry'
-import { getGlobalAudioAnalyzerStore } from '../plugins/clients/DGLabClient'
 import {
   resolveNotice,
   usePluginHostState,
@@ -22,11 +20,8 @@ import PluginNoticeModal from './PluginNoticeModal'
 import PluginCenterModal from './PluginCenterModal'
 import PluginDetailModal from './PluginDetailModal'
 import PluginImportModal from './PluginImportModal'
-import DGLabConsoleModal from './DGLabConsoleModal'
 import ChromaConsoleModal from './ChromaConsoleModal'
 import SignalRgbConsoleModal from './SignalRgbConsoleModal'
-import DGLabWidget from './DGLabWidget'
-import DglabSystemCaptureBridge from './DglabSystemCaptureBridge'
 
 // 启用状态 → 生命周期桥接：监听 wf_plugins 变更，按需调用 onEnable/onDisable
 function useRuntimeBridge() {
@@ -34,14 +29,6 @@ function useRuntimeBridge() {
     const previous = new Map<string, boolean>()
     const generations = new Map<string, number>()
     const queues = new Map<string, Promise<void>>()
-    const subscriptions = new Map<string, Set<() => void>>()
-    const releaseSubscriptions = (pluginId: string) => {
-      const releases = subscriptions.get(pluginId)
-      subscriptions.delete(pluginId)
-      for (const release of releases ?? []) {
-        try { release() } catch { /* 插件退订失败不阻塞其余清理 */ }
-      }
-    }
     const enqueue = (pluginId: string, task: () => void | Promise<void>) => {
       const previousTask = queues.get(pluginId) ?? Promise.resolve()
       const nextTask = previousTask.catch(() => undefined).then(task).catch(error => {
@@ -61,22 +48,9 @@ function useRuntimeBridge() {
         generations.set(manifest.id, generation)
         const context = buildPluginContext({
           audio: {
-            subscribe: (listener) => {
-              const store = getGlobalAudioAnalyzerStore()
-              if (!store) return () => undefined
-              const release = store.subscribe(() => listener(store.getSnapshot()))
-              const releases = subscriptions.get(manifest.id) ?? new Set<() => void>()
-              subscriptions.set(manifest.id, releases)
-              let released = false
-              const trackedRelease = () => {
-                if (released) return
-                released = true
-                releases.delete(trackedRelease)
-                release()
-              }
-              releases.add(trackedRelease)
-              return trackedRelease
-            },
+            // Renderer 侧不再持有全局分析器单例（随音频插件各自管理）；
+            // 导入插件默认拿不到实时帧，订阅退化为空实现。
+            subscribe: () => () => undefined,
           },
           storage: {
             get: (key) => localStorage.getItem(key),
@@ -90,11 +64,9 @@ function useRuntimeBridge() {
         enqueue(manifest.id, async () => {
           if (generations.get(manifest.id) !== generation) return
           if (enabled) {
-            releaseSubscriptions(manifest.id)
             await runtime.onEnable?.(context)
           } else {
             await runtime.onDisable?.()
-            releaseSubscriptions(manifest.id)
           }
         })
       }
@@ -110,7 +82,7 @@ function useRuntimeBridge() {
         const generation = (generations.get(manifest.id) ?? 0) + 1
         generations.set(manifest.id, generation)
         enqueue(manifest.id, async () => {
-          try { await runtime.onDisable?.() } finally { releaseSubscriptions(manifest.id) }
+          try { await runtime.onDisable?.() } catch { /* 插件卸载失败不阻塞其余清理 */ }
         })
       }
       previous.clear()
@@ -133,16 +105,11 @@ export default function PluginOverlay() {
       <PluginCenterModal />
       <PluginDetailModal />
       <PluginImportModal />
-      <DGLabConsoleModal />
       <ChromaConsoleModal />
       <SignalRgbConsoleModal
         open={host.activeConsolePluginId === 'signalrgb'}
         onClose={() => closePluginConsole('signalrgb')}
       />
-      {/* 常驻悬浮小组件（自管理显示条件：插件启用 + 常驻开关） */}
-      <DGLabWidget />
-      {/* 整机监听全局桥（监听系统扬声器；失败自动回退 + 监听中浮标） */}
-      <DglabSystemCaptureBridge />
     </>
   )
 }

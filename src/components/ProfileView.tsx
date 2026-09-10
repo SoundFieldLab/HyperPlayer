@@ -13,7 +13,6 @@ import DeletePlaylistModal from './DeletePlaylistModal'
 import {
   createPlaylist,
   deletePlaylist,
-  getPlaylistDetail,
   getUserPlaylists,
   removeSongFromPlaylist,
   subscribePlaylist,
@@ -101,14 +100,12 @@ type ProfileTab = 'created' | 'subscribed' | 'detail' | 'recent' | 'social' | 'r
 type RecentPlaybackType = 'song' | 'playlist' | 'album' | 'dj' | 'voice'
 
 // 平台切换轮转顺序（与 App.tsx 的已登录平台轮换一致；仅用于按钮文案/配色）
-const PLATFORM_SWITCH_ORDER: MusicPlatform[] = ['netease', 'qq', 'apple', 'spotify', 'kugou', 'soda']
+const PLATFORM_SWITCH_ORDER: MusicPlatform[] = ['netease', 'qq', 'apple', 'spotify']
 const SWITCH_PLATFORM_COLORS: Record<MusicPlatform, string> = {
   netease: 'bg-green-600 hover:bg-green-700 text-white',
   qq: 'bg-red-600 hover:bg-red-700 text-white',
   apple: 'bg-pink-600 hover:bg-pink-700 text-white',
   spotify: 'bg-[#1DB954] hover:bg-[#1ED760] text-white',
-  kugou: 'bg-blue-600 hover:bg-blue-700 text-white',
-  soda: 'bg-purple-600 hover:bg-purple-700 text-white',
 }
 
 const formatCount = (value?: number) => {
@@ -136,36 +133,6 @@ interface RecentPlaybackItem {
   song?: Song
   playlist?: Playlist
   albumId?: string
-}
-
-/**
- * 汽水曲目（后端 mapSodaMedia 产出）→ WaveForge Song。
- * 与 sodaService.mapSodaSongToSong 同口径：platform 固定 'soda'，mid 保留原始 id 字符串，
- * Song.id 用 Number(mid.slice(0,15))||0 截断生成（汽水 id 超出 JS 安全整数精度）；
- * 本组件直接消费 /api/soda/recent 的原始 JSON，避免为此改动 service 层公共映射。
- */
-const sodaMediaToSong = (raw: any): Song | undefined => {
-  const mid = String(raw?.id ?? '')
-  if (!mid) return undefined
-  const tier = raw?.requiredTier
-  const vip = Boolean(raw?.vip || tier === 'vip' || tier === 'svip')
-  const rawArtists = Array.isArray(raw?.artists) ? raw.artists : []
-  const artistNames = rawArtists.length
-    ? rawArtists.map((item: any) => (typeof item === 'string' ? item : String(item?.name || ''))).filter(Boolean)
-    : raw?.artist ? [String(raw.artist)] : []
-  return {
-    id: Number(mid.slice(0, 15)) || 0,
-    mid,
-    name: String(raw?.name || '未知歌曲'),
-    artists: artistNames.map((name: string) => ({ name })),
-    album: { name: String(raw?.album || ''), picUrl: String(raw?.coverUrl || '') },
-    duration: Number(raw?.durationMs || 0),
-    platform: 'soda',
-    vip,
-    fee: vip ? 1 : 0,
-    songType: 1,
-    fusedSources: [],
-  }
 }
 
 // ===== 列表行组件（模块级 memo）=====
@@ -714,20 +681,16 @@ function ProfileView({
     setLoading(true)
     try {
       const playlists = await getUserPlaylists(platform, userId, undefined, { forceRefresh: true })
-      // 汽水：与 fetchUserData 分栏规则一致——收藏的进收藏栏，自建（非我喜欢）进创建栏
+      // 分栏规则：QQ 按是否收藏分栏，其余平台按归属 userId
       const created = playlists.filter((playlist: Playlist) => (
         platform === 'qq'
           ? !playlist.isCollected
-          : platform === 'soda'
-            ? !playlist.isCollected && !playlist.isLike
-            : playlist.userId?.toString() === userId.toString()
+          : playlist.userId?.toString() === userId.toString()
       ))
       const subscribed = playlists.filter((playlist: Playlist) => (
         platform === 'qq'
           ? Boolean(playlist.isCollected)
-          : platform === 'soda'
-            ? Boolean(playlist.isCollected)
-            : playlist.userId?.toString() !== userId.toString()
+          : playlist.userId?.toString() !== userId.toString()
       ))
       setCreatedPlaylists(created)
       setSubscribedPlaylists(subscribed)
@@ -1125,27 +1088,6 @@ function ProfileView({
         return
       }
 
-      // 汽水：经 playlistService 统一详情（分页合并全量曲目，支持虚拟歌单 id）
-      if (platform === 'soda') {
-        const data = await getPlaylistDetail(String(playlist.id || ''), 'soda')
-        const detailed = { ...playlist, ...data?.playlist, platform: 'soda', isCollected: playlist.isCollected }
-        setSelectedPlaylist(detailed)
-        setManagementPlaylist(detailed)
-        setPlaylistSongs(Array.isArray(data?.tracks) ? data.tracks : [])
-        return
-      }
-
-      // 酷狗：经 playlistService 统一详情（公开详情失败回退用户歌单曲目接口；
-      // 用户自建歌单/「我喜欢」的 id 是网关 listid，公开 m.kugou.com 详情拿不到曲目）
-      if (platform === 'kugou') {
-        const data = await getPlaylistDetail(String(playlist.id || ''), 'kugou')
-        const detailed = { ...playlist, ...data?.playlist, platform: 'kugou', isCollected: playlist.isCollected }
-        setSelectedPlaylist(detailed)
-        setManagementPlaylist(detailed)
-        setPlaylistSongs(Array.isArray(data?.tracks) ? data.tracks : [])
-        return
-      }
-      
       if (platform === 'netease') {
         response = await fetch(`http://localhost:3001/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`)
         data = await response.json()
@@ -1356,39 +1298,6 @@ function ProfileView({
           playTime: 0,
           song: spotifyTrackToSong(track),
         })))
-        return
-      }
-      // 汽水：只读聚合路由（后端复用账号库缓存的 recently-played-media，cookie 请求级透传）；
-      // 返回 mapSodaMedia 映射歌曲列表，未登录返回 loggedIn:false 空列表，不报错
-      if (currentPlatform === 'soda') {
-        const sdCookie = getPlatformCookie('soda')
-        if (!sdCookie) {
-          setRecentItems([])
-          return
-        }
-        const query = new URLSearchParams({ limit: '50', cookie: sdCookie })
-        const response = await fetch(`http://localhost:3001/api/soda/recent?${query.toString()}`, {
-          cache: 'no-store',
-          signal: controller.signal,
-        })
-        const payload = await response.json().catch(() => null)
-        if (recentRequestRef.current.revision !== revision) return
-        if (!response.ok || payload?.error) throw new Error(payload?.error || '最近播放加载失败')
-        const rows: any[] = Array.isArray(payload?.songs) ? payload.songs : []
-        setRecentItems(rows.map((raw, index) => ({
-          id: String(raw?.id ?? index),
-          type: 'song' as const,
-          name: String(raw?.name || '未知歌曲'),
-          subtitle: String(raw?.artist || ''),
-          coverUrl: String(raw?.coverUrl || ''),
-          playTime: 0,
-          song: sodaMediaToSong(raw),
-        })))
-        return
-      }
-      // 酷狗：暂无最近播放接口，返回空（不报错）
-      if (currentPlatform === 'kugou') {
-        setRecentItems([])
         return
       }
       const requestType = requestPlatform === 'qq' ? 'song' : type
@@ -1969,85 +1878,6 @@ function ProfileView({
       }
       setCreatedPlaylists(playlists)
       setSubscribedPlaylists([])
-    } else if (platform === 'kugou') {
-      // 酷狗：本地登录态资料 + 用户歌单（经代理读取）
-      const username = localStorage.getItem('kugou_username') || ''
-      const avatar = localStorage.getItem('kugou_avatar') || ''
-      const kugouUid = localStorage.getItem('kugou_user_id') || ''
-      setUserDetail({
-        nickname: username || '酷狗音乐用户',
-        avatarUrl: avatar || '',
-        userId: kugouUid,
-      })
-      const playlists: Playlist[] = []
-      try {
-        const { fetchKugouUserPlaylists } = await import('../services/kugouService')
-        const list = await fetchKugouUserPlaylists()
-        for (const item of list) {
-          playlists.push({
-            id: item.specialid,
-            name: item.name || '未命名歌单',
-            coverImgUrl: item.coverUrl || '',
-            trackCount: item.songcount || 0,
-            playCount: item.playcount || 0,
-            platform: 'kugou',
-          })
-        }
-      } catch (error) {
-        console.error('获取酷狗用户歌单失败:', error)
-      }
-      setCreatedPlaylists(playlists)
-      setSubscribedPlaylists([])
-    } else if (platform === 'soda') {
-      // 汽水：本地登录态资料（登录时已落盘）；歌单经 /api/soda/user/playlists 读取
-      const username = localStorage.getItem('soda_username') || ''
-      const avatar = localStorage.getItem('soda_avatar') || ''
-      const sodaUid = localStorage.getItem('soda_user_id') || ''
-      setUserDetail({
-        nickname: username || '汽水音乐用户',
-        avatarUrl: avatar || '',
-        userId: sodaUid,
-      })
-      // 未登录保持空列表，不发请求
-      const createdPlaylists: Playlist[] = []
-      const subscribedPlaylists: Playlist[] = []
-      try {
-        // 字段映射参考上方酷狗分支；「汽水我的喜欢」虚拟歌单（isLikedLike）不进两个分栏，
-        // 喜欢歌曲由全局红心/我喜欢入口承担
-        const { fetchSodaUserPlaylists, isSodaLoggedIn } = await import('../services/sodaService')
-        if (!isSodaLoggedIn()) {
-          setCreatedPlaylists([])
-          setSubscribedPlaylists([])
-        } else {
-          const list = await fetchSodaUserPlaylists()
-          for (const item of list) {
-            if (item.collected) {
-              subscribedPlaylists.push({
-                id: item.id,
-                name: item.name || '未命名歌单',
-                coverImgUrl: item.coverUrl || '',
-                trackCount: item.trackCount || 0,
-                platform: 'soda',
-                isCollected: true,
-              })
-            } else if (!item.isLikedLike) {
-              createdPlaylists.push({
-                id: item.id,
-                name: item.name || '未命名歌单',
-                coverImgUrl: item.coverUrl || '',
-                trackCount: item.trackCount || 0,
-                platform: 'soda',
-              })
-            }
-          }
-          setCreatedPlaylists(createdPlaylists)
-          setSubscribedPlaylists(subscribedPlaylists)
-        }
-      } catch (error) {
-        console.error('获取汽水用户歌单失败:', error)
-        setCreatedPlaylists([])
-        setSubscribedPlaylists([])
-      }
     }
 
     setLoading(false)

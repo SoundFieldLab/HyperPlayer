@@ -1,40 +1,16 @@
 /**
- * 插件系统数据层：安装清单 / 开关状态 / 使用须知标记 / DG_LAB 波形库 的持久化，
+ * 插件系统数据层：安装清单 / 开关状态 / 使用须知标记 的持久化，
  * 以及插件弹窗的全局宿主状态（谁打开、开哪个）——非 React 单例，组件用
  * useSyncExternalStore 订阅，任意位置可直接调用 open/close（如三个模式的入口按钮）。
  */
 
 import { useSyncExternalStore } from 'react'
-import type { PluginManifest, WaveDef } from '../plugins/types'
+import type { PluginManifest } from '../plugins/types'
 
 const PLUGINS_KEY = 'wf_plugins'
 const PLUGIN_FLAGS_KEY = 'wf_plugin_flags'
-const WAVES_KEY = 'wf_dglab_waves'
 
 export const PLUGIN_STATE_EVENT = 'pluginStateChanged'
-export const DGLAB_WAVES_EVENT = 'dglabWavesChanged'
-export const DGLAB_WIDGET_EVENT = 'dglabWidgetChanged'
-
-/* ------------------------------ DG_LAB 常驻小组件开关 ------------------------------ */
-
-const WIDGET_KEY = 'wf_dglab_widget'
-
-export function isDGLabWidgetVisible(): boolean {
-  try {
-    return localStorage.getItem(WIDGET_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
-export function setDGLabWidgetVisible(visible: boolean) {
-  try {
-    localStorage.setItem(WIDGET_KEY, visible ? '1' : '0')
-  } catch {
-    /* ignore */
-  }
-  window.dispatchEvent(new CustomEvent(DGLAB_WIDGET_EVENT))
-}
 
 /* ---------------------------------- 通用小工具 ---------------------------------- */
 
@@ -169,46 +145,6 @@ export function setPluginConsent(id: string, consent: boolean) {
   notifyState()
 }
 
-/* ---------------------------------- DG_LAB 波形库 ---------------------------------- */
-
-function getWaves(): WaveDef[] {
-  try {
-    const raw = safeGet(WAVES_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function setWaves(waves: WaveDef[]) {
-  safeSet(WAVES_KEY, JSON.stringify(waves))
-  window.dispatchEvent(new CustomEvent(DGLAB_WAVES_EVENT))
-}
-
-/** 读取全部自定义波形（只存本机，不外发）。 */
-export function getWaveLibrary(): WaveDef[] {
-  return getWaves()
-}
-
-export function addWaves(waves: WaveDef[]) {
-  const existing = getWaves()
-  const ids = new Set(existing.map(w => w.id))
-  const fresh = waves.filter(w => !ids.has(w.id))
-  setWaves([...existing, ...fresh])
-  return fresh.length
-}
-
-export function removeWave(id: string) {
-  setWaves(getWaves().filter(w => w.id !== id))
-}
-
-/** 导出为 DG-Lab App「波形导入」可用的整合 txt（JSON 数组）。 */
-export function exportWavesAsTxt(waves: WaveDef[]): string {
-  return JSON.stringify(waves.map(w => w.params))
-}
-
 /* ---------------------------------- 宿主状态（弹窗开关） ---------------------------------- */
 
 export type NoticeKind = 'view' | 'consent'
@@ -224,7 +160,6 @@ export interface PluginHostState {
   centerOpen: boolean
   detailPluginId: string | null
   importOpen: boolean
-  dglabConsoleOpen: boolean
   chromaConsoleOpen: boolean
   activeConsolePluginId: string | null
   notice: PluginNoticeState | null
@@ -234,7 +169,6 @@ const EMPTY_HOST: PluginHostState = {
   centerOpen: false,
   detailPluginId: null,
   importOpen: false,
-  dglabConsoleOpen: false,
   chromaConsoleOpen: false,
   activeConsolePluginId: null,
   notice: null,
@@ -299,14 +233,6 @@ export function openPluginConsole(pluginId: string) {
 export function closePluginConsole(pluginId?: string) {
   const active = hostStore.getSnapshot().activeConsolePluginId
   if (!pluginId || active === pluginId) hostStore.set({ activeConsolePluginId: null })
-}
-
-export function openDGLabConsole() {
-  hostStore.set({ dglabConsoleOpen: true })
-}
-
-export function closeDGLabConsole() {
-  hostStore.set({ dglabConsoleOpen: false })
 }
 
 export function openChromaConsole() {

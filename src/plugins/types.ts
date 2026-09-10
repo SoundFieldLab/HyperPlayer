@@ -2,7 +2,7 @@
  * 插件系统核心类型定义。
  *
  * 一个插件 = 一份 PluginManifest（元信息 + 可选运行时代码）。
- * 内置插件（如 DG_LAB）由代码注册；第三方插件通过「导入插件」安装，
+ * 内置插件（如 Chroma / SignalRGB）由代码注册；第三方插件通过「导入插件」安装，
  * 其 manifest 持久化在 localStorage，可选携带一段受限运行时 code。
  */
 
@@ -43,40 +43,6 @@ export interface PluginManifest {
   needsAudio?: boolean
   source: PluginSource
   installedAt?: number
-}
-
-/** DG_LAB 波形（设计器曲线或设备帧）。 */
-export interface WavePoint {
-  x: number
-  y: number
-  anchor?: number
-}
-
-/** 归一化的设备波形帧：频率（0-255）+ 强度（0-200）。 */
-export interface WaveFrame {
-  freq: number
-  strength: number
-}
-
-export interface WavePoints {
-  p1?: WavePoint[]
-  p2?: WavePoint[]
-  p3?: WavePoint[]
-}
-
-export type WaveSource = 'combined' | 'pulse' | 'generated'
-
-export interface WaveDef {
-  id: string
-  name: string
-  nameEn?: string
-  source: WaveSource
-  /** 设计器波形：原样保留参数组，保证可回导 DG-Lab App。 */
-  params?: Record<string, number | string>
-  points?: WavePoints
-  /** 脉冲波形：直接设备帧。 */
-  frames?: WaveFrame[]
-  importedAt: number
 }
 
 /** 插件在渲染端的生命周期上下文（导入插件沙箱可用 API）。 */

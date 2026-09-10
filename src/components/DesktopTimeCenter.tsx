@@ -5,24 +5,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlarmClock,
   CalendarDays,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
-  Clock3,
   Globe2,
-  Pause,
-  Play,
   Plus,
-  RotateCcw,
   Search,
-  TimerReset,
   Trash2,
   X,
 } from 'lucide-react'
-import { useDesktopFocusTimer } from '../hooks/useDesktopFocusTimer'
 import { getCalendarFestivals, getLunarDateLabel } from '../utils/calendarFestivals'
 
 interface DesktopTimeCenterProps {
@@ -32,7 +23,7 @@ interface DesktopTimeCenterProps {
   initialTab?: TimeCenterTab
 }
 
-type TimeCenterTab = 'calendar' | 'world' | 'focus'
+type TimeCenterTab = 'calendar' | 'world'
 
 interface WorldCity {
   id: string
@@ -71,7 +62,6 @@ const WORLD_CITIES: WorldCity[] = [
 ]
 
 const WORLD_CLOCK_STORAGE_KEY = 'desktopWorldClockCities'
-const FOCUS_TIMER_DRAFT_STORAGE_KEY = 'desktopFocusTimerDraft'
 
 const PRECISE_TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   hour: '2-digit',
@@ -96,16 +86,6 @@ const getZonedParts = (date: Date, timeZone: string) => {
   }).formatToParts(date)
   const number = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find(part => part.type === type)?.value || 0)
   return { hour: number('hour') % 24, minute: number('minute'), second: number('second') }
-}
-
-const formatRemaining = (remainingMs: number) => {
-  const seconds = Math.ceil(remainingMs / 1000)
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const rest = seconds % 60
-  return hours > 0
-    ? `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${rest.toString().padStart(2, '0')}`
-    : `${minutes.toString().padStart(2, '0')}:${rest.toString().padStart(2, '0')}`
 }
 
 function AnalogClock({ city, now, accentColor }: { city: WorldCity; now: Date; accentColor: string }) {
@@ -397,130 +377,6 @@ function WorldClock({ accentColor, now }: { accentColor: string; now: Date }) {
   )
 }
 
-function DurationNumberField({
-  label,
-  value,
-  max,
-  disabled,
-  accentColor,
-  onChange,
-}: {
-  label: string
-  value: number
-  max: number
-  disabled: boolean
-  accentColor: string
-  onChange: (value: number) => void
-}) {
-  const updateValue = (nextValue: number) => {
-    if (disabled) return
-    onChange(Math.max(0, Math.min(max, Math.round(nextValue || 0))))
-  }
-
-  return (
-    <div className="relative rounded-2xl border border-white/10 bg-black/15 p-3 pr-12 transition focus-within:border-white/25 focus-within:bg-white/[0.035]">
-      <label className="block">
-        <span className="text-xs text-white/38">{label}</span>
-        <input
-          type="number"
-          inputMode="numeric"
-          min="0"
-          max={max}
-          value={value}
-          onChange={event => updateValue(Number(event.target.value))}
-          disabled={disabled}
-          className="mt-1 w-full bg-transparent text-3xl font-semibold tabular-nums text-white outline-none [appearance:textfield] disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-        />
-      </label>
-      <div className="absolute bottom-2.5 right-2.5 top-2.5 grid w-8 grid-rows-2 overflow-hidden rounded-xl border border-white/10 bg-white/[0.055] shadow-inner">
-        <button
-          type="button"
-          aria-label={`增加${label}`}
-          disabled={disabled || value >= max}
-          onClick={() => updateValue(value + 1)}
-          className="flex items-center justify-center border-b border-white/8 text-white/45 transition hover:bg-white/10 hover:text-white disabled:opacity-20"
-          style={{ color: value < max ? accentColor : undefined }}
-        >
-          <ChevronUp className="h-3.5 w-3.5" strokeWidth={2.4} />
-        </button>
-        <button
-          type="button"
-          aria-label={`减少${label}`}
-          disabled={disabled || value <= 0}
-          onClick={() => updateValue(value - 1)}
-          className="flex items-center justify-center text-white/45 transition hover:bg-white/10 hover:text-white disabled:opacity-20"
-          style={{ color: value > 0 ? accentColor : undefined }}
-        >
-          <ChevronDown className="h-3.5 w-3.5" strokeWidth={2.4} />
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function FocusTimer({ accentColor }: { accentColor: string }) {
-  const { timer, remainingMs, start, pause, resume, stop } = useDesktopFocusTimer()
-  const [taskLabel, setTaskLabel] = useState(() => timer.label || '')
-  const [sessionGoal, setSessionGoal] = useState(() => timer.sessionGoal || 4)
-  const [durationDraft, setDurationDraft] = useState(() => {
-    try {
-      const savedDraft = JSON.parse(localStorage.getItem(FOCUS_TIMER_DRAFT_STORAGE_KEY) || 'null') as { hours?: number; minutes?: number } | null
-      return {
-        hours: Math.max(0, Math.min(23, Math.round(savedDraft?.hours ?? 0))),
-        minutes: Math.max(0, Math.min(59, Math.round(savedDraft?.minutes ?? 25))),
-      }
-    } catch {
-      return { hours: 0, minutes: 25 }
-    }
-  })
-  const { hours, minutes } = durationDraft
-  const active = timer.status === 'running' || timer.status === 'paused'
-  const progress = timer.durationMs > 0 ? Math.min(100, ((timer.durationMs - remainingMs) / timer.durationMs) * 100) : 0
-  const startConfiguredTimer = () => start((Math.max(0, hours) * 60 + Math.max(0, minutes)) * 60 * 1000, { label: taskLabel.trim(), phase: 'focus', sessionGoal })
-  const startBreak = () => {
-    const longBreak = timer.completedSessions > 0 && timer.completedSessions % sessionGoal === 0
-    start((longBreak ? 15 : 5) * 60 * 1000, { label: longBreak ? '长休息' : '短休息', phase: longBreak ? 'longBreak' : 'shortBreak', sessionGoal })
-  }
-
-  useEffect(() => {
-    localStorage.setItem(FOCUS_TIMER_DRAFT_STORAGE_KEY, JSON.stringify(durationDraft))
-  }, [durationDraft])
-
-  return (
-    <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px] gap-5">
-      <div className="flex min-h-[430px] flex-col items-center justify-center rounded-[30px] border border-white/10 bg-white/[0.045] p-8 text-center">
-        <div className="relative flex h-64 w-64 items-center justify-center rounded-full" style={{ background: `conic-gradient(${accentColor} ${progress}%, rgba(255,255,255,.08) 0)` }}>
-          <div className="absolute inset-3 rounded-full bg-[#0a0f1c] shadow-inner" />
-          <div className="relative">
-            <div className="text-xs font-medium uppercase tracking-[0.22em] text-white/36">{timer.status === 'paused' ? '已暂停' : active ? (timer.phase === 'focus' ? '专注中' : '休息中') : '准备开始'}</div>
-            <div className="mt-3 text-5xl font-semibold tracking-[-0.05em] tabular-nums text-white">{formatRemaining(active ? remainingMs : (hours * 60 + minutes) * 60 * 1000)}</div>
-            <div className="mt-3 max-w-44 truncate text-xs text-white/42">{active ? timer.label || (timer.phase === 'focus' ? '保持专注' : '放松一下') : taskLabel || '设置本轮任务'}</div>
-          </div>
-        </div>
-        {active && <div className="mt-7 flex items-center gap-3"><button type="button" onClick={timer.status === 'running' ? pause : resume} className="flex h-12 items-center gap-2 rounded-full px-6 text-sm font-medium text-slate-950" style={{ background: accentColor }}>{timer.status === 'running' ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}{timer.status === 'running' ? '暂停' : '继续'}</button><button type="button" onClick={stop} className="flex h-12 items-center gap-2 rounded-full border border-white/12 bg-white/5 px-6 text-sm text-white/70"><TimerReset className="h-4 w-4" />结束</button></div>}
-      </div>
-      <aside className="rounded-[30px] border border-white/10 bg-white/[0.045] p-5">
-        <div className="flex items-center gap-2 font-medium text-white"><AlarmClock className="h-5 w-5" style={{ color: accentColor }} />设置专注时间</div>
-        <p className="mt-2 text-xs leading-5 text-white/40">增强番茄钟 · 已完成 {timer.completedSessions} / {sessionGoal} 轮</p>
-        <input disabled={active} value={taskLabel} onChange={event => setTaskLabel(event.target.value)} placeholder="本轮专注任务，例如：整理歌单" className="mt-4 w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-xs text-white outline-none placeholder:text-white/25 disabled:opacity-40" />
-        <div className="mt-5 grid grid-cols-2 gap-3">
-          <DurationNumberField label="小时" value={hours} max={23} disabled={active} accentColor={accentColor} onChange={value => setDurationDraft(current => ({ ...current, hours: value }))} />
-          <DurationNumberField label="分钟" value={minutes} max={59} disabled={active} accentColor={accentColor} onChange={value => setDurationDraft(current => ({ ...current, minutes: value }))} />
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          {[25, 45, 60, 90].map(preset => {
-            const selected = hours * 60 + minutes === preset
-            return <button key={preset} type="button" disabled={active} onClick={() => setDurationDraft({ hours: Math.floor(preset / 60), minutes: preset % 60 })} className="rounded-2xl border py-3 text-sm transition hover:bg-white/10 disabled:opacity-35" style={{ borderColor: selected ? `${accentColor}90` : 'rgba(255,255,255,.08)', background: selected ? `${accentColor}38` : 'rgba(255,255,255,.04)', color: selected ? '#fff' : 'rgba(255,255,255,.65)' }}>{preset >= 60 ? `${preset / 60} 小时` : `${preset} 分钟`}</button>
-          })}
-        </div>
-        <label className="mt-4 block text-xs text-white/42">每组番茄数：<b className="text-white">{sessionGoal}</b><input disabled={active} type="range" min="2" max="8" value={sessionGoal} onChange={event => setSessionGoal(Number(event.target.value))} className="mt-2 w-full" style={{ accentColor }} /></label>
-        <button type="button" disabled={active || hours * 60 + minutes < 1} onClick={startConfiguredTimer} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-full text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:opacity-35" style={{ background: accentColor, boxShadow: `0 10px 30px ${accentColor}35` }}><Play className="h-4 w-4" fill="currentColor" />开始专注</button>
-        <button type="button" disabled={active} onClick={startBreak} className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-full border border-white/12 bg-white/5 text-xs text-white/65 transition hover:bg-white/10 disabled:opacity-35"><Clock3 className="h-4 w-4" />{timer.completedSessions > 0 && timer.completedSessions % sessionGoal === 0 ? '开始 15 分钟长休息' : '开始 5 分钟短休息'}</button>
-      </aside>
-    </div>
-  )
-}
-
 export default function DesktopTimeCenter({ open, onClose, accentColor, initialTab = 'calendar' }: DesktopTimeCenterProps) {
   const [tab, setTab] = useState<TimeCenterTab>('calendar')
   const [now, setNow] = useState(() => new Date())
@@ -546,7 +402,6 @@ export default function DesktopTimeCenter({ open, onClose, accentColor, initialT
   const tabs: Array<{ id: TimeCenterTab; label: string; icon: typeof CalendarDays }> = [
     { id: 'calendar', label: '日历', icon: CalendarDays },
     { id: 'world', label: '世界时钟', icon: Globe2 },
-    { id: 'focus', label: '专注计时', icon: Clock3 },
   ]
   const isDaytime = now.getHours() >= 6 && now.getHours() < 18
   const theme = isDaytime
@@ -577,7 +432,6 @@ export default function DesktopTimeCenter({ open, onClose, accentColor, initialT
             <main className="relative z-10 flex min-h-0 flex-1 p-5">
               {tab === 'calendar' && <MonthCalendar accentColor={accentColor} />}
               {tab === 'world' && <WorldClock accentColor={accentColor} now={now} />}
-              {tab === 'focus' && <FocusTimer accentColor={accentColor} />}
             </main>
           </motion.div>
         </motion.div>
@@ -586,4 +440,3 @@ export default function DesktopTimeCenter({ open, onClose, accentColor, initialT
   )
 }
 
-export { formatRemaining }

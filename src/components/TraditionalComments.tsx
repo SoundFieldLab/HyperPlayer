@@ -6,13 +6,12 @@ import type { Song } from '../services/musicApi'
 import { getProxiedImageUrl } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
 import { getPlatformCookie, platformLabel } from '../services/platforms'
-import { fetchSodaComments, type SodaComment } from '../services/sodaService'
 
 interface CommentItem {
   commentId: string
   content: string
   user: { nickname: string; avatarUrl: string; userId?: string }
-  time: number | string // 毫秒时间戳或现成显示文本（汽水评论两者皆有可能）
+  time: number | string // 毫秒时间戳或现成显示文本
   likedCount: number
   replyCount: number
 }
@@ -26,7 +25,7 @@ const formatDate = (ms: number) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-// 评论时间展示：兼容毫秒时间戳与「3天前」等现成文本（汽水评论的 time 两者皆有可能）
+// 评论时间展示：兼容毫秒时间戳与「3天前」等现成文本
 const formatTime = (value: number | string) => {
   if (typeof value === 'string') {
     const text = value.trim()
@@ -74,23 +73,6 @@ function normalizeQQ(raw: any): CommentItem | null {
   }
 }
 
-/** 汽水评论 → 组件展示结构（简版：列表+分页，无点赞/回复交互，与该组件其它平台能力对齐） */
-function normalizeSoda(raw: SodaComment): CommentItem | null {
-  const content = String(raw.content || '')
-  if (!content || !raw.id) return null
-  return {
-    commentId: String(raw.id),
-    content,
-    user: {
-      nickname: String(raw.user?.name || '匿名用户'),
-      avatarUrl: String(raw.user?.avatarUrl || '')
-    },
-    time: raw.time,
-    likedCount: Number(raw.likes || 0),
-    replyCount: Array.isArray(raw.replies) ? raw.replies.length : 0
-  }
-}
-
 interface TraditionalCommentsProps {
   song: Song
   accent: string
@@ -110,8 +92,6 @@ function TraditionalComments({ song, accent, isDark, onClose }: TraditionalComme
   const offsetRef = useRef(0)
   const pageRef = useRef(0)
   const requestRef = useRef(0)
-  // 汽水评论游标：soda 接口为游标分页（与上方页码分页不同），组件内部自行维护
-  const sodaCursorRef = useRef<string | undefined>(undefined)
 
   const platform = (song?.platform || 'netease') as MusicPlatform
   const muted = isDark ? 'text-white/50' : 'text-slate-500'
@@ -120,8 +100,7 @@ function TraditionalComments({ song, accent, isDark, onClose }: TraditionalComme
   const load = useCallback(async (reset: boolean) => {
     if (!song) return
     const requestId = ++requestRef.current
-    // 汽水的 Song.id 是截断数值，真实曲目 id 保存在 mid
-    const songId = platform === 'soda' ? String(song.mid || song.id || '') : (song.id || song.mid || '')
+    const songId = song.id || song.mid || ''
     setError('')
     if (reset) setLoading(true)
     try {
@@ -147,14 +126,6 @@ function TraditionalComments({ song, accent, isDark, onClose }: TraditionalComme
         hot = (data.data?.hotComments || []).map(normalizeQQ).filter(Boolean) as CommentItem[]
         list = (data.data?.comments || []).map(normalizeQQ).filter(Boolean) as CommentItem[]
         more = Boolean(data.data.hasMore)
-      } else if (platform === 'soda') {
-        // 汽水：游标分页（首页不传 cursor）；热门/最新视图共用同一份列表
-        const requestCursor = reset ? undefined : sodaCursorRef.current
-        const page = await fetchSodaComments(String(songId), requestCursor, 20)
-        if (requestId !== requestRef.current) return
-        sodaCursorRef.current = page.cursor ?? undefined
-        list = page.comments.map(normalizeSoda).filter(Boolean) as CommentItem[]
-        more = page.hasMore
       }
       if (requestId !== requestRef.current) return
       // 加载更多时若没有新内容，说明已到底，停止继续翻页
@@ -184,7 +155,6 @@ function TraditionalComments({ song, accent, isDark, onClose }: TraditionalComme
   useEffect(() => {
     offsetRef.current = 0
     pageRef.current = 0
-    sodaCursorRef.current = undefined
     setComments([])
     setHotComments([])
     void load(true)

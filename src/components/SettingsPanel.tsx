@@ -20,10 +20,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { memo, useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence, Reorder } from 'framer-motion'
-import { X, Settings as SettingsIcon, User, Palette, Sparkles, Info, ExternalLink, Github, ChevronRight, ChevronLeft, Trash2, Heart, Copy, ClipboardPaste, KeyRound, Code2, Users, BadgeCheck, CheckCircle2, Gift, Headphones, MonitorSmartphone, Gamepad2, Eye, EyeOff, FileText, Music, FolderHeart, Trash, AlertTriangle, ListMusic } from 'lucide-react'
+import { X, Settings as SettingsIcon, User, Palette, Sparkles, Info, ExternalLink, Github, ChevronRight, ChevronLeft, Trash2, Heart, Code2, Users, Headphones, Eye, EyeOff, Music, FolderHeart, Trash, ListMusic } from 'lucide-react'
 import LoginButton from './LoginButton'
 import type { AppleUserInfo } from '../services/appleAuth'
-import type { StemModelProgress } from '../electron'
 import {
   MUSIC_PLATFORMS,
   PLATFORM_LABELS,
@@ -37,20 +36,13 @@ import {
 } from '../services/platforms'
 import HomeCustomizeModal from './HomeCustomizeModal'
 import PlaybackRadialMenuCustomizeModal from './PlaybackRadialMenuCustomizeModal'
-import DeviceInfoModal from './DeviceInfoModal'
 import AudioQualitySettingsModal from './AudioQualitySettingsModal'
 import FontPicker from './FontPicker'
-import RemoteControlSettingsModal from './RemoteControlSettingsModal'
-import RemoteControlGuideModal from './RemoteControlGuideModal'
 import CacheClearModal from './CacheClearModal'
-import LegalAgreement from './legal/LegalAgreement'
-import { LocaleSwitcher, type LocaleCode } from '../i18n'
 import packageInfo from '../../package.json'
 import { getVersionDisplay } from '../services/versionInfo'
 import { VERSION_HISTORY } from '../services/versionHistory'
-import { getDebugPanelVisible, setDebugPanelVisible } from '../tv/debugStore'
-import { setTvFocus } from '../tv/tvCore'
-import { isTvModeActive, TV_SCALE_OPTIONS, getTvScale, setTvScale, applyTvScale } from '../platform'
+import { isTvModeActive } from '../platform'
 import {
   loadPlaybackShortcutSettings,
   savePlaybackShortcutSettings,
@@ -129,7 +121,7 @@ const compareVersions = (left: string, right: string) => {
 interface SettingsPanelProps {
   show: boolean
   onClose: () => void
-  // TV 设置：打开远程遥控器配对弹窗（App 层控制 RemoteControlModal）
+  // 远程遥控器已随减配移除；保留可选 prop 仅为兼容 App 侧既有调用签名
   onOpenRemote?: () => void
   // 登录状态
   neteaseLoggedIn: boolean
@@ -151,30 +143,7 @@ interface SettingsPanelProps {
   spotifyUsername: string
   onSpotifyLogin: (cookie: string, username?: string) => void
   onSpotifyLogout: () => void
-  kugouLoggedIn: boolean
-  kugouUsername: string
-  onKugouLogin: (cookie: string, username?: string) => void
-  onKugouLogout: () => void
-  sodaLoggedIn: boolean
-  sodaUsername: string
-  onSodaLogin: (cookie: string, username?: string, extra?: { avatar?: string; userId?: string }) => void
-  onSodaLogout: () => void
   playerTheme?: 'light' | 'dark'
-}
-
-// 模型下载速率/剩余时间展示
-const formatDownloadSpeed = (bytesPerSec: number) => {
-  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return ''
-  if (bytesPerSec >= 1024 * 1024) return `${(bytesPerSec / 1024 / 1024).toFixed(1)} MB/s`
-  if (bytesPerSec >= 1024) return `${Math.round(bytesPerSec / 1024)} KB/s`
-  return `${bytesPerSec} B/s`
-}
-const formatDownloadEta = (seconds: number) => {
-  if (!Number.isFinite(seconds) || seconds < 1) return '即将完成'
-  if (seconds < 60) return `${seconds} 秒`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`
-  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`
 }
 
 function SettingsPanel({
@@ -199,19 +168,11 @@ function SettingsPanel({
   spotifyUsername,
   onSpotifyLogin,
   onSpotifyLogout,
-  kugouLoggedIn,
-  kugouUsername,
-  onKugouLogin,
-  onKugouLogout,
-  sodaLoggedIn,
-  sodaUsername,
-  onSodaLogin,
-  onSodaLogout,
   playerTheme = 'dark',
 }: SettingsPanelProps) {
-  const [activeTab, setActiveTab] = useState<'tv' | 'account' | 'advanced' | 'personalization' | 'about'>('account')
+  const [activeTab, setActiveTab] = useState<'account' | 'advanced' | 'personalization' | 'about'>('account')
   const contentScrollRef = useRef<HTMLDivElement>(null)
-  const switchTab = (tab: 'tv' | 'account' | 'advanced' | 'personalization' | 'about') => {
+  const switchTab = (tab: 'account' | 'advanced' | 'personalization' | 'about') => {
     setActiveTab(tab)
     requestAnimationFrame(() => contentScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' }))
   }
@@ -288,24 +249,6 @@ function SettingsPanel({
     const saved = localStorage.getItem('accentColor')
     return saved || '#3B82F6' // 默认蓝色
   })
-  // 远程遥控器设置（二级菜单弹窗）
-  const [showRemoteSettings, setShowRemoteSettings] = useState(false)
-  // TV：遥控器可视化教学弹窗
-  const [showRemoteGuide, setShowRemoteGuide] = useState(false)
-  // TV：每次启动自动打开远程遥控器配对界面（默认关闭）
-  const [tvAutoOpenRemote, setTvAutoOpenRemote] = useState(() => {
-    try {
-      return localStorage.getItem('tvAutoOpenRemote') === '1'
-    } catch {
-      return false
-    }
-  })
-  // TV：识别码 + 测试码
-  const [tvRedeemCode, setTvRedeemCode] = useState('')
-  const [showTvRedeemModal, setShowTvRedeemModal] = useState(false)
-  const [showTvDeviceId, setShowTvDeviceId] = useState(false)
-  const [tvRedeemState, setTvRedeemState] = useState<{ status: 'idle' | 'redeeming'; message: string | null }>({ status: 'idle', message: null })
-  const [tvLicense, setTvLicense] = useState<{ deviceId: string; grants: Array<{ feature: string; label: string; expiresAt?: number }> }>({ deviceId: '', grants: [] })
   const [showLocalMvMarks, setShowLocalMvMarks] = useState(false)
   const [localMvMarks, setLocalMvMarks] = useState<ReturnType<typeof getLocalMvMarks>>([])
   const [playbackShortcutSettings, setPlaybackShortcutSettings] = useState(loadPlaybackShortcutSettings)
@@ -596,71 +539,7 @@ function SettingsPanel({
   
   // 缓存清理弹窗状态
   const [showCacheClear, setShowCacheClear] = useState(false)
-  
-  // 法律声明弹窗状态
-  const [showLegalModal, setShowLegalModal] = useState(false)
-  // 法律声明弹窗语言（右上角切换）
-  const [legalLocale, setLegalLocale] = useState<LocaleCode>('zh-CN')
-  const [showDeviceIdModal, setShowDeviceIdModal] = useState(false)
-  const [showDeviceInfo, setShowDeviceInfo] = useState(false)
-  const [tvScale, setTvScaleState] = useState<number>(() => getTvScale())
-  const [tvInfo, setTvInfo] = useState<Record<string, string | number | boolean> | null>(null)
-  const [pendingTvScale, setPendingTvScale] = useState<number | null>(null)
-  const [tvScaleCountdown, setTvScaleCountdown] = useState(10)
-  const tvScaleCountdownRef = useRef(10)
-  const tvScaleCancelRef = useRef<HTMLButtonElement | null>(null)
 
-  // 点击缩放档位：先实时预览（改 viewport），弹确认框，10 秒不确认自动还原
-  const previewTvScale = useCallback((v: number) => {
-    if (v === tvScale) return
-    applyTvScale(v)
-    setPendingTvScale(v)
-    tvScaleCountdownRef.current = 10
-    setTvScaleCountdown(10)
-  }, [tvScale])
-
-  const confirmTvScale = useCallback(() => {
-    if (pendingTvScale != null) {
-      setTvScaleState(pendingTvScale)
-      setTvScale(pendingTvScale)
-    }
-    setPendingTvScale(null)
-  }, [pendingTvScale])
-
-  const cancelTvScale = useCallback(() => {
-    // 还原到上一次已应用的 DPI
-    applyTvScale(getTvScale())
-    setPendingTvScale(null)
-    setTvScaleState(getTvScale())
-  }, [])
-
-  // 倒计时：超时自动还原（等同取消）
-  useEffect(() => {
-    if (pendingTvScale == null) return
-    tvScaleCountdownRef.current = 10
-    setTvScaleCountdown(10)
-    // 弹窗打开时默认焦点放在「取消」上：按确认键直接还原
-    if (tvScaleCancelRef.current) setTvFocus(tvScaleCancelRef.current)
-    const timer = window.setInterval(() => {
-      tvScaleCountdownRef.current -= 1
-      if (tvScaleCountdownRef.current <= 0) {
-        window.clearInterval(timer)
-        cancelTvScale()
-      } else {
-        setTvScaleCountdown(tvScaleCountdownRef.current)
-      }
-    }, 1000)
-    return () => window.clearInterval(timer)
-  }, [pendingTvScale, cancelTvScale])
-  useEffect(() => {
-    if (!show || !isTvModeActive()) return
-    const native = (window as any).WaveForgeNative
-    if (native?.getDeviceInfo) {
-      try { setTvInfo(JSON.parse(String(native.getDeviceInfo()))) } catch { setTvInfo(null) }
-    }
-  }, [show])
-  const [showRedeemModal, setShowRedeemModal] = useState(false)
-  const [deviceIdForModal, setDeviceIdForModal] = useState('')
   const [updateCheck, setUpdateCheck] = useState<UpdateCheckState>({ status: 'idle' })
   const [updateDetail, setUpdateDetail] = useState<UpdateDetail | null>(null)
   const [pendingUpdate, setPendingUpdate] = useState<{ version: string; stagedAt?: number } | null>(null)
@@ -674,9 +553,6 @@ function SettingsPanel({
       if (p?.version) setPendingUpdate(p)
     }).catch(() => {})
   }, [])
-  const [deviceState, setDeviceState] = useState<DeviceState>({ status: 'idle', deviceId: '', grants: [] })
-  const [redeemCode, setRedeemCode] = useState('')
-  const [redeemMessage, setRedeemMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
 
   // 灰色歌曲跨平台补全：开启前必须阅读免责声明并等待倒计时结束
   const [showFallbackDisclaimer, setShowFallbackDisclaimer] = useState(false)
@@ -695,268 +571,6 @@ function SettingsPanel({
     window.dispatchEvent(new CustomEvent('showToast', {
       detail: { message: '已开启灰色歌曲跨平台补全', type: 'success' },
     }))
-  }
-
-  // 删除识别码与测试码：确认弹窗（10 秒倒计时）
-  const [showDeleteLicenseModal, setShowDeleteLicenseModal] = useState(false)
-  const [deleteLicenseCountdown, setDeleteLicenseCountdown] = useState(10)
-
-  useEffect(() => {
-    if (!showDeleteLicenseModal || deleteLicenseCountdown <= 0) return
-    const timer = window.setTimeout(() => setDeleteLicenseCountdown(value => value - 1), 1000)
-    return () => window.clearTimeout(timer)
-  }, [showDeleteLicenseModal, deleteLicenseCountdown])
-
-  const confirmDeleteLicense = async () => {
-    setShowDeleteLicenseModal(false)
-    try {
-      const result = await window.electron?.deviceLicense?.reset()
-      if (result?.success) {
-        window.dispatchEvent(new CustomEvent('showToast', {
-          detail: { message: '已删除识别码与测试码，本机将生成新的设备标识', type: 'success' },
-        }))
-        void loadDeviceState()
-      } else {
-        window.dispatchEvent(new CustomEvent('showToast', {
-          detail: { message: result?.error || '删除失败，请重试', type: 'error' },
-        }))
-      }
-    } catch {
-      window.dispatchEvent(new CustomEvent('showToast', {
-        detail: { message: '删除失败，请重试', type: 'error' },
-      }))
-    }
-  }
-
-  const loadDeviceState = async () => {
-    // TV：设备识别码 = Android 系统 ANDROID_ID（原生桥提供），无桌面端授权/兑换体系
-    const native = (window as any).WaveForgeNative
-    if (native?.getDeviceId) {
-      try {
-        const id = String(native.getDeviceId() || '')
-        setDeviceState({ status: 'ready', deviceId: id, grants: [] })
-      } catch {
-        setDeviceState({ status: 'error', deviceId: '', grants: [], message: '设备识别码读取失败' })
-      }
-      return
-    }
-    const api = window.electron?.deviceLicense
-    if (!api) {
-      setDeviceState({ status: 'error', deviceId: '', grants: [], message: '当前环境不支持设备授权功能' })
-      return
-    }
-    setDeviceState(previous => ({ ...previous, status: 'loading', message: undefined }))
-    try {
-      const result = await api.getState()
-      if (result.success) {
-        setDeviceState({ status: 'ready', deviceId: result.deviceId, storage: result.storage, grants: result.grants })
-      } else {
-        setDeviceState({ status: 'error', deviceId: '', grants: [], message: result.error })
-      }
-    } catch (error) {
-      setDeviceState({ status: 'error', deviceId: '', grants: [], message: error instanceof Error ? error.message : '设备识别码读取失败' })
-    }
-  }
-
-  useEffect(() => {
-    if (show && activeTab === 'about' && deviceState.status === 'idle') void loadDeviceState()
-  }, [show, activeTab, deviceState.status])
-
-  const copyDeviceId = async () => {
-    setDeviceState(previous => ({ ...previous, status: 'loading', message: undefined }))
-    try {
-      const native = (window as any).WaveForgeNative
-      if (native?.getDeviceId) {
-        // TV：用原生桥的 ANDROID_ID 作为识别码，直接复制到剪贴板
-        const id = deviceState.deviceId || String(native.getDeviceId() || '')
-        try {
-          await navigator.clipboard.writeText(id)
-        } catch {
-          // ignore
-        }
-        setDeviceState(previous => ({ ...previous, status: 'ready', deviceId: id }))
-        setDeviceIdForModal(id)
-        setShowDeviceIdModal(true)
-        setRedeemMessage(null)
-        window.dispatchEvent(new CustomEvent('showToast', {
-          detail: { message: '设备识别码已自动复制到剪贴板', type: 'success' },
-        }))
-        return
-      }
-      const result = await window.electron?.deviceLicense?.copyDeviceId()
-      if (!result) {
-        throw new Error('Device license bridge is unavailable')
-      }
-      if (!result.success) {
-        throw new Error(result.error)
-      }
-
-      setDeviceState(previous => ({
-        ...previous,
-        status: 'ready',
-        deviceId: result.deviceId,
-        storage: result.storage,
-      }))
-      setDeviceIdForModal(result.deviceId)
-      setShowDeviceIdModal(true)
-      setRedeemMessage(null)
-      window.dispatchEvent(new CustomEvent('showToast', {
-        detail: {
-          message: '设备识别码已自动复制到剪贴板',
-          type: 'success',
-        },
-      }))
-    } catch (error) {
-      console.error('获取设备识别码失败:', error)
-      setDeviceState(previous => ({ ...previous, status: 'error', message: '设备识别码获取失败' }))
-      setRedeemMessage(null)
-      window.dispatchEvent(new CustomEvent('showToast', {
-        detail: {
-          message: '设备识别码获取失败，请重启 WaveForge 后重试',
-          type: 'error',
-        },
-      }))
-    }
-  }
-
-  // ── TV：识别码 + 测试码（走设备内置 Node 后端，RSA 公钥签名验证） ──
-  // 识别码：真机为 Android ANDROID_ID（原生桥）；浏览器 ?tv=1 调试用本地模拟 ID。
-  const getTvDeviceId = () => {
-    const native = (window as any).WaveForgeNative
-    if (native?.getDeviceId) {
-      try {
-        const id = String(native.getDeviceId() || '')
-        if (id) return id
-      } catch {
-        // fallthrough
-      }
-    }
-    try {
-      let id = localStorage.getItem('tvDebugDeviceId')
-      if (!id) {
-        id = `WF-TV-${Math.random().toString(36).slice(2, 10).toUpperCase()}`
-        localStorage.setItem('tvDebugDeviceId', id)
-      }
-      return id
-    } catch {
-      return 'WF-TV-DEBUG'
-    }
-  }
-  const loadTvLicense = async () => {
-    const deviceId = getTvDeviceId()
-    try {
-      const res = await fetch(
-        `http://localhost:3001/api/tv/license/status?deviceId=${encodeURIComponent(deviceId)}`,
-        { cache: 'no-store' }
-      )
-      if (res.ok) {
-        const data = await res.json()
-        setTvLicense({ deviceId: data.deviceId || '', grants: data.grants || [] })
-      }
-    } catch {
-      // ignore
-    }
-  }
-  const tvRedeem = async () => {
-    const code = tvRedeemCode.trim()
-    if (!code) {
-      setTvRedeemState({ status: 'idle', message: '请输入测试码' })
-      return
-    }
-    setTvRedeemState({ status: 'redeeming', message: null })
-    try {
-      const res = await fetch('http://localhost:3001/api/tv/license/redeem', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, deviceId: getTvDeviceId() }),
-      })
-      const data = await res.json()
-      if (data.ok) {
-        setTvLicense({ deviceId: data.deviceId || tvLicense.deviceId, grants: data.grants || [] })
-        setTvRedeemState({ status: 'idle', message: data.message || '测试码验证成功' })
-        setTvRedeemCode('')
-      } else {
-        setTvRedeemState({ status: 'idle', message: data.error || '测试码验证失败' })
-      }
-    } catch {
-      setTvRedeemState({ status: 'idle', message: '测试码验证失败，请重试' })
-    }
-  }
-  const toggleTvAutoOpenRemote = (enabled: boolean) => {
-    setTvAutoOpenRemote(enabled)
-    try {
-      localStorage.setItem('tvAutoOpenRemote', enabled ? '1' : '0')
-    } catch {
-      // ignore
-    }
-  }
-
-  useEffect(() => {
-    if (show && activeTab === 'tv' && isTvModeActive()) void loadTvLicense()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [show, activeTab])
-
-  const pasteRedeemCode = async () => {
-    setRedeemMessage(null)
-    let clipboardText = ''
-
-    try {
-      const readClipboard = window.electron?.deviceLicense?.readClipboard
-      if (readClipboard) {
-        try {
-          const result = await readClipboard()
-          if (result.success) clipboardText = result.text
-        } catch (error) {
-          console.warn('通过 Electron 读取剪贴板失败，尝试浏览器接口:', error)
-        }
-      }
-
-      if (!clipboardText && navigator.clipboard?.readText) {
-        clipboardText = await navigator.clipboard.readText()
-      }
-
-      const code = clipboardText.trim()
-      if (!code) {
-        setRedeemMessage({ type: 'error', text: '剪贴板中没有可粘贴的内容' })
-        return
-      }
-
-      setRedeemCode(code)
-      setRedeemMessage(null)
-    } catch (error) {
-      console.error('读取剪贴板失败:', error)
-      setRedeemMessage({ type: 'error', text: '无法读取剪贴板，请手动粘贴' })
-    }
-  }
-
-  const redeemDeviceCode = async () => {
-    if (!redeemCode.trim()) {
-      setRedeemMessage({ type: 'error', text: '请输入测试码' })
-      return
-    }
-    setRedeemMessage({ type: 'info', text: '正在验证测试码…' })
-    try {
-      const result = await window.electron?.deviceLicense?.redeem(redeemCode.trim())
-      if (!result) {
-        setRedeemMessage({ type: 'error', text: '暂时无法提交测试码' })
-      } else if (result.success) {
-        setDeviceState(previous => ({ ...previous, status: 'ready', grants: result.grants }))
-        setRedeemCode('')
-        setRedeemMessage(null)
-        setShowRedeemModal(false)
-        window.dispatchEvent(new CustomEvent('showToast', {
-          detail: {
-            message: result.message || '测试码验证成功',
-            type: 'success',
-          },
-        }))
-      } else {
-        setRedeemMessage({ type: 'error', text: result.error })
-      }
-    } catch (error) {
-      console.error('测试码验证失败:', error)
-      setRedeemMessage({ type: 'error', text: '测试码验证失败，请重试' })
-    }
   }
 
   /** 打开外部链接：TV 走原生浏览器（ACTION_VIEW），桌面/网页用 window.open */
@@ -1396,332 +1010,9 @@ function SettingsPanel({
     return parseStoredBoolean(saved, true)
   })
   
-  const [autoMixEnabled, setAutoMixEnabled] = useState(() => {
-    const saved = localStorage.getItem('autoMixEnabled')
-    return parseStoredBoolean(saved, false)
-  })
-
-  const [autoMixBeatMatching, setAutoMixBeatMatching] = useState(() => {
-    const saved = localStorage.getItem('autoMixBeatMatching')
-    return parseStoredBoolean(saved, true)
-  })
-
-  const [autoMixSkipSilence, setAutoMixSkipSilence] = useState(() => {
-    const saved = localStorage.getItem('autoMixSkipSilence')
-    return parseStoredBoolean(saved, true)
-  })
-
-  const [autoMixMinDuration, setAutoMixMinDuration] = useState(() => {
-    const saved = localStorage.getItem('autoMixMinDuration')
-    return saved ? parseFloat(saved) : 2
-  })
-
-  const [autoMixMaxDuration, setAutoMixMaxDuration] = useState(() => {
-    const saved = localStorage.getItem('autoMixMaxDuration')
-    return saved ? parseFloat(saved) : 12
-  })
-  const [autoMixEnhanced, setAutoMixEnhanced] = useState(() => {
-    const saved = localStorage.getItem('autoMixEnhanced')
-    return parseStoredBoolean(saved, false)
-  })
-  const [autoMixTransitionIntensity, setAutoMixTransitionIntensity] = useState<'subtle' | 'standard' | 'strong'>(() => {
-    const saved = localStorage.getItem('autoMixTransitionIntensity')
-    return saved === 'subtle' || saved === 'strong' ? saved : 'standard'
-  })
-  const [autoMixAiMix, setAutoMixAiMix] = useState(() => {
-    const saved = localStorage.getItem('autoMixAiMix')
-    return parseStoredBoolean(saved, false)
-  })
-  // AI 混音引擎可用性（null=检测中 / true=可用 / false=未安装）
-  const [aiMixAvailable, setAiMixAvailable] = useState<boolean | null>(null)
-  // 序号防竞态：模型下载完成/删除后的重探不能覆盖更早的在途结果
-  const aiMixProbeSeq = useRef(0)
-  const probeAiMixAvailable = useCallback(async () => {
-    const seq = ++aiMixProbeSeq.current
-    try {
-      const status = await window.electron?.render?.aiMixStatus?.()
-      if (seq === aiMixProbeSeq.current) setAiMixAvailable(status?.available === true)
-    } catch {
-      if (seq === aiMixProbeSeq.current) setAiMixAvailable(false)
-    }
-  }, [])
-  useEffect(() => {
-    if (!autoMixEnabled || !autoMixEnhanced) return
-    setAiMixAvailable(null)
-    void probeAiMixAvailable()
-  }, [autoMixEnabled, autoMixEnhanced, probeAiMixAvailable])
-
-  useEffect(() => {
-    if (aiMixAvailable === false && autoMixAiMix) {
-      setAutoMixAiMix(false)
-      localStorage.setItem('autoMixAiMix', 'false')
-      window.dispatchEvent(new Event('autoMixSettingsChanged'))
-    }
-  }, [aiMixAvailable, autoMixAiMix])
-
-  // AI 混音模型（DJTransGAN 仓库 + 权重）下载/删除管理
-  const [aiModelStatus, setAiModelStatus] = useState<{
-    installed: boolean
-    repoReady: boolean
-    weightsReady: boolean
-    pythonFound: boolean
-    depsReady: boolean
-    engineAvailable: boolean
-    repoDir: string
-  } | null>(null)
-  const [aiModelProgress, setAiModelProgress] = useState<{
-    status: 'idle' | 'downloading' | 'paused' | 'done' | 'error' | 'cancelled' | 'deleting'
-    phase: 'python' | 'pip' | 'deps' | 'repo' | 'weights' | 'delete' | null
-    phaseLabel: string | null
-    phasePercent: number
-    overallPercent: number
-    error: string | null
-    done: boolean
-    downloadSpeed: number
-    downloadEta: number | null
-  } | null>(null)
-  const [showAiModelDownloadDialog, setShowAiModelDownloadDialog] = useState(false)
-  const [showAiModelDeleteDialog, setShowAiModelDeleteDialog] = useState(false)
-
-  // AutoMix Enhanced 核心的可选 HTDemucs 分轨模型。未安装时增强版仍使用现有 v2 DSP。
-  const [stemModelStatus, setStemModelStatus] = useState<{
-    installed: boolean
-    modelReady: boolean
-    runtimeReady: boolean
-    supported: boolean
-    modelPath: string
-    runtimePath: string
-    root: string
-    version: number
-    download: StemModelProgress
-  } | null>(null)
-  const [stemModelProgress, setStemModelProgress] = useState<StemModelProgress | null>(null)
-  const [showStemModelDownloadDialog, setShowStemModelDownloadDialog] = useState(false)
-  const [showStemModelDeleteDialog, setShowStemModelDeleteDialog] = useState(false)
-  const probeStemModelStatus = useCallback(async () => {
-    try {
-      const status = await window.electron?.stemModel?.getStatus?.()
-      if (status) {
-        setStemModelStatus(status)
-        if (status.download?.status && status.download.status !== 'idle') setStemModelProgress(status.download)
-      }
-    } catch { /* 可选模型探测失败保持 v2 DSP */ }
-  }, [])
-  useEffect(() => {
-    if (!autoMixEnabled || !autoMixEnhanced) return
-    void probeStemModelStatus()
-    const off = window.electron?.stemModel?.onProgress?.((progress) => {
-      setStemModelProgress(progress)
-      if (progress.status === 'done') {
-        void probeStemModelStatus()
-        window.dispatchEvent(new CustomEvent('showToast', {
-          detail: { message: 'HTDemucs 分轨模型安装完成，增强版将自动使用分轨混音', type: 'success' },
-        }))
-      }
-    })
-    return () => off?.()
-  }, [autoMixEnabled, autoMixEnhanced, probeStemModelStatus])
-  const handleStemModelDownload = () => {
-    setShowStemModelDownloadDialog(false)
-    void window.electron?.stemModel?.download?.()
-  }
-  const handleStemModelResume = () => { void window.electron?.stemModel?.download?.() }
-  const handleStemModelPause = () => { void window.electron?.stemModel?.pause?.() }
-  const handleStemModelCancel = () => { void window.electron?.stemModel?.cancel?.(); setStemModelProgress(null) }
-  const handleStemModelDelete = () => {
-    setShowStemModelDeleteDialog(false)
-    window.dispatchEvent(new Event('waveforge:track-stem-cache-clearing'))
-    void window.electron?.stemModel?.delete?.().then(result => {
-      if (result?.ok) {
-        setStemModelProgress(null)
-        void probeStemModelStatus()
-        window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '已删除 HTDemucs 模型，增强版继续使用 DSP 兼容模式', type: 'success' } }))
-      }
-    })
-  }
-
-  const probeAiModelStatus = useCallback(async () => {
-    try {
-      const status = await window.electron?.aiModel?.getStatus?.()
-      if (status) setAiModelStatus(status)
-    } catch { /* 探测失败保持现状 */ }
-  }, [])
-
-  useEffect(() => {
-    if (!autoMixEnabled || !autoMixEnhanced) return
-    void probeAiModelStatus()
-    const off = window.electron?.aiModel?.onProgress?.((progress) => {
-      setAiModelProgress(progress)
-      // 下载完成（含从暂停/错误恢复后完成）：toast 提示，并重探引擎可用性（
-      // 开关的 aiMixAvailable 之前探测时权重可能还没就绪）
-      if (progress.done && progress.status === 'done') {
-        window.dispatchEvent(new CustomEvent('showToast', {
-          detail: { message: 'DJTransGAN 模型下载完成，AI 混音已可用', type: 'success' },
-        }))
-        void probeAiModelStatus()
-        void probeAiMixAvailable()
-      }
-    })
-    return () => off?.()
-  }, [autoMixEnabled, autoMixEnhanced, probeAiModelStatus, probeAiMixAvailable])
-
-  const handleAiModelDownload = () => {
-    setShowAiModelDownloadDialog(false)
-    void window.electron?.aiModel?.download?.()
-  }
-  const handleAiModelPause = () => {
-    void window.electron?.aiModel?.pause?.()
-  }
-  const handleAiModelResume = () => {
-    void window.electron?.aiModel?.download?.()
-  }
-  const handleAiModelCancel = () => {
-    void window.electron?.aiModel?.cancel?.()
-    setAiModelProgress(null)
-  }
-  const handleAiModelDelete = () => {
-    setShowAiModelDeleteDialog(false)
-    void (async () => {
-      const result = await window.electron?.aiModel?.delete?.()
-      if (result?.ok) {
-        // DJTransGAN 是严格可选扩展：删除模型同时持久化关闭，避免后续计划继续
-        // 标记 aiMix=true、反复冷启动失败后才回退 DSP。
-        setAutoMixAiMix(false)
-        localStorage.setItem('autoMixAiMix', 'false')
-        window.dispatchEvent(new Event('autoMixSettingsChanged'))
-        window.dispatchEvent(new CustomEvent('showToast', {
-          detail: { message: '已删除 DJTransGAN 模型并关闭实验扩展', type: 'success' },
-        }))
-        setAiModelProgress(null)
-      } else {
-        window.dispatchEvent(new CustomEvent('showToast', {
-          detail: { message: result?.error || '删除模型失败', type: 'error' },
-        }))
-      }
-      void probeAiModelStatus()
-      void probeAiMixAvailable() // 删除后同步禁用 AI 混音开关
-    })()
-  }
-
-  // ── 代理自动配置（高级设置）：网络不佳时扫描本地代理端口，模型下载/更新走代理 ──
-  const [proxyEnabled, setProxyEnabled] = useState(false)
-  const [proxyScanning, setProxyScanning] = useState(false)
-  const [proxyList, setProxyList] = useState<Array<{ host: string; port: number; type: string; latency: number }>>([])
-  const [proxyState, setProxyState] = useState<{ enabled: boolean; proxy: { host: string; port: number; type: string } | null }>({ enabled: false, proxy: null })
-  const [proxyLatency, setProxyLatency] = useState<{
-    status: 'testing' | 'done'
-    result: {
-      baidu: { timeout: boolean; total: number; loss: number; lossRate: number; avgLatency: number; minLatency: number; maxLatency: number }
-      github: { timeout: boolean; total: number; loss: number; lossRate: number; avgLatency: number; minLatency: number; maxLatency: number }
-      google: { timeout: boolean; total: number; loss: number; lossRate: number; avgLatency: number; minLatency: number; maxLatency: number }
-    } | null
-  } | null>(null)
-
-  // 触发联通测试并展示（开关开启/重启仍开启时后台测）；75s 兜底超时显示"连接超时"
-  const probeAndShow = () => {
-    setProxyLatency({ status: 'testing', result: null })
-    const timeoutResult = {
-      baidu: { timeout: true, total: 0, loss: 0, lossRate: 100, avgLatency: 0, minLatency: 0, maxLatency: 0 },
-      github: { timeout: true, total: 0, loss: 0, lossRate: 100, avgLatency: 0, minLatency: 0, maxLatency: 0 },
-      google: { timeout: true, total: 0, loss: 0, lossRate: 100, avgLatency: 0, minLatency: 0, maxLatency: 0 },
-    }
-    const guard = window.setTimeout(() => setProxyLatency({ status: 'done', result: timeoutResult }), 75_000)
-    void window.electron?.proxyManager?.probe?.()
-      .then((r) => { window.clearTimeout(guard); if (r) setProxyLatency(r) })
-      .catch(() => { window.clearTimeout(guard); setProxyLatency({ status: 'done', result: timeoutResult }) })
-  }
-
-  useEffect(() => {
-    const refresh = () => {
-      void window.electron?.proxyManager?.getState?.().then((s) => {
-        if (s) { setProxyEnabled(s.enabled); setProxyState(s) }
-      }).catch(() => {})
-      // 功能开启时测 ping（重启后仍开启：后台测完填入）
-      void window.electron?.proxyManager?.getLatency?.().then((r) => {
-        if (r) setProxyLatency(r)
-        else if (proxyEnabled) probeAndShow()
-      }).catch(() => {})
-    }
-    refresh()
-    // 主进程自动关闭（运行中断开/启动无代理）时同步开关状态
-    const off = window.electron?.proxyManager?.onNotice?.(() => refresh())
-    const offLatency = window.electron?.proxyManager?.onLatency?.((r) => { if (r) setProxyLatency(r) })
-    return () => { off?.(); offLatency?.() }
-  }, [])
-
-  const handleProxyToggle = (enabled: boolean) => {
-    setProxyEnabled(enabled)
-    if (!enabled) {
-      void window.electron?.proxyManager?.disable?.().then((s) => { if (s) setProxyState(s) }).catch(() => {})
-      setProxyList([])
-      return
-    }
-    // 开启：扫描本地代理端口并自动选最优
-    setProxyScanning(true)
-    void (async () => {
-      try {
-        const list = await window.electron?.proxyManager?.scan?.()
-        const found = list || []
-        setProxyList(found)
-        if (found.length > 0) {
-          const best = found[0]
-          const s = await window.electron?.proxyManager?.enable?.(best.port)
-          if (s) { setProxyState(s); setProxyEnabled(true) }
-          probeAndShow() // 开启即测一次 ping 延迟/丢包
-          window.dispatchEvent(new CustomEvent('showToast', {
-            detail: { message: `已自动配置代理 127.0.0.1:${best.port}（延迟 ${best.latency}ms）`, type: 'success' },
-          }))
-        } else {
-          setProxyEnabled(false)
-          window.dispatchEvent(new CustomEvent('showToast', {
-            detail: { message: '未检测到可用的本地代理，请确认代理软件已开启', type: 'error' },
-          }))
-        }
-      } catch {
-        setProxyEnabled(false)
-        window.dispatchEvent(new CustomEvent('showToast', {
-          detail: { message: '代理扫描失败', type: 'error' },
-        }))
-      } finally {
-        setProxyScanning(false)
-      }
-    })()
-  }
-
-  const handleProxyRescan = () => {
-    setProxyScanning(true)
-    void (async () => {
-      try {
-        const list = await window.electron?.proxyManager?.scan?.()
-        const found = list || []
-        setProxyList(found)
-        if (found.length > 0) {
-          const best = found[0]
-          const s = await window.electron?.proxyManager?.enable?.(best.port)
-          if (s) setProxyState(s)
-        } else {
-          window.dispatchEvent(new CustomEvent('showToast', {
-            detail: { message: '未检测到可用的本地代理', type: 'error' },
-          }))
-        }
-      } catch {
-        window.dispatchEvent(new CustomEvent('showToast', {
-          detail: { message: '代理扫描失败', type: 'error' },
-        }))
-      } finally {
-        setProxyScanning(false)
-      }
-    })()
-  }
-  
   const handleCrossfadeToggle = (enabled: boolean) => {
-    // Crossfade 和 AutoMix、Gapless 互斥
+    // Crossfade 和 Gapless 互斥
     if (enabled) {
-      if (autoMixEnabled) {
-        setAutoMixEnabled(false)
-        localStorage.setItem('autoMixEnabled', JSON.stringify(false))
-        window.dispatchEvent(new Event('autoMixSettingsChanged'))
-      }
       if (gaplessEnabled) {
         setGaplessEnabled(false)
         localStorage.setItem('gaplessEnabled', JSON.stringify(false))
@@ -1741,17 +1032,12 @@ function SettingsPanel({
   }
   
   const handleGaplessToggle = (enabled: boolean) => {
-    // Gapless 和 Crossfade、AutoMix 互斥
+    // Gapless 和 Crossfade 互斥
     if (enabled) {
       if (crossfadeEnabled) {
         setCrossfadeEnabled(false)
         localStorage.setItem('crossfadeEnabled', JSON.stringify(false))
         window.dispatchEvent(new Event('crossfadeSettingsChanged'))
-      }
-      if (autoMixEnabled) {
-        setAutoMixEnabled(false)
-        localStorage.setItem('autoMixEnabled', JSON.stringify(false))
-        window.dispatchEvent(new Event('autoMixSettingsChanged'))
       }
     }
     setGaplessEnabled(enabled)
@@ -1763,73 +1049,6 @@ function SettingsPanel({
     setAlbumGaplessEnabled(enabled)
     localStorage.setItem('albumGaplessEnabled', JSON.stringify(enabled))
     window.dispatchEvent(new Event('albumGaplessSettingsChanged'))
-  }
-
-  const handleAutoMixToggle = (enabled: boolean) => {
-    // AutoMix 和 Crossfade、Gapless 互斥
-    if (enabled) {
-      if (crossfadeEnabled) {
-        setCrossfadeEnabled(false)
-        localStorage.setItem('crossfadeEnabled', JSON.stringify(false))
-        window.dispatchEvent(new Event('crossfadeSettingsChanged'))
-      }
-      if (gaplessEnabled) {
-        setGaplessEnabled(false)
-        localStorage.setItem('gaplessEnabled', JSON.stringify(false))
-        window.dispatchEvent(new Event('gaplessSettingsChanged'))
-      }
-    }
-    setAutoMixEnabled(enabled)
-    localStorage.setItem('autoMixEnabled', JSON.stringify(enabled))
-    window.dispatchEvent(new Event('autoMixSettingsChanged'))
-    // 探针：用户点击开关的瞬间写入后端日志（独立于 App 的事件链）
-    window.electron?.automixLog?.('settings-toggle', `autoMixEnabled=${enabled}`).catch(() => undefined)
-  }
-
-  const handleAutoMixBeatMatchingToggle = (enabled: boolean) => {
-    setAutoMixBeatMatching(enabled)
-    localStorage.setItem('autoMixBeatMatching', JSON.stringify(enabled))
-    window.dispatchEvent(new Event('autoMixSettingsChanged'))
-  }
-
-  const handleAutoMixSkipSilenceToggle = (enabled: boolean) => {
-    setAutoMixSkipSilence(enabled)
-    localStorage.setItem('autoMixSkipSilence', JSON.stringify(enabled))
-    window.dispatchEvent(new Event('autoMixSettingsChanged'))
-  }
-
-  const handleAutoMixMinDurationChange = (duration: number) => {
-    const newDuration = Math.max(1, Math.min(autoMixMaxDuration - 1, duration))
-    setAutoMixMinDuration(newDuration)
-    localStorage.setItem('autoMixMinDuration', newDuration.toString())
-    window.dispatchEvent(new Event('autoMixSettingsChanged'))
-  }
-
-  const handleAutoMixMaxDurationChange = (duration: number) => {
-    const newDuration = Math.max(autoMixMinDuration + 1, Math.min(20, duration))
-    setAutoMixMaxDuration(newDuration)
-    localStorage.setItem('autoMixMaxDuration', newDuration.toString())
-    window.dispatchEvent(new Event('autoMixSettingsChanged'))
-  }
-  const handleAutoMixEnhancedChange = (enabled: boolean) => {
-    setAutoMixEnhanced(enabled)
-    localStorage.setItem('autoMixEnhanced', JSON.stringify(enabled))
-    window.dispatchEvent(new Event('autoMixSettingsChanged'))
-    window.electron?.automixLog?.('settings-toggle', `autoMixEnhanced=${enabled}`).catch(() => undefined)
-  }
-  const handleAutoMixIntensityChange = (intensity: 'subtle' | 'standard' | 'strong') => {
-    setAutoMixTransitionIntensity(intensity)
-    localStorage.setItem('autoMixTransitionIntensity', intensity)
-    window.dispatchEvent(new Event('autoMixSettingsChanged'))
-    window.electron?.automixLog?.('settings-toggle', `autoMixTransitionIntensity=${intensity}`).catch(() => undefined)
-  }
-  const handleAutoMixAiMixToggle = (enabled: boolean) => {
-    // UI 事件、键盘和 TV 控制共用同一状态闸门；未安装模型时永远不能持久化 true。
-    const effectiveEnabled = enabled && aiMixAvailable === true
-    setAutoMixAiMix(effectiveEnabled)
-    localStorage.setItem('autoMixAiMix', JSON.stringify(effectiveEnabled))
-    window.dispatchEvent(new Event('autoMixSettingsChanged'))
-    window.electron?.automixLog?.('settings-toggle', `autoMixAiMix=${effectiveEnabled}`).catch(() => undefined)
   }
 
   // 深浅色主题：与播放页快捷设置共用同一存储与事件，App 监听后统一更新
@@ -1986,31 +1205,6 @@ function SettingsPanel({
 
             {/* Tabs：激活项下方为蓝色指示条（layoutId 共享布局动画，切换时丝滑滑到选中 tab 下方） */}
             <div className={`relative flex border-b ${playerTheme === 'dark' ? 'border-white/10' : 'border-black/10'}`}>
-              {isTvModeActive() && (
-                <button
-                  onClick={() => switchTab('tv')}
-                  className={`relative flex-1 py-4 px-4 flex items-center justify-center gap-2 transition-colors ${
-                    activeTab === 'tv'
-                      ? playerTheme === 'dark'
-                        ? 'text-white'
-                        : 'text-black'
-                      : playerTheme === 'dark'
-                      ? 'text-white/60 hover:text-white/80'
-                      : 'text-black/60 hover:text-black/80'
-                  }`}
-                >
-                  <MonitorSmartphone className="w-5 h-5" />
-                  TV设置
-                  {activeTab === 'tv' && (
-                    <motion.div
-                      layoutId="settings-tab-indicator"
-                      className="absolute bottom-0 left-1/4 right-1/4 h-[3px] rounded-full"
-                      style={{ backgroundColor: accentColor, boxShadow: `0 0 8px ${accentColor}66` }}
-                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                    />
-                  )}
-                </button>
-              )}
               <button
                 onClick={() => switchTab('account')}
                 className={`relative flex-1 py-4 px-4 flex items-center justify-center gap-2 transition-colors ${
@@ -2107,180 +1301,6 @@ function SettingsPanel({
 
             {/* Content area */}
             <div ref={contentScrollRef} className="p-6 overflow-y-auto h-[calc(100vh-140px)]">
-              {activeTab === 'tv' && (
-                <div className="space-y-6">
-                  {/* 远程遥控器 */}
-                  <div>
-                    <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>远程遥控器</h3>
-                    <div className="space-y-3">
-                      {/* 扫码配对（打开 App 层的 RemoteControlModal） */}
-                      <button
-                        onClick={() => onOpenRemote?.()}
-                        className={`w-full ${bgCard} rounded-xl p-4 border ${borderColor} ${hoverBg} transition-all flex items-center justify-between group`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${accentColor}20` }}>
-                            <MonitorSmartphone className="w-5 h-5" style={{ color: accentColor }} />
-                          </div>
-                          <div className="text-left min-w-0">
-                            <div className={`${textPrimary} font-medium`}>扫码配对手机遥控</div>
-                            <div className={`${textSecondary} text-sm truncate`}>手机扫码，用手机遥控 TV</div>
-                          </div>
-                        </div>
-                        <ChevronRight className={`w-5 h-5 ${textTertiary} flex-shrink-0 group-hover:translate-x-1 transition-transform`} />
-                      </button>
-
-                      {/* 遥控器个性化（外观/右上角按钮/手势） */}
-                      <button
-                        onClick={() => setShowRemoteSettings(true)}
-                        className={`w-full ${bgCard} rounded-xl p-4 border ${borderColor} ${hoverBg} transition-all flex items-center justify-between group`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${accentColor}20` }}>
-                            <SettingsIcon className="w-5 h-5" style={{ color: accentColor }} />
-                          </div>
-                          <div className="text-left min-w-0">
-                            <div className={`${textPrimary} font-medium`}>遥控器个性化</div>
-                            <div className={`${textSecondary} text-sm truncate`}>外观 · 右上角按钮 · 触摸板手势</div>
-                          </div>
-                        </div>
-                        <ChevronRight className={`w-5 h-5 ${textTertiary} flex-shrink-0 group-hover:translate-x-1 transition-transform`} />
-                      </button>
-
-                      {/* 每次启动自动打开远程遥控器 */}
-                      <label className={`w-full ${bgCard} rounded-xl p-4 border ${borderColor} flex items-center justify-between gap-6 cursor-pointer`}>
-                        <div className="min-w-0">
-                          <div className={`${textPrimary} font-medium`}>每次启动自动打开远程遥控器</div>
-                          <div className={`${textSecondary} text-sm mt-0.5`}>开机后自动弹出手机配对二维码，免去先用遥控器进入</div>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
-                          <input
-                            type="checkbox"
-                            checked={tvAutoOpenRemote}
-                            onChange={(event) => toggleTvAutoOpenRemote(event.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:rounded-full after:h-5 after:w-5 after:transition-all after:bg-white after:shadow-[0_1px_3px_rgba(0,0,0,0.35)]`} style={{ backgroundColor: tvAutoOpenRemote ? accentColor : '' }} />
-                        </label>
-                      </label>
-
-                      {/* 遥控器可视化（按键教学） */}
-                      <button
-                        onClick={() => setShowRemoteGuide(true)}
-                        className={`w-full ${bgCard} rounded-xl p-4 border ${borderColor} ${hoverBg} transition-all flex items-center justify-between group`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${accentColor}20` }}>
-                            <Gamepad2 className="w-5 h-5" style={{ color: accentColor }} />
-                          </div>
-                          <div className="text-left min-w-0">
-                            <div className={`${textPrimary} font-medium`}>遥控器可视化</div>
-                            <div className={`${textSecondary} text-sm truncate`}>认识遥控器按键 · 逐个动画演示</div>
-                          </div>
-                        </div>
-                        <ChevronRight className={`w-5 h-5 ${textTertiary} flex-shrink-0 group-hover:translate-x-1 transition-transform`} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 设备配置检查 + 性能模式 */}
-                  <div>
-                    <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>性能与设备</h3>
-                    <div className={`${bgCard} rounded-2xl border ${borderColor} p-4`}>
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className={`${textPrimary} font-medium`}>设备配置检查</div>
-                          <div className={`${textSecondary} text-sm mt-0.5`}>查看 TV 内存/存储/CPU，选择性能模式</div>
-                        </div>
-                        <button
-                          onClick={() => setShowDeviceInfo(true)}
-                          className="shrink-0 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                          style={{ backgroundColor: accentColor }}
-                        >
-                          配置检查
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* DPI 适配（TV 端界面缩放 + 显示器信息） */}
-                  <div className="mt-6">
-                    <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>DPI 适配</h3>
-                    <div className={`${bgCard} rounded-2xl border ${borderColor} p-4`}>
-                      <div className={`${textPrimary} font-medium mb-1`}>界面缩放</div>
-                      <div className={`${textSecondary} text-sm mb-3`}>按电视尺寸调整 UI 大小，实时生效</div>
-                      <div className="flex flex-wrap gap-2">
-                        {TV_SCALE_OPTIONS.map(v => (
-                          <button
-                            key={v}
-                            onClick={() => previewTvScale(v)}
-                            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
-                              tvScale === v ? 'text-white' : `${hoverBg} ${textSecondary}`
-                            }`}
-                            style={tvScale === v ? { backgroundColor: accentColor } : undefined}
-                          >
-                            {v}%
-                          </button>
-                        ))}
-                      </div>
-                      <div className={`mt-4 pt-3 border-t ${borderColor} space-y-1.5`}>
-                        <div className={`${textSecondary} text-sm`}>分辨率：<span className={textPrimary}>{tvInfo?.screenPx || '—'}</span></div>
-                        <div className={`${textSecondary} text-sm`}>刷新率：<span className={textPrimary}>{tvInfo?.refreshRate || '—'}</span></div>
-                        <div className={`${textSecondary} text-sm`}>显示模式：<span className={textPrimary}>{tvInfo?.displayMode || '—'}</span></div>
-                        <div className={`${textSecondary} text-sm`}>HDR：<span className={textPrimary}>{tvInfo?.hdr ? '支持' : '不支持'}</span></div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 设备授权（与 PC 端关于页统一设计） */}
-                  <div>
-                    <div className={`${bgCard} rounded-2xl border ${borderColor} p-5`}>
-                      <div className="flex items-start gap-4 mb-4">
-                        <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: `${accentColor}20`, color: accentColor }}>
-                          <KeyRound className="w-5 h-5" />
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className={`text-lg font-semibold ${textPrimary}`}>设备授权</h3>
-                          <p className={`text-sm ${textSecondary} mt-1.5 leading-6`}>仅用作设备标识，不会收集关于您设备的任何信息</p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => setShowTvDeviceId(true)}
-                        disabled={!tvLicense.deviceId}
-                        className="w-full rounded-xl px-5 py-3.5 text-white font-semibold flex items-center justify-center gap-2 transition-all hover:-translate-y-0.5 disabled:opacity-60 disabled:hover:translate-y-0"
-                        style={{ backgroundColor: accentColor, boxShadow: `0 10px 28px ${accentColor}24` }}
-                      >
-                        <Copy className="w-4 h-4" />
-                        获取识别码
-                      </button>
-
-                      <div className="mt-4 pt-4 border-t" style={{ borderColor: borderColor }}>
-                        <button
-                          onClick={() => setShowTvRedeemModal(true)}
-                          className={`w-full rounded-xl border ${borderColor} ${hoverBg} ${textPrimary} px-5 py-3.5 font-semibold flex items-center justify-center gap-2 transition-colors`}
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          测试码验证
-                        </button>
-                        {tvLicense.grants.length > 0 && (
-                          <div className="mt-3 space-y-1.5">
-                            {tvLicense.grants.map((grant) => (
-                              <div key={grant.feature} className="flex items-center gap-2 text-sm">
-                                <BadgeCheck className="w-4 h-4 flex-shrink-0" style={{ color: accentColor }} />
-                                <span className={`${textPrimary}`}>{grant.label}</span>
-                                {grant.expiresAt && (
-                                  <span className={`${textTertiary} text-xs`}>有效期至 {new Date(grant.expiresAt).toLocaleDateString('zh-CN')}</span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {activeTab === 'account' && (
                 <div className="space-y-6">
                   <div>
@@ -2304,17 +1324,15 @@ function SettingsPanel({
                         const isNetease = p === 'netease'
                         const isQQ = p === 'qq'
                         const isApple = p === 'apple'
-                        const isSpotify = p === 'spotify'
-                        const isKugou = p === 'kugou'
                         const label = PLATFORM_LABELS[p]
-                        const sub = isNetease ? '使用手机扫码登录' : isQQ ? '使用网页扫码登录' : isApple ? '使用网页登录' : isSpotify ? '使用 OAuth 授权登录' : isKugou ? '使用网页登录' : '使用抖音扫码登录'
-                        const iconBg = isNetease ? 'bg-red-600' : isQQ ? 'bg-green-600' : isApple ? 'bg-pink-600' : isSpotify ? 'bg-[#1DB954]' : isKugou ? 'bg-[#FF7A00]' : 'bg-[#38BDF8]'
+                        const sub = isNetease ? '使用手机扫码登录' : isQQ ? '使用网页扫码登录' : isApple ? '使用网页登录' : '使用 OAuth 授权登录'
+                        const iconBg = isNetease ? 'bg-red-600' : isQQ ? 'bg-green-600' : isApple ? 'bg-pink-600' : 'bg-[#1DB954]'
                         const iconSrc = isNetease ? 'https://s1.music.126.net/style/favicon.ico' : isQQ ? 'https://y.qq.com/favicon.ico' : isApple ? 'https://www.apple.com/favicon.ico' : ''
                         const iconFallback = isNetease ? '%E7%BD%91' : isQQ ? 'QQ' : isApple ? '%E8%8B%B9' : ''
-                        const loggedIn = isNetease ? neteaseLoggedIn : isQQ ? qqLoggedIn : isApple ? appleLoggedIn : isSpotify ? spotifyLoggedIn : isKugou ? kugouLoggedIn : sodaLoggedIn
-                        const username = isNetease ? neteaseUsername : isQQ ? qqUsername : isApple ? appleUsername : isSpotify ? spotifyUsername : isKugou ? kugouUsername : sodaUsername
-                        const onLogin = isNetease ? onNeteaseLogin : isQQ ? onQQLogin : isApple ? (() => undefined) : isSpotify ? onSpotifyLogin : isKugou ? onKugouLogin : onSodaLogin
-                        const onLogout = isNetease ? onNeteaseLogout : isQQ ? onQQLogout : isApple ? onAppleLogout : isSpotify ? onSpotifyLogout : isKugou ? onKugouLogout : onSodaLogout
+                        const loggedIn = isNetease ? neteaseLoggedIn : isQQ ? qqLoggedIn : isApple ? appleLoggedIn : spotifyLoggedIn
+                        const username = isNetease ? neteaseUsername : isQQ ? qqUsername : isApple ? appleUsername : spotifyUsername
+                        const onLogin = isNetease ? onNeteaseLogin : isQQ ? onQQLogin : isApple ? (() => undefined) : onSpotifyLogin
+                        const onLogout = isNetease ? onNeteaseLogout : isQQ ? onQQLogout : isApple ? onAppleLogout : onSpotifyLogout
                         return (
                           <Reorder.Item key={p} value={p} className="relative">
                             <motion.div
@@ -2521,7 +1539,7 @@ function SettingsPanel({
                         <div className="text-left min-w-0">
                         <div className={`${textPrimary} font-medium`}>各平台播放音质</div>
                         <div className={`${textSecondary} text-sm truncate`}>
-                          Apple Music：{audioQualityLabel(audioQualitySettings.apple)} · 网易云：{audioQualityLabel(audioQualitySettings.netease)} · QQ音乐：{audioQualityLabel(audioQualitySettings.qq)} · Spotify：{audioQualityLabel(audioQualitySettings.spotify)} · 酷狗：{audioQualityLabel(audioQualitySettings.kugou)} · 汽水：{audioQualityLabel(audioQualitySettings.soda)}
+                          Apple Music：{audioQualityLabel(audioQualitySettings.apple)} · 网易云：{audioQualityLabel(audioQualitySettings.netease)} · QQ音乐：{audioQualityLabel(audioQualitySettings.qq)} · Spotify：{audioQualityLabel(audioQualitySettings.spotify)}
                         </div>
                         </div>
                       </div>
@@ -3353,27 +2371,6 @@ function SettingsPanel({
                     </div>
                   </div>
 
-                  {/* 远程遥控器设置（卡片 → 二级菜单弹窗；TV 模式已移至「TV设置」tab） */}
-                  {!isTvModeActive() && (
-                  <div>
-                    <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>远程遥控器</h3>
-                    <button
-                      onClick={() => setShowRemoteSettings(true)}
-                      className={`w-full ${bgCard} rounded-xl p-4 border ${borderColor} ${hoverBg} transition-all flex items-center justify-between group`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${accentColor}20` }}>
-                          <MonitorSmartphone className="w-5 h-5" style={{ color: accentColor }} />
-                        </div>
-                        <div className="text-left min-w-0">
-                          <div className={`${textPrimary} font-medium`}>遥控器个性化</div>
-                          <div className={`${textSecondary} text-sm truncate`}>外观 · 右上角按钮 · 触摸板手势</div>
-                        </div>
-                      </div>
-                      <ChevronRight className={`w-5 h-5 ${textTertiary} flex-shrink-0 group-hover:translate-x-1 transition-transform`} />
-                    </button>
-                  </div>
-                  )}
                 </div>
               )}
 
@@ -3436,7 +2433,7 @@ function SettingsPanel({
                         <div>
                           <div className={`${textPrimary} font-medium mb-1`}>无缝衔接 (Gapless)</div>
                           <div className={`${textSecondary} text-sm`}>
-                            预加载下一首并在歌曲边界连续切换；节拍分析由独立的 AutoMix 负责
+                            预加载下一首并在歌曲边界连续切换，消除歌曲间的空隙
                           </div>
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer">
@@ -3471,351 +2468,6 @@ function SettingsPanel({
                             </label>
                           </div>
 
-                        </div>
-                      )}
-                    </div>
-
-                    {/* AutoMix 智能混音 */}
-                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mt-4`}>
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <div className={`${textPrimary} font-medium mb-1 flex items-center gap-2`}>
-                            <Sparkles className="w-4 h-4" />
-                            智能混音 (AutoMix)
-                            <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: accentColor + '20', color: accentColor }}>AI</span>
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400">Beta</span>
-                          </div>
-                          <div className={`${textSecondary} text-sm`}>
-                            自动分析上下歌曲BPM节拍与能量进行混音过渡
-                          </div>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={autoMixEnabled}
-                            onChange={(e) => handleAutoMixToggle(e.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: autoMixEnabled ? accentColor : '' }}></div>
-                        </label>
-                      </div>
-
-                      {autoMixEnabled && (
-                        <div className="mt-4 pt-4 border-t border-white/10 space-y-4">
-                          {/* 过渡引擎：标准 AutoMix（v1）/ AutoMix 增强版（v2） */}
-                          <div>
-                            <div className={`${textPrimary} text-sm font-medium mb-2`}>过渡引擎</div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                onClick={() => handleAutoMixEnhancedChange(false)}
-                                className={`px-3 py-2 rounded-lg text-sm transition-all ${textPrimary} ${
-                                  !autoMixEnhanced ? 'border-current' : 'border-transparent'
-                                }`}
-                                style={{
-                                  borderColor: !autoMixEnhanced ? accentColor : 'transparent',
-                                  backgroundColor: !autoMixEnhanced
-                                    ? `${accentColor}20`
-                                    : playerTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
-                                  color: !autoMixEnhanced ? accentColor : undefined,
-                                }}
-                              >
-                                标准 AutoMix
-                              </button>
-                              <button
-                                onClick={() => handleAutoMixEnhancedChange(true)}
-                                className={`px-3 py-2 rounded-lg text-sm transition-all ${textPrimary} ${
-                                  autoMixEnhanced ? 'border-current' : 'border-transparent'
-                                }`}
-                                style={{
-                                  borderColor: autoMixEnhanced ? accentColor : 'transparent',
-                                  backgroundColor: autoMixEnhanced
-                                    ? `${accentColor}20`
-                                    : playerTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
-                                  color: autoMixEnhanced ? accentColor : undefined,
-                                }}
-                              >
-                                AutoMix 增强版
-                              </button>
-                            </div>
-                            <div className={`${textSecondary} text-xs mt-1`}>
-                              {autoMixEnhanced
-                                ? '调性匹配、乐句对齐、能量曲线与更丰富的过渡特效（鼓点/加速/混响虚化）'
-                                : '节拍对齐 + 基础 DJ 效果（当前方案，保持稳定）'}
-                            </div>
-                          </div>
-
-                          {autoMixEnhanced && (
-                            <>
-                              {/* v2 特效强度档位 */}
-                              <div>
-                                <div className={`${textPrimary} text-sm font-medium mb-2`}>特效强度</div>
-                                <div className="grid grid-cols-3 gap-2">
-                                  {(['subtle', 'standard', 'strong'] as const).map(level => (
-                                    <button
-                                      key={level}
-                                      onClick={() => handleAutoMixIntensityChange(level)}
-                                      className={`px-3 py-2 rounded-lg text-sm transition-all ${textPrimary}`}
-                                      style={{
-                                        borderColor: autoMixTransitionIntensity === level ? accentColor : 'transparent',
-                                        backgroundColor: autoMixTransitionIntensity === level
-                                          ? `${accentColor}20`
-                                          : playerTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
-                                        color: autoMixTransitionIntensity === level ? accentColor : undefined,
-                                      }}
-                                    >
-                                      {level === 'subtle' ? '轻' : level === 'standard' ? '标准' : '强'}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-
-                              {/* AutoMix Enhanced 分轨核心：HTDemucs 可选模型，缺失时继续 v2 DSP */}
-                              <div className={`rounded-xl border p-3 ${playerTheme === 'dark' ? 'border-white/10 bg-white/[0.03]' : 'border-black/10 bg-black/[0.02]'}`}>
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <div className={`${textPrimary} text-sm font-medium mb-0.5`}>增强版分轨引擎（HTDemucs）</div>
-                                    <div className={`${textSecondary} text-xs leading-relaxed`}>
-                                      {stemModelStatus?.installed
-                                        ? '已安装：过渡会分离人声、鼓、贝斯与其他乐器并分别交接'
-                                        : stemModelProgress?.status === 'downloading'
-                                          ? `正在从 ${stemModelProgress.host || '镜像'} 下载 ${stemModelProgress.asset || '模型'}… ${Math.round(stemModelProgress.percent)}%`
-                                          : stemModelProgress?.status === 'paused'
-                                            ? '下载已暂停，可断点继续'
-                                            : stemModelProgress?.status === 'error'
-                                              ? `下载失败：${stemModelProgress.error || '未知错误'}`
-                                              : '未安装时仍可使用增强版 DSP；安装后自动升级为分轨混音'}
-                                    </div>
-                                  </div>
-                                  <div className="flex flex-shrink-0 items-center gap-1.5">
-                                    {stemModelStatus?.installed ? (
-                                      <button type="button" onClick={() => setShowStemModelDeleteDialog(true)} className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ color: '#f87171', background: playerTheme === 'dark' ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>删除</button>
-                                    ) : stemModelProgress?.status === 'downloading' ? (
-                                      <button type="button" onClick={handleStemModelPause} className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ color: playerTheme === 'dark' ? '#f2f3f7' : '#1c1d22', background: playerTheme === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>暂停</button>
-                                    ) : stemModelProgress?.status === 'paused' ? (
-                                      <>
-                                        <button type="button" onClick={handleStemModelResume} className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: accentColor }}>继续</button>
-                                        <button type="button" onClick={handleStemModelCancel} className="rounded-lg px-2 py-1.5 text-xs" style={{ color: textSecondary }}>取消</button>
-                                      </>
-                                    ) : (
-                                      <button type="button" onClick={() => setShowStemModelDownloadDialog(true)} disabled={stemModelStatus?.supported === false} className="rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40" style={{ background: accentColor }}>下载模型</button>
-                                    )}
-                                  </div>
-                                </div>
-                                {stemModelProgress && (stemModelProgress.status === 'downloading' || stemModelProgress.status === 'paused') && (
-                                  <div className="mt-2 space-y-1">
-                                    <div className={`h-1 rounded-full overflow-hidden ${playerTheme === 'dark' ? 'bg-white/10' : 'bg-black/10'}`}>
-                                      <div className="h-full rounded-full transition-[width] duration-300" style={{ width: `${Math.max(0, Math.min(100, stemModelProgress.percent))}%`, background: accentColor }} />
-                                    </div>
-                                    <div className={`flex justify-between text-[10px] ${textSecondary}`}>
-                                      <span>{stemModelProgress.speed > 0 ? formatDownloadSpeed(stemModelProgress.speed) : '准备下载'}</span>
-                                      <span>{typeof stemModelProgress.eta === 'number' ? `剩余约 ${formatDownloadEta(stemModelProgress.eta)}` : ''}</span>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* DJTransGAN 严格可选扩展：不影响 AutoMix Enhanced / HTDemucs */}
-                              <div className="flex items-center justify-between gap-4">
-                                <div>
-                                  <div className={`${textPrimary} text-sm font-medium mb-1`}>DJTransGAN 实验扩展（可选）</div>
-                                  <div className={`${textSecondary} text-xs`}>
-                                    {aiMixAvailable === true
-                                      ? '可选使用学习式推子/EQ；60 秒长混音资源占用较高，默认关闭。关闭时不会启动 Torch worker'
-                                      : aiMixAvailable === false
-                                        ? '未安装，不影响增强版的 HTDemucs 分轨与 DSP 过渡'
-                                        : '正在检测可选扩展…'}
-                                  </div>
-                                </div>
-                                <label className={`relative inline-flex flex-shrink-0 items-center ${aiMixAvailable === true ? 'cursor-pointer' : 'opacity-40 cursor-not-allowed'}`}>
-                                  <input
-                                    type="checkbox"
-                                    checked={autoMixAiMix && aiMixAvailable === true}
-                                    disabled={aiMixAvailable !== true}
-                                    onChange={(event) => handleAutoMixAiMixToggle(event.target.checked)}
-                                    className="sr-only peer"
-                                  />
-                                  <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: autoMixAiMix ? accentColor : '' }}></div>
-                                </label>
-                              </div>
-
-                              {/* DJTransGAN 模型：下载 / 进度 / 删除 */}
-                              <div className={`rounded-xl border p-3 ${playerTheme === 'dark' ? 'border-white/10 bg-white/[0.03]' : 'border-black/10 bg-black/[0.02]'}`}>
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <div className={`${textPrimary} text-sm font-medium mb-0.5`}>DJTransGAN 模型</div>
-                                    <div className={`${textSecondary} text-xs leading-relaxed`}>
-                                      {aiModelProgress?.status === 'deleting'
-                                        ? '正在删除模型…'
-                                        : aiModelStatus?.installed
-                                          ? '已安装，可直接使用 AI 混音'
-                                          : aiModelProgress?.status === 'downloading'
-                                            ? `${aiModelProgress.phaseLabel || '下载中'}… ${Math.round(aiModelProgress.phasePercent)}%`
-                                            : aiModelProgress?.status === 'paused'
-                                              ? '下载已暂停'
-                                              : aiModelProgress?.status === 'error'
-                                                ? `下载失败：${aiModelProgress.error || '未知错误'}`
-                                                : aiModelStatus
-                                                  ? aiModelStatus.repoReady && !aiModelStatus.weightsReady
-                                                    ? '已下载仓库，缺少预训练权重'
-                                                    : '未安装（点击下载将自动安装运行环境 + 模型）'
-                                                  : '检测中…'}
-                                    </div>
-                                  </div>
-                                  {aiModelProgress?.status === 'deleting' ? (
-                                    <button
-                                      type="button"
-                                      disabled
-                                      className="flex flex-shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium"
-                                      style={{ color: playerTheme === 'dark' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.55)', background: playerTheme === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }}
-                                    >
-                                      <span className="inline-block h-3 w-3 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: accentColor, borderRightColor: accentColor }} />
-                                      删除中…
-                                    </button>
-                                  ) : aiModelStatus?.installed ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowAiModelDeleteDialog(true)}
-                                      className="flex-shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
-                                      style={{
-                                        color: '#f87171',
-                                        background: playerTheme === 'dark' ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.08)',
-                                        border: '1px solid rgba(239,68,68,0.25)',
-                                      }}
-                                    >
-                                      删除模型
-                                    </button>
-                                  ) : aiModelProgress?.status === 'downloading' || aiModelProgress?.status === 'paused' ? (
-                                    <div className="flex flex-shrink-0 items-center gap-1.5">
-                                      {aiModelProgress.status === 'paused' ? (
-                                        <button type="button" onClick={handleAiModelResume} className="rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors hover:opacity-85" style={{ background: accentColor }}>继续</button>
-                                      ) : (
-                                        <button type="button" onClick={handleAiModelPause} className="rounded-lg px-3 py-1.5 text-xs font-medium transition-colors" style={{ color: playerTheme === 'dark' ? '#f2f3f7' : '#1c1d22', background: playerTheme === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>暂停</button>
-                                      )}
-                                      <button type="button" onClick={handleAiModelCancel} className="rounded-lg px-3 py-1.5 text-xs font-medium transition-colors" style={{ color: playerTheme === 'dark' ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.65)', background: 'transparent', border: `1px solid ${playerTheme === 'dark' ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.15)'}` }}>取消</button>
-                                    </div>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowAiModelDownloadDialog(true)}
-                                      className="flex-shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-transform hover:scale-[1.03] active:scale-95"
-                                      style={{ background: accentColor }}
-                                    >
-                                      下载模型
-                                    </button>
-                                  )}
-                                </div>
-                                {aiModelProgress && (aiModelProgress.status === 'downloading' || aiModelProgress.status === 'paused') && (
-                                  <div className="mt-2.5">
-                                    <div className="flex items-center justify-between text-[11px] mb-1">
-                                      <span className={textSecondary}>{aiModelProgress.phaseLabel || '下载中'}</span>
-                                      <span className={textSecondary}>{Math.round(aiModelProgress.phasePercent)}%</span>
-                                    </div>
-                                    <div className={`h-1.5 w-full overflow-hidden rounded-full ${playerTheme === 'dark' ? 'bg-white/10' : 'bg-black/10'}`}>
-                                      <div className="h-full rounded-full transition-[width] duration-300" style={{ width: `${Math.max(0, Math.min(100, aiModelProgress.phasePercent))}%`, background: accentColor }} />
-                                    </div>
-                                    {(aiModelProgress.downloadSpeed > 0 || typeof aiModelProgress.downloadEta === 'number') && (
-                                      <div className="flex items-center justify-between text-[11px] mt-1">
-                                        {aiModelProgress.downloadSpeed > 0 ? (
-                                          <span className={textTertiary}>下载速度 {formatDownloadSpeed(aiModelProgress.downloadSpeed)}</span>
-                                        ) : <span />}
-                                        {typeof aiModelProgress.downloadEta === 'number' && (
-                                          <span className={textTertiary}>剩余约 {formatDownloadEta(aiModelProgress.downloadEta)}</span>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            </>
-                          )}
-
-                          <div className="flex items-center justify-between gap-4">
-                            <div>
-                              <div className={`${textPrimary} text-sm font-medium mb-1`}>节拍匹配</div>
-                              <div className={`${textSecondary} text-xs`}>对齐重拍，并使用保留音高的渐进变速</div>
-                            </div>
-                            <label className="relative inline-flex flex-shrink-0 items-center cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={autoMixBeatMatching}
-                                onChange={(event) => handleAutoMixBeatMatchingToggle(event.target.checked)}
-                                className="sr-only peer"
-                              />
-                              <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: autoMixBeatMatching ? accentColor : '' }}></div>
-                            </label>
-                          </div>
-
-                          <div className="flex items-center justify-between gap-4">
-                            <div>
-                              <div className={`${textPrimary} text-sm font-medium mb-1`}>跳过首尾静音</div>
-                              <div className={`${textSecondary} text-xs`}>选择混音点时避开前奏与尾部的静音区</div>
-                            </div>
-                            <label className="relative inline-flex flex-shrink-0 items-center cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={autoMixSkipSilence}
-                                onChange={(event) => handleAutoMixSkipSilenceToggle(event.target.checked)}
-                                className="sr-only peer"
-                              />
-                              <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: autoMixSkipSilence ? accentColor : '' }}></div>
-                            </label>
-                          </div>
-
-                          {/* 过渡时长范围：仅标准版（v1）可调；增强版（v2）由算法按 BPM 智能决定 */}
-                          {!autoMixEnhanced && (
-                            <div>
-                              <div className="flex items-center justify-between mb-2">
-                                <div className={`${textPrimary} text-sm font-medium`}>过渡时长范围</div>
-                                <div className={`${textSecondary} text-xs tabular-nums`}>{autoMixMinDuration}–{autoMixMaxDuration} 秒</div>
-                              </div>
-                              <div className="grid grid-cols-2 gap-4">
-                                <label className={`${textSecondary} text-xs`}>
-                                  最短
-                                  <input
-                                    type="range"
-                                    min="1"
-                                    max="19"
-                                    step="1"
-                                    value={autoMixMinDuration}
-                                    onChange={(event) => handleAutoMixMinDurationChange(Number(event.target.value))}
-                                    className="mt-2 w-full accent-current"
-                                    style={{ color: accentColor }}
-                                  />
-                                </label>
-                                <label className={`${textSecondary} text-xs`}>
-                                  最长
-                                  <input
-                                    type="range"
-                                    min="2"
-                                    max="20"
-                                    step="1"
-                                    value={autoMixMaxDuration}
-                                    onChange={(event) => handleAutoMixMaxDurationChange(Number(event.target.value))}
-                                    className="mt-2 w-full accent-current"
-                                    style={{ color: accentColor }}
-                                  />
-                                </label>
-                              </div>
-                              <div className={`${textSecondary} text-xs mt-2`}>实际时长会吸附到完整的 8 / 16 / 24 / 32 拍。</div>
-                            </div>
-                          )}
-                          {autoMixEnhanced && (
-                            <div className={`${textSecondary} text-xs`}>
-                              增强版过渡时长由算法根据两首歌曲的 BPM 与能量自动决定，无需手动调整。
-                            </div>
-                          )}
-
-                          <div className={`${bgCard} rounded-lg p-3 border ${borderColor}`}>
-                            <div className="flex items-start gap-2">
-                              <Info className="w-4 h-4 text-orange-400 flex-shrink-0 mt-0.5" />
-                              <div className="text-xs">
-                                <p className={`${textPrimary} font-medium mb-1`}>开发阶段提示</p>
-                                <p className={`${textSecondary}`}>
-                                  本功能当前处于开发阶段，可能会影响播放体验。我们正在持续优化算法，以提供更流畅的混音效果。
-                                </p>
-                              </div>
-                            </div>
-                          </div>
                         </div>
                       )}
                     </div>
@@ -4299,125 +2951,6 @@ function SettingsPanel({
                     </div>
                   </div>
 
-                  {/* 代理自动配置：模型下载 / 应用更新走本地代理 */}
-                  <div>
-                    <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>网络与代理</h3>
-                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor}`}>
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className={`${textPrimary} font-medium mb-1`}>代理自动配置</div>
-                          <div className={`${textSecondary} text-xs leading-relaxed`}>
-                            网络环境不佳时，当您打开代理后请打开此功能，此功能会自动配置相关功能。
-                            <br />
-                            开启后自动扫描本机代理端口，模型下载与应用更新将走代理。
-                          </div>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
-                          <input
-                            type="checkbox"
-                            checked={proxyEnabled}
-                            disabled={proxyScanning}
-                            onChange={(e) => handleProxyToggle(e.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: proxyEnabled ? accentColor : '' }}></div>
-                        </label>
-                      </div>
-
-                      {proxyScanning && (
-                        <div className={`mt-3 text-xs ${textSecondary}`}>正在扫描本地代理端口…</div>
-                      )}
-
-                      {/* 当前连接信息 */}
-                      {proxyEnabled && proxyState.proxy && (
-                        <div className="mt-3 flex items-center gap-2 flex-wrap text-xs">
-                          <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1" style={{ backgroundColor: `${accentColor}22`, color: accentColor, border: `1px solid ${accentColor}55` }}>
-                            已连接
-                          </span>
-                          <span className={`${textPrimary}`}>端口：{proxyState.proxy.port}</span>
-                          <span className={`${textPrimary}`}>地址：{proxyState.proxy.host}</span>
-                          {(() => {
-                            const cur = proxyList.find((p) => p.port === proxyState.proxy?.port)
-                            return cur ? <span className={`${textPrimary}`}>探测延迟：{cur.latency}ms</span> : null
-                          })()}
-                          <button type="button" onClick={handleProxyRescan} disabled={proxyScanning} className="rounded-lg px-2.5 py-1 transition-colors" style={{ color: accentColor, background: `${accentColor}18`, border: `1px solid ${accentColor}44` }}>
-                            重新扫描
-                          </button>
-                        </div>
-                      )}
-
-                      {/* 三路并行联通测试：网络联通（百度）/ GitHub / Google，各最多 8 次、整体超 1 分钟显示连接超时 */}
-                      {proxyEnabled && (
-                        <div className="mt-3 space-y-1.5">
-                          {([
-                            ['baidu', '网络联通状态'],
-                            ['github', 'GitHub 联通状态'],
-                            ['google', 'Google 联通状态'],
-                          ] as const).map(([key, label]) => {
-                            const item = proxyLatency?.status === 'done' ? proxyLatency.result?.[key] : null
-                            return (
-                              <div key={key} className={`flex items-center gap-2 text-xs ${textSecondary}`}>
-                                <span className="w-28 shrink-0 whitespace-nowrap">{label}：</span>
-                                {proxyLatency?.status === 'testing' ? (
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <span className="inline-block h-3 w-3 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: accentColor, borderRightColor: accentColor }} />
-                                    正在测试中…
-                                  </span>
-                                ) : item?.timeout ? (
-                                  <span className="text-red-400">连接超时</span>
-                                ) : item ? (
-                                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                    <span className={item.avgLatency < 150 ? 'text-green-500' : item.avgLatency < 400 ? 'text-yellow-500' : 'text-red-400'}>
-                                      延迟 {item.avgLatency}ms
-                                    </span>
-                                    <span className={textTertiary}>({item.minLatency}~{item.maxLatency}ms)</span>
-                                    <span className={item.lossRate === 0 ? 'text-green-500' : 'text-red-400'}>
-                                      丢包 {item.lossRate}%
-                                    </span>
-                                    {/* 只有被 1 分钟截止截断、没跑满 8 次时才显示 x/8（结果不完整） */}
-                                    {item.total < 8 && (
-                                      <span className={textTertiary}>{item.loss}/{item.total} 次</span>
-                                    )}
-                                  </span>
-                                ) : (
-                                  <span>等待测试…</span>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-
-                      {/* 扫描结果列表 */}
-                      {proxyList.length > 0 && (
-                        <div className="mt-3 space-y-1.5">
-                          <div className={`${textSecondary} text-xs mb-1`}>检测到的本地代理（按延迟排序）：</div>
-                          {proxyList.map((p) => (
-                            <button
-                              key={p.port}
-                              type="button"
-                              disabled={proxyScanning}
-                              onClick={() => void window.electron?.proxyManager?.enable?.(p.port).then((s) => { if (s) setProxyState(s) })}
-                              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs transition-colors disabled:opacity-50"
-                              style={{
-                                background: proxyState.proxy?.port === p.port ? `${accentColor}20` : playerTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
-                                border: `1px solid ${proxyState.proxy?.port === p.port ? `${accentColor}66` : playerTheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'}`,
-                              }}
-                            >
-                              <span className={`${textPrimary}`}>127.0.0.1:{p.port}</span>
-                              <span className="flex items-center gap-2">
-                                <span className={p.latency < 100 ? 'text-green-500' : p.latency < 300 ? 'text-yellow-500' : 'text-red-400'}>
-                                  {p.latency}ms
-                                </span>
-                                {proxyState.proxy?.port === p.port && <span style={{ color: accentColor }}>使用中</span>}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
                   {/* 开发者选项 */}
                   <div>
                     <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>开发者选项</h3>
@@ -4454,29 +2987,6 @@ function SettingsPanel({
                               borderColor={playerTheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}
                             />
                           </div>
-                          <div className="mt-3 rounded-xl border p-4" style={{ backgroundColor: playerTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', borderColor: borderColor }}>
-                          <div className={`${textPrimary} font-medium mb-2 text-sm`}>调试面板</div>
-                          {[
-                            { key: 'waveforge:debug-show-backend', label: '后端日志（左下）' },
-                            { key: 'waveforge:debug-show-frontend', label: '前端日志（左下）' },
-                            { key: 'waveforge:debug-show-perf', label: '性能面板（右上）' },
-                          ].map((panel) => {
-                            const on = getDebugPanelVisible(panel.key)
-                            return (
-                              <label key={panel.key} className="flex items-center justify-between py-1.5 cursor-pointer">
-                                <span className={`text-xs ${textSecondary}`}>{panel.label}</span>
-                                <span className="relative inline-flex items-center">
-                                  <input
-                                    type="checkbox"
-                                    checked={on}
-                                    onChange={(e) => setDebugPanelVisible(panel.key, e.target.checked)}
-                                    className="sr-only peer"
-                                  />
-                                  <span className={`w-9 h-5 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all`} style={{ backgroundColor: on ? accentColor : '' }}></span>
-                                </span>
-                              </label>
-                            )
-                          })}
                           {/* 过渡调试：显示过渡用的引擎/策略/效果清单弹窗 */}
                           <label className="flex items-center justify-between py-1.5 cursor-pointer">
                             <span className={`text-xs ${textSecondary}`}>过渡调试（右上角显示过渡详情）</span>
@@ -4490,7 +3000,6 @@ function SettingsPanel({
                               <span className={`w-9 h-5 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all`} style={{ backgroundColor: transitionDebugEnabled ? accentColor : '' }}></span>
                             </span>
                           </label>
-                        </div>
                         </>
                       )}
                     </div>
@@ -4524,31 +3033,6 @@ function SettingsPanel({
                       </div>
                     </button>
                   </div>
-
-                  {/* 打开 OOBE（首次启动）引导 */}
-                  <button
-                    onClick={() => {
-                      try { localStorage.removeItem('waveforge:oobe-shown') } catch { /* ignore */ }
-                      window.dispatchEvent(new CustomEvent('waveforge-trigger-oobe'))
-                      window.dispatchEvent(new CustomEvent('showToast', {
-                        detail: { message: '正在打开首次启动引导', type: 'info' },
-                      }))
-                    }}
-                    className={`w-full ${bgCard} rounded-xl p-4 border ${borderColor} ${hoverBg} transition-all text-left`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${accentColor}20` }}>
-                          <Sparkles className="w-5 h-5" style={{ color: accentColor }} />
-                        </div>
-                        <div>
-                          <div className={`${textPrimary} font-medium mb-1`}>打开 OOBE（首次启动）引导</div>
-                          <div className={`${textSecondary} text-sm`}>手动打开主题选择 / 隐私条款 / 免责声明引导</div>
-                        </div>
-                      </div>
-                      <ChevronRight className={`w-5 h-5 ${textSecondary}`} />
-                    </div>
-                  </button>
 
                   {/* 看歌本地标记库 */}
                   <button
@@ -4724,22 +3208,6 @@ function SettingsPanel({
                     </div>
                   </section>
 
-                  <button
-                    onClick={() => setShowLegalModal(true)}
-                    className={`w-full group flex items-center justify-between gap-3 rounded-xl border px-4 py-3.5 transition-all hover:-translate-y-0.5 hover:shadow-lg ${playerTheme === 'dark' ? 'border-white/10 bg-white/5 hover:bg-white/10' : 'border-black/10 bg-black/5 hover:bg-black/10'}`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${accentColor}20`, color: accentColor }}>
-                        <FileText className="w-4 h-4" />
-                      </div>
-                      <div className="text-left min-w-0">
-                        <div className={`font-semibold truncate ${textPrimary}`}>法律声明 / 用户协议</div>
-                        <div className={`text-xs ${textTertiary} mt-0.5 truncate`}>使用本软件即表示您已阅读并同意相关条款</div>
-                      </div>
-                    </div>
-                    <ChevronRight className={`w-4 h-4 shrink-0 opacity-50 group-hover:translate-x-0.5 group-hover:opacity-90 transition-all`} style={{ color: accentColor }} />
-                  </button>
-
                   <section className={`${bgCard} rounded-2xl border ${borderColor} p-5`}>
                     <div className="flex items-start gap-4">
                       <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: `${accentColor}20`, color: accentColor }}><Users className="w-5 h-5" /></div>
@@ -4750,61 +3218,6 @@ function SettingsPanel({
                       </div>
                     </div>
                   </section>
-
-                  {!isTvModeActive() && (
-                  <section className={`${bgCard} rounded-2xl border ${borderColor} p-5`}>
-                    <div className="flex items-start gap-4 mb-5">
-                      <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: `${accentColor}20`, color: accentColor }}>
-                        <KeyRound className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <h3 className={`text-lg font-semibold ${textPrimary}`}>设备授权</h3>
-                        <p className={`text-sm ${textSecondary} mt-1.5 leading-6`}>仅用作设备标识，这不会收集关于您设备的任何信息</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => void copyDeviceId()}
-                      disabled={deviceState.status === 'loading'}
-                      className="w-full rounded-xl px-5 py-3.5 text-white font-semibold flex items-center justify-center gap-2 transition-all hover:-translate-y-0.5 disabled:opacity-60 disabled:hover:translate-y-0"
-                      style={{ backgroundColor: accentColor, boxShadow: `0 10px 28px ${accentColor}24` }}
-                    >
-                      <Copy className="w-4 h-4" />
-                      获取识别码
-                    </button>
-                    <div className={`mt-4 pt-4 border-t ${borderColor}`}>
-                      <button
-                        onClick={() => {
-                          setRedeemMessage(null)
-                          setShowRedeemModal(true)
-                        }}
-                        className={`w-full rounded-xl border ${borderColor} ${hoverBg} ${textPrimary} px-5 py-3.5 font-semibold flex items-center justify-center gap-2 transition-colors`}
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        测试码验证
-                      </button>
-                      <button
-                        onClick={() => {
-                          setDeleteLicenseCountdown(10)
-                          setShowDeleteLicenseModal(true)
-                        }}
-                        className={`w-full mt-2 rounded-xl border ${borderColor} ${hoverBg} ${textPrimary} px-5 py-3.5 font-semibold flex items-center justify-center gap-2 transition-colors ${playerTheme === 'dark' ? 'hover:text-red-400 hover:border-red-400/40' : 'hover:text-red-600 hover:border-red-500/40'}`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        删除识别码与测试码
-                      </button>
-                      {deviceState.grants.length > 0 && (
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {deviceState.grants.map(grant => (
-                            <span key={grant.feature} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium" style={{ backgroundColor: `${accentColor}18`, color: accentColor }}>
-                              <BadgeCheck className="w-3.5 h-3.5" />
-                              {grant.label}{grant.expiresAt ? ` · 至 ${new Date(grant.expiresAt * 1000).toLocaleDateString('zh-CN')}` : ' · 永久'}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </section>
-                  )}
 
                   <div className="flex items-center justify-center px-1">
                     <p className={`${textTertiary} text-xs`}>© 2026 WaveForge. All rights reserved.</p>
@@ -4853,17 +3266,10 @@ function SettingsPanel({
         neteaseLoggedIn={neteaseLoggedIn}
         qqLoggedIn={qqLoggedIn}
         spotifyLoggedIn={spotifyLoggedIn}
-        kugouLoggedIn={kugouLoggedIn}
-        sodaLoggedIn={sodaLoggedIn}
         appleLoggedIn={appleLoggedIn}
       />
 
-      {/* 远程遥控器设置弹窗 */}
-      <RemoteControlSettingsModal
-        show={showRemoteSettings}
-        onClose={() => setShowRemoteSettings(false)}
-        playerTheme={playerTheme}
-      />
+      {/* 远程遥控器设置弹窗已随减配移除 */}
 
       <CacheClearModal 
         key="cache-clear-modal"
@@ -4872,139 +3278,6 @@ function SettingsPanel({
         playerTheme={playerTheme}
       />
       
-      {/* 测试码验证弹窗 */}
-      {showRedeemModal && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}
-          onClick={() => {
-            setShowRedeemModal(false)
-            setRedeemCode('')
-            setRedeemMessage(null)
-          }}
-        >
-          <motion.div
-            initial={{ scale: 0.94, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.94, opacity: 0 }}
-            onClick={(event) => event.stopPropagation()}
-            className={`w-full max-w-md rounded-2xl border ${
-              playerTheme === 'dark'
-                ? 'bg-zinc-900 border-zinc-800'
-                : 'bg-white border-gray-200'
-            } shadow-2xl overflow-hidden`}
-          >
-            <div className={`px-5 py-4 border-b ${playerTheme === 'dark' ? 'border-zinc-800' : 'border-gray-200'}`}>
-              <h2 className={`text-lg font-bold ${textPrimary}`}>测试码验证</h2>
-            </div>
-            <div className="px-5 py-5">
-              <p className={`text-sm leading-6 ${textSecondary}`}>请将获取到的测试码粘贴在下方</p>
-              <div className="mt-4 flex items-stretch gap-3">
-                <input
-                  autoFocus
-                  value={redeemCode}
-                  onChange={(event) => {
-                    setRedeemCode(event.target.value)
-                    if (redeemMessage?.type === 'error') setRedeemMessage(null)
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault()
-                    void pasteRedeemCode()
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && redeemMessage?.type !== 'info') void redeemDeviceCode()
-                  }}
-                  placeholder="WF1.……"
-                  autoComplete="off"
-                  spellCheck={false}
-                  title="右键可直接粘贴"
-                  className={`min-w-0 flex-1 rounded-xl border ${borderColor} ${
-                    playerTheme === 'dark' ? 'bg-black/20' : 'bg-black/5'
-                  } ${textPrimary} px-4 py-3 font-mono text-sm outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                />
-                <button
-                  type="button"
-                  onClick={() => void pasteRedeemCode()}
-                  disabled={redeemMessage?.type === 'info'}
-                  className={`shrink-0 rounded-xl border ${borderColor} ${hoverBg} ${textPrimary} px-4 py-3 font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-60`}
-                >
-                  <ClipboardPaste className="w-4 h-4" />
-                  粘贴
-                </button>
-              </div>
-              {redeemMessage && (
-                <p className={`mt-3 text-sm ${redeemMessage.type === 'error' ? 'text-red-400' : textSecondary}`}>
-                  {redeemMessage.text}
-                </p>
-              )}
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => {
-                    setShowRedeemModal(false)
-                    setRedeemCode('')
-                    setRedeemMessage(null)
-                  }}
-                  disabled={redeemMessage?.type === 'info'}
-                  className={`rounded-xl border ${borderColor} ${hoverBg} ${textPrimary} px-4 py-3 font-semibold transition-colors disabled:opacity-60`}
-                >
-                  取消
-                </button>
-                <button
-                  onClick={() => void redeemDeviceCode()}
-                  disabled={redeemMessage?.type === 'info'}
-                  className="rounded-xl px-4 py-3 text-white font-semibold transition-opacity hover:opacity-90 disabled:opacity-60"
-                  style={{ backgroundColor: accentColor }}
-                >
-                  确定
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-
-      {/* 设备配置检查弹窗（TV 端性能模式选择） */}
-      {/* DPI 缩放确认弹窗（独立焦点域，保证弹窗内方向键导航可用） */}
-      {pendingTvScale != null && (
-        <div data-tv-scope className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 pointer-events-auto">
-          <div className={`rounded-2xl border p-6 w-[min(92vw,520px)] shadow-2xl ${
-            playerTheme === 'dark' ? 'bg-[#0b1220]/95 border-white/10' : 'bg-white/95 border-black/10'
-          }`}>
-            <div className={`text-base font-medium leading-relaxed ${playerTheme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-              DPI 缩放已切换为 {pendingTvScale}%，界面是否与预期相符？
-            </div>
-            <div className={`mt-1 text-sm ${playerTheme === 'dark' ? 'text-white/60' : 'text-gray-500'}`}>
-              若无法操作，将在 <span className="font-semibold">10</span> 秒后自动还原至上一次 DPI
-            </div>
-            <div className="mt-5 flex items-center justify-end gap-3">
-              <button
-                data-tv-focus
-                onClick={() => confirmTvScale()}
-                className={`rounded-xl px-6 py-2.5 text-sm font-semibold transition-colors ${
-                  playerTheme === 'dark' ? 'text-white/80 hover:text-white bg-white/10' : 'text-gray-700 hover:text-gray-900 bg-black/5'
-                }`}
-              >
-                应用
-              </button>
-              <button
-                ref={tvScaleCancelRef}
-                data-tv-focus
-                onClick={() => cancelTvScale()}
-                className="rounded-xl px-6 py-2.5 text-sm font-semibold text-white transition-colors"
-                style={{ backgroundColor: accentColor }}
-              >
-                取消（{tvScaleCountdown}）
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <DeviceInfoModal show={showDeviceInfo} onClose={() => setShowDeviceInfo(false)} playerTheme={playerTheme} />
 
       {/* 哔哩哔哩「看歌」扫码登录弹窗 */}
       {showBiliProfile && (
@@ -5083,184 +3356,7 @@ function SettingsPanel({
         />
       )}
 
-      {/* TV：测试码验证弹窗（参考 PC 端，无粘贴按钮） */}
-      {showTvRedeemModal && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          data-tv-scope
-          className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
-          style={{ background: playerTheme === 'dark' ? 'rgba(0,0,0,0.75)' : 'rgba(0,0,0,0.5)' }}
-          onClick={() => {
-            setShowTvRedeemModal(false)
-            setTvRedeemCode('')
-            setTvRedeemState({ status: 'idle', message: null })
-          }}
-        >
-          <motion.div
-            initial={{ scale: 0.94, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.94, opacity: 0 }}
-            onClick={(e) => e.stopPropagation()}
-            className={`w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden ${playerTheme === 'dark' ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-gray-200'}`}
-          >
-            <div className={`px-5 py-4 border-b ${playerTheme === 'dark' ? 'border-zinc-800' : 'border-gray-200'}`}>
-              <h2 className={`text-lg font-bold ${textPrimary}`}>测试码验证</h2>
-            </div>
-            <div className="px-5 py-5">
-              <p className={`text-sm leading-6 ${textSecondary}`}>请将获取到的测试码输入在下方</p>
-              <div className="mt-4 flex items-stretch gap-3">
-                <input
-                  autoFocus
-                  value={tvRedeemCode}
-                  onChange={(event) => {
-                    setTvRedeemCode(event.target.value)
-                    if (tvRedeemState.message?.includes('失败')) setTvRedeemState({ status: 'idle', message: null })
-                  }}
-                  placeholder="WF1.……"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className={`min-w-0 flex-1 rounded-xl border ${borderColor} ${playerTheme === 'dark' ? 'bg-black/20' : 'bg-black/5'} ${textPrimary} px-4 py-3 font-mono text-sm outline-none focus:ring-2`}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                />
-                <button
-                  type="button"
-                  onClick={() => void tvRedeem()}
-                  disabled={tvRedeemState.status === 'redeeming'}
-                  className={`shrink-0 rounded-xl px-5 py-3 font-semibold text-white transition-opacity disabled:opacity-60`}
-                  style={{ backgroundColor: accentColor }}
-                >
-                  {tvRedeemState.status === 'redeeming' ? '兑换中…' : '兑换'}
-                </button>
-              </div>
-              {tvRedeemState.message && (
-                <p className={`mt-3 text-sm ${tvRedeemState.message.includes('成功') ? 'text-green-400' : 'text-red-400'}`}>
-                  {tvRedeemState.message}
-                </p>
-              )}
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-
-      {/* TV：本机识别码弹窗（TV 无剪贴板，弹窗展示供查看/抄录） */}
-      {showTvDeviceId && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          data-tv-scope
-          className="fixed inset-0 z-[9990] flex items-center justify-center p-6"
-          style={{ background: playerTheme === 'dark' ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.45)', backdropFilter: 'blur(6px)' }}
-          onClick={() => setShowTvDeviceId(false)}
-        >
-          <motion.div
-            initial={{ scale: 0.92, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.94, opacity: 0 }}
-            transition={{ type: 'spring', damping: 26, stiffness: 300 }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-3xl border p-6 text-center shadow-2xl"
-            style={{
-              background: playerTheme === 'dark' ? 'rgba(14,17,24,0.95)' : 'rgba(255,255,255,0.98)',
-              borderColor: playerTheme === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.1)',
-            }}
-          >
-            <div className="w-12 h-12 mx-auto rounded-2xl flex items-center justify-center" style={{ backgroundColor: `${accentColor}20`, color: accentColor }}>
-              <KeyRound className="w-6 h-6" />
-            </div>
-            <h3 className={`mt-3 text-lg font-bold ${playerTheme === 'dark' ? 'text-white' : 'text-black'}`}>本机识别码</h3>
-            <p className={`mt-1 text-xs ${playerTheme === 'dark' ? 'text-white/50' : 'text-black/50'}`}>
-              请记录此识别码，向开发者兑换隐藏功能
-            </p>
-            <div
-              className="mt-4 rounded-2xl border px-4 py-4 font-mono text-sm break-all select-all"
-              style={{
-                borderColor: playerTheme === 'dark' ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.1)',
-                background: playerTheme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-                color: playerTheme === 'dark' ? '#e6edf3' : '#111',
-              }}
-            >
-              {tvLicense.deviceId || '加载中…'}
-            </div>
-            <button
-              data-tv-focus
-              tabIndex={-1}
-              onClick={() => setShowTvDeviceId(false)}
-              className="mt-5 w-full rounded-xl px-5 py-3 text-white font-semibold"
-              style={{ backgroundColor: accentColor }}
-            >
-              确认
-            </button>
-          </motion.div>
-        </motion.div>
-      )}
-
-      {/* TV：遥控器可视化教学弹窗 */}
-      {showRemoteGuide && (
-        <RemoteControlGuideModal onClose={() => setShowRemoteGuide(false)} playerTheme={playerTheme} />
-      )}
-
-      {/* 设备识别码弹窗 */}
-      {showDeviceIdModal && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}
-          onClick={() => setShowDeviceIdModal(false)}
-        >
-          <motion.div
-            initial={{ scale: 0.94, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.94, opacity: 0 }}
-            onClick={(event) => event.stopPropagation()}
-            className={`w-full max-w-md rounded-2xl border ${
-              playerTheme === 'dark'
-                ? 'bg-zinc-900 border-zinc-800'
-                : 'bg-white border-gray-200'
-            } shadow-2xl overflow-hidden`}
-          >
-            <div className={`flex items-center justify-between px-5 py-4 border-b ${
-              playerTheme === 'dark' ? 'border-zinc-800' : 'border-gray-200'
-            }`}>
-              <h2 className={`text-lg font-bold ${textPrimary}`}>设备识别码</h2>
-              <button
-                onClick={() => setShowDeviceIdModal(false)}
-                className={`p-2 rounded-lg ${hoverBg} transition-colors`}
-                aria-label="关闭"
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
-            </div>
-
-            <div className="px-5 py-5">
-              <p className={`text-sm leading-6 ${textSecondary}`}>您的设备识别码为：</p>
-              <div className={`mt-3 rounded-xl border ${borderColor} ${
-                playerTheme === 'dark' ? 'bg-black/20' : 'bg-black/5'
-              } px-4 py-4`}>
-                <p className={`font-mono text-sm leading-6 break-all select-all ${textPrimary}`}>
-                  {deviceIdForModal}
-                </p>
-              </div>
-              <p className={`mt-4 text-sm leading-6 ${textSecondary}`}>
-                请您前往对应平台进行兑换或标记。
-              </p>
-              <button
-                onClick={() => setShowDeviceIdModal(false)}
-                className="mt-5 w-full rounded-xl px-4 py-3 text-white font-semibold transition-opacity hover:opacity-90"
-                style={{ backgroundColor: accentColor }}
-              >
-                确定
-              </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-
-      {/* 法律声明弹窗 */}
+      {/* 版本历史弹窗 */}
       {showVersionHistory && (
         <motion.div
           initial={{ opacity: 0 }}
@@ -5310,43 +3406,6 @@ function SettingsPanel({
         </motion.div>
       )}
 
-      {showLegalModal && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}
-          onClick={() => setShowLegalModal(false)}
-        >
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.9, opacity: 0 }}
-            onClick={(e) => e.stopPropagation()}
-            className={`${playerTheme === 'dark' ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-gray-200'} rounded-2xl border shadow-2xl max-w-4xl w-full max-h-[85vh] overflow-hidden flex flex-col`}
-          >
-            {/* 标题栏 */}
-            <div className={`flex items-center justify-between gap-3 px-6 py-4 border-b ${playerTheme === 'dark' ? 'border-zinc-800' : 'border-gray-200'}`}>
-              <h2 className={`text-xl font-bold ${textPrimary}`}>法律声明与用户协议</h2>
-              <div className="flex items-center gap-2">
-                <LocaleSwitcher locale={legalLocale} onChange={setLegalLocale} theme={playerTheme} accentColor={accentColor} />
-                <button
-                  onClick={() => setShowLegalModal(false)}
-                  className={`p-2 rounded-lg ${hoverBg} transition-colors`}
-                >
-                  <X className={`w-5 h-5 ${textSecondary}`} />
-                </button>
-              </div>
-            </div>
-            
-            {/* 内容区域 */}
-            <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8">
-              <LegalAgreement theme={playerTheme} locale={legalLocale} />
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
       {/* 灰色歌曲跨平台补全：开启前免责声明弹窗 */}
       {showFallbackDisclaimer && (
         <motion.div
@@ -5411,300 +3470,6 @@ function SettingsPanel({
                 style={{ backgroundColor: accentColor, boxShadow: fallbackCountdown > 0 ? undefined : `0 10px 28px ${accentColor}24` }}
               >
                 确定{fallbackCountdown > 0 ? `（${fallbackCountdown}）` : ''}
-              </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-      {/* 删除识别码与测试码：确认弹窗（10 秒倒计时） */}
-      {showDeleteLicenseModal && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}
-          onClick={() => setShowDeleteLicenseModal(false)}
-        >
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.9, opacity: 0 }}
-            onClick={(e) => e.stopPropagation()}
-            className={`${playerTheme === 'dark' ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-gray-200'} rounded-2xl border shadow-2xl max-w-lg w-full overflow-hidden flex flex-col`}
-          >
-            {/* 标题栏 */}
-            <div className={`flex items-center justify-between px-6 py-4 border-b ${playerTheme === 'dark' ? 'border-zinc-800' : 'border-gray-200'}`}>
-              <h2 className={`text-lg font-bold ${textPrimary}`}>删除识别码与测试码</h2>
-              <button
-                onClick={() => setShowDeleteLicenseModal(false)}
-                className={`p-2 rounded-lg ${hoverBg} transition-colors`}
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
-            </div>
-
-            {/* 内容区域 */}
-            <div className="flex-1 overflow-y-auto px-6 py-5">
-              <div className={`space-y-4 ${textSecondary} text-sm leading-relaxed`}>
-                <section>
-                  <h3 className={`text-base font-semibold ${textPrimary} mb-2`}>请仔细阅读以下说明</h3>
-                  <p>点击"确定"后将执行以下操作，且<strong className={textPrimary}>不可撤销</strong>：</p>
-                </section>
-                <ul className={`list-disc pl-5 space-y-1.5`}>
-                  <li>删除保存在您本机的<strong className={textPrimary}>设备识别码</strong>（Windows 注册表与应用数据目录中的记录）；</li>
-                  <li>删除本机记录的全部<strong className={textPrimary}>已兑换测试码</strong>与授权记录（兑换机制数据一并清除）；</li>
-                  <li>下次启动本软件时会生成<strong className={textPrimary}>全新的设备标识</strong>，此前获得的测试码因与旧设备绑定将<strong className={textPrimary}>全部失效</strong>；</li>
-                  <li>如需恢复原授权，需要<strong className={textPrimary}>卸载并重新安装</strong>本软件后重新获取测试码。</li>
-                </ul>
-                <div className={`rounded-lg p-3 text-xs ${playerTheme === 'dark' ? 'bg-zinc-800/50' : 'bg-gray-100'} ${textTertiary}`}>
-                  识别码与测试码均仅存储于您的本机，不包含任何个人身份信息，也不会被上传。若您仍希望移除，请确认后继续。
-                </div>
-              </div>
-            </div>
-
-            {/* 底部按钮 */}
-            <div className={`flex items-center justify-end gap-3 px-6 py-4 border-t ${playerTheme === 'dark' ? 'border-zinc-800' : 'border-gray-200'}`}>
-              <button
-                onClick={() => setShowDeleteLicenseModal(false)}
-                className={`px-5 py-2.5 rounded-xl ${playerTheme === 'dark' ? 'bg-white/10 hover:bg-white/15' : 'bg-black/5 hover:bg-black/10'} ${textPrimary} text-sm font-medium transition-colors`}
-              >
-                取消
-              </button>
-              <button
-                onClick={() => void confirmDeleteLicense()}
-                disabled={deleteLicenseCountdown > 0}
-                className={`px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${deleteLicenseCountdown > 0 ? 'opacity-50 cursor-not-allowed' : 'hover:-translate-y-0.5 hover:shadow-lg'}`}
-                style={{ backgroundColor: '#ef4444', boxShadow: deleteLicenseCountdown > 0 ? undefined : '0 10px 28px rgba(239, 68, 68, 0.24)' }}
-              >
-                确定{deleteLicenseCountdown > 0 ? `（${deleteLicenseCountdown}）` : ''}
-              </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-
-      {/* HTDemucs 分轨引擎下载确认弹窗 */}
-      {showStemModelDownloadDialog && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)' }}
-          onClick={() => setShowStemModelDownloadDialog(false)}
-        >
-          <motion.div
-            data-tv-scope
-            initial={{ scale: 0.94, opacity: 0, y: 12 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.94, opacity: 0, y: 12 }}
-            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl relative"
-          >
-            <div className="absolute inset-0 rounded-3xl overflow-hidden">
-              <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.3) 0%, rgba(20,20,30,0.5) 50%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)' }} />
-              <div className="absolute inset-0 rounded-3xl" style={{ border: '1px solid rgba(255,255,255,0.2)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.15)', pointerEvents: 'none' }} />
-            </div>
-            <div className="relative z-10 p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'rgba(251,191,36,0.18)' }}>
-                  <AlertTriangle className="w-5 h-5 text-amber-400" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-base font-semibold text-white">下载增强版分轨引擎</h3>
-                  <p className="text-white/70 text-sm mt-1 leading-relaxed">
-                    将下载 HTDemucs 模型与运行环境（约 138MB）。安装后 AutoMix 增强版会自动使用人声、鼓和贝斯分轨混音。
-                  </p>
-                  <p className="text-white/40 text-xs mt-1.5">暂不下载也可继续使用 DSP 兼容模式。</p>
-                </div>
-                <button type="button" onClick={() => setShowStemModelDownloadDialog(false)} className="p-2 rounded-full transition-colors hover:bg-white/15 -m-1">
-                  <X className="w-5 h-5 text-white/60" />
-                </button>
-              </div>
-            </div>
-            <div className="relative z-10 flex gap-3 p-4">
-              <button type="button" onClick={() => setShowStemModelDownloadDialog(false)} className="flex-1 py-2.5 px-4 text-white/80 rounded-xl transition-colors hover:bg-white/10" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                取消
-              </button>
-              <button type="button" onClick={handleStemModelDownload} className="flex-1 py-2.5 px-4 rounded-xl font-medium text-white transition-transform hover:scale-[1.02]" style={{ background: 'linear-gradient(135deg, #7c6cff, #5a4bd8)', boxShadow: '0 4px 16px rgba(124,108,255,0.4)' }}>
-                确认下载
-              </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-
-      {/* HTDemucs 分轨引擎删除确认弹窗 */}
-      {showStemModelDeleteDialog && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)' }}
-          onClick={() => setShowStemModelDeleteDialog(false)}
-        >
-          <motion.div
-            data-tv-scope
-            initial={{ scale: 0.94, opacity: 0, y: 12 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.94, opacity: 0, y: 12 }}
-            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl relative"
-          >
-            <div className="absolute inset-0 rounded-3xl overflow-hidden">
-              <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.3) 0%, rgba(20,20,30,0.5) 50%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)' }} />
-              <div className="absolute inset-0 rounded-3xl" style={{ border: '1px solid rgba(255,255,255,0.2)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.15)', pointerEvents: 'none' }} />
-            </div>
-            <div className="relative z-10 p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'rgba(239,68,68,0.18)' }}>
-                  <AlertTriangle className="w-5 h-5 text-red-400" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-base font-semibold text-white">删除增强版分轨引擎</h3>
-                  <p className="text-white/60 text-sm mt-1">确定要删除 HTDemucs 模型与运行环境吗？</p>
-                  <p className="text-white/40 text-xs mt-1.5">删除后增强版会继续使用 DSP 兼容模式，标准 AutoMix 不受影响。</p>
-                </div>
-                <button type="button" onClick={() => setShowStemModelDeleteDialog(false)} className="p-2 rounded-full transition-colors hover:bg-white/15 -m-1">
-                  <X className="w-5 h-5 text-white/60" />
-                </button>
-              </div>
-            </div>
-            <div className="relative z-10 flex gap-3 p-4">
-              <button type="button" onClick={() => setShowStemModelDeleteDialog(false)} className="flex-1 py-2.5 px-4 text-white/80 rounded-xl transition-colors hover:bg-white/10" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                取消
-              </button>
-              <button type="button" onClick={handleStemModelDelete} className="flex-1 py-2.5 px-4 rounded-xl font-medium text-white" style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', boxShadow: '0 4px 16px rgba(239,68,68,0.4)' }}>
-                删除
-              </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-
-      {/* DJTransGAN 模型下载确认弹窗（参考删除歌单弹窗样式） */}
-      {showAiModelDownloadDialog && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)' }}
-          onClick={() => setShowAiModelDownloadDialog(false)}
-        >
-          <motion.div
-            data-tv-scope
-            initial={{ scale: 0.94, opacity: 0, y: 12 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.94, opacity: 0, y: 12 }}
-            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl relative"
-          >
-            <div className="absolute inset-0 rounded-3xl overflow-hidden">
-              <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.3) 0%, rgba(20,20,30,0.5) 50%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)' }} />
-              <div className="absolute inset-0 rounded-3xl" style={{ border: '1px solid rgba(255,255,255,0.2)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.15)', pointerEvents: 'none' }} />
-            </div>
-            <div className="relative z-10 p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'rgba(251,191,36,0.18)' }}>
-                  <AlertTriangle className="w-5 h-5 text-amber-400" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-base font-semibold text-white">下载 DJTransGAN 模型</h3>
-                  <p className="text-white/70 text-sm mt-1 leading-relaxed">
-                    将自动下载并安装运行环境与模型（约 400MB，需要几分钟），安装完成后可直接使用 AI 混音。
-                  </p>
-                </div>
-                <button type="button" onClick={() => setShowAiModelDownloadDialog(false)} className="p-2 rounded-full transition-colors hover:bg-white/15 -m-1">
-                  <X className="w-5 h-5 text-white/60" />
-                </button>
-              </div>
-            </div>
-            <div className="relative z-10 flex gap-3 p-4">
-              <button
-                type="button"
-                onClick={() => setShowAiModelDownloadDialog(false)}
-                className="flex-1 py-2.5 px-4 text-white/80 rounded-xl transition-colors hover:bg-white/10"
-                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleAiModelDownload}
-                className="flex-1 py-2.5 px-4 rounded-xl font-medium text-white transition-transform hover:scale-[1.02]"
-                style={{ background: 'linear-gradient(135deg, #7c6cff, #5a4bd8)', boxShadow: '0 4px 16px rgba(124,108,255,0.4)' }}
-              >
-                确认下载
-              </button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-
-      {/* DJTransGAN 模型删除确认弹窗 */}
-      {showAiModelDeleteDialog && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)' }}
-          onClick={() => setShowAiModelDeleteDialog(false)}
-        >
-          <motion.div
-            data-tv-scope
-            initial={{ scale: 0.94, opacity: 0, y: 12 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.94, opacity: 0, y: 12 }}
-            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl relative"
-          >
-            <div className="absolute inset-0 rounded-3xl overflow-hidden">
-              <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.3) 0%, rgba(20,20,30,0.5) 50%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)' }} />
-              <div className="absolute inset-0 rounded-3xl" style={{ border: '1px solid rgba(255,255,255,0.2)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.15)', pointerEvents: 'none' }} />
-            </div>
-            <div className="relative z-10 p-5 border-b" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'rgba(239,68,68,0.18)' }}>
-                  <AlertTriangle className="w-5 h-5 text-red-400" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-base font-semibold text-white">删除 DJTransGAN 模型</h3>
-                  <p className="text-white/60 text-sm mt-1">
-                    确定要删除已下载的 DJTransGAN 模型吗？
-                  </p>
-                  <p className="text-white/40 text-xs mt-1.5">
-                    删除后 AI 混音（60s 长混音）将不可用，需重新下载。此操作不可撤销。
-                  </p>
-                </div>
-                <button type="button" onClick={() => setShowAiModelDeleteDialog(false)} className="p-2 rounded-full transition-colors hover:bg-white/15 -m-1">
-                  <X className="w-5 h-5 text-white/60" />
-                </button>
-              </div>
-            </div>
-            <div className="relative z-10 flex gap-3 p-4">
-              <button
-                type="button"
-                onClick={() => setShowAiModelDeleteDialog(false)}
-                className="flex-1 py-2.5 px-4 text-white/80 rounded-xl transition-colors hover:bg-white/10"
-                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleAiModelDelete}
-                className="flex-1 py-2.5 px-4 rounded-xl font-medium text-white"
-                style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', boxShadow: '0 4px 16px rgba(239,68,68,0.4)' }}
-              >
-                删除
               </button>
             </div>
           </motion.div>

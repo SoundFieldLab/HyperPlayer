@@ -79,11 +79,10 @@ import { shouldShowEntitlementBadge, type PlatformEntitlements } from '../utils/
 // 全局设置镜像里的共享弹窗（按需加载）
 const LazyAudioQualityModal = lazy(() => import('./AudioQualitySettingsModal'))
 const LazyCacheClearModal = lazy(() => import('./CacheClearModal'))
-const LazyRemoteSettingsModal = lazy(() => import('./RemoteControlSettingsModal'))
 
 type ViewMode = 'explore' | 'minimal' | 'traditional' | 'desktop'
 const appLogoUrl = new URL('../../logo.png', import.meta.url).href
-// v2：酷狗探索数据修复（封面/真新歌榜/多榜单）后升级版本，强制旧缓存失效
+// v2：探索数据修复（封面/真新歌榜/多榜单）后升级版本，强制旧缓存失效
 // v3：榜单歌曲携带 appleId（目录曲目 id，原生取流必需）。v2 缓存里的 Apple 榜单
 // 是无 appleId 的旧结构（id=榜单排名），按天缓存会让坏数据在当天内一直生效。
 const EXPLORE_CACHE_KEY = 'exploreHomeCache-v3'
@@ -95,8 +94,6 @@ const EXPLORE_PLATFORM_META: Record<ExplorePlatform, { name: string; short: stri
   qq: { name: 'QQ 音乐', short: 'QQ 音乐', accent: '#31e68b', accentRgb: '49, 230, 139' },
   apple: { name: 'Apple Music', short: 'Apple Music', accent: '#fa2d48', accentRgb: '250, 45, 72' },
   spotify: { name: 'Spotify', short: 'Spotify', accent: '#1DB954', accentRgb: '29, 185, 84' },
-  kugou: { name: '酷狗音乐', short: '酷狗音乐', accent: '#FF7A00', accentRgb: '255, 122, 0' },
-  soda: { name: '汽水音乐', short: '汽水音乐', accent: '#38BDF8', accentRgb: '56, 189, 248' },
 }
 
 interface ExploreCacheEntry {
@@ -136,12 +133,6 @@ interface ExploreViewProps {
   spotifyLoggedIn: boolean
   spotifyUsername: string
   spotifyAvatar?: string
-  kugouLoggedIn: boolean
-  kugouUsername: string
-  kugouAvatar?: string
-  sodaLoggedIn: boolean
-  sodaUsername: string
-  sodaAvatar?: string
   onLoginClick: (platform: ExplorePlatform) => void
   onProfileClick: (platform: ExplorePlatform) => void
   onSearchClick: () => void
@@ -469,7 +460,7 @@ const readExploreCache = (): Partial<Record<ExplorePlatform, ExplorePayload>> =>
   const entries = readExploreCacheEntries()
   const today = getExploreDateKey()
   const result: Partial<Record<ExplorePlatform, ExplorePayload>> = {}
-  ;(['netease', 'qq', 'apple', 'spotify', 'kugou', 'soda'] as ExplorePlatform[]).forEach(platform => {
+  ;(['netease', 'qq', 'apple', 'spotify'] as ExplorePlatform[]).forEach(platform => {
     const entry = entries[platform]
     if (
       entry?.payload &&
@@ -537,12 +528,6 @@ function ExploreView({
   spotifyLoggedIn,
   spotifyUsername,
   spotifyAvatar,
-  kugouLoggedIn,
-  kugouUsername,
-  kugouAvatar,
-  sodaLoggedIn,
-  sodaUsername,
-  sodaAvatar,
   onLoginClick,
   onProfileClick,
   onSearchClick,
@@ -766,7 +751,6 @@ function ExploreView({
   useEffect(() => preloadOnIdle([
     () => import('./AudioQualitySettingsModal'),
     () => import('./CacheClearModal'),
-    () => import('./RemoteControlSettingsModal'),
   ]), [])
   const [moreSection, setMoreSection] = useState<ExploreSectionId | null>(null)
   const exploreScrollRef = useRef<HTMLDivElement>(null)
@@ -802,20 +786,14 @@ function ExploreView({
   const loggedIn = platform === 'qq' ? qqLoggedIn
     : platform === 'apple' ? appleLoggedIn
     : platform === 'spotify' ? spotifyLoggedIn
-    : platform === 'kugou' ? kugouLoggedIn
-    : platform === 'soda' ? sodaLoggedIn
     : neteaseLoggedIn
   const username = platform === 'qq' ? qqUsername
     : platform === 'apple' ? appleUsername
     : platform === 'spotify' ? spotifyUsername
-    : platform === 'kugou' ? kugouUsername
-    : platform === 'soda' ? sodaUsername
     : neteaseUsername
   const avatar = platform === 'qq' ? qqAvatar
     : platform === 'apple' ? appleAvatar
     : platform === 'spotify' ? spotifyAvatar
-    : platform === 'kugou' ? kugouAvatar
-    : platform === 'soda' ? sodaAvatar
     : neteaseAvatar
   const vip = platformEntitlements[platform] === 'vip' || platformEntitlements[platform] === 'svip'
   const activeEntitlement = platformEntitlements[platform]
@@ -902,31 +880,16 @@ function ExploreView({
         })
       return () => { active = false }
     }
-    // Spotify：官方 API 我的歌单（token 驱动）；酷狗：隐藏窗口桥抓用户歌单
-    if (platform === 'spotify' || platform === 'kugou') {
-      const loggedIn = platform === 'spotify' ? spotifyLoggedIn : kugouLoggedIn
-      if (!loggedIn) {
+    // Spotify：官方 API 我的歌单（token 驱动）
+    if (platform === 'spotify') {
+      if (!spotifyLoggedIn) {
         setUserPlaylists([])
         return
       }
       let active = true
       const shouldForceRefresh = authRevision !== playlistAuthRevisionRef.current
       playlistAuthRevisionRef.current = authRevision
-      void getUserPlaylists(platform, '', platform === 'spotify' ? spotifyUsername : kugouUsername, { forceRefresh: shouldForceRefresh })
-        .then(playlists => {
-          if (active) setUserPlaylists(playlists || [])
-        })
-        .catch(() => {
-          if (active) setUserPlaylists([])
-        })
-      return () => { active = false }
-    }
-    // 汽水：侧栏直接拉取真实用户歌单（含"我喜欢"虚拟歌单；未登录自然返回空数组）
-    if (platform === 'soda') {
-      let active = true
-      const shouldForceRefresh = authRevision !== playlistAuthRevisionRef.current
-      playlistAuthRevisionRef.current = authRevision
-      void getUserPlaylists('soda', '', sodaUsername, { forceRefresh: shouldForceRefresh })
+      void getUserPlaylists(platform, '', spotifyUsername, { forceRefresh: shouldForceRefresh })
         .then(playlists => {
           if (active) setUserPlaylists(playlists || [])
         })
@@ -1847,16 +1810,14 @@ function ExploreView({
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   {[
                     {
-                      // 汽水登录态下后端返回个性化日推（payload.personalized），
-                      // 标题体现「汽水·每日推荐」；未登录为公开热歌回退，文案如实标注
                       label: payload.dailySongs.length
-                        ? (platform === 'soda' && payload.personalized ? '汽水·每日推荐' : '每日推荐')
+                        ? '每日推荐'
                         : '今日热选',
                       title: payload.dailySongs.length
-                        ? (platform === 'soda' && !payload.personalized ? '汽水实时热门歌曲' : '只属于你的每日歌单')
+                        ? '只属于你的每日歌单'
                         : '今天大家都在听',
                       copy: payload.dailySongs.length
-                        ? (platform === 'soda' && !payload.personalized ? '登录汽水音乐后升级为个性化日推' : '根据近期口味持续更新')
+                        ? '根据近期口味持续更新'
                         : '无需登录，也能发现好音乐',
                       icon: Sparkles,
                       cover: payload.dailySongs[1]?.album.picUrl || payload.newSongs[0]?.album.picUrl,
@@ -2259,9 +2220,6 @@ function ExploreView({
         {globalModal === 'cache-clear' && (
           <LazyCacheClearModal show onClose={() => setGlobalModal(null)} playerTheme={playerTheme} />
         )}
-        {globalModal === 'remote-settings' && (
-          <LazyRemoteSettingsModal show onClose={() => setGlobalModal(null)} playerTheme={playerTheme} />
-        )}
       </Suspense>
 
       {detailLoading && !detailOpen && (
@@ -2409,7 +2367,7 @@ function ExploreView({
       <AnimatePresence>
         {showMVExplore && (
           <MVExploreModal
-            initialPlatform={(platform === 'apple' || platform === 'spotify' || platform === 'soda' || platform === 'kugou') ? 'netease' : platform}
+            initialPlatform={(platform === 'apple' || platform === 'spotify') ? 'netease' : platform}
             initialMvId={neteaseFeedMvId || undefined}
             playerTheme={playerTheme}
             onClose={() => {

@@ -57,8 +57,6 @@ export interface ExplorePreferences {
   qq: ExplorePlatformPreferences
   apple: ExplorePlatformPreferences
   spotify: ExplorePlatformPreferences
-  kugou: ExplorePlatformPreferences
-  soda: ExplorePlatformPreferences
 }
 
 export const EXPLORE_SECTION_LABELS: Record<ExploreSectionId, string> = {
@@ -80,8 +78,6 @@ const PLATFORM_ORDER: Record<ExplorePlatform, ExploreSectionId[]> = {
   // Apple 与网易云/QQ 共享探索 UI，按能力表提供可用区块（无旅程/频道）
   apple: APPLE_ORDER,
   spotify: THIRD_PARTY_ORDER,
-  kugou: THIRD_PARTY_ORDER,
-  soda: THIRD_PARTY_ORDER,
 }
 
 const DEFAULT_PLATFORM_PREFS = {

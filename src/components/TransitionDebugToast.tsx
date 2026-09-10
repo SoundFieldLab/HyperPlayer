@@ -20,16 +20,6 @@ const STRATEGY_LABEL: Record<string, string> = {
   'gapless': '无缝拼接',
   'none': '无',
 }
-const STYLE_LABEL: Record<string, string> = {
-  energetic: '高能量',
-  atmospheric: '氛围',
-  clean: '干净',
-}
-const INTENSITY_LABEL: Record<string, string> = {
-  subtle: '轻',
-  standard: '标准',
-  strong: '强',
-}
 
 export default function TransitionDebugToast({ info, playerTheme = 'dark' }: TransitionDebugToastProps) {
   const isDark = playerTheme === 'dark'
@@ -57,15 +47,12 @@ export default function TransitionDebugToast({ info, playerTheme = 'dark' }: Tra
           >
             <div className="text-sm font-semibold mb-1">
               {info.engine === 'v2' ? '🟢' : info.engine === 'fallback' ? '🟠' : '🔵'} 过渡 · {STRATEGY_LABEL[info.strategy] || info.strategy}
-              {info.style && <> · <span style={{ color: STYLE_LABEL[info.style] === '高能量' ? '#F59E0B' : STYLE_LABEL[info.style] === '氛围' ? '#8B5CF6' : '#10B981' }}>{STYLE_LABEL[info.style]}</span></>}
-              {info.intensity && <> · 强度:{INTENSITY_LABEL[info.intensity] || info.intensity}</>}
             </div>
             <div className="text-xs mb-1" style={{ color: isDark ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.65)' }}>
               {info.effects?.length ? info.effects.join(' · ') : '（无附加特效）'}
             </div>
             <div className="text-[11px] tabular-nums" style={{ color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)' }}>
               {info.beatCount}拍 · {info.sourceBpm}→{info.targetBpm} BPM
-              {typeof info.keyCompat === 'number' && <> · 调性兼容 {info.keyCompat.toFixed(2)}</>}
               {info.gainOffsetDb !== undefined && info.gainOffsetDb !== 0 && <> · 响度补偿 {info.gainOffsetDb > 0 ? '+' : ''}{info.gainOffsetDb.toFixed(1)}dB</>}
               {'\n'}置信 {info.confidence.toFixed(2)} · {info.rendererVersion}
             </div>

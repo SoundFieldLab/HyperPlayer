@@ -1,5 +1,5 @@
 /**
- * 插件注册表：内置插件（DGLab）+ 导入插件的 manifest 合并视图。
+ * 插件注册表：内置插件（Chroma / SignalRGB）+ 导入插件的 manifest 合并视图。
  *
  * 内置插件随应用发布，不可卸载；导入插件 manifest 持久化在 pluginStore 的
  * `wf_plugins` 中，这里只负责合并与查询视图。导入插件代码当前运行在 renderer，

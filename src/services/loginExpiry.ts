@@ -28,8 +28,6 @@ const DEFAULT_DURATIONS: Record<MusicPlatform, number> = {
   qq: 30 * 24 * 60 * 60 * 1000,
   apple: 180 * 24 * 60 * 60 * 1000,
   spotify: 60 * 24 * 60 * 60 * 1000, // OAuth refresh token 长期有效，access token 约 1 小时（自动刷新）
-  kugou: 30 * 24 * 60 * 60 * 1000,
-  soda: 30 * 24 * 60 * 60 * 1000,
 }
 
 const STOREFRONT_MAP: Record<string, MusicPlatform> = {

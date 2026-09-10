@@ -1,14 +1,11 @@
 /**
- * TV 端性能模式（配置检查面板配套）：
- *  - efficiency 效能：停掉最贵的无限动画/背景，隐藏桌面模式，缓存最小档；
- *  - normal 普通（默认）：保留基础过渡，停掉昂贵的无限背景动画，桌面模式显示，缓存中档；
- *  - enhanced 增强：全开（接近 PC），桌面模式显示，缓存高档。
+ * 性能模式（配置检查面板配套）。
  *
- * 默认按设备内存自动选：navigator.deviceMemory < 3GB → 效能，否则普通；增强需手动开。
- * 生效机制：html 上打 wf-perf-* 类（tv.css 分档控制动画）+ JS 侧（组件读 usePerfMode）。
+ * WaveForge 减配版：TV 形态已剥离，性能模式不再依赖 TV 检测 / 设备内存自动分档，
+ * 固定以普通档（normal）为默认。缓存上限统一取桌面档（见 getCacheLimits）。
+ * 生效机制：html 上打 wf-perf-* 类 + JS 侧（组件读 usePerfMode）。
  */
 import { useSyncExternalStore } from 'react'
-import { isTvModeActive } from '../platform'
 
 export type PerfMode = 'efficiency' | 'normal' | 'enhanced'
 
@@ -16,17 +13,7 @@ const KEY = 'waveforge:perf-mode'
 const listeners = new Set<() => void>()
 let mode: PerfMode = readStored()
 
-function autoDefault(): PerfMode {
-  if (!isTvModeActive()) return 'normal'
-  try {
-    const dm = (navigator as unknown as { deviceMemory?: number }).deviceMemory
-    if (typeof dm === 'number' && dm > 0 && dm < 3) return 'efficiency'
-  } catch {
-    // ignore
-  }
-  return 'normal'
-}
-
+/** 默认档：固定普通档（不再做 TV / 内存检测）。 */
 function readStored(): PerfMode {
   try {
     const v = localStorage.getItem(KEY)
@@ -34,7 +21,7 @@ function readStored(): PerfMode {
   } catch {
     // ignore
   }
-  return autoDefault()
+  return 'normal'
 }
 
 export function getPerfMode(): PerfMode {
@@ -89,7 +76,7 @@ export function initPerfMode(): void {
 }
 
 /**
- * 缓存上限按性能模式动态取值（TV 存储小，严格限制；PC 维持现状）。
+ * 缓存上限（减配版固定取桌面档，不再随 TV / 性能档收紧）。
  *  - coverCount/coverBytes/singleImage：cacheManager（localStorage 封面）
  *  - idbCoverBytes/playlistCount/playlistBytes/lyricCount/lyricBytes：indexedDBCache
  */
@@ -106,31 +93,9 @@ export interface CacheLimits {
 
 export function getCacheLimits(): CacheLimits {
   const MB = 1024 * 1024
-  if (!isTvModeActive()) {
-    return {
-      coverCount: 500, coverBytes: 2 * 1024 * MB, singleImage: 10 * MB,
-      idbCoverBytes: 256 * MB, playlistCount: 100, playlistBytes: 50 * MB,
-      lyricCount: 1000, lyricBytes: 128 * MB,
-    }
-  }
-  switch (mode) {
-    case 'efficiency':
-      return {
-        coverCount: 150, coverBytes: 60 * MB, singleImage: 5 * MB,
-        idbCoverBytes: 50 * MB, playlistCount: 60, playlistBytes: 30 * MB,
-        lyricCount: 400, lyricBytes: 30 * MB,
-      }
-    case 'enhanced':
-      return {
-        coverCount: 500, coverBytes: 300 * MB, singleImage: 10 * MB,
-        idbCoverBytes: 256 * MB, playlistCount: 100, playlistBytes: 50 * MB,
-        lyricCount: 1000, lyricBytes: 128 * MB,
-      }
-    default:
-      return {
-        coverCount: 300, coverBytes: 150 * MB, singleImage: 8 * MB,
-        idbCoverBytes: 120 * MB, playlistCount: 80, playlistBytes: 40 * MB,
-        lyricCount: 700, lyricBytes: 80 * MB,
-      }
+  return {
+    coverCount: 500, coverBytes: 2 * 1024 * MB, singleImage: 10 * MB,
+    idbCoverBytes: 256 * MB, playlistCount: 100, playlistBytes: 50 * MB,
+    lyricCount: 1000, lyricBytes: 128 * MB,
   }
 }

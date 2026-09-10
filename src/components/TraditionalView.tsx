@@ -21,7 +21,6 @@ import { isPlaylistOwner, isSpecialPlaylist } from '../services/playlistOwnershi
 import { fetchExploreHome, fetchExplorePlaylist, fetchExploreChart, type ExplorePayload, type ExplorePlaylist, type ExploreChart } from '../services/exploreApi'
 import { createPlaylist, deletePlaylist, getUserPlaylists, invalidateUserPlaylistsCache, removeSongFromPlaylist, subscribePlaylist, updatePlaylist } from '../services/playlistService'
 import { createApplePlaylist, deleteApplePlaylist, updateApplePlaylist, getLastAppleMutationResult, getAppleCatalogPlaylistTracks, getAppleFavoriteSongs, getAppleLibraryPlaylists, getAppleLibrarySongs, getApplePlaylistTracks, getAppleRecentPlayed, appleLibraryTrackToSong, appleSongToSong, removeAppleTracksFromPlaylist, APPLE_FAVORITES_ID, APPLE_LIBRARY_ID } from '../services/appleCatalog'
-import { sodaMediaToSong } from '../services/sodaService'
 import { fetchSpotifyLiked, fetchSpotifyRecentlyPlayed, spotifyTrackToSong } from '../services/spotifyService'
 import { useAudioAnalyzerSnapshot, type AudioAnalyzerStore } from '../hooks/useAudioAnalyzer'
 import { useTvBack, useTvMode, useRemoteCursorMode } from '../tv/tvCore'
@@ -38,18 +37,80 @@ import PlaylistContextMenu from './PlaylistContextMenu'
 import { MirroredGlobalSettings, PlatformOrderEditor, makeSkin } from './MirroredGlobalSettings'
 import { GLOBAL_SETTINGS_GROUPS, isEntryVisible, useGlobalSettings, type GlobalSettingsGroupId, type MirrorActionId } from '../services/globalSettingsRegistry'
 import { preloadOnIdle } from '../utils/lazyPreload'
-import { resolveReadableForegroundColor } from '../services/foliaReadableColor'
 import type { PlaybackTimeStore } from '../audio/playbackTimeStore'
 import type { PlaybackOrigin, SongSelectHandler, ViewMode } from '../types/playbackNavigation'
 
+// 主题色可读性校正（本地内联实现，避免悬空依赖）
+interface TraditionalRgbColor { r: number; g: number; b: number }
+const parseTraditionalHexColor = (input: string): TraditionalRgbColor | null => {
+  if (typeof input !== 'string') return null
+  let hex = input.trim()
+  const rgbMatch = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(hex)
+  if (rgbMatch) {
+    const r = Number(rgbMatch[1]); const g = Number(rgbMatch[2]); const b = Number(rgbMatch[3])
+    return [r, g, b].every(v => v >= 0 && v <= 255) ? { r, g, b } : null
+  }
+  if (hex.startsWith('#')) hex = hex.slice(1)
+  if (hex.length === 3) hex = hex.split('').map(c => c + c).join('')
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null
+  return { r: parseInt(hex.slice(0, 2), 16), g: parseInt(hex.slice(2, 4), 16), b: parseInt(hex.slice(4, 6), 16) }
+}
+const traditionalRgbToHex = (rgb: TraditionalRgbColor): string => {
+  const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)))
+  return `#${[rgb.r, rgb.g, rgb.b].map(v => clamp(v).toString(16).padStart(2, '0')).join('')}`
+}
+const traditionalRelativeLuminance = (rgb: TraditionalRgbColor): number => {
+  const linear = (c: number) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4 }
+  return 0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b)
+}
+const traditionalContrastRatio = (foreground: string, background: string): number | null => {
+  const fg = parseTraditionalHexColor(foreground)
+  const bg = parseTraditionalHexColor(background)
+  if (!fg || !bg) return null
+  const fl = traditionalRelativeLuminance(fg)
+  const bl = traditionalRelativeLuminance(bg)
+  return (Math.max(fl, bl) + 0.05) / (Math.min(fl, bl) + 0.05)
+}
+const traditionalMixHexLinear = (a: string, b: string, t: number): string => {
+  const ca = parseTraditionalHexColor(a)
+  const cb = parseTraditionalHexColor(b)
+  if (!ca || !cb) return a
+  const clamped = Math.max(0, Math.min(1, t))
+  const toLin = (c: number) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4 }
+  const toSrgb = (c: number) => Math.round((c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055) * 255)
+  return traditionalRgbToHex({
+    r: toSrgb(toLin(ca.r) + (toLin(cb.r) - toLin(ca.r)) * clamped),
+    g: toSrgb(toLin(ca.g) + (toLin(cb.g) - toLin(ca.g)) * clamped),
+    b: toSrgb(toLin(ca.b) + (toLin(cb.b) - toLin(ca.b)) * clamped),
+  })
+}
+/** 把前景色向黑/白最小幅度混合，使其达到指定 WCAG 对比度；无法解析则原样返回。 */
+const resolveReadableForegroundColor = (foreground: string, background: string, minimumContrast = 4.5): string => {
+  const currentContrast = traditionalContrastRatio(foreground, background)
+  if (currentContrast === null) return foreground
+  const targetContrast = Math.max(1, Math.min(21, minimumContrast))
+  if (currentContrast >= targetContrast) return foreground
+  const blackContrast = traditionalContrastRatio('#000000', background) ?? 1
+  const whiteContrast = traditionalContrastRatio('#ffffff', background) ?? 1
+  const endpoint = whiteContrast >= blackContrast ? '#ffffff' : '#000000'
+  if (Math.max(blackContrast, whiteContrast) < targetContrast) return endpoint
+  let low = 0
+  let high = 1
+  for (let iteration = 0; iteration < 24; iteration += 1) {
+    const midpoint = (low + high) / 2
+    const candidate = traditionalMixHexLinear(foreground, endpoint, midpoint)
+    if ((traditionalContrastRatio(candidate, background) ?? 1) >= targetContrast) high = midpoint
+    else low = midpoint
+  }
+  return traditionalMixHexLinear(foreground, endpoint, high)
+}
+
 // 设置页用的共享弹窗（按需加载，只有用户在设置里点开时才拉取代码）
 const LazyCacheClearModal = lazy(() => import('./CacheClearModal'))
-const LazyRemoteSettingsModal = lazy(() => import('./RemoteControlSettingsModal'))
 
 // 组件挂载后：空闲时预热设置页弹窗 chunk，消除首次点击的卡顿
 const warmSettingsChunks = () => preloadOnIdle([
   () => import('./CacheClearModal'),
-  () => import('./RemoteControlSettingsModal'),
 ])
 
 type TraditionalPreferences = {
@@ -113,14 +174,6 @@ interface TraditionalViewProps {
   spotifyUserId?: string
   spotifyUsername: string
   spotifyAvatar?: string
-  kugouLoggedIn: boolean
-  kugouUserId?: string
-  kugouUsername: string
-  kugouAvatar?: string
-  sodaLoggedIn: boolean
-  sodaUserId?: string
-  sodaUsername: string
-  sodaAvatar?: string
   authRevision?: number
   onLoginClick: (platform: MusicPlatform) => void
   onProfileClick: (platform: MusicPlatform) => void
@@ -150,10 +203,10 @@ interface TraditionalViewProps {
 }
 
 const PLATFORM_ACCENTS: Record<MusicPlatform, string> = {
-  netease: '#ec4899', qq: '#22c55e', apple: '#fa2d48', spotify: '#1ed760', kugou: '#ff7a00', soda: '#38bdf8',
+  netease: '#ec4899', qq: '#22c55e', apple: '#fa2d48', spotify: '#1ed760',
 }
 
-const platformShortName = (platform: MusicPlatform) => ({ netease: '网易云', qq: 'QQ音乐', apple: 'Apple', spotify: 'Spotify', kugou: '酷狗', soda: '汽水' })[platform]
+const platformShortName = (platform: MusicPlatform) => ({ netease: '网易云', qq: 'QQ音乐', apple: 'Apple', spotify: 'Spotify' })[platform]
 const songKey = (song: Song) => `${song.platform}:${song.id || song.mid || song.name}`
 const coverOf = (song?: Song | null) => song?.album?.picUrl ? getProxiedImageUrl(song.album.picUrl) : ''
 const CoverImage = ({ src, alt, className }: { src?: string; alt: string; className: string }) => {
@@ -499,9 +552,7 @@ function TraditionalView({
   neteaseLoggedIn, neteaseUsername, neteaseAvatar, neteaseUserId,
   qqLoggedIn, qqUsername, qqAvatar, qqUserId,
   appleLoggedIn, appleUsername, appleAvatar,
-  spotifyLoggedIn, spotifyUserId, spotifyUsername, spotifyAvatar,
-  kugouLoggedIn, kugouUserId, kugouUsername, kugouAvatar,
-  sodaLoggedIn, sodaUserId, sodaUsername, sodaAvatar, authRevision = 0,
+  spotifyLoggedIn, spotifyUserId, spotifyUsername, spotifyAvatar, authRevision = 0,
   onLoginClick, onPlayPause, onNext, onPrevious, onSeek, onVolumeChange,
   liked = false, onToggleFavorite, playMode = 'sequential', onPlayModeChange, onOpenMixingStudio,
   neteaseVip = false, qqVip = false,
@@ -671,9 +722,9 @@ function TraditionalView({
     return false
   }, [showModePanel, historyIndex])
 
-  const loggedIn = platform === 'netease' ? neteaseLoggedIn : platform === 'qq' ? qqLoggedIn : platform === 'apple' ? appleLoggedIn : platform === 'spotify' ? spotifyLoggedIn : platform === 'kugou' ? kugouLoggedIn : sodaLoggedIn
-  const username = platform === 'netease' ? neteaseUsername : platform === 'qq' ? qqUsername : platform === 'apple' ? appleUsername : platform === 'spotify' ? spotifyUsername : platform === 'kugou' ? kugouUsername : sodaUsername
-  const avatar = platform === 'netease' ? neteaseAvatar : platform === 'qq' ? qqAvatar : platform === 'apple' ? appleAvatar : platform === 'spotify' ? spotifyAvatar : platform === 'kugou' ? kugouAvatar : sodaAvatar
+  const loggedIn = platform === 'netease' ? neteaseLoggedIn : platform === 'qq' ? qqLoggedIn : platform === 'apple' ? appleLoggedIn : spotifyLoggedIn
+  const username = platform === 'netease' ? neteaseUsername : platform === 'qq' ? qqUsername : platform === 'apple' ? appleUsername : spotifyUsername
+  const avatar = platform === 'netease' ? neteaseAvatar : platform === 'qq' ? qqAvatar : platform === 'apple' ? appleAvatar : spotifyAvatar
   const accent = PLATFORM_ACCENTS[platform]
   // 正在播放/歌词卡片的主题色跟随当前歌曲（dominantColor），未播放时用平台色
   const songTheme = currentSong && dominantColor ? dominantColor : accent
@@ -719,8 +770,7 @@ function TraditionalView({
     const id = platform === 'netease' ? neteaseUserId
       : platform === 'qq' ? qqUserId
         : platform === 'spotify' ? spotifyUserId
-          : platform === 'kugou' ? kugouUserId
-            : platform === 'soda' ? sodaUserId : ''
+          : ''
     const name = username
     if (platform === 'apple') {
       if (!appleLoggedIn) { setUserPlaylists([]); return }
@@ -740,7 +790,7 @@ function TraditionalView({
     if (!id && !name) { setUserPlaylists([]); return }
     void getUserPlaylists(platform, id || '', name || undefined).then(items => { if (!cancelled) setUserPlaylists(items || []) }).catch(() => { if (!cancelled) setUserPlaylists([]) })
     return () => { cancelled = true }
-  }, [platform, neteaseUserId, qqUserId, spotifyUserId, kugouUserId, sodaUserId, username, authRevision, appleLoggedIn])
+  }, [platform, neteaseUserId, qqUserId, spotifyUserId, username, authRevision, appleLoggedIn])
 
   useEffect(() => {
     const reloadPlaylists = (event: Event) => {
@@ -749,15 +799,14 @@ function TraditionalView({
       const userId = platform === 'netease' ? neteaseUserId
         : platform === 'qq' ? qqUserId
           : platform === 'spotify' ? spotifyUserId
-            : platform === 'kugou' ? kugouUserId
-              : platform === 'soda' ? sodaUserId : ''
+            : ''
       void getUserPlaylists(platform, userId || '', username || undefined, { forceRefresh: true })
         .then(items => setUserPlaylists(items || []))
         .catch(() => undefined)
     }
     window.addEventListener('playlist-content-changed', reloadPlaylists)
     return () => window.removeEventListener('playlist-content-changed', reloadPlaylists)
-  }, [platform, neteaseUserId, qqUserId, spotifyUserId, kugouUserId, sodaUserId, username])
+  }, [platform, neteaseUserId, qqUserId, spotifyUserId, username])
 
   // 未播放（无歌词）时自动切回播放列表 tab
   useEffect(() => {
@@ -884,7 +933,7 @@ function TraditionalView({
   }, [navigate])
   const openCommentsFor = useCallback((song: Song) => { if (song) navigate({ name: 'comments', song }) }, [navigate])
 
-  const ownsPlaylist = useCallback((playlist: any): boolean => isPlaylistOwner(playlist, { neteaseUserId, qqUserId, spotifyUserId, kugouUserId, sodaUserId }), [kugouUserId, neteaseUserId, qqUserId, sodaUserId, spotifyUserId])
+  const ownsPlaylist = useCallback((playlist: any): boolean => isPlaylistOwner(playlist, { neteaseUserId, qqUserId, spotifyUserId }), [neteaseUserId, qqUserId, spotifyUserId])
 
   const handleRemoveFromCurrentPlaylist = useCallback(async (song: Song, playlistId: string) => {
     if (currentPage.name !== 'playlist' || !ownsPlaylist(currentPage.playlist)) return
@@ -1010,8 +1059,7 @@ function TraditionalView({
         const id = platform === 'netease' ? neteaseUserId
       : platform === 'qq' ? qqUserId
         : platform === 'spotify' ? spotifyUserId
-          : platform === 'kugou' ? kugouUserId
-            : platform === 'soda' ? sodaUserId : ''
+          : ''
         void getUserPlaylists(platform, id || '', username || undefined).then(items => setUserPlaylists(items || [])).catch(() => undefined)
       }
       window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform, type: 'playlist-list' } }))
@@ -1398,7 +1446,7 @@ function TraditionalView({
               : `https://music.163.com/#/playlist?id=${playlistId}`
         void navigator.clipboard?.writeText(url)
         window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '歌单链接已复制', type: 'success' } }))
-      }} isOwner={isPlaylistOwner(playlistMenu.playlist, { neteaseUserId, qqUserId, spotifyUserId, kugouUserId, sodaUserId })} isSubscribed={playlistSubscribed || Boolean(playlistMenu.playlist?.isCollected || playlistMenu.playlist?.subscribed)} isSpecialPlaylist={isSpecialPlaylist(playlistMenu.playlist)} canEdit={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).updatePlaylist} canDelete={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).deletePlaylist} canSubscribe={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).subscribePlaylist && !isSpecialPlaylist(playlistMenu.playlist)} canShare={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).sharePlaylist && ((playlistMenu.playlist?.platform || platform) !== 'apple' || String(playlistMenu.playlist?.id || '').startsWith('pl.'))} />
+      }} isOwner={isPlaylistOwner(playlistMenu.playlist, { neteaseUserId, qqUserId, spotifyUserId })} isSubscribed={playlistSubscribed || Boolean(playlistMenu.playlist?.isCollected || playlistMenu.playlist?.subscribed)} isSpecialPlaylist={isSpecialPlaylist(playlistMenu.playlist)} canEdit={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).updatePlaylist} canDelete={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).deletePlaylist} canSubscribe={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).subscribePlaylist && !isSpecialPlaylist(playlistMenu.playlist)} canShare={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).sharePlaylist && ((playlistMenu.playlist?.platform || platform) !== 'apple' || String(playlistMenu.playlist?.id || '').startsWith('pl.'))} />
       <EditPlaylistModal show={showEditPlaylist} onClose={() => setShowEditPlaylist(false)} onSubmit={data => { void handleEditPlaylist(data) }} playlist={playlistMenu.playlist} loading={playlistMutationBusy} />
       <DeletePlaylistModal show={showDeletePlaylist} onClose={() => setShowDeletePlaylist(false)} onConfirm={() => { void handleDeletePlaylist() }} playlistName={playlistMenu.playlist?.name || ''} loading={playlistMutationBusy} />
       <AudioQualitySettingsModal show={showQuality} onClose={() => setShowQuality(false)} playerTheme={playerTheme} neteaseVip={neteaseVip} qqVip={qqVip} neteaseLoggedIn={neteaseLoggedIn} qqLoggedIn={qqLoggedIn} />
@@ -1789,15 +1837,9 @@ function TraditionalRecent({ platform, accent, isDark, loggedIn, currentSong, au
         .catch(() => finish([], '最近播放加载失败，请重试'))
       return
     }
-    if (platform === 'kugou') {
-      finish([])
-      return
-    }
     const endpoint = platform === 'qq'
       ? `http://localhost:3001/api/qq/record/recent/song?limit=100${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
-      : platform === 'soda'
-        ? `http://localhost:3001/api/soda/recent?limit=50${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
-        : `http://localhost:3001/api/netease/record/recent/song?limit=100${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
+      : `http://localhost:3001/api/netease/record/recent/song?limit=100${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
     fetch(endpoint, { cache: 'no-store' })
       .then(response => response.json().catch(() => null).then(payload => ({ response, payload })))
       .then(({ response, payload }) => {
@@ -1818,9 +1860,6 @@ function TraditionalRecent({ platform, accent, isDark, loggedIn, currentSong, au
               platform: 'qq' as const,
             } as Song
           }).filter((s: unknown): s is Song => Boolean(s)))
-        } else if (platform === 'soda') {
-          const rows: any[] = Array.isArray(payload?.songs) ? payload.songs : []
-          finish(rows.map(sodaMediaToSong).filter((s): s is Song => Boolean(s)))
         } else {
           finish(getRecentRows(payload).map(neteaseRecentRowToSong).filter((s): s is Song => Boolean(s)))
         }
@@ -1853,7 +1892,7 @@ function TraditionalRecent({ platform, accent, isDark, loggedIn, currentSong, au
         ) : songs.length === 0 ? (
           <div className={`flex h-56 flex-col items-center justify-center gap-3 rounded-3xl border ${surface}`}>
             <History className="h-8 w-8 opacity-30" />
-            <p className={`text-sm ${muted}`}>{error || (platform === 'kugou' ? '该平台暂不支持最近播放' : '暂无最近播放记录')}</p>
+            <p className={`text-sm ${muted}`}>{error || '暂无最近播放记录'}</p>
           </div>
         ) : (
           <div className={`overflow-hidden rounded-2xl border ${surface}`}>
@@ -1939,7 +1978,6 @@ function TraditionalSettingsPage({ preferences, playerTheme, onChange, onOpenQua
   const skin = useMemo(() => makeSkin({ dark, accent }), [dark, accent])
   const [activeTab, setActiveTab] = useState<TraditionalSettingsTabId>('general')
   const [showCacheClear, setShowCacheClear] = useState(false)
-  const [showRemoteSettings, setShowRemoteSettings] = useState(false)
   const settingsTabsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -1961,7 +1999,6 @@ function TraditionalSettingsPage({ preferences, playerTheme, onChange, onOpenQua
   const handleOpenModal = useCallback((actionId: MirrorActionId) => {
     if (actionId === 'audio-quality') onOpenQuality()
     else if (actionId === 'cache-clear') setShowCacheClear(true)
-    else if (actionId === 'remote-settings') setShowRemoteSettings(true)
   }, [onOpenQuality])
 
   return (
@@ -2011,7 +2048,6 @@ function TraditionalSettingsPage({ preferences, playerTheme, onChange, onOpenQua
       {/* 设置内打开的共享弹窗（音质弹窗由父级挂载） */}
       <Suspense fallback={null}>
         {showCacheClear && <LazyCacheClearModal show onClose={() => setShowCacheClear(false)} playerTheme={playerTheme} />}
-        {showRemoteSettings && <LazyRemoteSettingsModal show onClose={() => setShowRemoteSettings(false)} playerTheme={playerTheme} />}
       </Suspense>
     </div>
   )

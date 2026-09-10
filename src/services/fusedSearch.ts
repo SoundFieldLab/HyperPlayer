@@ -9,7 +9,7 @@ export interface PlatformEntitlement {
   vip: boolean
 }
 
-/** 平台权益表：已知平台必填；额外平台键（spotify/kugou/soda 等占位）允许存在，待接入后加入 MusicPlatform */
+/** 平台权益表：已知平台必填；额外平台键允许存在，待接入后加入 MusicPlatform */
 export type FusionEntitlements = Record<MusicPlatform, PlatformEntitlement> & { [key: string]: PlatformEntitlement | undefined }
 
 export interface FusedSearchInput {
@@ -29,7 +29,7 @@ export interface FusedSearchOutput {
 }
 
 const platformOf = (item: { platform?: MusicPlatform }): MusicPlatform => (
-  item.platform === 'qq' || item.platform === 'apple' || item.platform === 'spotify' || item.platform === 'kugou' || item.platform === 'soda'
+  item.platform === 'qq' || item.platform === 'apple' || item.platform === 'spotify'
     ? (item.platform as MusicPlatform)
     : 'netease'
 )

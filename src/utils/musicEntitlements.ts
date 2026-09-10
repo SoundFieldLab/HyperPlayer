@@ -27,29 +27,11 @@ export const entitlementTierFromSpotifyProduct = (product: unknown): Entitlement
   return 'unknown'
 }
 
-export const entitlementTierFromSodaMembership = (membership: {
-  isVip?: boolean
-  isSvip?: boolean
-  vipLabel?: string
-  membershipKnown?: boolean
-  membershipStatus?: unknown
-  vipLevel?: number
-} | null | undefined): EntitlementTier => {
-  if (!membership) return 'unknown'
-  const reported = normalizeEntitlementTier(membership.membershipStatus)
-  if (reported !== 'unknown') return reported
-  if (membership.isSvip || Number(membership.vipLevel) >= 2 || /\bsvip\b/i.test(membership.vipLabel || '')) return 'svip'
-  if (membership.isVip || Number(membership.vipLevel) === 1 || /\bvip\b/i.test(membership.vipLabel || '')) return 'vip'
-  return membership.membershipKnown ? 'free' : 'unknown'
-}
-
 export const createPlatformEntitlements = (values: Partial<PlatformEntitlements> = {}): PlatformEntitlements => ({
   netease: 'unknown',
   qq: 'unknown',
   apple: 'unknown',
   spotify: 'unknown',
-  kugou: 'unknown',
-  soda: 'unknown',
   ...values,
 })
 

@@ -9,8 +9,6 @@
  */
 
 import type { EngineManifest, EngineAdapterOptions, IAudioEngineAdapter } from './types'
-import { v1Manifest } from './engines/v1'
-import { v2Manifest } from './engines/v2'
 import { v3Manifest } from './engines/v3'
 
 export type {
@@ -25,18 +23,13 @@ export type {
   EngineManifest,
   EngineAdapterOptions,
 } from './types'
-export { V1Adapter } from './V1Adapter'
-export { V2Adapter } from './V2Adapter'
 export { V3Adapter } from './V3Adapter'
-export { default as GenericMixingStudio } from './GenericMixingStudio'
 
 /**
  * 引擎注册表：按顺序排列。第一项是默认引擎（getAudioEngineVersion 无保存值时回退）。
  * 新增引擎在此加一行 import + 一项即可。
  */
 const REGISTRY: EngineManifest[] = [
-  v1Manifest,
-  v2Manifest,
   v3Manifest,
 ]
 
