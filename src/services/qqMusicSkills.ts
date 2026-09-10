@@ -1,6 +1,6 @@
 const API_BASE = 'http://localhost:3001/api'
 const OFFICIAL_KEY_URL = 'https://y.qq.com/n/ryqq_v2/qqmusic_skills'
-const SESSION_KEY = 'waveforge.qqmusicSkills.sessionKey'
+const SESSION_KEY = 'hyperplayer.qqmusicSkills.sessionKey'
 
 const normalizeKey = (value: unknown) => {
   const key = String(value || '').trim()

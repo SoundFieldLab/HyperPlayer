@@ -1,7 +1,7 @@
 // PV Tool — Copyright (c) 2026 DanteAlighieri13210914
 // Licensed under Non-Commercial License. See LICENSE for terms.
 //
-// wfLyricOverlay —— WaveForge 专属扩展特效（非原版文件）。
+// wfLyricOverlay —— HyperPlayer 专属扩展特效（非原版文件）。
 //
 // v2：凝彩（folia tempera）式逐词动画歌词层，学习其确定性逐词编排机制：
 // - 词级粒度：每词独立 PIXI.Text，按真实逐字时间戳（ctx.words，绝对秒）驱动，

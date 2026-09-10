@@ -1,7 +1,7 @@
 /**
  * 性能模式（配置检查面板配套）。
  *
- * WaveForge 减配版：TV 形态已剥离，性能模式不再依赖 TV 检测 / 设备内存自动分档，
+ * HyperPlayer 减配版：TV 形态已剥离，性能模式不再依赖 TV 检测 / 设备内存自动分档，
  * 固定以普通档（normal）为默认。缓存上限统一取桌面档（见 getCacheLimits）。
  * 生效机制：html 上打 wf-perf-* 类 + JS 侧（组件读 usePerfMode）。
  */
@@ -9,7 +9,7 @@ import { useSyncExternalStore } from 'react'
 
 export type PerfMode = 'efficiency' | 'normal' | 'enhanced'
 
-const KEY = 'waveforge:perf-mode'
+const KEY = 'hyperplayer:perf-mode'
 const listeners = new Set<() => void>()
 let mode: PerfMode = readStored()
 

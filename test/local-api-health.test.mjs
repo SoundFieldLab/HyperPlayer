@@ -6,7 +6,7 @@ import {
   isCompatibleLocalApiHealth,
 } from '../server/local-api-health.mjs'
 
-test('accepts only the current WaveForge local API health contract', () => {
+test('accepts only the current HyperPlayer local API health contract', () => {
   assert.equal(isCompatibleLocalApiHealth({
     status: 'ok',
     service: LOCAL_API_SERVICE,

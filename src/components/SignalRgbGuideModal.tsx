@@ -24,18 +24,18 @@ const STEPS = [
   },
   {
     icon: RefreshCw,
-    title: "安装 WaveForge Effect 后重启",
+    title: "安装 HyperPlayer Effect 后重启",
     detail: "在控制台点击安装 Effect。文件会写入 SignalRGB 的 Dynamic Effects 目录；完成后需要彻底退出并重新启动 SignalRGB。",
   },
   {
     icon: LayoutGrid,
-    title: "手动选择 WaveForge",
-    detail: "没有 SignalRGB Pro 时，在 SignalRGB 的效果页面手动选择 WaveForge。效果会使用 SignalRGB 原生 engine.audio 驱动当前完整布局。",
+    title: "手动选择 HyperPlayer",
+    detail: "没有 SignalRGB Pro 时，在 SignalRGB 的效果页面手动选择 HyperPlayer。效果会使用 SignalRGB 原生 engine.audio 驱动当前完整布局。",
   },
   {
     icon: Crown,
     title: "可选的 Pro 自动化",
-    detail: "SignalRGB Pro Local API 可让 WaveForge 自动应用及恢复效果。Pro 只影响自动切换，不是运行 WaveForge Effect 的必要条件。",
+    detail: "SignalRGB Pro Local API 可让 HyperPlayer 自动应用及恢复效果。Pro 只影响自动切换，不是运行 HyperPlayer Effect 的必要条件。",
   },
 ];
 
@@ -109,7 +109,7 @@ export default function SignalRgbGuideModal({
                   关于设备列表
                 </h4>
                 <p className="mt-2 text-xs leading-relaxed text-white/50">
-                  当前 SignalRGB Local API 不提供 WaveForge 可依赖的物理设备枚举接口，因此控制台只显示当前布局和效果信息，不伪造设备清单。实际品牌、型号、位置和分组请在 SignalRGB 的布局页面查看与管理。
+                  当前 SignalRGB Local API 不提供 HyperPlayer 可依赖的物理设备枚举接口，因此控制台只显示当前布局和效果信息，不伪造设备清单。实际品牌、型号、位置和分组请在 SignalRGB 的布局页面查看与管理。
                 </p>
               </section>
               <section className="mt-4 rounded-md border border-emerald-300/20 bg-emerald-300/[0.06] p-3">
@@ -118,7 +118,7 @@ export default function SignalRgbGuideModal({
                   音频路径
                 </p>
                 <p className="mt-1 text-[11px] leading-relaxed text-white/45">
-                  WaveForge 不向 SignalRGB 连续发送频谱。安装的 Effect 在 SignalRGB 内直接读取 engine.audio；WaveForge 只补充播放、节拍、重音、风格和主题事件。
+                  HyperPlayer 不向 SignalRGB 连续发送频谱。安装的 Effect 在 SignalRGB 内直接读取 engine.audio；HyperPlayer 只补充播放、节拍、重音、风格和主题事件。
                 </p>
               </section>
             </div>

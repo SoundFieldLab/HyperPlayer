@@ -9,7 +9,7 @@ const test = require('node:test')
 const { AudioDownloadService } = require('../desktop/audio-download.cjs')
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'waveforge-audio-policy-'))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperplayer-audio-policy-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
   return root
 }

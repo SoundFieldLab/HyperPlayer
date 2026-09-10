@@ -98,7 +98,7 @@ const homeModuleSessionCache = new Map<string, HomeModuleSessionSnapshot>()
 const HOME_MODULE_SESSION_CACHE_LIMIT = 6
 const HOME_MODULE_SESSION_CACHE_TTL = 5 * 60 * 1000
 const HOME_MODULE_PERSISTED_CACHE_TTL = 24 * 60 * 60 * 1000
-const HOME_MODULE_PERSISTED_CACHE_KEY = 'waveforge:home-module-cache:v2'
+const HOME_MODULE_PERSISTED_CACHE_KEY = 'hyperplayer:home-module-cache:v2'
 
 const readPersistedHomeModuleCache = (): Record<string, HomeModuleSessionSnapshot> => {
   try {
@@ -2025,10 +2025,10 @@ function HomeView({
 
     void loadSummary()
     const handleReported = () => void loadSummary()
-    window.addEventListener('waveforge-recent-playback-reported', handleReported)
+    window.addEventListener('hyperplayer-recent-playback-reported', handleReported)
     return () => {
       controller.abort()
-      window.removeEventListener('waveforge-recent-playback-reported', handleReported)
+      window.removeEventListener('hyperplayer-recent-playback-reported', handleReported)
     }
   }, [platform, isLoggedIn, authRevision])
 

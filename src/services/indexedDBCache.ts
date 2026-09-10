@@ -1,5 +1,5 @@
 import type { MusicPlatform } from './platforms'
-const DB_NAME = 'WaveForgeCache'
+const DB_NAME = 'HyperPlayerCache'
 const DB_VERSION = 2
 const COVER_STORE = 'covers'
 const PLAYLIST_STORE = 'playlists'

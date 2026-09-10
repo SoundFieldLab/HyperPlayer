@@ -141,7 +141,7 @@ async function startDev() {
       stdio: 'inherit',
       env: {
         ...process.env,
-        WAVEFORGE_DEV_SERVER_URL: devServerUrl,
+        HYPERPLAYER_DEV_SERVER_URL: devServerUrl,
         PYTHONIOENCODING: 'utf-8',
       },
     }

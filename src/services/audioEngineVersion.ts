@@ -18,11 +18,11 @@ export type AudioEngineVersion = string
 /** 默认引擎版本（注册表的第一个引擎，当前唯一引擎为 v3） */
 const DEFAULT_VERSION = 'v3'
 
-const VERSION_KEY = 'waveforge:audio-engine-version'
-/** 已移除的旧版 v3（机型预设版）残留存储键：与新 v3（waveforge:v3-*）无关联，顺带清理 */
+const VERSION_KEY = 'hyperplayer:audio-engine-version'
+/** 已移除的旧版 v3（机型预设版）残留存储键：与新 v3（hyperplayer:v3-*）无关联，顺带清理 */
 const LEGACY_V3_STORAGE_KEYS = [
-  'waveforge:audio-effects-v3-settings',
-  'waveforge:audio-effects-v3-scenes',
+  'hyperplayer:audio-effects-v3-settings',
+  'hyperplayer:audio-effects-v3-scenes',
 ]
 
 /**

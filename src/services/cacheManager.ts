@@ -604,7 +604,7 @@ class CacheManager {
     }
 
     if (targets.lyrics) {
-      window.dispatchEvent(new Event('waveforge:lyrics-cache-cleared'))
+      window.dispatchEvent(new Event('hyperplayer:lyrics-cache-cleared'))
       await indexedDBCache.clearLyrics()
       cleared = true
     }
@@ -627,7 +627,7 @@ class CacheManager {
     }
 
     if (targets.transitions && window.electron?.render) {
-      window.dispatchEvent(new Event('waveforge:track-stem-cache-clearing'))
+      window.dispatchEvent(new Event('hyperplayer:track-stem-cache-clearing'))
       const [renderResult, stemResult, trackStemResult] = await Promise.all([
         window.electron.render.clearCache(),
         window.electron.stems?.clearCache?.() ?? Promise.resolve({ success: true, cleared: 0 }),

@@ -445,7 +445,7 @@ function createClient() {
         set({
           status: {
             ...EMPTY_STATUS,
-            lastError: "Razer Chroma 仅支持 WaveForge Windows 桌面版",
+            lastError: "Razer Chroma 仅支持 HyperPlayer Windows 桌面版",
           },
         });
         return;

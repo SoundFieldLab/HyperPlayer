@@ -10,7 +10,7 @@ const { pathToFileURL } = require('url')
 const { AudioDownloadService } = require('../desktop/audio-download.cjs')
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'waveforge-audio-path-test-'))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperplayer-audio-path-test-'))
   const cache = path.join(root, 'cache')
   const outside = path.join(root, 'outside')
   fs.mkdirSync(outside)

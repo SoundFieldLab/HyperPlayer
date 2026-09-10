@@ -349,7 +349,7 @@ export default function NeteaseExplorePage({
         return
       }
       case 'podcast-section': podcastSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return
-      case 'none': setHomeError(`${resource.title} 暂不支持在 WaveForge 内打开`)
+      case 'none': setHomeError(`${resource.title} 暂不支持在 HyperPlayer 内打开`)
     }
   }, [onOpenAlbum, onOpenArtist, onOpenChannel, onOpenMV, onOpenPlaylist, onPlaySongs, onViewComments])
 

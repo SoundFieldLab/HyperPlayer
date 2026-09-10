@@ -1,6 +1,6 @@
 # 网易云音乐 Android 推荐页逆向记录（9.5.81）
 
-> 目标：WaveForge 的网易云探索页使用网易云手机客户端的原生推荐流语义，不再用若干公开接口拼装固定首页。
+> 目标：HyperPlayer 的网易云探索页使用网易云手机客户端的原生推荐流语义，不再用若干公开接口拼装固定首页。
 >
 > 样本：MuMu 模拟器，`com.netease.cloudmusic`，`versionName=9.5.81`，`versionCode=9005081`。
 
@@ -120,7 +120,7 @@ xHeaderTraceId
 | `HOMEPAGE_FIXED_LISTEN_LIVE` / `HOMEPAGE_SLIDE_LISTEN_LIVE` | 直播 |
 | `HOMEPAGE_LOCAL_CUSTOM_RN` | RN 自定义区块 |
 
-WaveForge 必须保留原始 `blockCode/showType/crossPlatformConfig/dslData/rnData/nativeData`。未知模块应降级成通用资源卡，而不是丢弃。
+HyperPlayer 必须保留原始 `blockCode/showType/crossPlatformConfig/dslData/rnData/nativeData`。未知模块应降级成通用资源卡，而不是丢弃。
 
 ## 顶部入口
 
@@ -182,7 +182,7 @@ WaveForge 必须保留原始 `blockCode/showType/crossPlatformConfig/dslData/rnD
 
 - 普通快捷入口直接使用服务端 `uiElement.image.imageUrl`；`purePicture=true` 时优先使用 `purePictureUrl`，`purePicName` 用于识别客户端语义层。
 - 客户端允许在服务端主体图片上叠加打包 drawable、遮罩、文字和状态；每日推荐会通过 `Canvas.drawText` 绘制当天日期。
-- 未发现客户端把任意专辑封面拼成快捷入口马赛克的证据。WaveForge 因此保留服务端图片作为主体，仅实现有 APK 证据的日期/状态组合；缺图时使用稳定语义降级，不伪造专辑拼图。
+- 未发现客户端把任意专辑封面拼成快捷入口马赛克的证据。HyperPlayer 因此保留服务端图片作为主体，仅实现有 APK 证据的日期/状态组合；缺图时使用稳定语义降级，不伪造专辑拼图。
 
 ### Dragon Ball 引导
 
@@ -208,7 +208,7 @@ WaveForge 必须保留原始 `blockCode/showType/crossPlatformConfig/dslData/rnD
 | 关注艺人新动向 | 账号生成 | 关注关系 |
 | 每周趋势、原创歌曲 | 通用或弱个性化 | 内容池通用，位置/挑选可个性化 |
 
-广告/商业插卡不在 WaveForge 的复刻范围。
+广告/商业插卡不在 HyperPlayer 的复刻范围。
 
 ## 当前样本与限制
 
@@ -216,10 +216,10 @@ WaveForge 必须保留原始 `blockCode/showType/crossPlatformConfig/dslData/rnD
 - 已采集每日推荐、心动模式、私人漫游的 Activity/运行行为。
 - 另一个任务随后把同一模拟器前台切到 QQ 音乐；为避免干扰，雷达及后续入口点击已停止。
 - 模拟器无 root，应用不可 `run-as`；`tcpdump` 存在但 shell 无 raw socket 权限。
-- 当前 WaveForge Electron 会话只有匿名 `MUSIC_A`，没有模拟器账号的 `MUSIC_U`，所以不能把匿名响应冒充当前账号完整推荐。
+- 当前 HyperPlayer Electron 会话只有匿名 `MUSIC_A`，没有模拟器账号的 `MUSIC_U`，所以不能把匿名响应冒充当前账号完整推荐。
 - 私有响应样本位于本地逆向目录 `.netease-reverse/responses/`，不提交账号 Cookie。
 
-## WaveForge 实现约束
+## HyperPlayer 实现约束
 
 1. 网易云使用独立 native feed 模块，不与 QQ 推荐协议混用。
 2. 后端直接调用上述私有 URI；公共 `personalized/toplist/dj_*` 只能作为故障降级，不能成为主页面。
@@ -232,7 +232,7 @@ WaveForge 必须保留原始 `blockCode/showType/crossPlatformConfig/dslData/rnD
 9. 公开红心数来自独立 `/api/song/red/count`，与账号收藏状态分离；前端仅为进入视口的歌曲分批请求。
 10. 推荐歌单右键菜单只提供适用于服务端推荐资源的打开、收藏/取消收藏和分享；编辑/删除仅属于本人歌单，匿名状态不显示不可执行的收藏命令。
 
-## WaveForge 落地与最终自检
+## HyperPlayer 落地与最终自检
 
 **已证实（实现、运行）**
 
@@ -240,7 +240,7 @@ WaveForge 必须保留原始 `blockCode/showType/crossPlatformConfig/dslData/rnD
 - 新增 `src/features/neteaseExplore/`，按照 `blockCodeOrderList` 和 `showType` 渲染服务端区块；原始 block、未知字段及未知资源仍被保留。
 - 捕获的主页、无限流与播客响应共 173 个资源全部解析成明确动作；匿名实时桌面样本渲染出 189 个 `data-resource-id` 动作目标。
 - 已覆盖歌单、歌曲、专辑、数字专辑、节目、播客、MV、评论、艺人、用户和安全 HTTPS 页面动作；歌单详情实测加载 81 首歌曲，包含歌手、专辑、时长及播放控制。
-- 节目 `3715608827` 实测解析到 `mainSong=3363556036`（《拉车门进行曲》），节目音频可进入 WaveForge 统一播放链。
+- 节目 `3715608827` 实测解析到 `mainSong=3363556036`（《拉车门进行曲》），节目音频可进入 HyperPlayer 统一播放链。
 - 桌面实测点击歌曲后媒体会话得到真实曲名和歌手，并解锁基于当前网易云歌曲的相似推荐。
 - 歌曲右键菜单实测包含播放、下一首播放、我喜欢、添加到、评论、专辑、歌手、歌曲详情、不感兴趣、相似歌曲和复制信息。
 - 1280×800 桌面首屏已检查：顶部平台栏、账号提示、快捷入口、横向资源轨道和可见滚动条没有重叠；长内容由独立纵向滚动容器承载并保留播放条底部空间。
@@ -253,11 +253,11 @@ WaveForge 必须保留原始 `blockCode/showType/crossPlatformConfig/dslData/rnD
 - 相似歌曲、歌单和用户使用三个独立上游请求；每个子请求有 12 秒上限，一个失败不会阻塞其他成功结果，三类均为空时展示明确空状态。
 - 请求切换使用 `AbortController`、请求序号和账号键防止旧账号响应覆盖新账号；主页缓存按不可逆 Cookie 指纹隔离，后端不持久化或回传 Cookie。
 - 本轮聚焦回归测试为 36/36 通过（5 个测试文件）；全量 `tsc --noEmit` 通过；生产 Vite 构建成功。构建仅报告既存的大 chunk 体积警告。
-- 1280×800 隔离页面截图确认 WaveForge 基础桌面布局无重叠；但 Browser Use 在加载完整长 Feed 后截图捕获失败，Computer Use 随后因 broker 连接中断不可用。因此本轮新增轨道的 1280×800、1440×900 明暗主题视觉验收未形成完整截图证据，不能记为人工视觉通过；交互行为由组件测试覆盖。
+- 1280×800 隔离页面截图确认 HyperPlayer 基础桌面布局无重叠；但 Browser Use 在加载完整长 Feed 后截图捕获失败，Computer Use 随后因 broker 连接中断不可用。因此本轮新增轨道的 1280×800、1440×900 明暗主题视觉验收未形成完整截图证据，不能记为人工视觉通过；交互行为由组件测试覆盖。
 
 ### 仍需真实账号才能验证的边界
 
-- 当前最终桌面验收使用匿名响应。每日推荐、历史日推、风格日推、心动模式、账号雷达、关注艺人和精确个人口味区块的协议与界面已实现，但没有用有效 `MUSIC_U` 在 WaveForge 中完成账号态端到端验收。
+- 当前最终桌面验收使用匿名响应。每日推荐、历史日推、风格日推、心动模式、账号雷达、关注艺人和精确个人口味区块的协议与界面已实现，但没有用有效 `MUSIC_U` 在 HyperPlayer 中完成账号态端到端验收。
 - NetEase 可在未来下发当前样本未出现的新 RN、mini-program、v3 动态或 DSL action。已知 action 会映射到等价 PC 功能；未知 action 会明确不可用，不会伪装成功。
-- 原生 Android 专属页面无法逐像素嵌入桌面应用；WaveForge 复刻的是同一服务端内容、顺序、语义和功能，并按 PC 交互重排，而不是照搬 1080×1920 手机尺寸。
+- 原生 Android 专属页面无法逐像素嵌入桌面应用；HyperPlayer 复刻的是同一服务端内容、顺序、语义和功能，并按 PC 交互重排，而不是照搬 1080×1920 手机尺寸。
 - 同一模拟器仍可能被另一任务用于 QQ 音乐，因此后续未执行会抢占前台的 ADB 点击，不影响本记录中已完成的静态、协议、接口和桌面验证。

@@ -4,7 +4,7 @@ const MIN_RELEASE_VMP_DAYS = 30
 
 function pythonCandidates() {
   return [
-    process.env.WAVEFORGE_EVS_PYTHON,
+    process.env.HYPERPLAYER_EVS_PYTHON,
     process.env.PYTHON,
     'D:\\Python\\python.exe',
     'python',

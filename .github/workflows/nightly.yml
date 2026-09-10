@@ -2,7 +2,7 @@
 # - 不 bump 正式版本号，仅在工作区拼 "<基础版本>-nightly.<YYYYMMDD>" 用于产物命名，不推回仓库。
 # - 固定使用 nightly tag/release，每次发布前覆盖上一版，GitHub Release 始终只保留一个当前 nightly。
 # - 自动生成 changelog（自上次 nightly tag 以来的提交），发布 GitHub 预发布。
-# - 不写/推 update.json、不发 Gitee —— 不影响正式版检查更新与正式发版流程。
+# - 不写/推 update.json、不发 Releases —— 不影响正式版检查更新与正式发版流程。
 # 也可在 Actions 页面手动触发（force=true 可忽略「无新增提交」跳过逻辑强制构建）。
 
 name: Nightly Build 每日构建
@@ -79,7 +79,7 @@ jobs:
 
           # 生成 changelog（排除 merge 提交，取 commit subject + 短哈希）
           {
-            echo "# WaveForge Nightly ${DATE}"
+            echo "# HyperPlayer Nightly ${DATE}"
             echo ""
             echo "**版本号：${NIGHTLY_VERSION}（基础 ${BASE_VERSION} + 构建日期，非正式发版，不自动升级版本号）**"
             echo ""
@@ -196,7 +196,7 @@ jobs:
         run: |
           ls -la artifacts
           gh release create nightly \
-            --title "WaveForge Nightly" \
+            --title "HyperPlayer Nightly" \
             --notes-file changelog.md \
             --prerelease \
             --target master \

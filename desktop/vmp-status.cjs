@@ -43,7 +43,7 @@ function parseVerifyOutput(output, exitCode = 0, checkedAt = Date.now(), source 
 }
 
 function pythonCandidates(env = process.env) {
-  return [env.WAVEFORGE_EVS_PYTHON, env.PYTHON, 'D:\\Python\\python.exe', 'python', 'py'].filter(Boolean)
+  return [env.HYPERPLAYER_EVS_PYTHON, env.PYTHON, 'D:\\Python\\python.exe', 'python', 'py'].filter(Boolean)
 }
 
 function runCaptured(exe, args, options = {}) {

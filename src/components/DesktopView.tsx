@@ -1,6 +1,6 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 import { isTvModeActive } from '../platform'
 import { PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } from '../services/platformSync'
@@ -814,10 +814,10 @@ function DesktopView({
       const platform = (event as CustomEvent<{ platform?: MusicPlatform }>).detail?.platform
       if (!platform || platform === currentPlatform) void loadRecent()
     }
-    window.addEventListener('waveforge-recent-playback-reported', handleReported)
+    window.addEventListener('hyperplayer-recent-playback-reported', handleReported)
     return () => {
       controller.abort()
-      window.removeEventListener('waveforge-recent-playback-reported', handleReported)
+      window.removeEventListener('hyperplayer-recent-playback-reported', handleReported)
     }
   }, [currentPlatform, neteaseLoggedIn, qqLoggedIn, appleLoggedIn, spotifyLoggedIn, neteaseUserId, qqUserId, spotifyUserId, authRevision])
 

@@ -1,6 +1,6 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 /**
  * MV 背景 ↔ 歌曲「对齐」服务
@@ -43,7 +43,7 @@ export const MIN_ALIGNMENT_CONFIDENCE = 0.5
 /** 偏移量合理性上限：前摇超过 45s 基本是货不对板（别的现场/剪辑），不冒险对齐 */
 const MAX_SANE_OFFSET_SECONDS = 45
 
-const STORAGE_KEY = 'waveforge:mv-alignments:v2-seconds'
+const STORAGE_KEY = 'hyperplayer:mv-alignments:v2-seconds'
 const CACHE_MAX = 200
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 天
 const NEGATIVE_CACHE_TTL_MS = 30 * 1000

@@ -1,4 +1,4 @@
-﻿; WaveForge setup UI preview. Reuses the production electron-builder include verbatim.
+﻿; HyperPlayer setup UI preview. Reuses the production electron-builder include verbatim.
 Unicode true
 !include "MUI2.nsh"
 
@@ -12,7 +12,7 @@ Unicode true
   !define ESTIMATED_SIZE 0
 !endif
 
-!define PRODUCT_NAME "WaveForge 澜音工坊"
+!define PRODUCT_NAME "HyperPlayer"
 !define WF_PREVIEW
 !define BUILD_RESOURCES_DIR "${SRC}/build"
 !define isUpdated `0 == 1`
@@ -38,7 +38,7 @@ Var ReviewTarget
 
 Function .onInit
   StrCpy $installMode "current"
-  StrCpy $INSTDIR "$LOCALAPPDATA\Programs\WaveForge"
+  StrCpy $INSTDIR "$LOCALAPPDATA\Programs\HyperPlayer"
   !insertmacro customInit
   ${GetParameters} $0
   ClearErrors
@@ -61,7 +61,7 @@ FunctionEnd
 
 Function .onGUIInit
   Call WaveGuiInit
-  System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "WaveForge Setup Preview [$ReviewTarget]")'
+  System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "HyperPlayer Setup Preview [$ReviewTarget]")'
 FunctionEnd
 
 Function ReviewThemeCreate
@@ -78,7 +78,7 @@ Function ReviewWelcomeCreate
   ${If} $ReviewTarget == ""
   ${OrIf} $ReviewTarget == "welcome-dark"
   ${OrIf} $ReviewTarget == "welcome-light"
-    System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "WaveForge Setup Preview [$ReviewTarget]")'
+    System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "HyperPlayer Setup Preview [$ReviewTarget]")'
     Call WaveWelcomeCreate
   ${Else}
     Abort
@@ -101,7 +101,7 @@ Function ReviewDirectoryCreate
   ${If} $ReviewTarget == ""
   ${OrIf} $ReviewTarget == "directory-dark"
   ${OrIf} $ReviewTarget == "directory-light"
-    System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "WaveForge Setup Preview [$ReviewTarget]")'
+    System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "HyperPlayer Setup Preview [$ReviewTarget]")'
     Call WaveOptionsCreate
   ${Else}
     Abort

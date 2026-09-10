@@ -27,7 +27,7 @@
 | castLabs development VMP | HTTP 200，status=-1021，errorCode=-42605 | 拒绝 |
 | EVS production streaming VMP | HTTP 200，license=648 bytes | session.update 成功，keyStatuses=usable |
 
-结论：**WaveForge 已通过 Electron ECS Browser CDM L3 播放 Apple Music 原生 CENC 音源。** WebView2 仅作为 L3/CENC 异常时的兼容兜底，不是主路径。
+结论：**HyperPlayer 已通过 Electron ECS Browser CDM L3 播放 Apple Music 原生 CENC 音源。** WebView2 仅作为 L3/CENC 异常时的兼容兜底，不是主路径。
 
 ## 三、生产构建要求
 

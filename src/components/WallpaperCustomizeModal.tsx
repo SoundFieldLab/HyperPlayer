@@ -103,7 +103,7 @@ export default function WallpaperCustomizeModal({ show, onClose, playerTheme = '
     setTvError('')
     try {
       // 已导入文件名记录在 localStorage，避免重复导入
-      const importedKey = 'waveforge:tv-wallpapers-imported'
+      const importedKey = 'hyperplayer:tv-wallpapers-imported'
       let importedNames: string[] = []
       try {
         importedNames = JSON.parse(localStorage.getItem(importedKey) || '[]')

@@ -118,7 +118,7 @@ export default function PluginCenterModal() {
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-white tracking-tight">插件</h2>
-                  <p className="text-[11px] text-white/40">为 WaveForge 扩展更多玩法 · 小功能通过插件引入</p>
+                  <p className="text-[11px] text-white/40">为 HyperPlayer 扩展更多玩法 · 小功能通过插件引入</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">

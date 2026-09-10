@@ -5,13 +5,13 @@ const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
 
-const effectPath = path.join(__dirname, '..', 'desktop', 'assets', 'signalrgb', 'WaveForge.html')
+const effectPath = path.join(__dirname, '..', 'desktop', 'assets', 'signalrgb', 'HyperPlayer.html')
 const html = fs.readFileSync(effectPath, 'utf8')
 const styles = ['spectrum-cycle','gradient-spectrum','wave','ripple','fire','rain','vu-meter','aurora','galaxy','bass-reactor','ambient','static']
 
-assert.match(html, /<meta\s+name="title"\s+content="WaveForge"/i)
+assert.match(html, /<meta\s+name="title"\s+content="HyperPlayer"/i)
 assert.match(html, /<meta\s+name="description"/i)
-assert.match(html, /<meta\s+name="publisher"\s+content="WaveForge"/i)
+assert.match(html, /<meta\s+name="publisher"\s+content="HyperPlayer"/i)
 assert.match(html, /<meta\s+name="version"/i)
 for (const setting of ['style','background','sensitivity','decay','size','peakHold','gamma','brightness','speed','mirror','direction','color1','color2','color3']) {
   assert.match(html, new RegExp(`<meta\\s+property="${setting}"`, 'i'), `missing ${setting} setting`)
@@ -43,7 +43,7 @@ const canvas = { width: 320, height: 200, getContext: (type) => { assert.equal(t
 const windowObject = {}
 const sandbox = {
   window: windowObject,
-  document: { getElementById: (id) => { assert.equal(id, 'waveforge'); return canvas } },
+  document: { getElementById: (id) => { assert.equal(id, 'hyperplayer'); return canvas } },
   requestAnimationFrame: (callback) => { callbacks.push(callback); return callbacks.length },
   Math,
   Number,
@@ -64,7 +64,7 @@ windowObject.engine = {
 sandbox.engine = windowObject.engine
 vm.createContext(sandbox)
 vm.runInContext(scriptMatch[1], sandbox, { filename: effectPath, timeout: 1000 })
-assert.deepEqual(Array.from(windowObject.__waveforgeEffect.styles), styles)
+assert.deepEqual(Array.from(windowObject.__hyperplayerEffect.styles), styles)
 assert.equal(typeof windowObject.onCanvasApiEvent, 'function')
 
 for (const style of styles) {
@@ -78,7 +78,7 @@ for (const style of styles) {
   assert.ok(drawOperations > before, `style ${style} should issue drawing operations`)
 }
 
-assert.equal(windowObject.onCanvasApiEvent({ sender: 'waveforge', event: 'play' }), true)
+assert.equal(windowObject.onCanvasApiEvent({ sender: 'hyperplayer', event: 'play' }), true)
 assert.equal(windowObject.onCanvasApiEvent({ sender: 'other-app', event: 'play' }), false)
 assert.equal(windowObject.onCanvasApiEvent('probe'), true)
 assert.equal(windowObject.onCanvasApiEvent('play'), true)

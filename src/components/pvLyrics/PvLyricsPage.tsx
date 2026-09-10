@@ -1,5 +1,5 @@
 /**
- * PvLyricsPage —— WaveForge 「PV」歌词模式适配层（pv-tool 引擎 + 凝彩式逐字动画，全自动版）。
+ * PvLyricsPage —— HyperPlayer 「PV」歌词模式适配层（pv-tool 引擎 + 凝彩式逐字动画，全自动版）。
  *
  * - pv-tool 移植引擎（src/vendor/pv）承担模板/特效/后期/节拍：按曲目自动选模板，
  *   段落级平滑切换（fadeToTemplate），能量驱动参数曲线 + 镜头慢呼吸 + 切镜爆发 + 间奏演出
@@ -35,7 +35,7 @@ export interface PvLyricsPageProps {
   songAlbum?: string
   coverUrl?: string
   trackId: string | number
-  /** WaveForge songKey（`platform-id`），用于拉取节拍分析缓存 */
+  /** HyperPlayer songKey（`platform-id`），用于拉取节拍分析缓存 */
   trackKey?: string
   translationEnabled: boolean
   romanEnabled: boolean

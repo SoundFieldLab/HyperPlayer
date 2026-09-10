@@ -72,7 +72,7 @@ castLabs 在 issue #234 明确回复：Windows MF Widevine CDM/L1 只是历史�
 - WebView2 外部源模式只作为兼容兜底，限制与桥协议仍见下方
 
 ### 主进程 `desktop/main.cjs` + `desktop/preload.cjs`
-- IPC `apple-bridge:spawn`：ping 优先（幂等）→ 找 Python（`WAVEFORGE_APPLE_BRIDGE_PYTHON` 环境变量 →
+- IPC `apple-bridge:spawn`：ping 优先（幂等）→ 找 Python（`HYPERPLAYER_APPLE_BRIDGE_PYTHON` 环境变量 →
   嵌入式 python-embed → `%LOCALAPPDATA%/Programs/Python`、`C:/D:\Python*`、PATH；逐个 `import webview` 校验）→ spawn
 - `spawnAppleBridge()` 已暴露到 preload（`window.electron.spawnAppleBridge`），端口固定为 18790
 - bridge 不在应用启动阶段预热；仅在原生 CENC 失败或设置页手动打开时按需启动
@@ -119,11 +119,11 @@ python 线程 50ms 步进；绝对音量/seek/换歌/stop 自动撞销在途斜�
   混合队列（Apple + 其他平台）正常工作
 - **AirPlay / 音频输出设备切换**：对 Apple 歌曲无效（声音在 WebView2 进程走系统默认设备）
 - **频谱**：来自系统混音 loopback，其他应用同时出声会混入；loopback 为单声道（DG-LAB L/R 同相）
-- **登录边界**：WebView2 兼容窗口维护独立的 MusicKit 会话，不能注入 WaveForge 保存的 MusicUserToken。正常 Electron CENC 路径只需 WaveForge 的 Apple 登录；仅当兼容兜底实际启用且未授权时，用户才需在设置里的播放窗口登录一次。
+- **登录边界**：WebView2 兼容窗口维护独立的 MusicKit 会话，不能注入 HyperPlayer 保存的 MusicUserToken。正常 Electron CENC 路径只需 HyperPlayer 的 Apple 登录；仅当兼容兜底实际启用且未授权时，用户才需在设置里的播放窗口登录一次。
 
 ## 七、验证清单（用户端到端）
 
-1. 完全重启 WaveForge（不手动启动 Python）→ 点 Apple 歌曲（热歌榜/喜爱歌曲）
+1. 完全重启 HyperPlayer（不手动启动 Python）→ 点 Apple 歌曲（热歌榜/喜爱歌曲）
 2. 验证：完整版播放、进度条/歌词走动、暂停/恢复/拖动/音量、播完自动下一首、单曲循环、
    切网易云歌无双重播放、频谱跳动、系统托盘无新弹窗
 3. 设置 →「Apple Music 播放面」打开窗口登录一次 → 重启验证免登录

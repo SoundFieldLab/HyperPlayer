@@ -58,7 +58,7 @@ function TraditionalSearch({
   const [error, setError] = useState('')
   const [songMenu, setSongMenu] = useState<{ show: boolean; x: number; y: number; song: Song | null }>({ show: false, x: 0, y: 0, song: null })
   const [history, setHistory] = useState<string[]>(() => {
-    try { return Array.isArray(JSON.parse(localStorage.getItem(`waveforge:traditional-search-history:${platform}`) || '[]')) ? JSON.parse(localStorage.getItem(`waveforge:traditional-search-history:${platform}`) || '[]') : [] } catch { return [] }
+    try { return Array.isArray(JSON.parse(localStorage.getItem(`hyperplayer:traditional-search-history:${platform}`) || '[]')) ? JSON.parse(localStorage.getItem(`hyperplayer:traditional-search-history:${platform}`) || '[]') : [] } catch { return [] }
   })
   const inputRef = useRef<HTMLInputElement>(null)
   const requestIdRef = useRef(0)
@@ -73,13 +73,13 @@ function TraditionalSearch({
   const pushHistory = useCallback((kw: string) => {
     setHistory(prev => {
       const next = [kw, ...prev.filter(item => item !== kw)].slice(0, 12)
-      localStorage.setItem(`waveforge:traditional-search-history:${platform}`, JSON.stringify(next))
+      localStorage.setItem(`hyperplayer:traditional-search-history:${platform}`, JSON.stringify(next))
       return next
     })
   }, [platform])
   const clearHistory = useCallback(() => {
     setHistory([])
-    localStorage.removeItem(`waveforge:traditional-search-history:${platform}`)
+    localStorage.removeItem(`hyperplayer:traditional-search-history:${platform}`)
   }, [platform])
 
   const runSearch = useCallback(async (query: string, targetTab: SearchTab) => {

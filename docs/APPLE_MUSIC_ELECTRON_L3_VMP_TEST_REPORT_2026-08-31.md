@@ -1,7 +1,7 @@
 # Apple Music Electron 原生 CENC / VMP 严格验证报告
 
 > 测试日期：2026-08-31
-> 项目：WaveForge 澜音工坊
+> 项目：HyperPlayer
 > 平台：Windows 11 x64
 > ECS：castLabs Electron 42.8.0 / Chromium 148
 > Widevine Browser CDM：4.10.3050.0
@@ -130,7 +130,7 @@ Apple 歌曲
   → 网易云/QQ 同款载体（最后兜底）
 ```
 
-正常原生路径进入 WaveForge 本地 audio deck / Web Audio graph，因此保留：
+正常原生路径进入 HyperPlayer 本地 audio deck / Web Audio graph，因此保留：
 
 - 进度、歌词；
 - 本地频谱与波形；
@@ -178,8 +178,8 @@ electron-builder --win dir
 最终安装目录必须包含：
 
 ```text
-WaveForge 澜音工坊.exe
-WaveForge 澜音工坊.exe.sig
+HyperPlayer.exe
+HyperPlayer.exe.sig
 ```
 
 最终用户：
@@ -188,7 +188,7 @@ WaveForge 澜音工坊.exe.sig
 - 不注册 castLabs；
 - 不配置签名；
 - 不安装系统 Python；
-- 只需在 WaveForge 内登录 Apple Music，并且账号有有效订阅，即可播放完整版 Apple原生音源。
+- 只需在 HyperPlayer 内登录 Apple Music，并且账号有有效订阅，即可播放完整版 Apple原生音源。
 
 EVS账号/密码仅存在于开发者构建机或 CI secrets，不能打包进应用。
 
@@ -215,10 +215,10 @@ VMP必须在所有EXE修改/Authenticode之后执行；VMP签名后不能再修�
 
 严格探针需要：
 
-- 本机WaveForge Apple登录态；
+- 本机HyperPlayer Apple登录态；
 - Vite 3000；
 - local-server 3001；
-- 不同时运行另一个占用同一 Electron profile 的 WaveForge实例。
+- 不同时运行另一个占用同一 Electron profile 的 HyperPlayer实例。
 
 ```bash
 node_modules/.bin/electron scripts/probe-apple-widevine-license.cjs <catalogSongId>

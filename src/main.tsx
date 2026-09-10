@@ -52,8 +52,8 @@ try {
   console.log('[COLOR-MIX] 不可检测')
 }
 
-// 内存观察哨：仅当 localStorage 中设置了 waveforge:memory-debug=1 时生效，
-// 用于定位播放期间内存持续增长的来源（控制台执行 localStorage.setItem('waveforge:memory-debug','1') 后重启）。
+// 内存观察哨：仅当 localStorage 中设置了 hyperplayer:memory-debug=1 时生效，
+// 用于定位播放期间内存持续增长的来源（控制台执行 localStorage.setItem('hyperplayer:memory-debug','1') 后重启）。
 startMemoryWatchdog()
 
 createRoot(document.getElementById('root')!).render(

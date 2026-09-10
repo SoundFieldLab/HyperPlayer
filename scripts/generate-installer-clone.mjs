@@ -1,5 +1,5 @@
 /**
- * WaveForge 安装器 — 1:1 复刻 SnowLeopard-Vision 安装器视觉
+ * HyperPlayer 安装器 — 1:1 复刻 SnowLeopard-Vision 安装器视觉
  * 设计元素（逆向自 SnowLeopard-Vision-V2.0-Setup.exe）：
  * - 窗口 896x609
  * - 欢迎页：浅粉底 #FEE8F2 + 金色文字 + 右侧金色功能面板
@@ -123,7 +123,7 @@ function welcomeSvg() {
 ${segBarSvg(0, 0, W, 5, SEG_TOP)}
 ${segBarSvg(0, 484, W, 4, SEG_BOT)}
 <image href="data:image/png;base64,${logoB64}" x="56" y="64" width="96" height="96"/>
-<text x="172" y="106" font-family='${FONT}' font-size="34" font-weight="700" fill="${DARK}">WaveForge 澜音工坊</text>
+<text x="172" y="106" font-family='${FONT}' font-size="34" font-weight="700" fill="${DARK}">HyperPlayer</text>
 <text x="172" y="140" font-family='${FONT}' font-size="14" fill="${GOLD_DARK}">沉浸式多平台音乐播放器 · 聆听 · 混音 · 共创</text>
 <!-- 右侧功能面板 -->
 <rect x="560" y="96" width="280" height="340" rx="16" fill="#FFFFFF" opacity="0.6" stroke="${GOLD}" stroke-width="1.5"/>
@@ -151,7 +151,7 @@ ${segBarSvg(0, 0, W, 5, SEG_TOP)}
 ${segBarSvg(0, 484, W, 4, SEG_BOT)}
 <image href="data:image/png;base64,${logoB64}" x="400" y="120" width="96" height="96"/>
 <text x="448" y="260" font-family='${FONT}' font-size="24" font-weight="700" fill="${DARK}" text-anchor="middle">正在安装</text>
-<text x="448" y="292" font-family='${FONT}' font-size="13" fill="#8A6B45" text-anchor="middle">正在将 WaveForge 澜音工坊 安装到你的电脑</text>
+<text x="448" y="292" font-family='${FONT}' font-size="13" fill="#8A6B45" text-anchor="middle">正在将 HyperPlayer 安装到你的电脑</text>
 <!-- 进度条轨道（金色） -->
 <rect x="196" y="330" width="504" height="8" rx="4" fill="#F0D9C2"/>
 <rect x="36" y="436" width="140" height="36" rx="8" fill="#FFFFFF" stroke="${GOLD}" stroke-width="1"/>
@@ -167,7 +167,7 @@ ${segBarSvg(0, 0, W, 5, SEG_TOP)}
 ${segBarSvg(0, 484, W, 4, SEG_BOT)}
 <text x="448" y="200" font-family='${FONT}' font-size="90" fill="#7BC47F" text-anchor="middle">✓</text>
 <text x="448" y="300" font-family='${FONT}' font-size="28" font-weight="700" fill="${DARK}" text-anchor="middle">安装完成</text>
-<text x="448" y="334" font-family='${FONT}' font-size="14" fill="#8A6B45" text-anchor="middle">WaveForge 澜音工坊 已成功安装到你的电脑</text>
+<text x="448" y="334" font-family='${FONT}' font-size="14" fill="#8A6B45" text-anchor="middle">HyperPlayer 已成功安装到你的电脑</text>
 <rect x="36" y="436" width="140" height="36" rx="8" fill="#FFFFFF" opacity="0.7" stroke="${GOLD}" stroke-width="1"/>
 <text x="106" y="459" font-family='${FONT}' font-size="13" fill="${GOLD_DARK}" text-anchor="middle">v0.1.4</text>
 </svg>`

@@ -343,7 +343,7 @@ describe('传统模式 TraditionalView', () => {
   })
 
   it('旧偏好中的关闭推荐不再隐藏排行榜和推荐歌单', async () => {
-    localStorage.setItem('waveforge:traditional-preferences:v2', JSON.stringify({ showRecommendations: false, density: 'compact', sidebarWidth: 'narrow' }))
+    localStorage.setItem('hyperplayer:traditional-preferences:v2', JSON.stringify({ showRecommendations: false, density: 'compact', sidebarWidth: 'narrow' }))
     render(<TraditionalView {...baseProps} />)
     await waitFor(() => expect(screen.getByText('排行榜')).toBeTruthy())
     expect(screen.getAllByText('推荐歌单').length).toBeGreaterThan(0)
@@ -486,7 +486,7 @@ describe('传统模式 TraditionalView', () => {
       expect(eventSpy).not.toHaveBeenCalled()
       await act(async () => { vi.advanceTimersByTime(120) })
       expect(eventSpy).toHaveBeenCalledTimes(1)
-      expect(JSON.parse(localStorage.getItem('waveforge:traditional-preferences:v2') || '{}').backgroundBlur).toBe(16)
+      expect(JSON.parse(localStorage.getItem('hyperplayer:traditional-preferences:v2') || '{}').backgroundBlur).toBe(16)
     } finally {
       window.removeEventListener('traditionalPreferencesChanged', eventSpy)
       vi.useRealTimers()

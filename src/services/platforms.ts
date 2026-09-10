@@ -1,7 +1,7 @@
 /**
  * 音乐平台抽象层（第三平台：Apple Music）
  *
- * WaveForge 的"平台"曾长期是散落在 40+ 文件里的 'netease' | 'qq' 字面量。
+ * HyperPlayer 的"平台"曾长期是散落在 40+ 文件里的 'netease' | 'qq' 字面量。
  * 本模块集中定义：
  * 1. MusicPlatform —— 平台联合类型（新增平台只需在此加一个成员）
  * 2. PlatformCapabilities / PLATFORM_CAPABILITIES —— 平台能力注册表。
@@ -267,8 +267,8 @@ export function getPlatformFavoriteLabels(platform: MusicPlatform): PlatformFavo
 
 // ─────────────────────────── 平台排序（用户自定义，三模式继承） ───────────────────────────
 
-const PLATFORM_ORDER_KEY = 'waveforge:platformOrder'
-export const PLATFORM_ORDER_EVENT = 'waveforge-platform-order-changed'
+const PLATFORM_ORDER_KEY = 'hyperplayer:platformOrder'
+export const PLATFORM_ORDER_EVENT = 'hyperplayer-platform-order-changed'
 
 /** 用户自定义平台顺序（缺省 = MUSIC_PLATFORMS 默认顺序） */
 export function getPlatformOrder(): MusicPlatform[] {
@@ -301,8 +301,8 @@ export function setPlatformOrder(order: MusicPlatform[]): void {
 
 // ─────────────────────────── 平台可见性（隐藏平台） ───────────────────────────
 
-const HIDDEN_PLATFORMS_KEY = 'waveforge:hiddenPlatforms'
-export const PLATFORM_VISIBILITY_EVENT = 'waveforge-platform-visibility-changed'
+const HIDDEN_PLATFORMS_KEY = 'hyperplayer:hiddenPlatforms'
+export const PLATFORM_VISIBILITY_EVENT = 'hyperplayer-platform-visibility-changed'
 
 /** 用户手动隐藏的平台列表（默认空 = 全部显示） */
 export function getHiddenPlatforms(): MusicPlatform[] {

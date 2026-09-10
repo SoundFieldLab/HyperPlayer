@@ -16,7 +16,7 @@ export interface PluginNotice {
 }
 
 export interface PluginManifest {
-  /** 唯一标识（内置约定为 kebab-case 如 'dglab'；导入插件由 manifest 提供）。 */
+  /** 唯一标识（内置约定为 kebab-case，如 'chroma'；导入插件由 manifest 提供）。 */
   id: string
   name: string
   version: string

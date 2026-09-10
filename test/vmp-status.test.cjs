@@ -55,7 +55,7 @@ test('development verification strips EVS credentials and requests the actual re
   const calls = []
   const status = await verifyDevelopmentVmp('C:\\runtime', {
     now: () => 1234,
-    env: { EVS_ACCOUNT_NAME: 'account', ['EVS_' + 'PASSWD']: 'test-value', WAVEFORGE_EVS_PYTHON: 'python-test' },
+    env: { EVS_ACCOUNT_NAME: 'account', ['EVS_' + 'PASSWD']: 'test-value', HYPERPLAYER_EVS_PYTHON: 'python-test' },
     spawnImpl: fakeSpawn([
       { status: 0 },
       { status: 0, stdout: ' - Signature is valid: streaming, 1416 days left\n' },
@@ -70,7 +70,7 @@ test('development verification strips EVS credentials and requests the actual re
 })
 
 test('packaged metadata ages without EVS at runtime', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waveforge-vmp-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperplayer-vmp-'))
   const file = path.join(dir, 'vmp-status.json')
   const verifiedAt = Date.UTC(2026, 0, 1)
   fs.writeFileSync(file, JSON.stringify(createMetadata({
@@ -90,7 +90,7 @@ test('provider caches one verification result for the process lifetime', async (
     isPackaged: false,
     developmentPackageDir: 'C:\\runtime',
     verifyOptions: {
-      env: { WAVEFORGE_EVS_PYTHON: 'python-test' },
+      env: { HYPERPLAYER_EVS_PYTHON: 'python-test' },
       spawnImpl: fakeSpawn([
         { status: 0 },
         { status: 0, stdout: 'Signature is valid: streaming, 400 days left' },

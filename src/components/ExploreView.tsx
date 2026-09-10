@@ -1,6 +1,6 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type ReactNode } from 'react'
 import { PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } from '../services/platformSync'
@@ -1433,7 +1433,7 @@ function ExploreView({
             <div className="flex min-w-0 items-center gap-3">
               <img
                 src={appLogoUrl}
-                alt="WaveForge"
+                alt="HyperPlayer"
                 className="h-10 w-10 shrink-0 rounded-2xl object-cover shadow-lg"
                 draggable={false}
               />
@@ -1629,9 +1629,9 @@ function ExploreView({
               onOpenChannel={(channel, autoplay) => void handleChannel(channel, autoplay)}
               onOpenSearch={query => {
                 if (query) {
-                  sessionStorage.setItem('waveforge_search_keyword', query)
-                  sessionStorage.setItem('waveforge_search_platform', 'qq')
-                  sessionStorage.setItem('waveforge_search_searched', 'false')
+                  sessionStorage.setItem('hyperplayer_search_keyword', query)
+                  sessionStorage.setItem('hyperplayer_search_platform', 'qq')
+                  sessionStorage.setItem('hyperplayer_search_searched', 'false')
                 }
                 onSearchClick()
               }}
@@ -1787,7 +1787,7 @@ function ExploreView({
                         </div>
                         <h3 className="line-clamp-2 text-sm font-semibold leading-snug md:text-base">{playlist.name}</h3>
                         <p className="mt-1 text-[11px] text-white/48">
-                          {formatCount(playlist.playCount) ? `${formatCount(playlist.playCount)} 次播放` : playlist.creator || 'WaveForge 推荐'}
+                          {formatCount(playlist.playCount) ? `${formatCount(playlist.playCount)} 次播放` : playlist.creator || 'HyperPlayer 推荐'}
                         </p>
                       </div>
                     </motion.div>

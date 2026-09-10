@@ -1,4 +1,4 @@
-# WaveForge 澜音工坊
+# HyperPlayer
 
 沉浸式桌面音乐播放器（Windows / Electron），共 **5 个音源**：**网易云音乐 / QQ音乐 / Apple Music / Spotify** 四个平台 + **B站看歌**。覆盖搜索、播放、歌词、可视化、无缝衔接、桌面模式与自定义壁纸。仓库同时含 **Apple 歌词/探索**分支。
 
@@ -44,13 +44,13 @@ npm run dev:electron           # 一键启动：Vite(3000) + API(3001) + Electro
 ```
 
 ```
-WaveForge/
+HyperPlayer/
 ├── src/                        # React 前端
 │   ├── components/            # 组件（App.tsx 懒加载；Apple* 为 Apple 分支）
 │   ├── services/              # API 客户端、缓存、无缝衔接、apple* 服务
 │   │   ├── audio-engine/      # 引擎适配层（V3Adapter + 注册表）
 │   │   ├── gapless/           # 无缝衔接（私有模块）
-│   │   └── waveforge-engine-v3/   # HSE 音效引擎（DSP + UI + 空间音频）
+│   │   └── HyperSoundEngine-v1/   # HSE 音效引擎（DSP + UI + 空间音频）
 │   ├── audio/                 # 播放引擎（队列/过渡计划/渲染器）
 │   ├── hooks/  api/  utils/  types/  vendor/pv/
 ├── desktop/                   # Electron 主进程 + preload（.cjs）+ splash/任务栏小窗
@@ -86,12 +86,12 @@ npm run version:patch|minor|major|pre  # 版本号更迭（自动 commit/tag/pus
 
 ## 发布（GitHub Releases）
 
-**只发 NSIS 安装版**（`release/WaveForge-<version>-Setup.exe`），**不发便携版**（`release/win-unpacked/` 仅本地调试）。安装版为每用户安装、**不携带任何用户数据/配置**——首次运行在该机 `%APPDATA%\WaveForge 澜音工坊\` 自动生成全新配置并适配当前用户。
+**只发 NSIS 安装版**（`release/HyperPlayer-<version>-Setup.exe`），**不发便携版**（`release/win-unpacked/` 仅本地调试）。安装版为每用户安装、**不携带任何用户数据/配置**——首次运行在该机 `%APPDATA%\HyperPlayer\` 自动生成全新配置并适配当前用户。
 
 ```bash
 npm run build:electron          # 构建安装版（强制 EVS production VMP）
 git tag v<version> && git push origin v<version>
-gh release create v<version> release/WaveForge-<version>-Setup.exe --title "v<version>" --notes "..."
+gh release create v<version> release/HyperPlayer-<version>-Setup.exe --title "v<version>" --notes "..."
 ```
 
 Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `castlabs-evs`。签名发生在构建机，正式构建要求 production streaming VMP 至少剩余 30 天，并将无敏感信息的有效期元数据写入安装包；低于门槛或签名无效会直接阻断发布。最终用户安装后**不需要 EVS、签名工具或任何手动签名步骤**；Apple Music 用户只需在应用内登录具有有效订阅的账号。CI：`.github/workflows/ci.yml`（类型/单测/构建 + tag 出包）、`nightly.yml`（每日 nightly 预发布）。
@@ -108,7 +108,7 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 
 ## 音效引擎 HSE（HyperSoundEngine）
 
-当前唯一音效引擎（代码标识符仍为 v3：`src/services/waveforge-engine-v3/`）。纯 TypeScript DSP 内核，与引擎适配层 `src/services/audio-engine/` 配合，`V3Adapter` 以 `studioMode: 'custom'` 渲染 HSE 调音室。
+当前唯一音效引擎（代码标识符仍为 v3：`src/services/HyperSoundEngine-v1/`）。纯 TypeScript DSP 内核，与引擎适配层 `src/services/audio-engine/` 配合，`V3Adapter` 以 `studioMode: 'custom'` 渲染 HSE 调音室。
 
 - **处理链（14 级固定顺序）**：响度归一化增益 → 3D 环绕（轻量立体声旋转） → M/S（立体声宽度 + 人声比例） → Pre-EQ（用户 EQ） → Deesser → Compressor → NightMode（压缩增强 + 6kHz 高频衰减） → 混响（卷积/算法/off 三路） → BassEnhancer → LoudnessComp（等响度补偿） → IEQ（Post 智能均衡） → LUFS 采样点 → Limiter → 输出；**第 15 级为空间音频**（见下节）。LUFS 采样点严格位于 Limiter 之前。
 - **11 个内置场景**：pop / enhanced / jazz / dance / classical / livehouse / studio / warm / dts / vocal-stage / night-bass（快照式，一键整体应用；音量独立于场景，不被覆盖）
@@ -120,14 +120,14 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 - **响度归一化与频响补偿在引擎内实时实现**（`LufsMeter` / `LoudnessComp` DSP 模块），不依赖任何外部服务
 - **导出**：离线 MP3 导出（解码 PCM → `EngineV3.process` 分块 → lamejs 128kbps）
 - **渲染线程**：`EngineV3Host` 模式 `auto` —— AudioWorklet 优先（`public/v3-worklet.js`，`npm run build:v3-worklet` 生成），失败回退 ScriptProcessor；参数在 worklet 模式下双下发，统计优先取 worklet 周期回传值
-- **开发者模式**：关于页开关开启后，「音效场景」页可实时微调内置场景并保存为参数覆盖层，支持还原出厂、场景库 JSON 导出/导入；「写回发布种子」经 IPC 写入 `src/services/waveforge-engine-v3/src/engine/builtinSceneSeed.ts`，commit/push 后全员生效
+- **开发者模式**：关于页开关开启后，「音效场景」页可实时微调内置场景并保存为参数覆盖层，支持还原出厂、场景库 JSON 导出/导入；「写回发布种子」经 IPC 写入 `src/services/HyperSoundEngine-v1/src/engine/builtinSceneSeed.ts`，commit/push 后全员生效
 - **调音室 UI**：左侧导航 9 页（主页 / 音效场景 / 均衡器 / 空间音效 / 空间音频 / 动态调音 / 分析 / 调音器 / 关于）+ 深色琥珀金主题
 
-**许可红线**：HSE 模块自带 [LICENSE](./src/services/waveforge-engine-v3/LICENSE)（CC BY-NC-ND 4.0）、[授权补充说明.md](./src/services/waveforge-engine-v3/授权补充说明.md) 与 `THIRD_PARTY_NOTICES.md`，勿删改。
+**许可红线**：HSE 模块自带 [LICENSE](./src/services/HyperSoundEngine-v1/LICENSE)（CC BY-NC-ND 4.0）、[授权补充说明.md](./src/services/HyperSoundEngine-v1/授权补充说明.md) 与 `THIRD_PARTY_NOTICES.md`，勿删改。
 
 ## 空间音频（Spatial Audio）
 
-空间音频是 **EngineV3 的第 15 级处理**（纯 TypeScript，内联调用 `src/spatial/*` 纯模块），不是独立 AudioWorklet 节点，也无 WASM/Rust 后端；`mode='off'` 时完全旁路、逐位不触碰 L/R。参数属于 `V3EngineParams.spatial`，随 `waveforge:v3-params` 快照持久化。四种模式：
+空间音频是 **EngineV3 的第 15 级处理**（纯 TypeScript，内联调用 `src/spatial/*` 纯模块），不是独立 AudioWorklet 节点，也无 WASM/Rust 后端；`mode='off'` 时完全旁路、逐位不触碰 L/R。参数属于 `V3EngineParams.spatial`，随 `hyperplayer:v3-params` 快照持久化。四种模式：
 
 - **A 一键空间化**：立体声展开为 ±30°（20..120° 可调）虚拟扬声器，干湿混合强度 / 房间模拟预设 / 房间混响可调
 - **B 头锁定环绕**：5.1 / 5.1.4 / 7.1 / 7.1.4 / 自定义布局预设 + 环形拖拽编辑器（上限 16 只扬声器）+ 逐扬声器声源路由（L / R / both），声场固定于头部朝向（耳机听感）
@@ -162,15 +162,17 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 - [docs/adr/](./docs/adr/) — 架构决策记录
 - [PRIVATE-LICENSE.md](./PRIVATE-LICENSE.md) — 私有模块许可（无缝衔接 / 看歌MV / 桌面模式 / 探索模式 / Apple 接入）
 - [DEBUG_PAGES.md](./DEBUG_PAGES.md) — 独立调试页注册表（Weather Lab 等）
-- [docs/plugin-development.md](./docs/plugin-development.md) — 插件开发文档（公开，供开发者与 AI 编写 WaveForge 插件）
+- [docs/plugin-development.md](./docs/plugin-development.md) — 插件开发文档（公开，供开发者与 AI 编写 HyperPlayer 插件）
 - [docs/歌词对比-LyricsBlossom.md](./docs/歌词对比-LyricsBlossom.md) — Apple Music 歌词逆向对比（Apple 逐字模式）
-- [src/services/waveforge-engine-v3/docs/](./src/services/waveforge-engine-v3/docs/) — HSE 融合/UI/算法文档
+- [src/services/HyperSoundEngine-v1/docs/](./src/services/HyperSoundEngine-v1/docs/) — HSE 融合/UI/算法文档
 
 ## 许可证
 
-MIT。
+完整条款见 [LICENSE](./LICENSE)，版权归属见 [NOTICE](./NOTICE)。
 
-**私有模块**：无缝衔接（Gapless）、看歌 / MV 背景（Bilibili）、桌面模式、探索模式、Apple Music
-接入等模块以 **WaveForge 私有模块许可**提供（非 MIT），适用范围与使用限制详见
+**上游授权**：本项目已获上游母项目 **WaveForge** 授权，被授权人 **IceFireIcer**。
+
+**私有模块**：无缝衔接（Gapless）、智能混音（AutoMix）、看歌 / MV 背景（Bilibili）、
+桌面模式、探索模式、Apple Music 接入等模块以 **私有模块许可**提供，适用范围与使用限制详见
 [PRIVATE-LICENSE.md](./PRIVATE-LICENSE.md)（受保护文件头部 / 目录 `LICENSE.private` 亦标注）。
-HSE 音效引擎模块另受 CC BY-NC-ND 4.0 约束，见 [src/services/waveforge-engine-v3/LICENSE](./src/services/waveforge-engine-v3/LICENSE)。
+HSE 音效引擎模块另受 CC BY-NC-ND 4.0 约束，见 [src/services/HyperSoundEngine-v1/LICENSE](./src/services/HyperSoundEngine-v1/LICENSE)。

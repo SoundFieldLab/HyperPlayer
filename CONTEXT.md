@@ -1,6 +1,6 @@
-# WaveForge 音效域
+# HyperPlayer 音效域
 
-播放器"调音室"（Mixing Studio）中所有作用于音频信号的听感处理：效果器、场景方案、动态处理与响度补偿。核心问题域是"用户想把声音听成什么样"。当前唯一音效引擎是 **HSE（HyperSoundEngine，即 v3）**，其调音室 UI 位于 `src/services/waveforge-engine-v3/ui/`。
+播放器"调音室"（Mixing Studio）中所有作用于音频信号的听感处理：效果器、场景方案、动态处理与响度补偿。核心问题域是"用户想把声音听成什么样"。当前唯一音效引擎是 **HSE（HyperSoundEngine，即 v3）**，其调音室 UI 位于 `src/services/HyperSoundEngine-v1/ui/`。
 
 ## Language
 
@@ -45,5 +45,5 @@ _Avoid_: 混响风格、空间预设
 _Avoid_: 设备音量、主音量
 
 **音效引擎版本（Engine Version）**:
-**HSE（HyperSoundEngine）为当前唯一引擎。** 它就是代码里的 v3（`src/services/waveforge-engine-v3/`，纯 TS DSP 内核）；历史上可切换的 v1（远程原版）/ v2（本地增强版）已随减配整体移除。适配层注册表 `src/services/audio-engine/` 目前只注册 v3 一项（默认引擎即 v3），框架仍支持未来接入新引擎（写 `XxxAdapter.ts` + `engines/xxx.ts` + 注册表加一行）。
+**HSE（HyperSoundEngine）为当前唯一引擎。** 它就是代码里的 v3（`src/services/HyperSoundEngine-v1/`，纯 TS DSP 内核）；历史上可切换的 v1（远程原版）/ v2（本地增强版）已随减配整体移除。适配层注册表 `src/services/audio-engine/` 目前只注册 v3 一项（默认引擎即 v3），框架仍支持未来接入新引擎（写 `XxxAdapter.ts` + `engines/xxx.ts` + 注册表加一行）。
 _Avoid_: 音效模式、旧版/新版开关

@@ -1,6 +1,6 @@
 ﻿/**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  *
  * TransitionRenderer（减配后）——仅保留 standard-v1 的纯前端 equal-power 交叉淡化渲染。
  * smart-rendered / smart-rendered-v2 的 Python/Electron 渲染桥、DJTransGAN AI 混音、

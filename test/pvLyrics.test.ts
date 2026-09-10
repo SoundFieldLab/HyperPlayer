@@ -3,7 +3,7 @@ import { toPvLyrics, buildBeats } from '../src/components/pvLyrics/pvBridge'
 import { recommendTemplates } from '../src/components/pvLyrics/pvStyleMapping'
 import { compileScenes } from '../src/components/pvLyrics/pvDirector'
 
-describe('toPvLyrics（WaveForge 歌词 → 引擎歌词，逐字毫秒→绝对秒）', () => {
+describe('toPvLyrics（HyperPlayer 歌词 → 引擎歌词，逐字毫秒→绝对秒）', () => {
   it('逐字 startTime/duration（相对行首毫秒）转为绝对秒', () => {
     const result = toPvLyrics([
       {

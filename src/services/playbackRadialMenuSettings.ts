@@ -12,8 +12,8 @@ export type PlaybackRadialActionId =
   | 'copy-info'
   | 'similar'
 
-export const PLAYBACK_RADIAL_MENU_SETTINGS_EVENT = 'waveforge-playback-radial-menu-settings-changed'
-export const PLAYBACK_RADIAL_MENU_SETTINGS_KEY = 'waveforge:playbackRadialMenu'
+export const PLAYBACK_RADIAL_MENU_SETTINGS_EVENT = 'hyperplayer-playback-radial-menu-settings-changed'
+export const PLAYBACK_RADIAL_MENU_SETTINGS_KEY = 'hyperplayer:playbackRadialMenu'
 export const MAX_PLAYBACK_RADIAL_ACTIONS = 8
 
 export const DEFAULT_PLAYBACK_RADIAL_ACTIONS: PlaybackRadialActionId[] = [

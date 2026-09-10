@@ -382,7 +382,7 @@ export default function DesktopLyricsApp() {
   // 已唱歌词始终使用高对比月白色，主题色仅用于未唱部分和辉光。
   const filledColor = '#ffffff'
   const lyric = state.lyric
-  const currentText = lyric?.line?.trim() || state.song?.name || 'WaveForge 澜音工坊'
+  const currentText = lyric?.line?.trim() || state.song?.name || 'HyperPlayer'
   const translation = settings.translationEnabled && state.hasTranslation ? lyric?.translation?.trim() || '' : ''
   const romaji = settings.romajiEnabled && state.hasRomaji ? lyric?.romaji?.trim() || '' : ''
   const next = lyric?.nextLine?.trim() || ''

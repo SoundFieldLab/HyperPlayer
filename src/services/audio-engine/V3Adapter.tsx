@@ -1,7 +1,7 @@
 /**
  * V3Adapter —— v3 音效引擎适配器（studioMode: 'custom'）
  *
- * 转发 waveforge-engine-v3/attachV3Engine 的自由函数（模块单例模式）。
+ * 转发 HyperSoundEngine-v1/attachV3Engine 的自由函数（模块单例模式）。
  * v3 是纯 TS DSP 内核引擎，响度归一化/频响补偿都在引擎内实时实现（不走外部服务）。
  * 导出状态（exporting）上提到 adapter，通过 onExportingChange 事件通知 App 重渲染。
  */
@@ -14,7 +14,7 @@ import {
   setV3SystemVolume,
   exportV3Mp3,
   isV3Attached,
-} from '../waveforge-engine-v3/attachV3Engine'
+} from '../HyperSoundEngine-v1/attachV3Engine'
 import type { AudioEngineVersion } from '../audioEngineVersion'
 import type {
   IAudioEngineAdapter,
@@ -25,7 +25,7 @@ import type {
 } from './types'
 
 const LazyMixingStudioV3 = lazy(() =>
-  import('../waveforge-engine-v3/ui').then((m) => ({ default: m.V3MixingStudio })),
+  import('../HyperSoundEngine-v1/ui').then((m) => ({ default: m.V3MixingStudio })),
 )
 
 export class V3Adapter implements IAudioEngineAdapter {

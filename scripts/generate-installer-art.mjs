@@ -121,8 +121,8 @@ const sidebarSvg = `<svg width="164" height="314" viewBox="0 0 164 314" xmlns="h
   <rect width="164" height="314" fill="url(#bg)"/>
   <rect width="164" height="314" fill="url(#glow)"/>
   <image href="data:image/png;base64,${logoB64}" x="27" y="30" width="110" height="110"/>
-  <text x="82" y="172" font-family='${FONT}' font-size="20" font-weight="bold" fill="#ffffff" text-anchor="middle">WaveForge</text>
-  <text x="82" y="196" font-family='${FONT}' font-size="13" fill="#9fc3ff" text-anchor="middle">澜音工坊</text>
+  <text x="82" y="172" font-family='${FONT}' font-size="20" font-weight="bold" fill="#ffffff" text-anchor="middle">HyperPlayer</text>
+  <text x="82" y="196" font-family='${FONT}' font-size="13" fill="#9fc3ff" text-anchor="middle">HyperPlayer</text>
   <rect x="52" y="210" width="60" height="2" rx="1" fill="#3b82f6"/>
   <path d="M-20 236 Q 22 218 62 236 T 150 236 T 250 236 L 250 314 L -20 314 Z" fill="#ffffff" opacity="0.05"/>
   <path d="M-20 258 Q 22 240 62 258 T 150 258 T 250 258 L 250 314 L -20 314 Z" fill="#60a5fa" opacity="0.10"/>

@@ -7,15 +7,15 @@
  *   - 「稍后重启」/ 用户正常退出时不写该标志 → 只换文件不自动重启，下次手动启动即是新版本。
  *
  * 仅依赖 node 内置模块（fs/path/child_process），不依赖 electron。
- * 配置经环境变量 WAVEFORGE_UPDATE_CONFIG 传入；完成后自清理（暂存目录、自身、pending 标记）。
+ * 配置经环境变量 HYPERPLAYER_UPDATE_CONFIG 传入；完成后自清理（暂存目录、自身、pending 标记）。
  */
 const fs = require('fs')
 const path = require('path')
 const { spawn } = require('child_process')
 
 let config = {}
-try { config = JSON.parse(process.env.WAVEFORGE_UPDATE_CONFIG || '{}') } catch { /* ignore */ }
-const waitPid = Number(process.env.WAVEFORGE_UPDATE_WAIT_PID || 0)
+try { config = JSON.parse(process.env.HYPERPLAYER_UPDATE_CONFIG || '{}') } catch { /* ignore */ }
+const waitPid = Number(process.env.HYPERPLAYER_UPDATE_WAIT_PID || 0)
 // 错误日志放暂存目录外（userData/update），避免随暂存清理被一起删掉
 const logPath = path.join(path.dirname(config.stagingDir || '.'), 'updater-error.log')
 

@@ -1,6 +1,6 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 /**
  * Apple Music 目录服务（探索页数据源）
@@ -8,7 +8,7 @@
  * - 热门歌曲 / 热门专辑：Apple RSS Feed Generator（most-played，按国家/地区）
  * - 专辑曲目：iTunes Lookup API（collectionId + entity=song）
  * - 目录搜索：复用 appleMusic.ts 的 iTunes Search
- * - 跨平台匹配：Apple 曲目 → 网易云/QQ 同款（WaveForge 播放 Apple 曲目的方式）
+ * - 跨平台匹配：Apple 曲目 → 网易云/QQ 同款（HyperPlayer 播放 Apple 曲目的方式）
  */
 import { searchSongs, type Song } from './musicApi'
 import type { MusicPlatform } from './platforms'
@@ -51,7 +51,7 @@ export const APPLE_EXPLORE_COUNTRIES = [
 ]
 
 const RSS_BASE = 'https://rss.marketingtools.apple.com/api/v2'
-/** WaveForge 本地 API 服务提供的 Apple RSS 代理（见 local-server.mjs /api/apple/rss） */
+/** HyperPlayer 本地 API 服务提供的 Apple RSS 代理（见 local-server.mjs /api/apple/rss） */
 const RSS_PROXY = 'http://localhost:3001/api/apple/rss'
 
 /**
@@ -162,7 +162,7 @@ const normalizeMatch = (value: string) =>
 
 /**
  * 在网易云/QQ 中寻找 Apple 曲目的可播放同款（标题+艺人+时长评分）。
- * 返回 WaveForge 可播放的 Song；找不到返回 null。
+ * 返回 HyperPlayer 可播放的 Song；找不到返回 null。
  */
 export async function findPlayableAppleSong(track: {
   name: string
@@ -1281,7 +1281,7 @@ export async function getAppleRecentPlayed(limit = 50): Promise<AppleCatalogSong
     .filter(track => track.name)
 }
 
-// ─────────────────────────── Apple 曲目 → WaveForge Song（统一播放转换） ───────────────────────────
+// ─────────────────────────── Apple 曲目 → HyperPlayer Song（统一播放转换） ───────────────────────────
 
 /** Apple 合成集合 ID（与真实 library-playlists ID 永不冲突）。 */
 export const APPLE_LIBRARY_ID = '__apple_library__'
@@ -1298,7 +1298,7 @@ export async function getApplePlaylistFirstTrackArtwork(playlistId: string): Pro
   }
 }
 
-/** Apple 目录歌曲 → WaveForge Song（platform: 'apple'，播放时统一走匹配载体） */
+/** Apple 目录歌曲 → HyperPlayer Song（platform: 'apple'，播放时统一走匹配载体） */
 export function appleSongToSong(song: AppleCatalogSong, storefront = song.storefront || getAppleCredentials().storefront || 'cn'): Song {
   return {
     id: Number(song.id) || 0,
@@ -1317,7 +1317,7 @@ export function appleSongToSong(song: AppleCatalogSong, storefront = song.storef
   }
 }
 
-/** 资料库歌曲 → WaveForge Song（platform: 'apple'） */
+/** 资料库歌曲 → HyperPlayer Song（platform: 'apple'） */
 export function appleLibraryTrackToSong(track: AppleLibraryTrack): Song {
   return {
     id: Number(track.id) || 0,
@@ -1359,7 +1359,6 @@ export async function resolveAppleLibraryCatalogId(libraryId: string): Promise<s
  * 统一播放转换：非网易云/QQ 平台的曲目 → 网易云/QQ 同款可播放歌曲。
  * - apple：始终匹配（Apple 曲目无法直接播放）
  * - spotify：无自源音源，始终匹配
- * - kugou / soda：由调用方决定（原生音源可播时不进来；汽水走逆向 Web API，免费/试听流可播）
  * - 网易云/QQ 曲目原样返回
  * 所有界面（搜索/歌单/探索/个人中心）点播放时都走这里，避免各处重复匹配。
  */

@@ -1,14 +1,14 @@
 /**
  * 内存观察哨（仅调试用，不影响正常功能）
  *
- * 在开发者工具控制台执行 localStorage.setItem('waveforge:memory-debug', '1')
+ * 在开发者工具控制台执行 localStorage.setItem('hyperplayer:memory-debug', '1')
  * 并重启应用后生效：每 30 秒输出一次 JS 堆占用与页面内音频/视频元素数量，
  * 用于定位播放期间内存持续增长的来源。
  */
 export function startMemoryWatchdog(intervalMs = 30_000): () => void {
   if (typeof window === 'undefined') return () => undefined
   try {
-    if (localStorage.getItem('waveforge:memory-debug') !== '1') return () => undefined
+    if (localStorage.getItem('hyperplayer:memory-debug') !== '1') return () => undefined
   } catch {
     return () => undefined
   }

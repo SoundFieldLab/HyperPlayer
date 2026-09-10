@@ -1,4 +1,4 @@
-$p = Start-Process -FilePath 'release/win-unpacked/WaveForge 澜音工坊.exe' -PassThru -WindowStyle Hidden
+$p = Start-Process -FilePath 'release/win-unpacked/HyperPlayer.exe' -PassThru -WindowStyle Hidden
 foreach ($i in 1..20) { Start-Sleep 1; try { $null = Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:3002/health' -TimeoutSec 3; break } catch {} }
 $w1 = 'C:\Windows\Media\Alarm01.wav'
 $w2 = (Get-ChildItem 'C:\Windows\Media' -Filter '*.wav' | Where-Object { $_.Name -ne 'Alarm01.wav' } | Select-Object -First 1).FullName

@@ -1,11 +1,11 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 /**
  * 哔哩哔哩「看歌」后端模块（server/bilibili-api.mjs）
  *
- * 为 WaveForge 的 B 站 MV 自动播放模式提供：
+ * 为 HyperPlayer 的 B 站 MV 自动播放模式提供：
  *  - WBI 签名搜索（x/web-interface/wbi/search/type）
  *  - 视频详情 / 播放地址（playurl，登录解锁 1080p；大会员专享画质受限）
  *  - 视频流代理（CDN 需 Referer 且无 CORS，本地回环带 Range 转发支持 seek）

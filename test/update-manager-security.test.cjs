@@ -11,9 +11,8 @@ const {
 const HASH = 'a'.repeat(64)
 
 test('update URLs are restricted to audited HTTPS release hosts', () => {
-  assert.equal(isAllowedUpdateUrl('https://github.com/SoundFieldLab/WaveForge/releases/download/v1/app.exe'), true)
-  assert.equal(isAllowedUpdateUrl('https://ghproxy.net/https://github.com/SoundFieldLab/WaveForge/releases/download/v1/app.exe'), true)
-  assert.equal(isAllowedUpdateUrl('https://gitee.com/kirito666233/wave-forge/releases/download/v1/app.exe'), true)
+  assert.equal(isAllowedUpdateUrl('https://github.com/SoundFieldLab/HyperPlayer/releases/download/v1/app.exe'), true)
+  assert.equal(isAllowedUpdateUrl('https://ghproxy.net/https://github.com/SoundFieldLab/HyperPlayer/releases/download/v1/app.exe'), true)
   assert.equal(isAllowedUpdateUrl('http://github.com/example.exe'), false)
   assert.equal(isAllowedUpdateUrl('https://github.com.evil.example/app.exe'), false)
   assert.equal(isAllowedUpdateUrl('file:///C:/Windows/System32/calc.exe'), false)

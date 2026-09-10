@@ -1,14 +1,14 @@
 /**
  * 首次平台登录风险提示（自包含）
  *
- * 监听 waveforge-auth-changed（六音乐平台登录成功）与 bilibili-auth-changed（看歌登录成功），
+ * 监听 hyperplayer-auth-changed（六音乐平台登录成功）与 bilibili-auth-changed（看歌登录成功），
  * 在用户首次登录任意平台后弹出一次，提示第三方客户端登录可能违反平台用户协议；
  * 点击"我已了解"后写入本地标记，之后不再弹出。
  */
 import { useEffect, useState } from 'react'
 import { ShieldAlert, X } from 'lucide-react'
 
-const NOTICE_FLAG = 'waveforge:platformLoginNoticeShown'
+const NOTICE_FLAG = 'hyperplayer:platformLoginNoticeShown'
 
 interface PlatformLoginNoticeProps {
   playerTheme?: 'light' | 'dark'
@@ -40,10 +40,10 @@ export default function PlatformLoginNotice({ playerTheme = 'dark' }: PlatformLo
         setShow(true)
       }
     }
-    window.addEventListener('waveforge-auth-changed', onAuthChanged)
+    window.addEventListener('hyperplayer-auth-changed', onAuthChanged)
     window.addEventListener('bilibili-auth-changed', onAuthChanged)
     return () => {
-      window.removeEventListener('waveforge-auth-changed', onAuthChanged)
+      window.removeEventListener('hyperplayer-auth-changed', onAuthChanged)
       window.removeEventListener('bilibili-auth-changed', onAuthChanged)
     }
   }, [])
@@ -90,7 +90,7 @@ export default function PlatformLoginNotice({ playerTheme = 'dark' }: PlatformLo
           <div className={`space-y-4 ${textSecondary} text-sm leading-relaxed`}>
             <div className="flex items-start gap-2">
               <ShieldAlert className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
-              <p>您正在通过 WaveForge（第三方客户端）登录音乐平台账号。请知悉：</p>
+              <p>您正在通过 HyperPlayer（第三方客户端）登录音乐平台账号。请知悉：</p>
             </div>
             <ul className="list-disc pl-5 space-y-1.5">
               <li>本软件与各音乐平台不存在任何合作或授权关系，亦非各平台官方发布的客户端；</li>

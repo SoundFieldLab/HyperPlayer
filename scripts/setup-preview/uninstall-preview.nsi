@@ -1,4 +1,4 @@
-﻿; Safe WaveForge uninstaller UI preview. It never removes application files.
+﻿; Safe HyperPlayer uninstaller UI preview. It never removes application files.
 Unicode true
 !include "MUI2.nsh"
 
@@ -6,11 +6,11 @@ Unicode true
   !error "SRC not defined - run via npm run preview:setup"
 !endif
 
-!define PRODUCT_NAME "WaveForge 澜音工坊"
+!define PRODUCT_NAME "HyperPlayer"
 !define BUILD_UNINSTALLER
 !define BUILD_RESOURCES_DIR "${SRC}/build"
 !define INSTALL_MODE_PER_ALL_USERS_REQUIRED
-!define INSTALL_REGISTRY_KEY "Software\WaveForgePreview"
+!define INSTALL_REGISTRY_KEY "Software\HyperPlayerPreview"
 
 Var UnReviewTarget
 
@@ -28,7 +28,7 @@ SilentUnInstall normal
 !include "build\installer.nsh"
 
 Function un.onInit
-  StrCpy $INSTDIR "D:\WaveForge"
+  StrCpy $INSTDIR "D:\HyperPlayer"
   ${GetParameters} $0
   ClearErrors
   ${GetOptions} $0 "/review=" $UnReviewTarget
@@ -40,12 +40,12 @@ FunctionEnd
 
 Function un.onGUIInit
   Call un.WaveUnGuiInit
-  System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "WaveForge Uninstall Preview [$UnReviewTarget]")'
+  System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "HyperPlayer Uninstall Preview [$UnReviewTarget]")'
 FunctionEnd
 
 Function un.ReviewConfirmCreate
   ${If} $UnReviewTarget == "confirm"
-    System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "WaveForge Uninstall Preview [$UnReviewTarget]")'
+    System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "HyperPlayer Uninstall Preview [$UnReviewTarget]")'
     Call un.WaveUnConfirmCreate
   ${Else}
     Abort
@@ -55,11 +55,11 @@ Function un.ReviewProgressPre
   ${If} $UnReviewTarget != "progress"
     Abort
   ${EndIf}
-  System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "WaveForge Uninstall Preview [$UnReviewTarget]")'
+  System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "HyperPlayer Uninstall Preview [$UnReviewTarget]")'
 FunctionEnd
 Function un.ReviewFinishCreate
   ${If} $UnReviewTarget == "finish"
-    System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "WaveForge Uninstall Preview [$UnReviewTarget]")'
+    System::Call 'user32::SetWindowTextW(p $HWNDPARENT, w "HyperPlayer Uninstall Preview [$UnReviewTarget]")'
     Call un.WaveUnFinishCreate
   ${Else}
     Abort

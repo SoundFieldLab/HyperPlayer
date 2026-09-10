@@ -1,6 +1,6 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 /**
  * 哔哩哔哩「看歌」播放表面（第 7 种歌词显示模式）
@@ -1069,7 +1069,7 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
       const now = performance.now()
       // 诊断：每 3s **无条件**打印一次（健康/不健康都打）——此前只在 readyState<2 时打，
       // 健康时段静默，无法判断"全程没解出帧"还是"解出了但画面本身是黑边内容"
-      if (now - lastDiag > 3000 && localStorage.getItem('waveforge:verbose-log') === '1') {
+      if (now - lastDiag > 3000 && localStorage.getItem('hyperplayer:verbose-log') === '1') {
         lastDiag = now
         console.log(`[Ambient] mode=${ambientMode} canvas=${canvas.width > 0 ? canvas.width + 'x' + canvas.height : '空'} video=${video.readyState}/${video.videoWidth}x${video.videoHeight} paused=${video.paused} draw=${drawCount} fail=${drawFails} aspect=${videoAspect ?? '-'} box=${Math.round(extMinX * 100)}-${Math.round(extMaxX * 100)}/${Math.round(extMinY * 100)}-${Math.round(extMaxY * 100)}`)
       }

@@ -14,9 +14,9 @@ const DEVICE_SPECS = Object.freeze({
 })
 
 const REGISTRATION = Object.freeze({
-  title: 'WaveForge',
-  description: 'WaveForge music visualization and ambient lighting integration',
-  author: { name: 'WaveForge', contact: 'https://github.com/WaveForge' },
+  title: 'HyperPlayer',
+  description: 'HyperPlayer music visualization and ambient lighting integration',
+  author: { name: 'HyperPlayer', contact: 'https://github.com/SoundFieldLab/HyperPlayer' },
   device_supported: Object.keys(DEVICE_SPECS),
   category: 'application',
 })
@@ -83,7 +83,7 @@ function shapeColors(device, colors, zones) {
 
 class ChromaRestService {
   constructor(options = {}) {
-    this.baseUrl = cleanBaseUrl(options.baseUrl || process.env.WAVEFORGE_CHROMA_BASE_URL)
+    this.baseUrl = cleanBaseUrl(options.baseUrl || process.env.HYPERPLAYER_CHROMA_BASE_URL)
     this.fetchImpl = options.fetchImpl || globalThis.fetch
     if (typeof this.fetchImpl !== 'function') throw new TypeError('ChromaRestService requires fetch')
 
@@ -105,7 +105,7 @@ class ChromaRestService {
     this.launchRepairImpl = options.launchRepair || launchChromaAppListRepair
     this.mockReady = options.mockReady || null
 
-    const testOverride = Boolean(options.baseUrl || process.env.WAVEFORGE_CHROMA_BASE_URL || process.env.WAVEFORGE_CHROMA_MOCK === '1')
+    const testOverride = Boolean(options.baseUrl || process.env.HYPERPLAYER_CHROMA_BASE_URL || process.env.HYPERPLAYER_CHROMA_MOCK === '1')
     this.state = {
       active: false,
       platformSupported: process.platform === 'win32' || testOverride,
@@ -337,7 +337,7 @@ class ChromaRestService {
   async launchAppListRepair() {
     const result = await this.launchRepairImpl(this.repairBasePath)
     if (result.outcome === 'succeeded') {
-      this.log('info', `Chroma app-list repair completed; removed ${result.report.removed.length} stale WaveForge entries`)
+      this.log('info', `Chroma app-list repair completed; removed ${result.report.removed.length} stale HyperPlayer entries`)
       await this.inspectAppList()
     } else if (result.outcome === 'uac-cancelled') {
       this.log('warn', 'Chroma app-list repair cancelled at the Windows UAC prompt')
@@ -512,7 +512,7 @@ class ChromaRestService {
 function setupChromaIpc({ ipcMain, getMainWindow, baseUrl, fetchImpl, timers, discoverDevices, repairBasePath, inspectAppList, launchRepair } = {}) {
   if (!ipcMain) throw new TypeError('setupChromaIpc requires ipcMain')
   let mock = null
-  if (process.env.WAVEFORGE_CHROMA_MOCK === '1') {
+  if (process.env.HYPERPLAYER_CHROMA_MOCK === '1') {
     mock = require('./chroma-mock.cjs').startChromaMock()
     baseUrl = mock.baseUrl
   }

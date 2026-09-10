@@ -632,10 +632,10 @@ class AudioDownloadService {
       }
     }
 
-    // Handle waveforge-media:// protocol
-    if (urlOrPath.startsWith('waveforge-media://')) {
+    // Handle hyperplayer-media:// protocol
+    if (urlOrPath.startsWith('hyperplayer-media://')) {
       try {
-        return realFilePath(decodeURIComponent(urlOrPath.replace('waveforge-media://', '')))
+        return realFilePath(decodeURIComponent(urlOrPath.replace('hyperplayer-media://', '')))
       } catch {
         return null
       }

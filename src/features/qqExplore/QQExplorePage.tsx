@@ -101,7 +101,7 @@ function cardSong(card: QQExploreCard): Song {
 }
 
 function closedShelfStorageKey(account: string) {
-  return `waveforge:qq-explore:closed-shelves:${account}`
+  return `hyperplayer:qq-explore:closed-shelves:${account}`
 }
 
 function qqFavoriteUserId(userId?: string) {

@@ -1,6 +1,6 @@
 # Bilibili MV matching benchmark
 
-This benchmark samples real Bilibili search results while reusing WaveForge's production scoring functions. It is deliberately separate from the application matching cache, remembered overrides, blacklist, login state, and playback APIs.
+This benchmark samples real Bilibili search results while reusing HyperPlayer's production scoring functions. It is deliberately separate from the application matching cache, remembered overrides, blacklist, login state, and playback APIs.
 
 ## Corpus
 

@@ -31,7 +31,7 @@ const STEPS = [
     icon: ShieldCheck,
     title: "允许应用控制",
     detail:
-      "打开 Chroma Studio / Connect，允许第三方应用控制灯光，并避免把 WaveForge 加入阻止列表。",
+      "打开 Chroma Studio / Connect，允许第三方应用控制灯光，并避免把 HyperPlayer 加入阻止列表。",
   },
   {
     icon: CheckCircle2,
@@ -172,7 +172,7 @@ export default function ChromaGuideModal({
                     </p>
                     <p className="mt-1">
                       退出或暂停其他可能独占灯光控制的 RGB 应用，再在雷云中确认
-                      Chroma Connect 已允许 WaveForge 控制。
+                      Chroma Connect 已允许 HyperPlayer 控制。
                     </p>
                   </div>
                   <div>
@@ -180,7 +180,7 @@ export default function ChromaGuideModal({
                       关闭插件后灯光会怎样？
                     </p>
                     <p className="mt-1">
-                      WaveForge 退出 Chroma
+                      HyperPlayer 退出 Chroma
                       会话并释放灯效，控制权会交还雷云或其他 RGB 应用。
                     </p>
                   </div>
@@ -189,7 +189,7 @@ export default function ChromaGuideModal({
                       macOS 或 Linux 可以使用吗？
                     </p>
                     <p className="mt-1">
-                      不可以。Razer Chroma 集成仅支持 WaveForge Windows 桌面版。
+                      不可以。Razer Chroma 集成仅支持 HyperPlayer Windows 桌面版。
                     </p>
                   </div>
                 </div>

@@ -31,21 +31,21 @@ const dns = require('node:dns')
 // 当前 Windows 网络的 IPv6 路由可能不可达；外部音乐 CDN/API 优先走 IPv4。
 dns.setDefaultResultOrder('ipv4first')
 
-const { selectWaveForgeUserData } = require('./user-data-profile.cjs')
+const { selectHyperPlayerUserData } = require('./user-data-profile.cjs')
 
 // 开发版历史上因首次 getPath(userData) 过早而长期使用 %APPDATA%/Electron。
-// 只在该目录有明确 WaveForge 标记时继续沿用，避免设置、登录和 Chromium profile 丢失；
+// 只在该目录有明确 HyperPlayer 标记时继续沿用，避免设置、登录和 Chromium profile 丢失；
 // 打包版始终使用正式目录。仅切换路径，不复制或覆盖任何凭据/数据库。
 const appDataRoot = process.platform === 'win32'
   ? (process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'))
   : (process.env.XDG_CONFIG_HOME || path.join(require('os').homedir(), '.config'))
-const selectedUserDataPath = selectWaveForgeUserData({
+const selectedUserDataPath = selectHyperPlayerUserData({
   appDataRoot,
   isPackaged: app.isPackaged,
-  overridePath: process.env.WAVEFORGE_USER_DATA,
+  overridePath: process.env.HYPERPLAYER_USER_DATA,
   platform: process.platform,
 })
-app.setName('WaveForge 澜音工坊')
+app.setName('HyperPlayer')
 fs.mkdirSync(selectedUserDataPath, { recursive: true })
 app.setPath('userData', selectedUserDataPath)
 
@@ -56,13 +56,13 @@ if (windowIcon.isEmpty()) {
 }
 const { fetchAllowedApplePage, readTextWithLimit } = require('./apple-url-policy.cjs')
 const { createDocumentUrlMatcher, createTrustedIpcGuard } = require('./trusted-ipc.cjs')
-const LOCAL_SERVICE_TOKEN = process.env.WAVEFORGE_LOCAL_TOKEN || crypto.randomBytes(32).toString('base64url')
+const LOCAL_SERVICE_TOKEN = process.env.HYPERPLAYER_LOCAL_TOKEN || crypto.randomBytes(32).toString('base64url')
 const {
   loadWindowState,
   saveWindowState,
   clampBoundsToWorkArea,
 } = require('./window-state.cjs')
-const startupTimingLogPath = process.env.WAVEFORGE_STARTUP_LOG || ''
+const startupTimingLogPath = process.env.HYPERPLAYER_STARTUP_LOG || ''
 function logStartupTiming(message) {
   const line = '[Electron +' + Math.round(performance.now() - electronProcessStartedAt) + 'ms] ' + message
   console.log(line)
@@ -342,7 +342,7 @@ app.on('child-process-gone', (_event, details) => {
 // 立即设置应用名称（必须在 app.ready 之前）。打包版使用与安装器一致的
 // AppUserModelID；开发版没有该 ID 对应的开始菜单快捷方式，强行设置会让
 // Windows Shell 回退到空白文件图标，而不是 BrowserWindow 的自定义图标。
-if (app.isPackaged) app.setAppUserModelId('com.waveforge.desktop')
+if (app.isPackaged) app.setAppUserModelId('com.hyperplayer.desktop')
 
 const { execFile, execFileSync, spawn } = require('child_process')
 const os = require('os')
@@ -428,11 +428,11 @@ function readDesktopWidgetDisks() {
 }
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
-const devServerUrl = process.env.WAVEFORGE_DEV_SERVER_URL || 'http://127.0.0.1:3000'
-const appleAcceptanceMode = ['crossfade', 'gapless', 'automix', 'radio'].includes(process.env.WAVEFORGE_APPLE_ACCEPTANCE)
-  ? process.env.WAVEFORGE_APPLE_ACCEPTANCE
+const devServerUrl = process.env.HYPERPLAYER_DEV_SERVER_URL || 'http://127.0.0.1:3000'
+const appleAcceptanceMode = ['crossfade', 'gapless', 'automix', 'radio'].includes(process.env.HYPERPLAYER_APPLE_ACCEPTANCE)
+  ? process.env.HYPERPLAYER_APPLE_ACCEPTANCE
   : ''
-const appleAcceptanceOutput = process.env.WAVEFORGE_APPLE_ACCEPTANCE_OUTPUT || ''
+const appleAcceptanceOutput = process.env.HYPERPLAYER_APPLE_ACCEPTANCE_OUTPUT || ''
 
 // 导航白名单：只允许应用自身的地址（开发模式 Vite 服务器 / 生产模式打包产物），
 // 阻止同窗口被任意外部页面导航——特权 preload 桥一旦跟到外部站点就会被滥用。
@@ -525,32 +525,32 @@ async function runAppleAcceptance(win, mode, outputPath) {
   const deadline = Date.now() + 20_000
   try {
     while (Date.now() < deadline) {
-      if (await evaluate('Boolean(window.__waveforgeAppleAcceptance)')) break
+      if (await evaluate('Boolean(window.__hyperplayerAppleAcceptance)')) break
       await new Promise(resolve => setTimeout(resolve, 100))
     }
-    if (!(await evaluate('Boolean(window.__waveforgeAppleAcceptance)'))) {
+    if (!(await evaluate('Boolean(window.__hyperplayerAppleAcceptance)'))) {
       throw new Error('Renderer acceptance hook did not become ready')
     }
 
     result.phase = 'hook-ready'
     result.stages.before = {
-      renderer: await evaluate('window.__waveforgeAppleAcceptance.snapshot()'),
+      renderer: await evaluate('window.__hyperplayerAppleAcceptance.snapshot()'),
       memory: getAppleAcceptanceMemory(win),
     }
-    await evaluate(`window.__waveforgeAppleAcceptance.configure(${JSON.stringify(mode)})`)
+    await evaluate(`window.__hyperplayerAppleAcceptance.configure(${JSON.stringify(mode)})`)
     result.stages.configured = {
-      renderer: await evaluate('window.__waveforgeAppleAcceptance.snapshot()'),
+      renderer: await evaluate('window.__hyperplayerAppleAcceptance.snapshot()'),
       memory: getAppleAcceptanceMemory(win),
     }
     if (mode === 'radio') {
-      const radio = await evaluate('window.__waveforgeAppleAcceptance.loadRadio()')
+      const radio = await evaluate('window.__hyperplayerAppleAcceptance.loadRadio()')
       result.phase = 'radio-ready'
       result.stages.ready = {
         radio,
-        renderer: await evaluate('window.__waveforgeAppleAcceptance.snapshot()'),
+        renderer: await evaluate('window.__hyperplayerAppleAcceptance.snapshot()'),
         memory: getAppleAcceptanceMemory(win),
       }
-      const cleanup = await evaluate('window.__waveforgeAppleAcceptance.cleanup(true)')
+      const cleanup = await evaluate('window.__hyperplayerAppleAcceptance.cleanup(true)')
       await collectAppleAcceptanceGarbage(win)
       result.phase = 'cleaned'
       result.stages.cleaned = { renderer: cleanup, memory: getAppleAcceptanceMemory(win) }
@@ -574,25 +574,25 @@ async function runAppleAcceptance(win, mode, outputPath) {
       if (!result.ok) throw new Error('One or more Apple radio acceptance checks failed')
       return
     }
-    const selection = await evaluate('window.__waveforgeAppleAcceptance.loadPair()')
+    const selection = await evaluate('window.__hyperplayerAppleAcceptance.loadPair()')
     result.phase = 'pair-ready'
     result.stages.ready = {
       selection,
-      renderer: await evaluate('window.__waveforgeAppleAcceptance.snapshot()'),
+      renderer: await evaluate('window.__hyperplayerAppleAcceptance.snapshot()'),
       memory: getAppleAcceptanceMemory(win),
     }
     writeResult()
 
-    const transition = await evaluate('window.__waveforgeAppleAcceptance.transition()')
+    const transition = await evaluate('window.__hyperplayerAppleAcceptance.transition()')
     result.phase = 'transitioned'
     result.stages.transitioned = {
       transition,
-      renderer: await evaluate('window.__waveforgeAppleAcceptance.snapshot()'),
+      renderer: await evaluate('window.__hyperplayerAppleAcceptance.snapshot()'),
       memory: getAppleAcceptanceMemory(win),
     }
-    const requestedRounds = Number.parseInt(process.env.WAVEFORGE_APPLE_ACCEPTANCE_ROUNDS || '1', 10)
+    const requestedRounds = Number.parseInt(process.env.HYPERPLAYER_APPLE_ACCEPTANCE_ROUNDS || '1', 10)
     const roundCount = Number.isInteger(requestedRounds) ? Math.max(1, Math.min(5, requestedRounds)) : 1
-    const cleanup = await evaluate(`window.__waveforgeAppleAcceptance.cleanup(${roundCount === 1})`)
+    const cleanup = await evaluate(`window.__hyperplayerAppleAcceptance.cleanup(${roundCount === 1})`)
     await collectAppleAcceptanceGarbage(win)
     result.phase = 'cleaned'
     result.stages.cleaned = {
@@ -603,11 +603,11 @@ async function runAppleAcceptance(win, mode, outputPath) {
     result.stressRounds = []
     for (let round = 2; round <= roundCount; round += 1) {
       result.phase = `stress-round-${round}`
-      await evaluate(`window.__waveforgeAppleAcceptance.configure(${JSON.stringify(mode)})`)
-      await evaluate('window.__waveforgeAppleAcceptance.loadPair()')
-      const stressReady = await evaluate('window.__waveforgeAppleAcceptance.snapshot()')
-      const stressTransition = await evaluate('window.__waveforgeAppleAcceptance.transition()')
-      const stressCleaned = await evaluate(`window.__waveforgeAppleAcceptance.cleanup(${round === roundCount})`)
+      await evaluate(`window.__hyperplayerAppleAcceptance.configure(${JSON.stringify(mode)})`)
+      await evaluate('window.__hyperplayerAppleAcceptance.loadPair()')
+      const stressReady = await evaluate('window.__hyperplayerAppleAcceptance.snapshot()')
+      const stressTransition = await evaluate('window.__hyperplayerAppleAcceptance.transition()')
+      const stressCleaned = await evaluate(`window.__hyperplayerAppleAcceptance.cleanup(${round === roundCount})`)
       await collectAppleAcceptanceGarbage(win)
       result.stressRounds.push({
         round,
@@ -681,11 +681,11 @@ async function runAppleAcceptance(win, mode, outputPath) {
     if (result.phase !== 'failed-checks') result.phase = 'failed'
     result.error = error instanceof Error ? error.message : String(error)
     try {
-      await evaluate('window.__waveforgeAppleAcceptance?.cleanup?.(true)')
+      await evaluate('window.__hyperplayerAppleAcceptance?.cleanup?.(true)')
     } catch {}
     try {
       result.stages.failure = {
-        renderer: await evaluate('window.__waveforgeAppleAcceptance?.snapshot?.() || null'),
+        renderer: await evaluate('window.__hyperplayerAppleAcceptance?.snapshot?.() || null'),
         memory: getAppleAcceptanceMemory(win),
       }
     } catch {}
@@ -918,7 +918,7 @@ function createDesktopPlayerWindow() {
     maximizable: false,
     minimizable: false,
     show: false,
-    title: 'WaveForge 桌面播放器',
+    title: 'HyperPlayer 桌面播放器',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -1109,7 +1109,7 @@ function createDesktopLyricsWindow() {
     maximizable: false,
     minimizable: false,
     show: false,
-    title: 'WaveForge 桌面歌词',
+    title: 'HyperPlayer 桌面歌词',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -2328,14 +2328,14 @@ $point = $position.Coordinate.Point.Position
 
 protocol.registerSchemesAsPrivileged([
   {
-    scheme: 'waveforge-media',
+    scheme: 'hyperplayer-media',
     privileges: {
       standard: true,
       secure: true,
       stream: true,
       supportFetchAPI: true,
       // 关键：允许从 http://127.0.0.1:3000（渲染 origin）跨源 fetch 该协议。
-      // 缺失时 AI 混音 wav（waveforge-media://）被 Chromium CORS 拦截 → 缓冲加载失败
+      // 缺失时 AI 混音 wav（hyperplayer-media://）被 Chromium CORS 拦截 → 缓冲加载失败
       // → 回退普通交叉淡化 → 音量突变 + MV 预载链路断裂（用户实测的"介入即衰减/
       // MV 不叠加/封面回退"均由此引起）。registerSchemesAsPrivileged 仅在启动时生效，
       // 修改后必须完全重启应用。
@@ -2426,7 +2426,7 @@ function createWindow() {
     backgroundColor: '#000000',
     transparent: false,
     titleBarStyle: 'hidden',
-    title: 'WaveForge 澜音工坊',
+    title: 'HyperPlayer',
     icon: windowIcon.isEmpty() ? undefined : windowIcon,
     roundedCorners: true,
     show: false, // 初始隐藏窗口
@@ -2577,7 +2577,7 @@ function createWindow() {
       ? `${devServerUrl}${devServerUrl.includes('?') ? '&' : '?'}appleAcceptance=1`
       : devServerUrl
     mainWindow.loadURL(mainUrl)
-    if (process.env.WAVEFORGE_OPEN_DEVTOOLS === '1') {
+    if (process.env.HYPERPLAYER_OPEN_DEVTOOLS === '1') {
       mainWindow.webContents.openDevTools()
     }
   } else {
@@ -2676,11 +2676,11 @@ function toMediaUrl(filePath) {
     if (!oldest) break
     allowedMediaFiles.delete(oldest)
   }
-  return `waveforge-media://local/${encodeURIComponent(resolved)}`
+  return `hyperplayer-media://local/${encodeURIComponent(resolved)}`
 }
 
 function registerMediaProtocol() {
-  protocol.registerFileProtocol('waveforge-media', (request, callback) => {
+  protocol.registerFileProtocol('hyperplayer-media', (request, callback) => {
     try {
       const url = new URL(request.url)
       const encodedPath = url.pathname.replace(/^\/+/, '')
@@ -3157,7 +3157,7 @@ async function createQQLoginWindow() {
       }
       
       // 登录窗口与主应用共用 session，不能清空全部 localStorage/indexDB，
-      // 否则会连带删除 WaveForge 自身设置。QQ 域 Cookie 已在上面精准清理。
+      // 否则会连带删除 HyperPlayer 自身设置。QQ 域 Cookie 已在上面精准清理。
       console.log('✓ [QQ登录] QQ 域 Cookie 清理完成')
     } catch (err) {
       console.error('❌ [QQ登录] 清理缓存失败:', err)
@@ -3173,7 +3173,7 @@ async function createQQLoginWindow() {
       frame: false, // 无边框
       backgroundColor: '#000000',
       titleBarStyle: 'hidden',
-      title: 'WaveForge 澜音工坊 - QQ音乐登录',
+      title: 'HyperPlayer - QQ音乐登录',
       icon: fs.existsSync(iconPath) ? iconPath : undefined,
       webPreferences: {
         nodeIntegration: false,
@@ -3220,7 +3220,7 @@ async function createQQLoginWindow() {
         (function() {
           // 创建关闭按钮容器
           const closeBtn = document.createElement('div');
-          closeBtn.id = 'waveforge-close-btn';
+          closeBtn.id = 'hyperplayer-close-btn';
           closeBtn.innerHTML = \`
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -3360,7 +3360,7 @@ async function createQQLoginWindow() {
 
 
 // ── Spotify OAuth 授权（Electron 弹窗，授权码流）──────────────────────────
-// 用公开的 Spotify Client ID（WaveForge 桌面应用）走 OAuth 授权码流程：
+// 用公开的 Spotify Client ID（HyperPlayer 桌面应用）走 OAuth 授权码流程：
 // 弹窗打开 accounts.spotify.com/authorize → 用户登录授权 → 重定向到本地回调端口
 // → 主进程监听回调换 access/refresh token → 存 localStorage 并通知渲染进程。
 // 未配置自有 Client Secret 时采用 PKCE 或本地换 token 端点（见实现）。
@@ -3494,7 +3494,7 @@ async function createSpotifyLoginWindow(clientId) {
           modal: true,
           frame: false,
           backgroundColor: '#191414',
-          title: 'WaveForge 澜音工坊 - Spotify 授权',
+          title: 'HyperPlayer - Spotify 授权',
           webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -3525,9 +3525,9 @@ async function createSpotifyLoginWindow(clientId) {
       spotifyLoginWindow.webContents.on('did-finish-load', () => {
         spotifyLoginWindow.webContents.executeJavaScript(`
           (function() {
-            if (document.getElementById('waveforge-close-btn')) return;
+            if (document.getElementById('hyperplayer-close-btn')) return;
             const b = document.createElement('div');
-            b.id = 'waveforge-close-btn';
+            b.id = 'hyperplayer-close-btn';
             b.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
             b.style.cssText = 'position:fixed;top:12px;right:12px;width:32px;height:32px;background:rgba(0,0,0,0.55);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2147483647;color:#fff;';
             b.addEventListener('click', () => window.close());
@@ -3570,7 +3570,7 @@ ipcMain.handle('hse-write-scene-seed', async (_e, content) => {
     if (typeof content !== 'string' || !content.includes('export const BUILTIN_SCENE_SEED') || content.length > 2 * 1024 * 1024) {
       return { ok: false, error: '内容不符合种子文件格式' }
     }
-    const target = path.join(app.getAppPath(), 'src', 'services', 'waveforge-engine-v3', 'src', 'engine', 'builtinSceneSeed.ts')
+    const target = path.join(app.getAppPath(), 'src', 'services', 'HyperSoundEngine-v1', 'src', 'engine', 'builtinSceneSeed.ts')
     if (!fs.existsSync(target)) return { ok: false, error: '仓库中不存在 builtinSceneSeed.ts（仅开发环境可用）' }
     const tmp = target + '.tmp'
     fs.writeFileSync(tmp, content, 'utf8')
@@ -3591,7 +3591,7 @@ ipcMain.handle('hse-save-rendered-audio', (_e, data, fileName) => {
     if (!buf.length) return { ok: false, error: '导出内容为空' }
     if (buf.length > 300 * 1024 * 1024) return { ok: false, error: '导出内容超过 300MB，疑似异常' }
     const safeName = String(fileName || '').replace(/[\\/:*?"<>|]/g, '_').trim()
-      .replace(/^\.{1,2}$/, '_') || 'WaveForge-HSE-Modified.mp3'
+      .replace(/^\.{1,2}$/, '_') || 'HyperPlayer-HSE-Modified.mp3'
     const dir = app.getPath('desktop')
     const ext = path.extname(safeName) || '.mp3'
     const stem = safeName.slice(0, safeName.length - ext.length)
@@ -3899,7 +3899,7 @@ ipcMain.handle('apple-fetch-account', async (event, cookies) => {
 // 用户无需自行获取 Developer Token / Media-User-Token：
 //  - Media-User-Token：登录 music.apple.com 后从会话 Cookie 抓取（同 QQ 登录模式）
 //  - Developer Token：拦截登录窗口发往 amp-api.music.apple.com 的 Authorization 请求头
-const APPLE_LOGIN_PARTITION = 'waveforge-apple-login'
+const APPLE_LOGIN_PARTITION = 'hyperplayer-apple-login'
 // 标准 Chrome/Windows UA（无 Electron 标记）。Safari UA 在 Windows 上可能触发
 // Apple 页面的兼容性重定向，改用 Chrome 最稳。
 const APPLE_SAFARI_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
@@ -3968,9 +3968,9 @@ function startAppleFinalizeOverlay(win) {
     if (!win || win.isDestroyed()) return
     win.webContents.executeJavaScript(`
       (function () {
-        if (document.getElementById('waveforge-icloud-overlay')) return;
+        if (document.getElementById('hyperplayer-icloud-overlay')) return;
         var el = document.createElement('div');
-        el.id = 'waveforge-icloud-overlay';
+        el.id = 'hyperplayer-icloud-overlay';
         el.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;background:#0a0a0a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#fff;font:500 14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;pointer-events:none;';
         el.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.18);border-top-color:#fa2d48;animation:wf-icloud-spin .9s linear infinite;"></div><div style="opacity:.65">正在获取用户信息…</div>';
         var st = document.createElement('style');
@@ -4236,7 +4236,7 @@ async function extractAppleAccountProfile(win, appleSession) {
       if (info && typeof info === 'object' && info.needLogin) {
         // 未登录：移除处理中遮罩（让登录表单可见），提示用户在当前窗口完成 Apple 账户登录
         // （Apple 会识别 AM 会话预填邮箱），然后继续轮询等待登录成功。
-        win.webContents.executeJavaScript('(function(){var e=document.getElementById("waveforge-apple-processing");if(e&&e.parentNode)e.parentNode.removeChild(e);var c=document.getElementById("waveforge-apple-consent");if(c&&c.parentNode)c.parentNode.removeChild(c);})()').catch(() => {})
+        win.webContents.executeJavaScript('(function(){var e=document.getElementById("hyperplayer-apple-processing");if(e&&e.parentNode)e.parentNode.removeChild(e);var c=document.getElementById("hyperplayer-apple-consent");if(c&&c.parentNode)c.parentNode.removeChild(c);})()').catch(() => {})
         if (!loginPrompted) {
           loginPrompted = true
           // 人工登录不受 1 分钟预算限制：从提示起重置 5 分钟窗口
@@ -4244,9 +4244,9 @@ async function extractAppleAccountProfile(win, appleSession) {
           console.log('[Apple登录] account.apple.com 未登录，等待用户在当前窗口完成登录…')
           win.webContents.executeJavaScript(`
             (function () {
-              if (document.getElementById('waveforge-account-login-hint')) return;
+              if (document.getElementById('hyperplayer-account-login-hint')) return;
               var el = document.createElement('div');
-              el.id = 'waveforge-account-login-hint';
+              el.id = 'hyperplayer-account-login-hint';
               el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483646;background:rgba(10,10,12,0.92);color:#fff;padding:14px 20px;font:600 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;display:flex;align-items:center;justify-content:center;gap:10px;border-bottom:1px solid rgba(255,255,255,0.12);';
               el.innerHTML = '<span style="color:#fa2d48;font-size:16px;">●</span> 请在下方完成 Apple 账户登录（邮箱已预填），登录后将自动获取您的账户资料';
               document.body.appendChild(el);
@@ -4258,7 +4258,7 @@ async function extractAppleAccountProfile(win, appleSession) {
     }
     if (!info || typeof info !== 'object') return null
     // 登录成功：移除登录提示条（数据已就绪，顶部药丸继续显示到安全页抓取结束）
-    win.webContents.executeJavaScript('(function(){var e=document.getElementById("waveforge-account-login-hint");if(e&&e.parentNode)e.parentNode.removeChild(e);})()').catch(() => {})
+    win.webContents.executeJavaScript('(function(){var e=document.getElementById("hyperplayer-account-login-hint");if(e&&e.parentNode)e.parentNode.removeChild(e);})()').catch(() => {})
     const name = String(info.name || '').trim()
     const email = String(info.email || '').trim()
     const avatar = String(info.avatar || '').trim()
@@ -4387,9 +4387,9 @@ function showAppleOverlay(win, text) {
   win.webContents.executeJavaScript(`
     (function () {
       var text = ${JSON.stringify(text || '正在获取用户信息…')};
-      if (document.getElementById('waveforge-apple-consent')) {
+      if (document.getElementById('hyperplayer-apple-consent')) {
         // 已存在弹窗遮罩（同意/拒绝后切换为处理中）：更新文案
-        var card = document.getElementById('waveforge-apple-consent');
+        var card = document.getElementById('hyperplayer-apple-consent');
         card.innerHTML =
           '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#fff;font:500 14px/1.4 -apple-system,BlinkMacSystemFont,\\"Segoe UI\\",\\"PingFang SC\\",\\"Microsoft YaHei\\",sans-serif;">' +
           '<div style="width:36px;height:36px;border-radius:50%;border:3px solid rgba(255,255,255,0.18);border-top-color:#fa2d48;animation:wf-consent-spin 0.9s linear infinite;"></div>' +
@@ -4398,7 +4398,7 @@ function showAppleOverlay(win, text) {
         return;
       }
       var el = document.createElement('div');
-      el.id = 'waveforge-apple-processing';
+      el.id = 'hyperplayer-apple-processing';
       el.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;background:rgba(10,10,12,0.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#fff;font:500 14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;';
       el.innerHTML =
         '<div style="width:36px;height:36px;border-radius:50%;border:3px solid rgba(255,255,255,0.18);border-top-color:#fa2d48;animation:wf-consent-spin 0.9s linear infinite;"></div>' +
@@ -4421,14 +4421,14 @@ function showApplePill(win, text) {
   win.webContents.executeJavaScript(`
     (function () {
       var text = ${JSON.stringify(text || '正在获取用户信息…')};
-      var el = document.getElementById('waveforge-apple-pill');
+      var el = document.getElementById('hyperplayer-apple-pill');
       if (!el) {
         el = document.createElement('div');
-        el.id = 'waveforge-apple-pill';
+        el.id = 'hyperplayer-apple-pill';
         el.style.cssText = 'position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:2147483647;background:rgba(10,10,12,0.86);border:1px solid rgba(255,255,255,0.14);border-radius:999px;padding:9px 18px;display:flex;align-items:center;gap:9px;color:#fff;font:600 12.5px/1 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;box-shadow:0 8px 28px rgba(0,0,0,0.45);backdrop-filter:blur(8px);';
         el.innerHTML =
           '<span style="width:13px;height:13px;border-radius:50%;border:2px solid rgba(255,255,255,0.22);border-top-color:#fa2d48;display:inline-block;animation:wf-consent-spin 0.9s linear infinite;"></span>' +
-          '<span id="waveforge-apple-pill-text" style="opacity:0.85;">' + text + '</span>';
+          '<span id="hyperplayer-apple-pill-text" style="opacity:0.85;">' + text + '</span>';
         if (!document.getElementById('wf-consent-spin-style')) {
           var st = document.createElement('style');
           st.id = 'wf-consent-spin-style';
@@ -4437,7 +4437,7 @@ function showApplePill(win, text) {
         }
         document.body.appendChild(el);
       } else {
-        var t = document.getElementById('waveforge-apple-pill-text');
+        var t = document.getElementById('hyperplayer-apple-pill-text');
         if (t) t.textContent = text;
       }
     })()
@@ -4446,7 +4446,7 @@ function showApplePill(win, text) {
 
 function hideApplePill(win) {
   if (!win || win.isDestroyed()) return
-  win.webContents.executeJavaScript(`(function(){var e=document.getElementById('waveforge-apple-pill');if(e&&e.parentNode)e.parentNode.removeChild(e);})()`).catch(() => {})
+  win.webContents.executeJavaScript(`(function(){var e=document.getElementById('hyperplayer-apple-pill');if(e&&e.parentNode)e.parentNode.removeChild(e);})()`).catch(() => {})
 }
 
 // ── Apple 账户信息展示确认弹窗（登录窗口内，用户同意才继续抓取 account.apple.com）────
@@ -4460,11 +4460,11 @@ async function askAppleAccountConsent(win, billingName) {
     await win.webContents.executeJavaScript('window.__wfAppleAccountChoice = ""').catch(() => {})
     await win.webContents.executeJavaScript(`
       (function () {
-        if (document.getElementById('waveforge-apple-consent')) {
-          document.getElementById('waveforge-apple-consent').remove();
+        if (document.getElementById('hyperplayer-apple-consent')) {
+          document.getElementById('hyperplayer-apple-consent').remove();
         }
         var overlay = document.createElement('div');
-        overlay.id = 'waveforge-apple-consent';
+        overlay.id = 'hyperplayer-apple-consent';
         overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;background:rgba(10,10,12,0.88);display:flex;align-items:center;justify-content:center;padding:24px;';
         var card = document.createElement('div');
         card.style.cssText = 'max-width:430px;width:100%;background:#14141c;border:1px solid rgba(255,255,255,0.12);border-radius:20px;padding:28px 26px;color:#fff;font:500 14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;box-shadow:0 24px 80px rgba(0,0,0,0.6);';
@@ -4486,7 +4486,7 @@ async function askAppleAccountConsent(win, billingName) {
         document.body.appendChild(overlay);
         // 点击后：记录选择并把弹窗内容切换为"正在获取用户信息…"（遮罩常驻，避免回到 AM 界面）
         function wfShowProcessing(text) {
-          var o = document.getElementById('waveforge-apple-consent');
+          var o = document.getElementById('hyperplayer-apple-consent');
           if (!o) return;
           o.innerHTML =
             '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#fff;font:500 14px/1.4 -apple-system,BlinkMacSystemFont,\\"Segoe UI\\",\\"PingFang SC\\",\\"Microsoft YaHei\\",sans-serif;">' +
@@ -4582,7 +4582,7 @@ async function createAppleLoginWindow() {
           frame: false, // 无标题栏/无最小化最大化/无菜单栏，只留注入的关闭 X
           autoHideMenuBar: true,
           backgroundColor: '#0a0a0a',
-          title: 'WaveForge 澜音工坊 - Apple Music 登录',
+          title: 'HyperPlayer - Apple Music 登录',
           icon: fs.existsSync(iconPath) ? iconPath : undefined,
           webPreferences: {
             nodeIntegration: false,
@@ -4691,9 +4691,9 @@ async function createAppleLoginWindow() {
         appleLoginWindow.webContents.on('dom-ready', () => {
           appleLoginWindow.webContents.executeJavaScript(`
             (function () {
-              if (window.__waveforgeAppleHooked) return;
-              window.__waveforgeAppleHooked = true;
-              window.__waveforgeAppleDevToken = '';
+              if (window.__hyperplayerAppleHooked) return;
+              window.__hyperplayerAppleHooked = true;
+              window.__hyperplayerAppleDevToken = '';
 
               function isValidToken(t) {
                 try {
@@ -4711,8 +4711,8 @@ async function createAppleLoginWindow() {
               }
               function report(t) {
                 var v = String(t || '').trim();
-                if (!v || window.__waveforgeAppleDevToken || !isValidToken(v)) return;
-                window.__waveforgeAppleDevToken = v;
+                if (!v || window.__hyperplayerAppleDevToken || !isValidToken(v)) return;
+                window.__hyperplayerAppleDevToken = v;
               }
               function maybeFromHeaders(headers) {
                 try {
@@ -4724,9 +4724,9 @@ async function createAppleLoginWindow() {
               }
 
               // 加载动画遮罩（页面渲染期间避免纯黑让用户误以为窗口卡死）
-              if (!document.getElementById('waveforge-loading-overlay')) {
+              if (!document.getElementById('hyperplayer-loading-overlay')) {
                 var overlay = document.createElement('div');
-                overlay.id = 'waveforge-loading-overlay';
+                overlay.id = 'hyperplayer-loading-overlay';
                 overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483645;background:#0a0a0a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#fff;font:500 14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;pointer-events:none;';
                 overlay.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.18);border-top-color:#fa2d48;animation:wf-loading-spin .9s linear infinite;"></div><div style="opacity:.65">正在加载 Apple Music…</div>';
                 var ovStyle = document.createElement('style');
@@ -4735,16 +4735,16 @@ async function createAppleLoginWindow() {
                 document.body.appendChild(overlay);
                 // 用户一旦与页面交互（点击/触摸）立即移除遮罩，绝不让它盖住已渲染的界面
                 window.addEventListener('pointerdown', function wfRemove() {
-                  var el = document.getElementById('waveforge-loading-overlay');
+                  var el = document.getElementById('hyperplayer-loading-overlay');
                   if (el && el.parentNode) el.parentNode.removeChild(el);
                   window.removeEventListener('pointerdown', wfRemove);
                 });
               }
 
               // 常显关闭 X
-              if (!document.getElementById('waveforge-close-btn')) {
+              if (!document.getElementById('hyperplayer-close-btn')) {
                 var btn = document.createElement('div');
-                btn.id = 'waveforge-close-btn';
+                btn.id = 'hyperplayer-close-btn';
                 btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
                 btn.style.cssText = 'position:fixed;top:12px;right:12px;width:32px;height:32px;background:rgba(20,20,24,.55);backdrop-filter:blur(8px);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2147483647;color:#fff;transition:background .2s ease;';
                 btn.addEventListener('mouseenter', function () { btn.style.background = 'rgba(220,38,38,.85)'; });
@@ -4801,7 +4801,7 @@ async function createAppleLoginWindow() {
             appleOverlayTimer = null
             if (!appleLoginWindow || appleLoginWindow.isDestroyed()) return
             appleLoginWindow.webContents.executeJavaScript(
-              "(function(){var o=document.getElementById('waveforge-loading-overlay');if(o&&o.parentNode)o.parentNode.removeChild(o);})()"
+              "(function(){var o=document.getElementById('hyperplayer-loading-overlay');if(o&&o.parentNode)o.parentNode.removeChild(o);})()"
             ).catch(() => {})
           }, 400)
           appleLoginWindow.webContents.executeJavaScript(`
@@ -4826,7 +4826,7 @@ async function createAppleLoginWindow() {
           }
           // 读取页面主世界补丁捕获的 Developer Token
           try {
-            appleLoginWindow.webContents.executeJavaScript('window.__waveforgeAppleDevToken || ""')
+            appleLoginWindow.webContents.executeJavaScript('window.__hyperplayerAppleDevToken || ""')
               .then(token => { if (token && !appleDevTokenCapture) appleDevTokenCapture = String(token) })
               .catch(() => {})
           } catch (e) {}
@@ -5303,13 +5303,13 @@ ipcMain.handle('apple-fetch-dev-token', guardTrustedIpc('privileged', async () =
 const QMK_OFFICIAL_KEY_URL = 'https://y.qq.com/n/ryqq_v2/qqmusic_skills'
 // Dedicated isolated session for the claim window, wiped on every open so
 // cached QQ login state from the app/browser is never reused.
-const QMK_SESSION_PARTITION = 'waveforge-qq-skill-key'
+const QMK_SESSION_PARTITION = 'hyperplayer-qq-skill-key'
 
 // 注入：自动滚动到「获取 API Key」区块，并用动画引导点击「登录QQ音乐」按钮
 const QMK_GUIDE_JS = `
 (function () {
-  if (window.__waveforgeQmkGuideDismissed) return;
-  var old = document.getElementById('waveforge-skill-guide');
+  if (window.__hyperplayerQmkGuideDismissed) return;
+  var old = document.getElementById('hyperplayer-skill-guide');
   if (old && old.parentNode) old.parentNode.removeChild(old);
 
   function findElByText(text) {
@@ -5340,7 +5340,7 @@ const QMK_GUIDE_JS = `
   if (!loginBtn) return;
 
   var overlay = document.createElement('div');
-  overlay.id = 'waveforge-skill-guide';
+  overlay.id = 'hyperplayer-skill-guide';
   overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2147483646;';
 
   var style = document.createElement('style');
@@ -5382,7 +5382,7 @@ const QMK_GUIDE_JS = `
   function dismissGuide() {
     if (dismissed) return;
     dismissed = true;
-    window.__waveforgeQmkGuideDismissed = true;
+    window.__hyperplayerQmkGuideDismissed = true;
     clearInterval(moveTimer);
     clearInterval(goneTimer);
     if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
@@ -5402,9 +5402,9 @@ const QMK_GUIDE_JS = `
 // 注入：右上角悬浮关闭按钮（鼠标靠近右上角出现）
 const QMK_CLOSE_BTN_JS = `
 (function () {
-  if (document.getElementById('waveforge-close-btn')) return;
+  if (document.getElementById('hyperplayer-close-btn')) return;
   var closeBtn = document.createElement('div');
-  closeBtn.id = 'waveforge-close-btn';
+  closeBtn.id = 'hyperplayer-close-btn';
   closeBtn.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
   closeBtn.style.cssText = 'position:fixed;top:20px;right:20px;width:40px;height:40px;background:rgba(0,0,0,.5);backdrop-filter:blur(10px);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:999999;color:white;opacity:0;transition:all .3s ease;pointer-events:auto;';
   var hideTimer = null;
@@ -5498,8 +5498,8 @@ ${qmkFindCopyBtnSource()}
 // 复制按钮点击后完整 key 会进剪贴板，主进程轮询读到后自动完成登录并关闭窗口。
 const QMK_COPY_GUIDE_JS = `
 (function () {
-  if (window.__waveforgeQmkCopyGuideDismissed) return;
-  var old = document.getElementById('waveforge-copy-guide');
+  if (window.__hyperplayerQmkCopyGuideDismissed) return;
+  var old = document.getElementById('hyperplayer-copy-guide');
   if (old && old.parentNode) old.parentNode.removeChild(old);
 
   var texts = ['复制Key', '复制 Key', '复制key', '复制', 'Copy Key', 'Copy', 'copy'];
@@ -5523,11 +5523,11 @@ const QMK_COPY_GUIDE_JS = `
   }
 
   function mount(target) {
-    if (window.__waveforgeQmkCopyGuideMounted) return;
-    window.__waveforgeQmkCopyGuideMounted = true;
+    if (window.__hyperplayerQmkCopyGuideMounted) return;
+    window.__hyperplayerQmkCopyGuideMounted = true;
 
     var overlay = document.createElement('div');
-    overlay.id = 'waveforge-copy-guide';
+    overlay.id = 'hyperplayer-copy-guide';
     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2147483646;';
 
     var style = document.createElement('style');
@@ -5564,7 +5564,7 @@ const QMK_COPY_GUIDE_JS = `
     var moveTimer = null;
     var goneTimer = null;
     function cleanup() {
-      window.__waveforgeQmkCopyGuideDismissed = true;
+      window.__hyperplayerQmkCopyGuideDismissed = true;
       if (moveTimer) clearInterval(moveTimer);
       if (goneTimer) clearInterval(goneTimer);
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
@@ -5588,7 +5588,7 @@ const QMK_COPY_GUIDE_JS = `
   if (btn) { mount(btn); return; }
   var tries = 0;
   var retry = setInterval(function () {
-    if (window.__waveforgeQmkCopyGuideMounted || ++tries > 12) { clearInterval(retry); return; }
+    if (window.__hyperplayerQmkCopyGuideMounted || ++tries > 12) { clearInterval(retry); return; }
     var b = findCopyBtn();
     if (b) { clearInterval(retry); mount(b); }
   }, 500);
@@ -5641,7 +5641,7 @@ async function createQQSkillKeyWindow() {
       frame: false,
       backgroundColor: '#000000',
       titleBarStyle: 'hidden',
-      title: 'WaveForge 波音工坊 - QQ音乐官方增强',
+      title: 'HyperPlayer 波音工坊 - QQ音乐官方增强',
       icon: fs.existsSync(iconPath) ? iconPath : undefined,
       webPreferences: {
         nodeIntegration: false,
@@ -6113,7 +6113,7 @@ async function recreateMainWindow(transparent) {
     backgroundColor: transparent ? '#00000000' : '#000000',
     transparent,
     titleBarStyle: 'hidden',
-    title: 'WaveForge 澜音工坊',
+    title: 'HyperPlayer',
     icon: windowIcon.isEmpty() ? undefined : windowIcon,
     // 不透明窗口用 Windows 11 原生圆角；透明窗口原生圆角无效，由渲染端 #root 自绘
     roundedCorners: !transparent,
@@ -6132,7 +6132,7 @@ async function recreateMainWindow(transparent) {
 
   if (isDev) {
     win.loadURL(devServerUrl)
-    if (process.env.WAVEFORGE_OPEN_DEVTOOLS === '1') win.webContents.openDevTools()
+    if (process.env.HYPERPLAYER_OPEN_DEVTOOLS === '1') win.webContents.openDevTools()
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'))
   }
@@ -6389,7 +6389,7 @@ async function sweepBackendOrphans(reason) {
         '$c = Get-NetTCPConnection -LocalPort ' + port + ' -State Listen -ErrorAction SilentlyContinue',
         'foreach ($x in $c) {',
         '  $pp = Get-Process -Id $x.OwningProcess -ErrorAction SilentlyContinue',
-        '  if ($pp -and ($pp.Path -like "*win-unpacked*" -or $pp.ProcessName -like "WaveForge*" -or $pp.ProcessName -like "python*")) { Write-Output $x.OwningProcess }',
+        '  if ($pp -and ($pp.Path -like "*win-unpacked*" -or $pp.ProcessName -like "HyperPlayer*" -or $pp.ProcessName -like "python*")) { Write-Output $x.OwningProcess }',
         '}',
       ].join('; ')
       const out = await execFileAsync('powershell', ['-NoProfile', '-Command', ps], { timeout: 12000 })
@@ -6406,7 +6406,7 @@ async function sweepBackendOrphans(reason) {
 
 async function startLocalBackend() {
   if (!app.isPackaged) return // 开发模式由 dev-electron.mjs 启动
-  if (process.env.WAVEFORGE_DISABLE_LOCAL_BACKEND === '1') return
+  if (process.env.HYPERPLAYER_DISABLE_LOCAL_BACKEND === '1') return
 
   // 1) Express API（3001）
   try {
@@ -6415,8 +6415,8 @@ async function startLocalBackend() {
     localApiChild = utilityProcess.fork(serverEntry, [], {
       env: {
         ...process.env,
-        WAVEFORGE_USERDATA: app.getPath('userData'),
-        WAVEFORGE_LOCAL_TOKEN: LOCAL_SERVICE_TOKEN,
+        HYPERPLAYER_USERDATA: app.getPath('userData'),
+        HYPERPLAYER_LOCAL_TOKEN: LOCAL_SERVICE_TOKEN,
       },
       stdio: 'pipe',
     })
@@ -6465,7 +6465,7 @@ async function pythonHasPywebview(pythonExe) {
 /** 找可用的 Python：环境变量 → 常见系统安装位置 → PATH */
 async function findAppleBridgePython() {
   const candidates = []
-  if (process.env.WAVEFORGE_APPLE_BRIDGE_PYTHON) candidates.push(process.env.WAVEFORGE_APPLE_BRIDGE_PYTHON)
+  if (process.env.HYPERPLAYER_APPLE_BRIDGE_PYTHON) candidates.push(process.env.HYPERPLAYER_APPLE_BRIDGE_PYTHON)
   const localAppData = process.env.LOCALAPPDATA || ''
   try {
     for (const dir of fs.readdirSync(path.join(localAppData, 'Programs', 'Python'))) {
@@ -6492,7 +6492,7 @@ async function pingAppleBridge(token = appleBridgeSessionToken) {
   if (!token) return false
   try {
     const res = await fetch(`http://127.0.0.1:${APPLE_BRIDGE_PORT}/ping`, {
-      headers: { 'X-WaveForge-Bridge-Token': token },
+      headers: { 'X-HyperPlayer-Bridge-Token': token },
       signal: AbortSignal.timeout(1500),
     })
     if (res.ok) {
@@ -6648,7 +6648,7 @@ app.whenReady().then(async () => {
     { urls: ['http://localhost:3001/*', 'http://127.0.0.1:3001/*'] },
     (details, callback) => {
       if (mainWindow && details.webContentsId === mainWindow.webContents.id) {
-        details.requestHeaders['X-WaveForge-Local-Token'] = LOCAL_SERVICE_TOKEN
+        details.requestHeaders['X-HyperPlayer-Local-Token'] = LOCAL_SERVICE_TOKEN
       }
       callback({ requestHeaders: details.requestHeaders })
     },
@@ -6799,7 +6799,7 @@ app.whenReady().then(async () => {
   }))
 
 
-  // 把已下载的音频文件映射为渲染进程可 fetch 的 waveforge-media:// URL
+  // 把已下载的音频文件映射为渲染进程可 fetch 的 hyperplayer-media:// URL
   // （浏览器端 decodeAudioData 原生支持 m4a/aac——Python/librosa 侧 libsndfile 打不开）。
   // 仅允许下载缓存目录内的文件，与 render:getAudioUrl 同款路径校验。
   ipcMain.handle('audio-download:getMediaUrl', guardTrustedIpc('privileged', (_event, filePath) => {

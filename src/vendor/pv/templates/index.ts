@@ -20,7 +20,7 @@ import { flyMeToTheMoonTemplate } from './flyMeToTheMoon';
 import { kawaiPixelTemplate } from './kawaiPixel';
 import { crimeSceneTemplate } from './crimeScene';
 import { haruhikageTemplate } from './haruhikage';
-// 未在主 UI 展示、但完整可用的模板（WaveForge 全量注册）
+// 未在主 UI 展示、但完整可用的模板（HyperPlayer 全量注册）
 import { battleTemplate } from './battle';
 import { blueInkTemplate } from './blueInk';
 import { cyberTemplate } from './cyber';

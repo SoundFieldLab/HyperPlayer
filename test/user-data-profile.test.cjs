@@ -5,22 +5,22 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { hasWaveForgeDevMarkers, selectWaveForgeUserData } = require('../desktop/user-data-profile.cjs')
+const { hasHyperPlayerDevMarkers, selectHyperPlayerUserData } = require('../desktop/user-data-profile.cjs')
 
 function fixture() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'waveforge-profile-'))
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'hyperplayer-profile-'))
 }
 
-test('selects a marked legacy WaveForge development profile without copying it', () => {
+test('selects a marked legacy HyperPlayer development profile without copying it', () => {
   const root = fixture()
   const legacy = path.join(root, 'Electron')
   fs.mkdirSync(path.join(legacy, 'IndexedDB', 'http_127.0.0.1_3000.indexeddb.leveldb'), { recursive: true })
   fs.writeFileSync(path.join(legacy, 'config.json'), '{}')
   fs.writeFileSync(path.join(legacy, 'desktop-player-settings.json'), '{}')
 
-  assert.equal(hasWaveForgeDevMarkers(legacy), true)
-  assert.equal(selectWaveForgeUserData({ appDataRoot: root, isPackaged: false }), legacy)
-  assert.equal(fs.existsSync(path.join(root, 'WaveForge 澜音工坊')), false)
+  assert.equal(hasHyperPlayerDevMarkers(legacy), true)
+  assert.equal(selectHyperPlayerUserData({ appDataRoot: root, isPackaged: false }), legacy)
+  assert.equal(fs.existsSync(path.join(root, 'HyperPlayer')), false)
   fs.rmSync(root, { recursive: true, force: true })
 })
 
@@ -29,8 +29,8 @@ test('does not misidentify an unrelated Electron profile', () => {
   const legacy = path.join(root, 'Electron')
   fs.mkdirSync(legacy, { recursive: true })
   fs.writeFileSync(path.join(legacy, 'Preferences'), '{}')
-  assert.equal(hasWaveForgeDevMarkers(legacy), false)
-  assert.equal(selectWaveForgeUserData({ appDataRoot: root, isPackaged: false }), path.join(root, 'WaveForge 澜音工坊'))
+  assert.equal(hasHyperPlayerDevMarkers(legacy), false)
+  assert.equal(selectHyperPlayerUserData({ appDataRoot: root, isPackaged: false }), path.join(root, 'HyperPlayer'))
   fs.rmSync(root, { recursive: true, force: true })
 })
 
@@ -41,7 +41,7 @@ test('main process creates selected profile before setPath and launcher shares i
   const mkdirIndex = mainSource.indexOf("fs.mkdirSync(selectedUserDataPath, { recursive: true })")
   const setPathIndex = mainSource.indexOf("app.setPath('userData', selectedUserDataPath)")
   assert.ok(mkdirIndex >= 0 && setPathIndex > mkdirIndex)
-  assert.match(launcherSource, /WAVEFORGE_USERDATA:\s*userDataRoot/)
+  assert.match(launcherSource, /HYPERPLAYER_USERDATA:\s*userDataRoot/)
   assert.match(launcherSource, /\.\.\.localServiceEnv/)
 })
 
@@ -51,6 +51,6 @@ test('packaged builds always use the stable product profile and ignore overrides
   fs.mkdirSync(path.join(legacy, 'IndexedDB', 'http_127.0.0.1_3000.indexeddb.leveldb'), { recursive: true })
   fs.writeFileSync(path.join(legacy, 'config.json'), '{}')
   fs.writeFileSync(path.join(legacy, 'apple-web-cookies.json'), '{}')
-  assert.equal(selectWaveForgeUserData({ appDataRoot: root, isPackaged: true, overridePath: legacy }), path.join(root, 'WaveForge 澜音工坊'))
+  assert.equal(selectHyperPlayerUserData({ appDataRoot: root, isPackaged: true, overridePath: legacy }), path.join(root, 'HyperPlayer'))
   fs.rmSync(root, { recursive: true, force: true })
 })

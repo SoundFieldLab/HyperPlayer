@@ -42,7 +42,7 @@ await build({
 
 server = spawn(process.execPath, [resolve(root, 'scripts/bilibili-mv-benchmark-server.mjs')], {
   cwd: root,
-  env: { ...process.env, PORT: String(port), WAVEFORGE_LOCAL_TOKEN: '' },
+  env: { ...process.env, PORT: String(port), HYPERPLAYER_LOCAL_TOKEN: '' },
   stdio: ['ignore', 'pipe', 'inherit'],
 })
 

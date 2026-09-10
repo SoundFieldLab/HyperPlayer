@@ -7,7 +7,7 @@ import { exec } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 
-console.log('🧪 WaveForge 壁纸检测测试脚本\n');
+console.log('🧪 HyperPlayer 壁纸检测测试脚本\n');
 
 // 测试 1: 检查操作系统
 console.log('📋 测试 1: 检查操作系统');

@@ -3,7 +3,7 @@ import { fetchQQExploreAppendShelf, fetchQQExploreBootstrap, fetchQQExploreFeed,
 import { getExploreCookie } from '../../services/exploreApi'
 import { dedupeQQModules, qqModuleIdentity, type QQExploreCard, type QQExploreModule, type QQExploreSnapshot, type QQExploreState } from './model'
 
-const CACHE_PREFIX = 'waveforge:qq-explore:v5:'
+const CACHE_PREFIX = 'hyperplayer:qq-explore:v5:'
 const FEED_STALE_MS = 10 * 60 * 1000
 const LOAD_MORE_BATCHES = 5
 

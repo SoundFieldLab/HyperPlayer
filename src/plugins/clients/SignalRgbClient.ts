@@ -309,7 +309,7 @@ function createClient() {
       ensureAnalyzerSubscription();
       const api = bridge();
       if (!api) {
-        set({ clientError: "SignalRGB 仅支持 WaveForge Windows 桌面版" });
+        set({ clientError: "SignalRGB 仅支持 HyperPlayer Windows 桌面版" });
         return snapshot.status;
       }
       await runStatusOperation(() => api.refresh());

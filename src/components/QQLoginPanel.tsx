@@ -33,7 +33,7 @@ export default function QQLoginPanel({ onClose, onLoginSuccess }: QQLoginPanelPr
   }, [])
 
   // TV：原生应用内扫码登录，抓到 cookie 后自动完成登录
-  const nativeBridge = (window as any).WaveForgeNative
+  const nativeBridge = (window as any).HyperPlayerNative
   const canNativeLogin = Boolean(nativeBridge?.openQQLogin)
 
   useEffect(() => {

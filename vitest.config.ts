@@ -11,11 +11,11 @@ export default defineConfig({
     include: [
       'test/**/*.test.ts',
       'test/**/*.test.tsx',
-      // 音频引擎 v3（src/services/waveforge-engine-v3/，自 test/ 与 ui/ 原位迁入）
-      'src/services/waveforge-engine-v3/test/**/*.test.ts',
-      'src/services/waveforge-engine-v3/ui/**/*.test.tsx',
+      // 音频引擎 v3（src/services/HyperSoundEngine-v1/，自 test/ 与 ui/ 原位迁入）
+      'src/services/HyperSoundEngine-v1/test/**/*.test.ts',
+      'src/services/HyperSoundEngine-v1/ui/**/*.test.tsx',
       // 空间音频（v3 模块树内联 src/spatial/）
-      'src/services/waveforge-engine-v3/src/spatial/test/**/*.test.ts',
+      'src/services/HyperSoundEngine-v1/src/spatial/test/**/*.test.ts',
     ],
     setupFiles: ['test/setup.ts'],
   },

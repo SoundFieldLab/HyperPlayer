@@ -1,7 +1,7 @@
 // 多曲目音源可用性普查
 const fs = require('fs');
 const http = require('http');
-const cfg = JSON.parse(fs.readFileSync(process.env.APPDATA + '/WaveForge 澜音工坊/soda-qr-login.json', 'utf8'));
+const cfg = JSON.parse(fs.readFileSync(process.env.APPDATA + '/HyperPlayer/soda-qr-login.json', 'utf8'));
 const COOKIE = encodeURIComponent(cfg.cookie || '');
 function get(path) {
   return new Promise((resolve, reject) => {

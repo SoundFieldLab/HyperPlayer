@@ -59,7 +59,7 @@ export default function LoginView({ platform, onCancel, onLoginSuccess }: LoginV
       setLoading(true)
       setQQError('')
       const electron = window.electron
-      const native = (window as any).WaveForgeNative
+      const native = (window as any).HyperPlayerNative
       if (!electron?.openQQLoginWindow && !native?.openQQLogin) {
         // 纯浏览器（含 ?tv=1 模拟）：跨域限制下无法自动抓取 qq.com 的 cookie——
         // 打开 y.qq.com 让用户登录，然后走"手动登录"粘贴 Cookie 流程。
@@ -439,7 +439,7 @@ export default function LoginView({ platform, onCancel, onLoginSuccess }: LoginV
                       <div>
                         <h3 className="text-xl font-medium text-white mb-2">QQ音乐登录</h3>
                         <p className="text-white/60 text-sm">
-                          {(window as any).WaveForgeNative?.openQQLogin
+                          {(window as any).HyperPlayerNative?.openQQLogin
                             ? '请在电视屏幕上使用手机 QQ 扫码登录，登录成功后自动返回'
                             : '弹出窗口后请选择立即登录，登录成功后本窗口将自动关闭'}
                         </p>
@@ -471,7 +471,7 @@ export default function LoginView({ platform, onCancel, onLoginSuccess }: LoginV
                         className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-full font-medium transition-colors inline-flex items-center justify-center gap-2"
                       >
                         <ExternalLink className="w-4 h-4" />
-                        {(window as any).WaveForgeNative?.openQQLogin ? '手机扫码登录' : '打开登录窗口'}
+                        {(window as any).HyperPlayerNative?.openQQLogin ? '手机扫码登录' : '打开登录窗口'}
                       </button>
                       <button
                         onClick={onCancel}

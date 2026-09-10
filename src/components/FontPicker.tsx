@@ -197,7 +197,7 @@ export default function FontPicker({ value, onChange, dark, accent, buttonWidth,
       {open && rect && createPortal(
         <div
           ref={panelRef}
-          className="waveforge-font-picker"
+          className="hyperplayer-font-picker"
           style={{
             position: 'fixed',
             left: rect.left,
@@ -229,8 +229,8 @@ export default function FontPicker({ value, onChange, dark, accent, buttonWidth,
             </div>
           </div>
 
-          {/* 选项列表（自定义滚动条见 .waveforge-font-picker-list 样式） */}
-          <div className="waveforge-font-picker-list flex-1 overflow-y-auto px-1.5 py-1.5">
+          {/* 选项列表（自定义滚动条见 .hyperplayer-font-picker-list 样式） */}
+          <div className="hyperplayer-font-picker-list flex-1 overflow-y-auto px-1.5 py-1.5">
             {filteredRecommended.length > 0 && (
               <>
                 <div className="px-2 pb-1 pt-0.5 text-[10px] font-medium uppercase tracking-wider" style={{ color: textSub }}>推荐字体</div>
@@ -297,11 +297,11 @@ export default function FontPicker({ value, onChange, dark, accent, buttonWidth,
 
           {/* 组件内滚动条 + 选项样式（作用域限定，避免污染全局） */}
           <style>{`
-            .waveforge-font-picker-list { scrollbar-width: thin; scrollbar-color: ${dark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.2)'} transparent; }
-            .waveforge-font-picker-list::-webkit-scrollbar { width: 8px; }
-            .waveforge-font-picker-list::-webkit-scrollbar-track { background: transparent; }
-            .waveforge-font-picker-list::-webkit-scrollbar-thumb { background: ${dark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.18)'}; border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
-            .waveforge-font-picker-list::-webkit-scrollbar-thumb:hover { background: ${accent}; background-clip: padding-box; }
+            .hyperplayer-font-picker-list { scrollbar-width: thin; scrollbar-color: ${dark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.2)'} transparent; }
+            .hyperplayer-font-picker-list::-webkit-scrollbar { width: 8px; }
+            .hyperplayer-font-picker-list::-webkit-scrollbar-track { background: transparent; }
+            .hyperplayer-font-picker-list::-webkit-scrollbar-thumb { background: ${dark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.18)'}; border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+            .hyperplayer-font-picker-list::-webkit-scrollbar-thumb:hover { background: ${accent}; background-clip: padding-box; }
           `}</style>
         </div>,
         document.body,

@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // ⚠️ 设置镜像机制声明（后续维护者 / AI 协作必读）⚠️
 //
-// 本组件是【简约模式设置】= 整软件的"总设置"。WaveForge 共 4 个界面模式
+// 本组件是【简约模式设置】= 整软件的"总设置"。HyperPlayer 共 4 个界面模式
 // （简约 / 传统 / 探索 / 桌面，后续可能更多），其中【全局功能性设置】通过
 //   services/globalSettingsRegistry.ts（设置注册表，同键同事件双向同步）
 //   components/MirroredGlobalSettings.tsx（按各模式设计语言渲染的镜像 UI）
@@ -347,7 +347,7 @@ function SettingsPanel({
     localStorage.setItem('applePreferCover', JSON.stringify(next.preferAppleCover))
     localStorage.setItem('appleDuetColors', JSON.stringify(next.duetColors))
     if (next.enabled !== appleMusic.enabled || next.lyricLang !== appleMusic.lyricLang || next.storefront !== appleMusic.storefront) {
-      window.dispatchEvent(new Event('waveforge:lyrics-policy-changed'))
+      window.dispatchEvent(new Event('hyperplayer:lyrics-policy-changed'))
     }
   }
 
@@ -391,8 +391,8 @@ function SettingsPanel({
 
   useEffect(() => {
     const sync = () => setPlaybackRadialActionCount(getPlaybackRadialActions().length)
-    window.addEventListener('waveforge-playback-radial-menu-settings-changed', sync)
-    return () => window.removeEventListener('waveforge-playback-radial-menu-settings-changed', sync)
+    window.addEventListener('hyperplayer-playback-radial-menu-settings-changed', sync)
+    return () => window.removeEventListener('hyperplayer-playback-radial-menu-settings-changed', sync)
   }, [])
 
   // 桌面播放器（独立置顶小窗口）设置
@@ -575,7 +575,7 @@ function SettingsPanel({
 
   /** 打开外部链接：TV 走原生浏览器（ACTION_VIEW），桌面/网页用 window.open */
   const openExternal = (url: string) => {
-    const native = (window as any).WaveForgeNative
+    const native = (window as any).HyperPlayerNative
     if (native?.openExternal) {
       native.openExternal(url)
       return
@@ -587,14 +587,14 @@ function SettingsPanel({
     setUpdateCheck({ status: 'checking', message: '正在检查…' })
     try {
       // Android（TV/平板）：交给原生更新器——它知道本机 versionCode 且能下载安装
-      const nativeBridge = (window as any).WaveForgeNative
+      const nativeBridge = (window as any).HyperPlayerNative
       if (nativeBridge?.checkForUpdates) {
         nativeBridge.checkForUpdates()
         setUpdateCheck({ status: 'current', message: '已开始检查，如有新版本将弹出提示' })
         return
       }
 
-      // 桌面/网页：拉多源更新清单（Gitee 主源 → ghproxy 加速的 GitHub → GitHub 直连），比较版本号
+      // 桌面/网页：拉多源更新清单（ghproxy 加速的 GitHub → GitHub 直连），比较版本号
       const { UPDATE_MANIFEST_URLS, withDownloadProxies } = await import('../services/updateConstants')
       let manifest: { version?: string; notes?: string; artifacts?: Record<string, { urls?: string[]; sha256?: string }> } | null = null
       let httpStatus = 0
@@ -636,7 +636,7 @@ function SettingsPanel({
       setUpdateDetail(detail)
       setUpdateCheck({ status: 'available', message: `当前版本：${packageInfo.version}  新版本：${getVersionDisplay(remoteVersion)}` })
       // 详情/下载/就绪/重启弹窗由全局 UpdateManager 承接（应用内美化弹窗）
-      window.dispatchEvent(new CustomEvent('waveforge:update-open-details', { detail }))
+      window.dispatchEvent(new CustomEvent('hyperplayer:update-open-details', { detail }))
     } catch (error) {
       setUpdateCheck({ status: 'error', message: `检查失败：${error instanceof Error ? error.message : '网络不可用'}` })
     }
@@ -644,7 +644,7 @@ function SettingsPanel({
 
   const openUpdateDetails = () => {
     if (updateDetail?.version) {
-      window.dispatchEvent(new CustomEvent('waveforge:update-open-details', { detail: updateDetail }))
+      window.dispatchEvent(new CustomEvent('hyperplayer:update-open-details', { detail: updateDetail }))
     }
   }
 
@@ -775,7 +775,7 @@ function SettingsPanel({
   // 过渡调试：开启后切歌/过渡时右上角弹窗显示引擎/策略/DJ 效果清单
   const [transitionDebugEnabled, setTransitionDebugEnabled] = useState(() => {
     try {
-      return localStorage.getItem('waveforge:transition-debug') === '1'
+      return localStorage.getItem('hyperplayer:transition-debug') === '1'
     } catch {
       return false
     }
@@ -783,7 +783,7 @@ function SettingsPanel({
   const handleTransitionDebugToggle = (enabled: boolean) => {
     setTransitionDebugEnabled(enabled)
     try {
-      localStorage.setItem('waveforge:transition-debug', enabled ? '1' : '0')
+      localStorage.setItem('hyperplayer:transition-debug', enabled ? '1' : '0')
     } catch {
       // 忽略持久化失败（隐身模式等）
     }
@@ -2541,7 +2541,7 @@ function SettingsPanel({
                               const enabled = e.target.checked
                               setThirdPartyLyricsEnabled(enabled)
                               localStorage.setItem('thirdPartyLyricsEnabled', JSON.stringify(enabled))
-                              window.dispatchEvent(new Event('waveforge:lyrics-policy-changed'))
+                              window.dispatchEvent(new Event('hyperplayer:lyrics-policy-changed'))
                             }}
                             className="sr-only peer"
                           />
@@ -2662,7 +2662,7 @@ function SettingsPanel({
                                 const enabled = e.target.checked
                                 setAdaptiveLyrics(enabled)
                                 localStorage.setItem('adaptiveLyrics', JSON.stringify(enabled))
-                                window.dispatchEvent(new Event('waveforge:lyrics-policy-changed'))
+                                window.dispatchEvent(new Event('hyperplayer:lyrics-policy-changed'))
                               }}
                               className="sr-only peer"
                             />
@@ -2693,7 +2693,7 @@ function SettingsPanel({
                               onClick={() => {
                                 setPrimaryLyricsSource(source.key)
                                 localStorage.setItem('primaryLyricsSource', source.key)
-                                window.dispatchEvent(new Event('waveforge:lyrics-policy-changed'))
+                                window.dispatchEvent(new Event('hyperplayer:lyrics-policy-changed'))
                               }}
                               className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors border-2 ${
                                 primaryLyricsSource === source.key
@@ -3091,7 +3091,7 @@ function SettingsPanel({
                       <div className="flex items-start justify-between gap-4 mb-5">
                         <div>
                           <div className={`text-xs font-semibold tracking-[0.2em] uppercase ${textTertiary} mb-2`}>About</div>
-                          <h2 className={`text-2xl font-bold ${textPrimary}`}>关于 WaveForge</h2>
+                          <h2 className={`text-2xl font-bold ${textPrimary}`}>关于 HyperPlayer</h2>
                         </div>
                         <span className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold ${playerTheme === 'dark' ? 'bg-white/10 text-white/70' : 'bg-black/5 text-black/60'}`}>
                           {getVersionDisplay(packageInfo.version)} · 预览版
@@ -3100,18 +3100,18 @@ function SettingsPanel({
 
                       <div className={`rounded-xl border ${borderColor} p-4 relative`}>
                         <div className="flex items-center gap-4 pr-10">
-                          <img src={appLogoUrl} alt="WaveForge" className="w-14 h-14 rounded-xl object-cover shadow-lg shrink-0" />
+                          <img src={appLogoUrl} alt="HyperPlayer" className="w-14 h-14 rounded-xl object-cover shadow-lg shrink-0" />
                           <div className="min-w-0">
                             <p className={`text-xs ${textTertiary} mb-1`}>开发者</p>
                             <p className={`text-lg font-semibold leading-6 ${textPrimary}`}>Yoshino / Castorice</p>
                             <p className={`text-lg font-semibold leading-6 ${textPrimary}`}>IceFire_Icer</p>
-                            <p className={`text-sm leading-6 ${textSecondary} mt-1`} style={{ textWrap: 'pretty' }}>WaveForge 澜音工坊的开发与维护</p>
+                            <p className={`text-sm leading-6 ${textSecondary} mt-1`} style={{ textWrap: 'pretty' }}>HyperPlayer的开发与维护</p>
                           </div>
                         </div>
                         <button
                           onClick={() => openExternal('https://www.afdian.com/a/Kirito666233')}
-                          title="支持 WaveForge"
-                          aria-label="支持 WaveForge"
+                          title="支持 HyperPlayer"
+                          aria-label="支持 HyperPlayer"
                           className="absolute top-3 right-3 w-9 h-9 rounded-full flex items-center justify-center text-white transition-all hover:scale-110 hover:shadow-md"
                           style={{ background: `linear-gradient(135deg, ${accentColor}, #ff5b9d)`, boxShadow: `0 6px 16px ${accentColor}24` }}
                         >
@@ -3122,13 +3122,10 @@ function SettingsPanel({
                       <div className={`mt-4 pt-4 border-t ${borderColor}`}>
                         <div>
                           <p className={`font-medium ${textPrimary}`}>查看软件源代码</p>
-                          <p className={`text-sm ${textSecondary} mt-1`}>选择国内 Gitee 或 GitHub 仓库</p>
+                          <p className={`text-sm ${textSecondary} mt-1`}>前往 GitHub 仓库查看源码与更新</p>
                         </div>
-                        <div className="mt-3 grid grid-cols-2 gap-3 w-full">
-                          <button onClick={() => openExternal('https://gitee.com/kirito666233/wave-forge')} className={`rounded-xl border ${borderColor} ${hoverBg} ${textPrimary} px-4 py-3 flex items-center justify-center gap-2 transition-colors`}>
-                            <Code2 className="w-4 h-4" /><span className="text-sm font-medium">Gitee</span><ExternalLink className="w-3.5 h-3.5 opacity-60" />
-                          </button>
-                          <button onClick={() => openExternal('https://github.com/YoshinoRinn/WaveForge')} className={`rounded-xl border ${borderColor} ${hoverBg} ${textPrimary} px-4 py-3 flex items-center justify-center gap-2 transition-colors`}>
+                        <div className="mt-3 grid grid-cols-1 gap-3 w-full">
+                          <button onClick={() => openExternal('https://github.com/SoundFieldLab/HyperPlayer')} className={`rounded-xl border ${borderColor} ${hoverBg} ${textPrimary} px-4 py-3 flex items-center justify-center gap-2 transition-colors`}>
                             <Github className="w-4 h-4" /><span className="text-sm font-medium">GitHub</span><ExternalLink className="w-3.5 h-3.5 opacity-60" />
                           </button>
                         </div>
@@ -3213,14 +3210,14 @@ function SettingsPanel({
                       <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: `${accentColor}20`, color: accentColor }}><Users className="w-5 h-5" /></div>
                       <div>
                         <h3 className={`text-lg font-semibold ${textPrimary}`}>特别鸣谢 / 粉丝开发者</h3>
-                        <p className={`mt-3 font-medium ${textPrimary}`}>WaveForge 澜音工坊群的各位</p>
+                        <p className={`mt-3 font-medium ${textPrimary}`}>HyperPlayer群的各位</p>
                         <p className={`mt-1.5 text-sm leading-6 ${textSecondary}`}>感谢各位朋友们对软件的喜爱与鼓励。</p>
                       </div>
                     </div>
                   </section>
 
                   <div className="flex items-center justify-center px-1">
-                    <p className={`${textTertiary} text-xs`}>© 2026 WaveForge. All rights reserved.</p>
+                    <p className={`${textTertiary} text-xs`}>© 2026 HyperPlayer. All rights reserved.</p>
                   </div>
                 </div>
               )}
@@ -3381,7 +3378,7 @@ function SettingsPanel({
             <div className="relative z-10 p-5 border-b flex items-center justify-between" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
               <div>
                 <h3 className="text-base font-semibold text-white">版本历史</h3>
-                <p className="text-white/55 text-xs mt-0.5">WaveForge 澜音工坊 各版本更新内容</p>
+                <p className="text-white/55 text-xs mt-0.5">HyperPlayer 各版本更新内容</p>
               </div>
               <button type="button" onClick={() => setShowVersionHistory(false)} className="p-2 rounded-full transition-colors hover:bg-white/15 -m-1">
                 <X className="w-5 h-5 text-white/60" />

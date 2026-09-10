@@ -1,6 +1,6 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 import { useEffect, useRef, useState } from 'react'
 import { CheckCircle2, ChevronDown, KeyRound, Link2, Loader2, LogOut, Music, ShieldCheck, X } from 'lucide-react'
@@ -349,7 +349,7 @@ export default function AppleLoginPanel({ accentColor = '#fa2d48', onClose, onLo
             </span>
             <div>
               <h2 className="text-base font-semibold text-white">Apple Music 登录</h2>
-              <p className="text-xs text-white/45">使用 Apple 账号接入 WaveForge</p>
+              <p className="text-xs text-white/45">使用 Apple 账号接入 HyperPlayer</p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg text-white/50 transition hover:bg-white/10 hover:text-white" aria-label="关闭">

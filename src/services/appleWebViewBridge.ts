@@ -2,10 +2,10 @@
  * Apple Music WebView2 播放面桥接服务
  *
  * 架构：
- *   WaveForge (Electron) → HTTP → apple_bridge.py (pywebview) → WebView2 → music.apple.com
+ *   HyperPlayer (Electron) → HTTP → apple_bridge.py (pywebview) → WebView2 → music.apple.com
  *
  * Apple 歌曲在 Electron 原生 CENC 失败时可通过 WebView2 兼容窗口播放，
- * WaveForge 通过带会话认证的 HTTP 控制播放并读取进度（歌词/UI 同步）。
+ * HyperPlayer 通过带会话认证的 HTTP 控制播放并读取进度（歌词/UI 同步）。
  *
  * bridge 进程生命周期：首次 Apple 歌曲时自动启动（由主进程 spawn），退出时跟随主进程关闭。
  */
@@ -50,7 +50,7 @@ let sessionToken = ''
 function bridgeFetch(path: string, init: RequestInit = {}) {
   if (!sessionToken) return Promise.reject(new Error('Apple bridge session is unavailable'))
   const headers = new Headers(init.headers)
-  headers.set('X-WaveForge-Bridge-Token', sessionToken)
+  headers.set('X-HyperPlayer-Bridge-Token', sessionToken)
   return fetch(`${BRIDGE_URL}${path}`, { ...init, headers })
 }
 

@@ -76,18 +76,18 @@ export class PVEngine {
   private _time = 0;
   private _lastFrameTime = 0;
 
-  // WaveForge 自动编排：段落级模板平滑切换（淡出→重载→淡入）
+  // HyperPlayer 自动编排：段落级模板平滑切换（淡出→重载→淡入）
   // 状态机用独立 _fading 门控整个流程（淡入阶段 _pendingTemplate 已清空，
   // 不能用它做推进条件——否则淡入永远不跑、alpha 卡 0 整段透明）
   private _pendingTemplate: TemplateConfig | null = null;
   private _fading = false;
   private _fadeValue = 1;
   private _fadeSpeed = 0; // >0 淡出，<0 淡入
-  /** WaveForge 扩展：每次 loadTemplate（含 fadeToTemplate 重载）完成后回调——
+  /** HyperPlayer 扩展：每次 loadTemplate（含 fadeToTemplate 重载）完成后回调——
    *  组件用它统一挂载系统级 overlay（逐字高亮），避免重载后被 clearEffects 清掉。 */
   onTemplateReload: (() => void) | null = null;
 
-  // WaveForge 镜头控制（组件每帧注入）：强度→Ken Burns 推近幅度；sweep→切镜横扫（组件维护衰减）
+  // HyperPlayer 镜头控制（组件每帧注入）：强度→Ken Burns 推近幅度；sweep→切镜横扫（组件维护衰减）
   cameraIntensity = 0.5;
   cameraSweepX = 0;
   cameraSweepY = 0;
@@ -388,7 +388,7 @@ export class PVEngine {
     return t - this.lyricTimeline[this.lyricCursor].time;
   }
 
-  /** WaveForge 扩展：当前行逐字演唱进度（0~1）。无逐字时间戳返回 undefined。 */
+  /** HyperPlayer 扩展：当前行逐字演唱进度（0~1）。无逐字时间戳返回 undefined。 */
   private getWordProgress(time: number): number | undefined {
     if (!this.lyricTimeline || this.lyricTimeline.length === 0) return undefined;
     const line = this.lyricTimeline[this.lyricCursor];
@@ -430,12 +430,12 @@ export class PVEngine {
   }
   get alphaMode() { return this._alphaMode; }
 
-  /** WaveForge 扩展：注入歌曲节拍时间点（精确踩点），无拍点时内部节拍器兜底 */
+  /** HyperPlayer 扩展：注入歌曲节拍时间点（精确踩点），无拍点时内部节拍器兜底 */
   setBeats(beats: BeatTiming[]): void {
     this.beat.setBeats(beats);
   }
 
-  /** WaveForge 扩展：挂载系统级特效（逐字高亮等），随模板重载一起被清理 */
+  /** HyperPlayer 扩展：挂载系统级特效（逐字高亮等），随模板重载一起被清理 */
   addEffect(type: string, config: Record<string, any>, layer: LayerType = 'overlay'): BaseEffect | null {
     const layerContainer = this.layers.get(layer);
     if (!layerContainer) return null;
@@ -449,7 +449,7 @@ export class PVEngine {
     }
   }
 
-  /** WaveForge 扩展：按父容器尺寸重设渲染器（父容器布局改变/ResizeObserver 时调用） */
+  /** HyperPlayer 扩展：按父容器尺寸重设渲染器（父容器布局改变/ResizeObserver 时调用） */
   resize(): void {
     if (this._resizeParent) {
       const w = this._resizeParent.clientWidth;
@@ -459,7 +459,7 @@ export class PVEngine {
     this.syncResolution();
   }
 
-  /** WaveForge 扩展：平滑切换到另一模板（淡出 → 重载 → 淡入），自动编排段落切换用。
+  /** HyperPlayer 扩展：平滑切换到另一模板（淡出 → 重载 → 淡入），自动编排段落切换用。
    *  加载中/上一次切换未完成时忽略，避免连锁。 */
   fadeToTemplate(template: TemplateConfig, seconds = 0.35): void {
     if (this._loading || this._fading) return;
@@ -468,12 +468,12 @@ export class PVEngine {
     this._fadeSpeed = 1 / (seconds / 2);
   }
 
-  /** WaveForge 扩展：当前激活特效数（状态诊断） */
+  /** HyperPlayer 扩展：当前激活特效数（状态诊断） */
   get effectCount(): number {
     return this.activeEffects.length;
   }
 
-  /** WaveForge 扩展：当前模板名（状态诊断） */
+  /** HyperPlayer 扩展：当前模板名（状态诊断） */
   get templateName(): string | null {
     return this.currentTemplate?.name ?? null;
   }
@@ -956,7 +956,7 @@ export class PVEngine {
       py += (Math.random() - 0.5) * totalShake * 20;
     }
 
-    // 镜头运动（WaveForge 扩展）：Ken Burns 慢推拉 + 段落强度推近 + 切镜横扫
+    // 镜头运动（HyperPlayer 扩展）：Ken Burns 慢推拉 + 段落强度推近 + 切镜横扫
     const cam = this.cameraIntensity ?? 0.5;
     const driftAmp = 0.012 + cam * 0.02;
     px += Math.sin(time * 0.07) * w * driftAmp;

@@ -117,7 +117,7 @@ export default function PlaybackRadialMenu({
       setSelectedIndex(null)
       setRadialCenter(null)
     }
-    const isPlaybackPageTarget = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest('[data-waveforge-playback-page="true"]'))
+    const isPlaybackPageTarget = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest('[data-hyperplayer-playback-page="true"]'))
     const handleMouseDown = (event: MouseEvent) => {
       if (event.button !== 2 || !isPlaybackPageTarget(event.target)) return
       if (event.target instanceof Element && event.target.closest('[data-playback-radial-block="true"]')) return
@@ -164,8 +164,8 @@ export default function PlaybackRadialMenu({
         else if (action === 'album') actionsRef.current.onViewAlbum(currentSong)
         else if (action === 'artist') actionsRef.current.onViewArtist(currentSong)
         else if (action === 'copy-info') actionsRef.current.onCopyInfo(currentSong)
-        else if (action === 'details') window.dispatchEvent(new CustomEvent('waveforge:show-song-detail', { detail: currentSong }))
-        else if (action === 'similar') window.dispatchEvent(new CustomEvent('waveforge:show-similar-songs', { detail: currentSong }))
+        else if (action === 'details') window.dispatchEvent(new CustomEvent('hyperplayer:show-song-detail', { detail: currentSong }))
+        else if (action === 'similar') window.dispatchEvent(new CustomEvent('hyperplayer:show-similar-songs', { detail: currentSong }))
         else if (action === 'add-to-playlist') {
           contextMenuOpenRef.current?.()
           setShowPlaylistPicker(true)

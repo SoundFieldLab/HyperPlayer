@@ -163,7 +163,7 @@ describe('MV alignment negative cache', () => {
       method: 'beat' as const,
       ts: Date.now(),
     }
-    localStorage.setItem('waveforge:mv-alignments:v2-seconds', JSON.stringify({
+    localStorage.setItem('hyperplayer:mv-alignments:v2-seconds', JSON.stringify({
       'villain-key|BV-villain': poisoned,
     }))
     resetMvAlignmentCachesForTests()
@@ -196,7 +196,7 @@ describe('alignment cache trust gate（候选可信度闸门）', () => {
   })
 
   it('getMvAlignmentFor hides a poisoned cache from fast-path readers', () => {
-    localStorage.setItem('waveforge:mv-alignments:v2-seconds', JSON.stringify({
+    localStorage.setItem('hyperplayer:mv-alignments:v2-seconds', JSON.stringify({
       'villain-key|BV-villain': { ...beatCache, ts: Date.now() },
     }))
     resetMvAlignmentCachesForTests()

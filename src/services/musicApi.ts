@@ -52,7 +52,7 @@ const ensureSongUrlListenersRegistered = () => {
   songUrlListenersRegistered = true
   if (typeof window !== 'undefined') {
     window.addEventListener(AUDIO_QUALITY_SETTINGS_EVENT, clearSongUrlCache)
-    window.addEventListener('waveforge-auth-changed', clearSongUrlCache)
+    window.addEventListener('hyperplayer-auth-changed', clearSongUrlCache)
   }
 }
 
@@ -1801,7 +1801,7 @@ function parseAMLLTTMLLyrics(ttmlText: string): LyricLine[] {
     .map(line => {
       const words = line.words.map(word => ({
         word: word.text,
-        // AMLL TTML 使用歌曲绝对时间；WaveForge 的逐字时间以当前行为原点。
+        // AMLL TTML 使用歌曲绝对时间；HyperPlayer 的逐字时间以当前行为原点。
         startTime: Math.max(0, word.startTime - line.startTime),
         duration: Math.max(0, word.endTime - word.startTime),
       }))

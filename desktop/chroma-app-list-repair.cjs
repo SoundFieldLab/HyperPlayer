@@ -7,7 +7,7 @@ const { execFile, spawn } = require('node:child_process')
 
 const APP_ROOT = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'Razer Chroma SDK', 'Apps')
 const SDK_REGISTRY = 'HKLM\\SOFTWARE\\WOW6432Node\\Razer Chroma SDK\\Apps'
-const STALE_APPS = Object.freeze(['WaveForge澜音工坊', 'WaveForgeProbe', 'WaveForgeMousepadProbe'])
+const STALE_APPS = Object.freeze(['HyperPlayer', 'HyperPlayerProbe', 'HyperPlayerMousepadProbe'])
 const APP_MANAGER_LOG = path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Razer Chroma SDK', 'logs', 'RzSDKServer.exe.log')
 const REPAIR_PROTOCOL_VERSION = 1
 const DEFAULT_REPAIR_TIMEOUT_MS = 120000
@@ -57,15 +57,15 @@ async function inspectChromaAppList(options = {}) {
   const staleRegistry = STALE_APPS.filter(name => registryApps.some(value => String(value.Name).toLowerCase() === name.toLowerCase()))
   const nonAsciiApps = registryApps.filter(value => /[^\x20-\x7e]/.test(`${value.Name || ''}${value.Title || ''}${value.Path || ''}`))
   const utf8Error = (options.readRecentUtf8ErrorImpl || readRecentUtf8Error)()
-  const waveForgeCorrupted = Boolean(utf8Error || staleFolders.length || staleRegistry.length)
+  const hyperPlayerCorrupted = Boolean(utf8Error || staleFolders.length || staleRegistry.length)
   return {
-    corrupted: waveForgeCorrupted,
+    corrupted: hyperPlayerCorrupted,
     thirdPartyWarning: nonAsciiApps.length > 0,
     utf8Error,
     staleFolders,
     staleRegistry,
     nonAsciiApps,
-    cleanAppRegistered: registryApps.some(value => String(value.Name).toLowerCase() === 'waveforge'),
+    cleanAppRegistered: registryApps.some(value => String(value.Name).toLowerCase() === 'hyperplayer'),
     appRoot: options.appRoot || APP_ROOT,
   }
 }

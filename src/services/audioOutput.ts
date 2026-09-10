@@ -1,7 +1,7 @@
 // 音频输出设备选择（渲染进程）：
 // 依赖 main 进程 session.setDevicePermissionHandler 授权 media/audiooutput，
 // 使 navigator.mediaDevices.enumerateDevices() 返回带真实标签的输出设备；
-// 切换输出用 AudioContext.setSinkId —— WaveForge 所有音频都流经
+// 切换输出用 AudioContext.setSinkId —— HyperPlayer 所有音频都流经
 // createMediaElementSource → masterGain → analyser → destination，因此打在
 // AudioContext 上即可整体切换输出。
 

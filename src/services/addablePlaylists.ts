@@ -5,9 +5,6 @@ import { isPlaylistOwner, type PlaylistOwnershipContext } from './playlistOwners
 const VIRTUAL_PLAYLIST_IDS = new Set([
   '__apple_library__',
   '__apple_favorites__',
-  'qishui-liked',
-  'qishui-recent',
-  'qishui-feed',
 ])
 
 export function getPlaylistMutationId(playlist: any): string {

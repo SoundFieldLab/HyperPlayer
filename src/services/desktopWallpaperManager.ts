@@ -58,14 +58,14 @@ type ElectronWallpaperResult = {
 
 /**
  * 将本地壁纸路径规范化为渲染进程可直接使用的 URL，重点容错 UNC 网络路径：
- * - 已是 URL（data:/http:/https:/blob:/file:/waveforge-media:）原样返回
+ * - 已是 URL（data:/http:/https:/blob:/file:/hyperplayer-media:）原样返回
  * - UNC 路径（\\server\share\file.png）转为 file://server/share/file.png
  * - 其他本地路径保持原样（通常主进程已附带 fileUrl / dataUrl）
  */
 export function toWallpaperUrl(raw: string | null | undefined): string {
   if (!raw) return ''
   const value = raw.trim()
-  if (/^(data:|https?:|blob:|file:|waveforge-media:)/i.test(value)) return value
+  if (/^(data:|https?:|blob:|file:|hyperplayer-media:)/i.test(value)) return value
   // UNC：\\server\share\... -> file://server/share/...
   if (/^\\\\[^\\]+\\/.test(value)) {
     return `file:${value.replace(/\\/g, '/')}`

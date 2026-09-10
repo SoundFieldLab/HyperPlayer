@@ -510,7 +510,7 @@ export default function SongContextMenu({
       label: '查看歌曲详情',
       icon: Info,
       onClick: () => {
-        window.dispatchEvent(new CustomEvent('waveforge:show-song-detail', { detail: song }))
+        window.dispatchEvent(new CustomEvent('hyperplayer:show-song-detail', { detail: song }))
         onClose()
       }
     },
@@ -526,7 +526,7 @@ export default function SongContextMenu({
       label: '相似歌曲',
       icon: ListMusic,
       onClick: () => {
-        window.dispatchEvent(new CustomEvent('waveforge:show-similar-songs', { detail: song }))
+        window.dispatchEvent(new CustomEvent('hyperplayer:show-similar-songs', { detail: song }))
         onClose()
       }
     }] : []),

@@ -5,8 +5,9 @@ const test = require('node:test')
 
 const root = join(__dirname, '..')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-const legal = readFileSync(join(root, 'src', 'i18n', 'legal.ts'), 'utf8')
-const oobe = readFileSync(join(root, 'src', 'i18n', 'oobe.ts'), 'utf8')
+// 减配后 src/i18n/ 已移除：法务条款内联于 LegalAgreement，使用须知位于 PlatformLoginNotice。
+const legal = readFileSync(join(root, 'src', 'components', 'legal', 'LegalAgreement.tsx'), 'utf8')
+const oobe = readFileSync(join(root, 'src', 'components', 'PlatformLoginNotice.tsx'), 'utf8')
 const installer = readFileSync(join(root, 'build', 'installer.nsh'), 'utf8')
 const generator = readFileSync(join(root, 'scripts', 'generate-installer-ui.mjs'), 'utf8')
 const preview = readFileSync(join(root, 'scripts', 'setup-preview', 'preview.nsi'), 'utf8')
@@ -109,15 +110,19 @@ test('installer legal summary is traceable to legal.ts and OOBE source clauses',
     ['Esri', /Esri ArcGIS/],
     ['DataV', /DataV/],
     ['公网 IP 定位', /公网 IP 定位/],
-    ['Gitee / GitHub', /Gitee \/ GitHub/],
+    ['GitHub', /GitHub/],
     ['Bing 壁纸', /Bing 壁纸/],
-    ['按“现状”', /按"现状"/],
+    // LegalAgreement 内联文案中引号带转义（按\"现状\"），此处匹配其转义形态。
+    ['按“现状”', /按\\"现状\\"/],
   ]
   for (const [summaryPhrase, sourcePattern] of mappings) {
     assert.match(generator, new RegExp(summaryPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
     assert.match(legal, sourcePattern)
   }
-  for (const sourcePhrase of ['非官方接口', '个人非商业', '账号风险', '本机']) assert.match(oobe, new RegExp(sourcePhrase))
+  for (const sourcePhrase of ['非官方接口', '账号风险']) assert.match(oobe, new RegExp(sourcePhrase))
+  // 「个人非商业」随第三方音源须知移入设置面板；「本机」在法务条款中。
+  assert.match(readFileSync(join(root, 'src', 'components', 'SettingsPanel.tsx'), 'utf8'), /个人非商业/)
+  assert.match(legal, /本机/)
 })
 
 test('UAC inner and upgrades skip mutable setup pages and preserve builder scope and path', () => {
@@ -139,8 +144,8 @@ test('fresh installs prefer a fixed D drive without overriding builder path deci
   assert.match(init, /hasPerUserInstallation == "0"/)
   assert.match(init, /hasPerMachineInstallation == "0"/)
   assert.match(init, /GetDriveTypeW\(w "D:\\\\"\)/)
-  assert.match(init, /\$2 == 3[\s\S]*StrCpy \$INSTDIR "D:\\WaveForge"/)
-  assert.match(init, /!ifdef WF_PREVIEW[\s\S]*StrCpy \$INSTDIR "D:\\WaveForge"/)
+  assert.match(init, /\$2 == 3[\s\S]*StrCpy \$INSTDIR "D:\\HyperPlayer"/)
+  assert.match(init, /!ifdef WF_PREVIEW[\s\S]*StrCpy \$INSTDIR "D:\\HyperPlayer"/)
   assert.doesNotMatch(block(installer, 'Function WaveSkipInitialPage', 'FunctionEnd'), /StrCpy \$INSTDIR/)
 })
 

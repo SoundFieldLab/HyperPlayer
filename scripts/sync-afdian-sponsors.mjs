@@ -6,14 +6,14 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const outputPath = path.join(root, 'src', 'data', 'afdianSponsors.generated.json')
-const configuredEnvPath = String(process.env.WAVEFORGE_AFDIAN_ENV || '').trim()
+const configuredEnvPath = String(process.env.HYPERPLAYER_AFDIAN_ENV || '').trim()
 const developerConfigDir = process.env.APPDATA
-  ? path.join(process.env.APPDATA, 'WaveForge Developer')
-  : path.join(os.homedir(), '.waveforge-developer')
+  ? path.join(process.env.APPDATA, 'HyperPlayer Developer')
+  : path.join(os.homedir(), '.hyperplayer-developer')
 const externalEnvCandidates = [
   configuredEnvPath ? path.resolve(configuredEnvPath) : null,
-  path.resolve(root, '..', 'WaveForge-Afdian.env'),
-  path.join(developerConfigDir, 'WaveForge-Afdian.env'),
+  path.resolve(root, '..', 'HyperPlayer-Afdian.env'),
+  path.join(developerConfigDir, 'HyperPlayer-Afdian.env'),
 ].filter(Boolean)
 const externalEnvPath = externalEnvCandidates.find(candidate => fs.existsSync(candidate))
 const optional = process.argv.includes('--optional')

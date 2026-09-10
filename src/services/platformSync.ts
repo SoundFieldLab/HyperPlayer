@@ -1,10 +1,10 @@
 import { MUSIC_PLATFORMS, type MusicPlatform } from './platforms'
 
 /** 全局平台键；四个视图键保留用于兼容旧版本。 */
-export const GLOBAL_PLATFORM_KEY = 'waveforge:platform'
+export const GLOBAL_PLATFORM_KEY = 'hyperplayer:platform'
 export const LEGACY_PLATFORM_KEYS = ['selectedPlatform', 'explorePlatform', 'traditionalPlatform', 'desktopModePlatform'] as const
 const PLATFORM_KEYS = [GLOBAL_PLATFORM_KEY, ...LEGACY_PLATFORM_KEYS] as const
-export const PLATFORM_CHANGED_EVENT = 'waveforge-platform-changed'
+export const PLATFORM_CHANGED_EVENT = 'hyperplayer-platform-changed'
 
 export function isMusicPlatform(value: unknown): value is MusicPlatform {
   return typeof value === 'string' && (MUSIC_PLATFORMS as readonly string[]).includes(value)

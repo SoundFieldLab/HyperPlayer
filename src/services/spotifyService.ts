@@ -85,7 +85,7 @@ function clearSpotifySession(): void {
   localStorage.removeItem('spotify_avatar')
   localStorage.removeItem('spotify_user_id')
   window.dispatchEvent(new CustomEvent('spotify-session-expired'))
-  window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'spotify' } }))
+  window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'spotify' } }))
 }
 
 async function parseSpotifyResponse(response: Response): Promise<any> {
@@ -538,7 +538,7 @@ export async function fetchSpotifyRecentlyPlayed(limit = 20): Promise<SpotifyTra
   return (data?.items || []).map((item: any) => normalizeTrack(item.track)).filter((t: SpotifyTrack) => t.id && t.name)
 }
 
-/** Spotify 歌曲 → WaveForge Song */
+/** Spotify 歌曲 → HyperPlayer Song */
 export function spotifyTrackToSong(track: SpotifyTrack): Song {
   return {
     id: Number(parseInt(track.id.slice(0, 12), 36)) || 0,

@@ -13,10 +13,10 @@ export const MODE_SELECTION_PANEL_HEIGHT = 210
 export const MODE_SELECTION_CLOSE_MS = 380
 
 // 模式可见性自定义：控制模式选择下拉菜单里显示哪些模式卡片。
-const MODE_VISIBILITY_KEY = 'waveforge_visible_modes'
+const MODE_VISIBILITY_KEY = 'hyperplayer_visible_modes'
 // 已见模式记录：识别"保存的可见列表早于新模式上线"的情况——
 // 否则旧列表（如 8/22 传统模式上线前保存的）会让新增模式永远不可见
-const MODE_KNOWN_KEY = 'waveforge_known_modes'
+const MODE_KNOWN_KEY = 'hyperplayer_known_modes'
 const ALL_MODES: ModeSelectionMode[] = ['explore', 'minimal', 'traditional', 'desktop']
 const MODE_NAMES: Record<ModeSelectionMode, string> = {
   explore: '探索',
@@ -116,8 +116,8 @@ export default function ModeSelectionPanel({
   // 同步其他视图修改的模式可见性设置
   useEffect(() => {
     const handleVisibilityChanged = () => setVisibleModes(loadVisibleModes())
-    window.addEventListener('waveforge-modes-visibility-changed', handleVisibilityChanged)
-    return () => window.removeEventListener('waveforge-modes-visibility-changed', handleVisibilityChanged)
+    window.addEventListener('hyperplayer-modes-visibility-changed', handleVisibilityChanged)
+    return () => window.removeEventListener('hyperplayer-modes-visibility-changed', handleVisibilityChanged)
   }, [])
 
   // 当前所在模式始终保留在可见列表里
@@ -146,7 +146,7 @@ export default function ModeSelectionPanel({
       console.warn('保存模式可见设置失败:', error)
     }
     setVisibleModes(next)
-    window.dispatchEvent(new Event('waveforge-modes-visibility-changed'))
+    window.dispatchEvent(new Event('hyperplayer-modes-visibility-changed'))
   }
 
   const handlePanelClick = (event: MouseEvent<HTMLDivElement>) => {

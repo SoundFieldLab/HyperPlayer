@@ -23,7 +23,7 @@ export interface AudioQualitySettings {
 }
 
 export const AUDIO_QUALITY_SETTINGS_KEY = 'audioQualitySettings'
-export const AUDIO_QUALITY_SETTINGS_EVENT = 'waveforge-audio-quality-changed'
+export const AUDIO_QUALITY_SETTINGS_EVENT = 'hyperplayer-audio-quality-changed'
 
 export const DEFAULT_AUDIO_QUALITY_SETTINGS: AudioQualitySettings = {
   netease: 'auto',

@@ -1,6 +1,6 @@
 ﻿/**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 import { debugLog } from '../utils/debugLog'
 import { isTvModeActive } from '../platform'
@@ -857,7 +857,7 @@ class AutoMixAnalysisService {
 
   /**
    * 浏览器端整曲分析（Chromium decodeAudioData 原生支持 m4a/aac）。这是移除独立
-   * Python 分析服务后的唯一分析路径。优先解码已下载的本地文件（waveforge-media://），
+   * Python 分析服务后的唯一分析路径。优先解码已下载的本地文件（hyperplayer-media://），
    * 失败再回退直接抓取原始 URL；结果会正常缓存，同一首歌只解码一次。
    */
   private async analyzeInBrowser(input: TrackAnalysisInput): Promise<TrackAnalysis> {

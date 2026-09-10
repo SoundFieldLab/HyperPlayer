@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
-const VERBOSE_KEY = 'waveforge:verbose-log'
+const VERBOSE_KEY = 'hyperplayer:verbose-log'
 
 // debugLog 的 verboseEnabled 会缓存模块级结果，且 debugLog.ts 依赖全局
 // localStorage。为在干净状态下测试每个分支，这里用 vi.resetModules() 每次

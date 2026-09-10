@@ -2,7 +2,7 @@
 
 ## 结论
 
-通过 MuMu 中 QQ 音乐 20.8.0.8 的只读 APK 分析、页面截图和同账号 MusicU 验证，WaveForge 已接入两条手机客户端数据源：
+通过 MuMu 中 QQ 音乐 20.8.0.8 的只读 APK 分析、页面截图和同账号 MusicU 验证，HyperPlayer 已接入两条手机客户端数据源：
 
 ```text
 music.recommend.RecommendFeed.get_recommend_feed
@@ -36,7 +36,7 @@ Cookie、Token、UIN、签名、设备标识、追踪串和完整响应不写入
 
 当前客户端可下发以下入口：
 
-| 入口 | subtype/style | WaveForge 行为 |
+| 入口 | subtype/style | HyperPlayer 行为 |
 |---|---|---|
 | 用户/AI 身份卡 | 712/203 | 显示账号头像；仅打开白名单内的 QQ 官方 HTTPS H5 |
 | 猜你喜欢 | 711/201 | 获取账号 99 号电台并连续播放 |
@@ -92,10 +92,10 @@ music.feedback.RecommendFeedback.ReportConfigFb
 白名单动作：
 
 - 歌曲：直接播放或先补全详情。
-- 歌单：打开 WaveForge 歌单详情。
-- 专辑：打开 WaveForge 专辑详情。
-- 榜单：打开 WaveForge 榜单详情。
-- MV：打开 WaveForge QQ 视频播放器。
+- 歌单：打开 HyperPlayer 歌单详情。
+- 专辑：打开 HyperPlayer 专辑详情。
+- 榜单：打开 HyperPlayer 榜单详情。
+- MV：打开 HyperPlayer QQ 视频播放器。
 - 网页：仅允许 HTTPS 且域名属于 QQ 或 Kugou。
 - 未确认的深链、AI 指令、购买、粉丝、跨应用和游戏动作：显示但禁用。
 

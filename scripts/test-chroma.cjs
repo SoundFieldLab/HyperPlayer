@@ -70,7 +70,7 @@ async function main() {
     assert.equal(activated.deviceDiscoveryError, null)
     assert.ok(activated.lastDeviceScanAt)
     assert.ok(mock.metrics.earlySessionRequests >= 1, 'service should retry while the dynamic session endpoint starts')
-    assert.equal(mock.metrics.lastBodies.registration.title, 'WaveForge')
+    assert.equal(mock.metrics.lastBodies.registration.title, 'HyperPlayer')
     assert.deepEqual(mock.metrics.lastBodies.registration.device_supported, Object.keys(DEVICE_SPECS))
     assert.equal(appListInspections, 1, 'activate should inspect Chroma app-list health')
 
@@ -83,7 +83,7 @@ async function main() {
     assert.equal(repairSettled, false, 'repair IPC must wait for the elevated operation')
     resolveRepair({
       outcome: 'succeeded',
-      report: { version: 1, ok: true, repairedAt: new Date().toISOString(), removed: ['WaveForgeProbe'], error: null },
+      report: { version: 1, ok: true, repairedAt: new Date().toISOString(), removed: ['HyperPlayerProbe'], error: null },
     })
     const repairResult = await repairOperation
     assert.equal(repairResult.outcome, 'succeeded')

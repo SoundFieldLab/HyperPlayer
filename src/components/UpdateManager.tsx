@@ -3,7 +3,7 @@
  * 弹窗，以及启动时的自动检测提示。全部为应用内美化弹窗（非系统弹窗）。
  *
  * 触发方式：
- * - SettingsPanel 检查到新版本后派发 window 事件 'waveforge:update-open-details'（携带版本/更新内容/下载地址）
+ * - SettingsPanel 检查到新版本后派发 window 事件 'hyperplayer:update-open-details'（携带版本/更新内容/下载地址）
  * - 后台下载进度/结果经 preload update.onDownloadStatus 事件
  * - 启动时 consumeLastApplied → 首次启动弹「更新日志」
  * - 自动检测（可在「关于 → 更新」关闭）：限频每 24h 一次、延时 6s、失败静默，检测到仅提示
@@ -80,8 +80,8 @@ export default function UpdateManager() {
       const d = (e as CustomEvent).detail as UpdateInfo | undefined
       if (d?.version) openDetails(d)
     }
-    window.addEventListener('waveforge:update-open-details', open)
-    return () => window.removeEventListener('waveforge:update-open-details', open)
+    window.addEventListener('hyperplayer:update-open-details', open)
+    return () => window.removeEventListener('hyperplayer:update-open-details', open)
   }, [])
 
   // 后台下载状态事件
@@ -253,7 +253,7 @@ export default function UpdateManager() {
                 <div className="flex-1 min-w-0">
                   <h3 className="text-base font-semibold text-white">{viewTitle(view)}</h3>
                   <p className="text-white/55 text-xs mt-0.5">
-                    {view === 'changelog' ? `已更新至 ${getVersionDisplay(info?.version || '')}` : view === 'applied' ? '热更新已完成文件替换' : `WaveForge ${packageInfo.version} → ${getVersionDisplay(info?.version || '')}`}
+                    {view === 'changelog' ? `已更新至 ${getVersionDisplay(info?.version || '')}` : view === 'applied' ? '热更新已完成文件替换' : `HyperPlayer ${packageInfo.version} → ${getVersionDisplay(info?.version || '')}`}
                   </p>
                 </div>
                 {canCloseBackdrop && (

@@ -2,7 +2,7 @@ const path = require('node:path')
 const { runEvs } = require('./evs-runner.cjs')
 
 const target = path.resolve('node_modules/electron/dist')
-const required = process.env.WAVEFORGE_REQUIRE_DEV_VMP === '1'
+const required = process.env.HYPERPLAYER_REQUIRE_DEV_VMP === '1'
 
 try {
   if (runEvs('verify-pkg', target, { required: false })) {

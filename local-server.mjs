@@ -61,7 +61,7 @@ axios.defaults.httpsAgent = new HttpsAgent({ keepAlive: true, maxSockets: 64 })
 
 const app = express()
 const PORT = Number(process.env.PORT) || 3001
-const LOCAL_SERVICE_TOKEN = String(process.env.WAVEFORGE_LOCAL_TOKEN || '')
+const LOCAL_SERVICE_TOKEN = String(process.env.HYPERPLAYER_LOCAL_TOKEN || '')
 const ALLOWED_RENDERER_ORIGINS = new Set([
   'http://localhost:3000',
   'http://127.0.0.1:3000',
@@ -106,7 +106,7 @@ function setQQMusicCookie(cookie) {
 const QQ_COOKIE_PERSIST_FILENAME = 'qq-cookie.txt'
 
 function getQQCookiePersistPath() {
-  const baseDir = process.env.WAVEFORGE_USERDATA || join(os.homedir(), '.waveforge')
+  const baseDir = process.env.HYPERPLAYER_USERDATA || join(os.homedir(), '.hyperplayer')
   return join(baseDir, QQ_COOKIE_PERSIST_FILENAME)
 }
 
@@ -1042,7 +1042,7 @@ app.use((req, res, next) => {
     return res.status(426).json({ error: 'WebSocket 不在此服务，请连接遥控器服务的 /ws' })
   }
   const origin = req.headers.origin
-  const suppliedLocalToken = req.headers['x-waveforge-local-token']
+  const suppliedLocalToken = req.headers['x-hyperplayer-local-token']
   const tokenAuthorized = isAuthorizedLocalRequest({
     configuredToken: LOCAL_SERVICE_TOKEN,
     suppliedToken: suppliedLocalToken,
@@ -1059,7 +1059,7 @@ app.use((req, res, next) => {
   }
   // QQ Music Skills 的用户密钥只通过本机请求头传递，避免出现在 URL、历史记录和日志中。
   // Apple license 代理：兼容规范 Media-User-Token 与历史 X-Apple-Music-User-Token。
-  res.header('Access-Control-Allow-Headers', 'Content-Type, X-WaveForge-Local-Token, X-QQMusic-Skill-Key, Authorization, Media-User-Token, X-Apple-Music-User-Token, X-Apple-Renewal')
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-HyperPlayer-Local-Token, X-QQMusic-Skill-Key, Authorization, Media-User-Token, X-Apple-Music-User-Token, X-Apple-Renewal')
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
   if (req.method === 'OPTIONS') return res.sendStatus(204)
   if (!tokenAuthorized) {
@@ -8484,7 +8484,7 @@ app.post('/api/qq/like', async (req, res) => {
 })
 
 // QQ account-level recent songs. This reads the platform-synced MusicU history
-// and never falls back to WaveForge's local playback queue/history.
+// and never falls back to HyperPlayer's local playback queue/history.
 app.post('/api/qq/record/recent/report', async (req, res) => {
   try {
     const { cookie, songId, id } = req.body || {}
@@ -11134,7 +11134,7 @@ app.get('/api/apple/rss', async (req, res) => {
   try {
     const response = await axios.get(url, {
       timeout: 15000,
-      headers: { 'User-Agent': 'WaveForge/0.1 (compatible)', Accept: 'application/json' },
+      headers: { 'User-Agent': 'HyperPlayer/0.1 (compatible)', Accept: 'application/json' },
       responseType: 'json',
     })
     res.json(response.data)
@@ -11202,7 +11202,7 @@ const APPLE_LICENSE_URL = 'https://play.itunes.apple.com/WebObjects/MZPlay.woa/w
 // 仅凭 media-user-token 会被拒（-1002 session ended）
 function readAppleWebCookieHeader() {
   try {
-    const base = process.env.WAVEFORGE_USERDATA
+    const base = process.env.HYPERPLAYER_USERDATA
       || join(process.env.APPDATA || join(os.homedir(), 'AppData', 'Roaming'), 'Electron')
     const data = JSON.parse(readFileSync(join(base, 'apple-web-cookies.json'), 'utf8'))
     return typeof data?.cookie === 'string' && data.cookie ? data.cookie : ''

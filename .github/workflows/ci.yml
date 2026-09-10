@@ -83,5 +83,5 @@ jobs:
       - name: 上传安装包（可下载）
         uses: actions/upload-artifact@v4
         with:
-          name: waveforge-windows-installer
+          name: hyperplayer-windows-installer
           path: release/*.exe

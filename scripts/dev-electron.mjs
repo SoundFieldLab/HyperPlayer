@@ -29,7 +29,7 @@ const logStartup = message => {
 
 const projectRoot = resolve(__dirname, '..')
 const require = createRequire(import.meta.url)
-const { selectWaveForgeUserData } = require('../desktop/user-data-profile.cjs')
+const { selectHyperPlayerUserData } = require('../desktop/user-data-profile.cjs')
 const viteConfigFile = resolve(projectRoot, 'vite.config.ts')
 const distDir = resolve(projectRoot, 'dist')
 
@@ -47,14 +47,14 @@ if (vmpCheck.status !== 0) {
   process.exit(vmpCheck.status || 1)
 }
 
-const localServiceToken = process.env.WAVEFORGE_LOCAL_TOKEN || randomBytes(32).toString('base64url')
+const localServiceToken = process.env.HYPERPLAYER_LOCAL_TOKEN || randomBytes(32).toString('base64url')
 const appDataRoot = process.platform === 'win32'
   ? resolve(process.env.APPDATA || resolve(homedir(), 'AppData/Roaming'))
   : resolve(process.env.XDG_CONFIG_HOME || resolve(homedir(), '.config'))
-const userDataRoot = selectWaveForgeUserData({
+const userDataRoot = selectHyperPlayerUserData({
   appDataRoot,
   isPackaged: false,
-  overridePath: process.env.WAVEFORGE_USER_DATA,
+  overridePath: process.env.HYPERPLAYER_USER_DATA,
 })
 let pythonCacheRoot = resolve(userDataRoot, 'cache')
 try {
@@ -64,9 +64,9 @@ try {
 mkdirSync(pythonCacheRoot, { recursive: true })
 const localServiceEnv = {
   ...process.env,
-  WAVEFORGE_LOCAL_TOKEN: localServiceToken,
-  WAVEFORGE_CACHE_PATH: pythonCacheRoot,
-  WAVEFORGE_USERDATA: userDataRoot,
+  HYPERPLAYER_LOCAL_TOKEN: localServiceToken,
+  HYPERPLAYER_CACHE_PATH: pythonCacheRoot,
+  HYPERPLAYER_USERDATA: userDataRoot,
 }
 
 function getNewestMtime(targetPath) {
@@ -165,7 +165,7 @@ async function isLocalApiServerHealthy() {
     const controller = new AbortController()
     timer = setTimeout(() => controller.abort(), 1500)
     const res = await fetch('http://127.0.0.1:3001/health', {
-      headers: { 'X-WaveForge-Local-Token': localServiceToken },
+      headers: { 'X-HyperPlayer-Local-Token': localServiceToken },
       signal: controller.signal,
     })
     if (!res.ok) return false
@@ -195,7 +195,7 @@ async function createStaleLocalApiError() {
   return new Error([
     '',
     '============================================================',
-    `检测到 3001 端口上存在旧的或其他会话的 WaveForge 后端${pidText}。`,
+    `检测到 3001 端口上存在旧的或其他会话的 HyperPlayer 后端${pidText}。`,
     '为避免当前调试界面连接到错误的登录会话，本次启动已停止。',
     '请先清理该残留后端，再重新运行 npm run dev:electron。',
     '启动器没有自动终止该进程，也没有读取或输出任何登录凭据。',
@@ -211,7 +211,7 @@ async function getPidOnPort(port) {
 }
 
 /** 进程命令行是否为「本项目残留的 dev 进程」（vite dev server / local-server / python 服务） */
-function isWaveForgeDevLeftover(commandLine) {
+function isHyperPlayerDevLeftover(commandLine) {
   if (!commandLine) return false
   // 统一为正斜杠比较，避免 Windows 命令行的反斜杠/正斜杠混用误判
   const normalized = commandLine.replace(/[\\/]+/g, '/')
@@ -233,8 +233,8 @@ async function freePortIfHijacked(port, serviceName) {
   if (!pid) return true // 端口已空闲，无需处理
 
   const cmdline = await ps([`(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`])
-  if (isWaveForgeDevLeftover(cmdline)) {
-    console.warn(`[dev] 端口 ${port} 被残留的 WaveForge dev 进程(PID ${pid})占用，正在清理…`)
+  if (isHyperPlayerDevLeftover(cmdline)) {
+    console.warn(`[dev] 端口 ${port} 被残留的 HyperPlayer dev 进程(PID ${pid})占用，正在清理…`)
     await killProcess(pid)
     // 等端口真正释放
     for (let i = 0; i < 20; i++) {
@@ -286,7 +286,7 @@ async function startDev() {
   }
 
   const startRendererServer = async () => {
-    const useLiveRenderer = process.env.WAVEFORGE_LIVE_UI === '1'
+    const useLiveRenderer = process.env.HYPERPLAYER_LIVE_UI === '1'
 
     // 3000 是渲染服务专用端口：被残留的 vite dev server 占用会因 strictPort 直接失败
     if (await isPortOpen(3000)) {
@@ -324,7 +324,7 @@ async function startDev() {
     return server
   }
 
-  // The cached production renderer is the default fast path; set WAVEFORGE_LIVE_UI=1
+  // The cached production renderer is the default fast path; set HYPERPLAYER_LIVE_UI=1
   // to restore full Vite HMR.
   // 先完成 3001 预检，避免旧会话存在时仍启动其余服务并遗留更多进程。
   const api = await startAPI()
@@ -344,9 +344,9 @@ async function startDev() {
       stdio: 'inherit',
       env: {
         ...localServiceEnv,
-        WAVEFORGE_USER_DATA: userDataRoot,
-        WAVEFORGE_DEV_SERVER_URL: devServerUrl,
-        WAVEFORGE_STARTUP_LOG: startupLogFile,
+        HYPERPLAYER_USER_DATA: userDataRoot,
+        HYPERPLAYER_DEV_SERVER_URL: devServerUrl,
+        HYPERPLAYER_STARTUP_LOG: startupLogFile,
       },
     }
   )

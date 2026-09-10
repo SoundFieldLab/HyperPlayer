@@ -3,7 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-function hasWaveForgeDevMarkers(candidate, fsImpl = fs) {
+function hasHyperPlayerDevMarkers(candidate, fsImpl = fs) {
   try {
     const hasConfig = fsImpl.existsSync(path.join(candidate, 'config.json'))
     const hasProductFile = ['desktop-player-settings.json', 'apple-web-cookies.json', 'remote-settings.json']
@@ -17,12 +17,12 @@ function hasWaveForgeDevMarkers(candidate, fsImpl = fs) {
   }
 }
 
-function selectWaveForgeUserData({ appDataRoot, isPackaged, overridePath, fsImpl = fs }) {
-  const stable = path.resolve(appDataRoot, 'WaveForge 澜音工坊')
+function selectHyperPlayerUserData({ appDataRoot, isPackaged, overridePath, fsImpl = fs }) {
+  const stable = path.resolve(appDataRoot, 'HyperPlayer')
   if (isPackaged) return stable
   if (overridePath && path.isAbsolute(overridePath)) return path.resolve(overridePath)
   const legacy = path.resolve(appDataRoot, 'Electron')
-  return hasWaveForgeDevMarkers(legacy, fsImpl) ? legacy : stable
+  return hasHyperPlayerDevMarkers(legacy, fsImpl) ? legacy : stable
 }
 
-module.exports = { hasWaveForgeDevMarkers, selectWaveForgeUserData }
+module.exports = { hasHyperPlayerDevMarkers, selectHyperPlayerUserData }

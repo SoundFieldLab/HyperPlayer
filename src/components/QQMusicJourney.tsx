@@ -313,7 +313,7 @@ export default function QQMusicJourney({
               <ol className="mt-5 space-y-2 text-sm leading-relaxed text-white/58">
                 <li>1. 打开 QQ 音乐官方页面并登录当前账号。</li>
                 <li>2. 领取以 <code className="rounded bg-white/[0.06] px-1.5 py-0.5 text-emerald-200">qmk-</code> 开头的 API Key。</li>
-                <li>3. 粘贴到下方，WaveForge 会先验证再启用。</li>
+                <li>3. 粘贴到下方，HyperPlayer 会先验证再启用。</li>
               </ol>
               <button type="button" onClick={() => void handleOpenKeyPage()} className="mt-4 flex items-center gap-2 rounded-xl border border-white/[0.1] bg-white/[0.045] px-4 py-2.5 text-sm text-white/72 hover:bg-white/[0.08]"><KeyRound className="h-4 w-4" />前往官方页面领取</button>
               {!active && <input type="password" autoComplete="off" value={keyInput} onChange={event => setKeyInput(event.target.value)} placeholder="qmk-…" className="mt-4 w-full rounded-2xl border border-white/[0.1] bg-black/25 px-4 py-3 text-sm outline-none transition focus:border-emerald-300/40" />}

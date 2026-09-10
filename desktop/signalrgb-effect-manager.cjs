@@ -5,8 +5,8 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 
-const EFFECT_FILE = 'WaveForge.html'
-const SIDECAR_FILE = 'WaveForge.waveforge.json'
+const EFFECT_FILE = 'HyperPlayer.html'
+const SIDECAR_FILE = 'HyperPlayer.hyperplayer.json'
 const DEFAULT_LOCAL_API = 'http://127.0.0.1:16038/api/v1'
 const DEFAULT_CANVAS_API = 'http://localhost:16034/canvas/event'
 const EVENT_RE = /^(?:probe|play|pause|stop|beat:(?:100|[1-9]?\d)|accent(?::(?:100|[1-9]?\d))?|theme:[0-9a-fA-F]{6}:[0-9a-fA-F]{6}|style:(?:spectrum-cycle|gradient-spectrum|wave|ripple|fire|rain|vu-meter|aurora|galaxy|bass-reactor|ambient|static)|section:(?:intro|verse|pre-chorus|chorus|bridge|outro|breakdown|drop|solo))$/
@@ -150,7 +150,7 @@ class SignalRgbEffectManager {
     try { content = await this.fs.promises.readFile(effectPath) } catch (error) { if (error.code !== 'ENOENT') throw error }
     try { metadata = JSON.parse(await this.fs.promises.readFile(sidecarPath, 'utf8')) } catch { metadata = null }
     const hash = content ? sha256(content) : null
-    const sidecarOwned = Boolean(metadata && metadata.owner === 'WaveForge' && metadata.file === EFFECT_FILE && /^[a-f0-9]{64}$/i.test(metadata.sha256 || ''))
+    const sidecarOwned = Boolean(metadata && metadata.owner === 'HyperPlayer' && metadata.file === EFFECT_FILE && /^[a-f0-9]{64}$/i.test(metadata.sha256 || ''))
     return { ...installation, effectPath, sidecarPath, content, metadata, hash,
       owned: Boolean(content && sidecarOwned && metadata.sha256.toLowerCase() === hash),
       conflict: Boolean(content && (!sidecarOwned || metadata.sha256.toLowerCase() !== hash)) }
@@ -198,7 +198,7 @@ class SignalRgbEffectManager {
 
   async probeCanvasEndpoint() {
     try {
-      const url = `${this.canvasApiBase}?sender=waveforge&event=probe`
+      const url = `${this.canvasApiBase}?sender=hyperplayer&event=probe`
       const response = await this.request(url, {
         method: 'POST',
         headers: { 'content-type': 'text/plain;charset=utf-8' },
@@ -246,7 +246,7 @@ class SignalRgbEffectManager {
     const bundled = await this.fs.promises.readFile(this.bundledEffectPath)
     const bundledHash = sha256(bundled)
     if (latest.content) {
-      if (!latest.owned) { this.state.conflict = true; this.emit(); throw new Error('WaveForge.html exists but is not owned by WaveForge') }
+      if (!latest.owned) { this.state.conflict = true; this.emit(); throw new Error('HyperPlayer.html exists but is not owned by HyperPlayer') }
       if (latest.hash === bundledHash && latest.metadata.version === this.version) return this.emit()
     }
     await this.fs.promises.mkdir(latest.effectDirectory, { recursive: true })
@@ -256,7 +256,7 @@ class SignalRgbEffectManager {
       await this.fs.promises.writeFile(temporary, bundled)
       await this.fs.promises.copyFile(temporary, latest.effectPath)
     } finally { await this.fs.promises.rm(temporary, { force: true }).catch(() => {}) }
-    await this.fs.promises.writeFile(latest.sidecarPath, `${JSON.stringify({ owner: 'WaveForge', file: EFFECT_FILE, version: this.version, sha256: bundledHash }, null, 2)}\n`)
+    await this.fs.promises.writeFile(latest.sidecarPath, `${JSON.stringify({ owner: 'HyperPlayer', file: EFFECT_FILE, version: this.version, sha256: bundledHash }, null, 2)}\n`)
     this.log('info', `installed SignalRGB effect ${this.version}`)
     await this.refreshInstallation()
     return this.emit()
@@ -273,7 +273,7 @@ class SignalRgbEffectManager {
     return this.emit()
   }
 
-  findWaveForgeEffect() { return this.effects.find((effect) => /waveforge/i.test(itemName(effect))) || null }
+  findHyperPlayerEffect() { return this.effects.find((effect) => /hyperplayer/i.test(itemName(effect))) || null }
   currentEffectId() { return itemId(this.state.currentEffect) }
   async postEffect(effectId) {
     const encoded = encodeURIComponent(String(effectId))
@@ -295,8 +295,8 @@ class SignalRgbEffectManager {
   }
   async applyEffect() {
     await this.refresh()
-    const effect = this.findWaveForgeEffect()
-    if (!effect || !itemId(effect)) throw new Error('WaveForge effect not found in SignalRGB Local API')
+    const effect = this.findHyperPlayerEffect()
+    if (!effect || !itemId(effect)) throw new Error('HyperPlayer effect not found in SignalRGB Local API')
     const current = this.currentEffectId()
     if (current && current !== itemId(effect)) this.previousEffectId = current
     await this.postEffect(itemId(effect))
@@ -321,7 +321,7 @@ class SignalRgbEffectManager {
     if (event === this.lastEventValue && now - this.lastEventAt < this.eventDedupeMs) return { sent: false, deduplicated: true, status: this.getStatus() }
     if (now - this.lastEventAttemptAt < this.eventThrottleMs) return { sent: false, throttled: true, status: this.getStatus() }
     this.lastEventAttemptAt = now
-    const url = `${this.canvasApiBase}?sender=waveforge&event=${encodeURIComponent(event)}`
+    const url = `${this.canvasApiBase}?sender=hyperplayer&event=${encodeURIComponent(event)}`
     let response
     let method = 'POST'
     try {

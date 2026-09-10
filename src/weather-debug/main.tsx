@@ -56,7 +56,7 @@ function DebugApp() {
     <main className="weather-debug-root">
       <header className="weather-debug-header">
         <div>
-          <div className="weather-debug-eyebrow">WAVEFORGE WEATHER LAB</div>
+          <div className="weather-debug-eyebrow">HYPERPLAYER WEATHER LAB</div>
           <h1>Apple Weather Scene Comparison</h1>
           <p>选择一种天气和昼夜状态，逐项检查完整场景与桌面卡片。</p>
         </div>

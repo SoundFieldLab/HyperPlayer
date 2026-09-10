@@ -184,7 +184,7 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
 
   const handleClearLyrics = async () => {
     try {
-      window.dispatchEvent(new Event('waveforge:lyrics-cache-cleared'))
+      window.dispatchEvent(new Event('hyperplayer:lyrics-cache-cleared'))
       await indexedDBCache.clearLyrics()
       await refreshStats()
       showToastMessage('歌词缓存清理成功')
@@ -230,7 +230,7 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
   const handleClearTransitionCache = async () => {
     if (!window.electron?.render) return
     try {
-      window.dispatchEvent(new Event('waveforge:track-stem-cache-clearing'))
+      window.dispatchEvent(new Event('hyperplayer:track-stem-cache-clearing'))
       const [renderResult, stemResult, trackStemResult] = await Promise.all([
         window.electron.render.clearCache(),
         window.electron.stems?.clearCache?.() ?? Promise.resolve({ success: true, cleared: 0 }),
@@ -260,10 +260,10 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
     } else {
       // 第二次点击，执行清理
       let failed = false
-      window.dispatchEvent(new Event('waveforge:track-stem-cache-clearing'))
+      window.dispatchEvent(new Event('hyperplayer:track-stem-cache-clearing'))
       cacheManager.clearAll()
       clearUserPlaylistsMemoryCache()
-      window.dispatchEvent(new Event('waveforge:lyrics-cache-cleared'))
+      window.dispatchEvent(new Event('hyperplayer:lyrics-cache-cleared'))
       try {
         await indexedDBCache.clearAll()
       } catch (err) {

@@ -10,7 +10,7 @@ function startSignalRgbMock(options = {}) {
   const state = {
     localMode: options.localMode || 'ok',
     canvasPostStatus: Number(options.canvasPostStatus) || 200,
-    effects: options.effects || [{ id: 'waveforge', title: 'WaveForge' }, { id: 'previous', name: 'Previous Effect' }],
+    effects: options.effects || [{ id: 'hyperplayer', title: 'HyperPlayer' }, { id: 'previous', name: 'Previous Effect' }],
     currentEffect: options.currentEffect || { id: 'previous', name: 'Previous Effect' },
     layouts: options.layouts || [{ id: 'desk', name: 'Desk' }],
     currentLayout: options.currentLayout || { id: 'desk', name: 'Desk' },

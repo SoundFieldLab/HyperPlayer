@@ -1,12 +1,12 @@
 """
-[WaveForge Apple 播放面] pywebview + WebView2 桥接服务 v2
-架构：WaveForge (Electron) → HTTP → 本服务 → evaluate_js → music.apple.com MusicKit JS
+[HyperPlayer Apple 播放面] pywebview + WebView2 桥接服务 v2
+架构：HyperPlayer (Electron) → HTTP → 本服务 → evaluate_js → music.apple.com MusicKit JS
 音频在 WebView2 内经 MF Widevine 解密播放（Apple 接受 Edge 运行时的 CDM 证书）。
 
 启动：python apple_bridge.py [端口] --token <随机会话令牌> [--profile <dir>] [--show]
   --token    主进程生成的会话令牌；所有 HTTP 请求必须携带
   --profile  WebView2 用户数据目录（持久化登录态；不传则用 %LOCALAPPDATA% 默认目录）
-  --show     窗口可见启动（默认隐藏；登录引导由 WaveForge 设置页手动打开）
+  --show     窗口可见启动（默认隐藏；登录引导由 HyperPlayer 设置页手动打开）
 
 HTTP 协议（127.0.0.1，仅本机）：
   GET  /ping                 → {ok, ready}
@@ -49,7 +49,7 @@ while index < len(args):
 if not SESSION_TOKEN:
     raise SystemExit('missing required --token')
 if not PROFILE_DIR:
-    PROFILE_DIR = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'WaveForge', 'apple-bridge-profile')
+    PROFILE_DIR = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'HyperPlayer', 'apple-bridge-profile')
 
 APPLE_URL = 'https://music.apple.com/cn/new'
 ALLOWED_ORIGINS = {
@@ -303,7 +303,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         origin = self.headers.get('Origin')
         if origin and origin not in ALLOWED_ORIGINS:
             return False
-        return self.headers.get('X-WaveForge-Bridge-Token', '') == SESSION_TOKEN
+        return self.headers.get('X-HyperPlayer-Bridge-Token', '') == SESSION_TOKEN
 
     def _json(self, data, status=200):
         try:
@@ -313,7 +313,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if origin in ALLOWED_ORIGINS:
                 self.send_header('Access-Control-Allow-Origin', origin)
                 self.send_header('Vary', 'Origin')
-            self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-WaveForge-Bridge-Token')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-HyperPlayer-Bridge-Token')
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
             self.end_headers()
             self.wfile.write(json.dumps(data).encode('utf-8'))
@@ -520,7 +520,7 @@ if __name__ == '__main__':
         threading.Thread(target=capture_spectrum, daemon=True).start()
 
     window = webview.create_window(
-        title='WaveForge Apple 播放面',
+        title='HyperPlayer Apple 播放面',
         url=APPLE_URL,
         width=420,
         height=700,

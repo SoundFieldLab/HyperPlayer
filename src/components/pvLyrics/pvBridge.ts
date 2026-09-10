@@ -1,7 +1,7 @@
 /**
- * PV 歌词模式桥接层 —— 把 WaveForge 的歌词/分析数据归一化为 pv-tool 引擎可消费的结构。
+ * PV 歌词模式桥接层 —— 把 HyperPlayer 的歌词/分析数据归一化为 pv-tool 引擎可消费的结构。
  *
- * - WaveForge LyricLine.words（startTime/duration 均为相对行首毫秒）→ 引擎逐字（绝对秒）
+ * - HyperPlayer LyricLine.words（startTime/duration 均为相对行首毫秒）→ 引擎逐字（绝对秒）
  * - TrackAnalysis.beats（秒数组）+ beatFeatures（逐拍 energy）→ beatProvider 拍点数组（带能量）
  */
 import type { LyricLine as WfLyricLine } from '../../services/musicApi'
@@ -9,7 +9,7 @@ import type { LyricLine as PvLyricLine, LyricWordTiming } from '../../vendor/pv/
 import type { BeatTiming } from '../../vendor/pv/core/beatProvider'
 import type { TrackAnalysis } from '../../audio/types'
 
-/** WaveForge 歌词（逐字相对毫秒）→ 引擎歌词（逐字绝对秒） */
+/** HyperPlayer 歌词（逐字相对毫秒）→ 引擎歌词（逐字绝对秒） */
 export function toPvLyrics(lyrics: WfLyricLine[]): PvLyricLine[] {
   return lyrics.map((line) => {
     let words: LyricWordTiming[] | undefined

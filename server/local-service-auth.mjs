@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 
-export const LOCAL_SERVICE_HEADER = 'x-waveforge-local-token'
+export const LOCAL_SERVICE_HEADER = 'x-hyperplayer-local-token'
 
 export function isAuthorizedLocalRequest({ configuredToken, suppliedToken }) {
   if (!configuredToken) return true

@@ -5,7 +5,7 @@
  * 内存读取 dev token / media-user-token，不打印、不落盘。Cookie 由本地 license 代理
  * 从 apple-web-cookies.json 读取。实时 generateRequest → POST flat body → 同一 session.update。
  *
- * 用法（先关闭 WaveForge，保持 dev server/local-server 在跑）：
+ * 用法（先关闭 HyperPlayer，保持 dev server/local-server 在跑）：
  *   node_modules/.bin/electron scripts/probe-apple-widevine-license.cjs [songId]
  */
 const { app, BrowserWindow, components, ipcMain } = require('electron')
@@ -55,7 +55,7 @@ async function getCredentials(win) {
     developerToken: localStorage.getItem('appleDeveloperToken') || '',
     mediaUserToken: localStorage.getItem('appleMediaUserToken') || ''
   }))()`)
-  if (!creds.developerToken || !creds.mediaUserToken) throw new Error('WaveForge localStorage 中无 Apple 登录凭据')
+  if (!creds.developerToken || !creds.mediaUserToken) throw new Error('HyperPlayer localStorage 中无 Apple 登录凭据')
   log('credentials: present (values redacted)')
   return creds
 }

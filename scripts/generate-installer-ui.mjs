@@ -92,8 +92,8 @@ function rail(theme, phase, phaseNames = PHASES) {
   })
   return `<rect width="${W}" height="${H}" fill="${THEMES[theme].bg}"/><rect width="${RAIL}" height="${H}" fill="${THEMES[theme].rail}"/>
     <image href="data:image/png;base64,${logoB64}" x="72" y="28" width="88" height="88"/>
-    <text x="116" y="145" font-family="${FONT}" font-size="19" font-weight="700" fill="#fff" text-anchor="middle">WaveForge</text>
-    <text x="116" y="168" font-family="${FONT}" font-size="12" fill="#9FC3FF" text-anchor="middle">澜音工坊</text>
+    <text x="116" y="145" font-family="${FONT}" font-size="19" font-weight="700" fill="#fff" text-anchor="middle">HyperPlayer</text>
+    <text x="116" y="168" font-family="${FONT}" font-size="12" fill="#9FC3FF" text-anchor="middle">HyperPlayer</text>
     <rect x="46" y="188" width="140" height="2" rx="1" fill="#4B91F7"/>${steps}
     <text x="116" y="488" font-family="${FONT}" font-size="11" fill="#607086" text-anchor="middle">NATIVE SETUP</text>`
 }
@@ -140,7 +140,7 @@ function themePage(frame = 0) {
     <defs><linearGradient id="themeBg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0B1220"/><stop offset=".55" stop-color="#14274D"/><stop offset="1" stop-color="#0A162C"/></linearGradient></defs>
     <rect width="${W}" height="${H}" fill="url(#themeBg)"/><circle cx="440" cy="115" r="180" fill="#2D76DB" opacity=".11"/>
     <image href="data:image/png;base64,${logoB64}" x="388" y="34" width="104" height="104"/>
-    <text x="440" y="185" font-family="${FONT}" font-size="32" font-weight="700" fill="#fff" text-anchor="middle">WaveForge 澜音工坊</text>
+    <text x="440" y="185" font-family="${FONT}" font-size="32" font-weight="700" fill="#fff" text-anchor="middle">HyperPlayer</text>
     <text x="440" y="218" font-family="${FONT}" font-size="13" fill="#A8B8CC" text-anchor="middle">选择界面主题和安装范围</text>
     <rect x="245" y="246" width="390" height="34" rx="8" fill="#0C172B" stroke="#334968"/>
     ${cardSvg(true, false, 138, 304)}${cardSvg(false, false, 458, 304)}
@@ -186,7 +186,7 @@ function licenseBody(t) {
     ['01  平台、账号与版权', '独立第三方播放器，非官方客户端。Cookie / Token 凭证可能明文存于本机；非官方接口有账号风险。内容版权归平台和权利人。'],
     ['02  联网服务与代理', '音乐功能会访问平台；Apple 跨域请求可能经 api.allorigins.win 转发。歌词会查 Lrclib、AMLL、amlldb。'],
     ['03  天气、地图与定位', '天气地图会访问 Open-Meteo、气象地震源、OpenStreetMap、Photon、Esri、DataV；可能用公网 IP 定位。'],
-    ['04  更新与第三方图片', '版本检查会访问 Gitee / GitHub 更新清单；壁纸和背景可能从 Bing 壁纸、风景或动漫图片 API 获取。'],
+    ['04  更新与第三方图片', '版本检查会访问 GitHub 更新清单；壁纸和背景可能从 Bing 壁纸、风景或动漫图片 API 获取。'],
     ['05  本地数据与使用责任', '凭证、缓存、配置、歌单和分析数据主要存于本机，无系统级加密。不得批量抓取、绕过付费、侵权导出、再分发或商用。'],
     ['06  授权、风险与组件', '软件按“现状”提供。完整许可见随包 THIRD_PARTY_NOTICES.md。'],
   ]
@@ -217,14 +217,14 @@ function dirBody(t) {
 }
 
 const pages = {
-  welcome: [1, '欢迎使用 WaveForge', '准备好你的沉浸式音乐工作台', (t) => `<rect x="${CX}" y="148" width="560" height="246" rx="8" fill="${t.panel}" stroke="${t.border}"/>
+  welcome: [1, '欢迎使用 HyperPlayer', '准备好你的沉浸式音乐工作台', (t) => `<rect x="${CX}" y="148" width="560" height="246" rx="8" fill="${t.panel}" stroke="${t.border}"/>
     <text x="${CX + 28}" y="184" font-family="${FONT}" font-size="13" font-weight="700" fill="${t.brand}">安装内容</text>
     ${['多平台音乐播放与曲库管理', '无缝衔接、智能混音与音频可视化', '桌面组件、歌词与沉浸式背景', '本地配置、缓存与可选模型支持'].map((x, i) => `<circle cx="${CX + 34}" cy="${220 + i * 42}" r="4" fill="${i % 2 ? t.brand2 : t.brand}"/><text x="${CX + 51}" y="${225 + i * 42}" font-family="${FONT}" font-size="13" fill="${t.tx}">${x}</text>`).join('')}
-    <text x="${CX + 28}" y="377" font-family="${FONT}" font-size="10.5" fill="${t.sub}">继续前请关闭正在运行的 WaveForge，以便完整更新程序文件。</text>`],
+    <text x="${CX + 28}" y="377" font-family="${FONT}" font-size="10.5" fill="${t.sub}">继续前请关闭正在运行的 HyperPlayer，以便完整更新程序文件。</text>`],
   license: [2, '重点条款摘要', '本页不替代完整《法律声明与用户协议》；首次启动可查看全文', licenseBody],
   dir: [3, '选择安装位置', '路径可编辑；空间信息将随目录更新', dirBody],
-  inst: [4, '正在安装', '正在部署 WaveForge 澜音工坊', (t) => `<rect x="${CX}" y="148" width="560" height="122" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="${CX + 24}" y="181" font-family="${FONT}" font-size="11" fill="${t.sub}">安装进度</text><rect x="${CX + 24}" y="204" width="512" height="12" rx="6" fill="${t.panel2}"/><text x="${CX + 24}" y="248" font-family="${FONT}" font-size="11" fill="${t.sub}">正在准备文件...</text>`],
-  finish: [5, '安装完成', 'WaveForge 已准备就绪', (t) => `<circle cx="560" cy="224" r="58" fill="${t.brand2}" opacity=".12"/><circle cx="560" cy="224" r="38" fill="${t.brand2}"/><path d="M540 224l13 13 28-31" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><rect x="${CX}" y="310" width="560" height="62" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="560" y="336" font-family="${FONT}" font-size="11" fill="${t.sub}" text-anchor="middle">安装目录</text>`],
+  inst: [4, '正在安装', '正在部署 HyperPlayer', (t) => `<rect x="${CX}" y="148" width="560" height="122" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="${CX + 24}" y="181" font-family="${FONT}" font-size="11" fill="${t.sub}">安装进度</text><rect x="${CX + 24}" y="204" width="512" height="12" rx="6" fill="${t.panel2}"/><text x="${CX + 24}" y="248" font-family="${FONT}" font-size="11" fill="${t.sub}">正在准备文件...</text>`],
+  finish: [5, '安装完成', 'HyperPlayer 已准备就绪', (t) => `<circle cx="560" cy="224" r="58" fill="${t.brand2}" opacity=".12"/><circle cx="560" cy="224" r="38" fill="${t.brand2}"/><path d="M540 224l13 13 28-31" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><rect x="${CX}" y="310" width="560" height="62" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="560" y="336" font-family="${FONT}" font-size="11" fill="${t.sub}" text-anchor="middle">安装目录</text>`],
 }
 
 function buttonSvg(w, h, text, kind, theme, state) {
@@ -341,9 +341,9 @@ for (const [name, text, width] of [['current', '当前用户', 140], ['all', '�
 }
 
 const uninstallPages = {
-  unconfirm: [1, '卸载 WaveForge', '确认要从此电脑移除程序文件', (t) => `<rect x="${CX}" y="142" width="560" height="250" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="${CX + 24}" y="180" font-family="${FONT}" font-size="12" font-weight="700" fill="${t.tx}">将移除</text><text x="${CX + 24}" y="208" font-family="${FONT}" font-size="11" fill="${t.sub}">WaveForge 程序文件、开始菜单与桌面快捷方式</text><rect x="${CX + 24}" y="230" width="512" height="1" fill="${t.border}"/><text x="${CX + 24}" y="264" font-family="${FONT}" font-size="12" font-weight="700" fill="${t.brand2}">默认保留本地数据</text><text x="${CX + 24}" y="290" font-family="${FONT}" font-size="11" fill="${t.tx}">配置、登录凭据、缓存、歌单和分析数据不会删除</text><text x="${CX + 24}" y="326" font-family="${FONT}" font-size="10.5" fill="${t.sub}">安装目录</text><text x="${CX + 24}" y="357" font-family="${FONT}" font-size="10.5" fill="${t.sub}">安装范围</text>`],
+  unconfirm: [1, '卸载 HyperPlayer', '确认要从此电脑移除程序文件', (t) => `<rect x="${CX}" y="142" width="560" height="250" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="${CX + 24}" y="180" font-family="${FONT}" font-size="12" font-weight="700" fill="${t.tx}">将移除</text><text x="${CX + 24}" y="208" font-family="${FONT}" font-size="11" fill="${t.sub}">HyperPlayer 程序文件、开始菜单与桌面快捷方式</text><rect x="${CX + 24}" y="230" width="512" height="1" fill="${t.border}"/><text x="${CX + 24}" y="264" font-family="${FONT}" font-size="12" font-weight="700" fill="${t.brand2}">默认保留本地数据</text><text x="${CX + 24}" y="290" font-family="${FONT}" font-size="11" fill="${t.tx}">配置、登录凭据、缓存、歌单和分析数据不会删除</text><text x="${CX + 24}" y="326" font-family="${FONT}" font-size="10.5" fill="${t.sub}">安装目录</text><text x="${CX + 24}" y="357" font-family="${FONT}" font-size="10.5" fill="${t.sub}">安装范围</text>`],
   uninst: [2, '正在移除组件', '请稍候，卸载器正在清理程序文件', pages.inst[3]],
-  unfinish: [3, '卸载完成', 'WaveForge 程序文件已从此电脑移除', pages.finish[3]],
+  unfinish: [3, '卸载完成', 'HyperPlayer 程序文件已从此电脑移除', pages.finish[3]],
 }
 const UNINSTALL_PHASES = ['确认卸载', '移除组件', '完成']
 for (const [name, page] of Object.entries(uninstallPages)) writeFileSync(join(OUT, `${name}-dark.bmp`), await svgToBmp(pageSvg('dark', ...page, UNINSTALL_PHASES), W, H))

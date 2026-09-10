@@ -1,6 +1,6 @@
 // 官方灾害数据代理：中央气象台台风网 / 中国地震台网中心
 const SOURCE_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 WaveForge/0.1',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 HyperPlayer/0.1',
   Accept: 'application/json,text/plain,*/*',
 }
 

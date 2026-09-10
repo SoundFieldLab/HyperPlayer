@@ -120,7 +120,7 @@ type TraditionalPreferences = {
   backgroundDim: boolean
 }
 
-const PREF_KEY = 'waveforge:traditional-preferences:v2'
+const PREF_KEY = 'hyperplayer:traditional-preferences:v2'
 const defaultPreferences: TraditionalPreferences = {
   showWaveform: true, background: 'aurora', backgroundBlur: 0, backgroundDim: false,
 }
@@ -969,7 +969,7 @@ function TraditionalView({
       if (!success) throw new Error(result?.message || result?.error || '歌单收藏操作失败')
       setPlaylistSubscribed(subscribe)
       window.dispatchEvent(new CustomEvent('showToast', { detail: { message: subscribe ? '已收藏歌单' : '已取消收藏', type: 'success' } }))
-      window.dispatchEvent(new CustomEvent('waveforge-auth-changed'))
+      window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed'))
     } catch (error) {
       window.dispatchEvent(new CustomEvent('showToast', { detail: { message: error instanceof Error ? error.message : '歌单收藏操作失败，请重试', type: 'error' } }))
     }
@@ -1199,8 +1199,8 @@ function TraditionalView({
         <div className="min-w-0 flex-1" />
         {/* 右上角：Logo + 软件名（品牌标识，非交互；个人中心入口在右栏资料卡，避免与右上角隐藏窗口按钮抢点击） */}
         <div className="flex shrink-0 items-center gap-2">
-          <img src={new URL('../../logo.png', import.meta.url).href} alt="WaveForge" className="h-9 w-9 rounded-xl object-cover" />
-          <span className="hidden text-base font-semibold sm:inline">WaveForge</span>
+          <img src={new URL('../../logo.png', import.meta.url).href} alt="HyperPlayer" className="h-9 w-9 rounded-xl object-cover" />
+          <span className="hidden text-base font-semibold sm:inline">HyperPlayer</span>
         </div>
       </header>
 

@@ -291,9 +291,9 @@ const buildDesktopLyricsWithInterludes = (lyrics: LyricLine[]): DesktopLyricLine
 type CoverPulseMode = 'dynamic' | 'soft' | 'restless'
 type LyricDisplayMode = 'modern' | 'immersive' | 'video' | 'pv'
 
-const LYRIC_MODE_VISIBILITY_KEY = 'waveforge_visible_lyric_modes'
-const LYRIC_MODE_VIDEO_MIGRATED_KEY = 'waveforge_video_mode_migrated'
-const LYRIC_MODE_PV_MIGRATED_KEY = 'waveforge_pv_mode_migrated'
+const LYRIC_MODE_VISIBILITY_KEY = 'hyperplayer_visible_lyric_modes'
+const LYRIC_MODE_VIDEO_MIGRATED_KEY = 'hyperplayer_video_mode_migrated'
+const LYRIC_MODE_PV_MIGRATED_KEY = 'hyperplayer_pv_mode_migrated'
 const ALL_LYRIC_MODES: LyricDisplayMode[] = ['modern', 'immersive', 'video', 'pv']
 const LYRIC_MODE_NAMES: Record<LyricDisplayMode, string> = {
   modern: '现代',
@@ -503,7 +503,7 @@ function App() {
   viewModeRef.current = viewMode
   
   const [currentTrack, setCurrentTrack] = useState<Track>({
-    title: 'WaveForge',
+    title: 'HyperPlayer',
     artist: '点击搜索按钮开始',
     album: 'Demo Album',
     coverUrl: '', // 初始为空，避免加载随机图片
@@ -746,10 +746,10 @@ function App() {
     }
 
     window.addEventListener(AUDIO_QUALITY_SETTINGS_EVENT, invalidatePreloadedAudioUrls)
-    window.addEventListener('waveforge-auth-changed', invalidatePreloadedAudioUrls)
+    window.addEventListener('hyperplayer-auth-changed', invalidatePreloadedAudioUrls)
     return () => {
       window.removeEventListener(AUDIO_QUALITY_SETTINGS_EVENT, invalidatePreloadedAudioUrls)
-      window.removeEventListener('waveforge-auth-changed', invalidatePreloadedAudioUrls)
+      window.removeEventListener('hyperplayer-auth-changed', invalidatePreloadedAudioUrls)
     }
   }, [])
 
@@ -1372,11 +1372,11 @@ function App() {
         void ensureSongLyrics(currentSong, currentKey)
       }
     }
-    window.addEventListener('waveforge:lyrics-cache-cleared', clearLyricsMemory)
-    window.addEventListener('waveforge:lyrics-policy-changed', clearLyricsMemory)
+    window.addEventListener('hyperplayer:lyrics-cache-cleared', clearLyricsMemory)
+    window.addEventListener('hyperplayer:lyrics-policy-changed', clearLyricsMemory)
     return () => {
-      window.removeEventListener('waveforge:lyrics-cache-cleared', clearLyricsMemory)
-      window.removeEventListener('waveforge:lyrics-policy-changed', clearLyricsMemory)
+      window.removeEventListener('hyperplayer:lyrics-cache-cleared', clearLyricsMemory)
+      window.removeEventListener('hyperplayer:lyrics-policy-changed', clearLyricsMemory)
     }
   }, [ensureSongLyrics])
 
@@ -1556,7 +1556,7 @@ function App() {
         if (activeSession.songKey !== songKey) return
         activeSession.reported = true
         activeSession.nextRetryAt = 0
-        window.dispatchEvent(new CustomEvent('waveforge-recent-playback-reported', {
+        window.dispatchEvent(new CustomEvent('hyperplayer-recent-playback-reported', {
           detail: { platform },
         }))
       })
@@ -1717,8 +1717,8 @@ function App() {
           // 忽略：服务未就绪 / 不存在（浏览器预览、服务未启动等），静默降级
         }
       }
-      void checkService(3004, '频响补偿服务已就绪', 'waveforge:service-3004-toasted')
-      void checkService(3003, '响度服务已就绪', 'waveforge:service-3003-toasted')
+      void checkService(3004, '频响补偿服务已就绪', 'hyperplayer:service-3004-toasted')
+      void checkService(3003, '响度服务已就绪', 'hyperplayer:service-3003-toasted')
     }, 3000)
 
     return () => {
@@ -2115,7 +2115,7 @@ function App() {
 
   const [traditionalSpectrumVisible, setTraditionalSpectrumVisible] = useState(() => {
     try {
-      const stored = JSON.parse(localStorage.getItem('waveforge:traditional-preferences:v2') || '{}')
+      const stored = JSON.parse(localStorage.getItem('hyperplayer:traditional-preferences:v2') || '{}')
       return stored.showWaveform !== false
     } catch {
       return true
@@ -2356,8 +2356,8 @@ function App() {
   // 允许独立模式打开全局播放列表面板，避免传统模式依赖父级布局实现按钮行为。
   useEffect(() => {
     const openPlaylist = () => setShowPlaylist(true)
-    window.addEventListener('waveforge:open-playlist', openPlaylist)
-    return () => window.removeEventListener('waveforge:open-playlist', openPlaylist)
+    window.addEventListener('hyperplayer:open-playlist', openPlaylist)
+    return () => window.removeEventListener('hyperplayer:open-playlist', openPlaylist)
   }, [])
   
   // 监听背景模糊度变化
@@ -2813,8 +2813,8 @@ function App() {
   // 同步其他视图修改的歌词模式可见性设置
   useEffect(() => {
     const handleLyricModesVisibilityChanged = () => setVisibleLyricModes(loadVisibleLyricModes())
-    window.addEventListener('waveforge-lyric-modes-visibility-changed', handleLyricModesVisibilityChanged)
-    return () => window.removeEventListener('waveforge-lyric-modes-visibility-changed', handleLyricModesVisibilityChanged)
+    window.addEventListener('hyperplayer-lyric-modes-visibility-changed', handleLyricModesVisibilityChanged)
+    return () => window.removeEventListener('hyperplayer-lyric-modes-visibility-changed', handleLyricModesVisibilityChanged)
   }, [])
 
   // 当前所在歌词模式始终保留在可见列表里
@@ -2843,7 +2843,7 @@ function App() {
       console.warn('保存歌词模式可见设置失败:', error)
     }
     setVisibleLyricModes(next)
-    window.dispatchEvent(new Event('waveforge-lyric-modes-visibility-changed'))
+    window.dispatchEvent(new Event('hyperplayer-lyric-modes-visibility-changed'))
   }
 
   // 显示封面：始终用平台封面
@@ -4552,10 +4552,10 @@ function App() {
       return snapshot()
     }
 
-    ;(window as any).__waveforgeAppleAcceptance = { configure, loadPair, loadRadio, snapshot, transition, cleanup }
+    ;(window as any).__hyperplayerAppleAcceptance = { configure, loadPair, loadRadio, snapshot, transition, cleanup }
     return () => {
       restoreEme()
-      delete (window as any).__waveforgeAppleAcceptance
+      delete (window as any).__hyperplayerAppleAcceptance
     }
   }, [])
   
@@ -5112,8 +5112,8 @@ function App() {
         setShowSongDetail(true)
       }
     }
-    window.addEventListener('waveforge:show-song-detail', handler)
-    return () => window.removeEventListener('waveforge:show-song-detail', handler)
+    window.addEventListener('hyperplayer:show-song-detail', handler)
+    return () => window.removeEventListener('hyperplayer:show-song-detail', handler)
   }, [])
 
   // 右键菜单「相似歌曲」：通过全局事件展示相似歌曲列表
@@ -5129,8 +5129,8 @@ function App() {
         setShowSimilarSongs(true)
       }
     }
-    window.addEventListener('waveforge:show-similar-songs', handler)
-    return () => window.removeEventListener('waveforge:show-similar-songs', handler)
+    window.addEventListener('hyperplayer:show-similar-songs', handler)
+    return () => window.removeEventListener('hyperplayer:show-similar-songs', handler)
   }, [])
 
   useEffect(() => {
@@ -5399,7 +5399,7 @@ function App() {
     setAuthRevision(previous => previous + 1)
     // 记录登录有效期（网易云 cookie 官方约 30 天）
     recordLogin('netease')
-    window.dispatchEvent(new CustomEvent('waveforge-auth-changed', {
+    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', {
       detail: {
         platform: 'netease',
         userId: localStorage.getItem('netease_user_id') || ''
@@ -5425,7 +5425,7 @@ function App() {
     localStorage.removeItem('netease_vip')
     clearLoginExpiry('netease')
     setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'netease' } }))
+    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'netease' } }))
   }
 
   const handleQQLogin = async (cookie: string, showToastMessage = true) => {
@@ -5491,7 +5491,7 @@ function App() {
         setAuthRevision(previous => previous + 1)
         // 记录登录有效期（QQ 音乐 cookie 官方约 30 天）
         recordLogin('qq')
-        window.dispatchEvent(new CustomEvent('waveforge-auth-changed', {
+        window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', {
           detail: { platform: 'qq', userId: uin }
         }))
       } else {
@@ -5529,7 +5529,7 @@ function App() {
     localStorage.removeItem('qq_vip')
     clearLoginExpiry('qq')
     setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'qq' } }))
+    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'qq' } }))
     void fetch('http://localhost:3001/api/qq/cookie', { method: 'DELETE' }).catch(() => undefined)
   }
 
@@ -5538,7 +5538,7 @@ function App() {
   const handleAppleLogin = (user: AppleUserInfo | null) => {
     refreshAppleAuth(user)
     setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('waveforge-auth-changed', {
+    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', {
       detail: { platform: 'apple', userId: '' }
     }))
     if (user) addToast('Apple Music 登录成功', 'success')
@@ -5549,7 +5549,7 @@ function App() {
     clearAppleLogin()
     refreshAppleAuth(null)
     setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'apple' } }))
+    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'apple' } }))
     addToast('Apple Music 已退出登录', 'info')
   }
 
@@ -5582,7 +5582,7 @@ function App() {
         if (profile.product) localStorage.setItem('spotify_product', profile.product)
       }))
       setAuthRevision(previous => previous + 1)
-      window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'spotify', userId: result.userId || '' } }))
+      window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'spotify', userId: result.userId || '' } }))
       addToast('Spotify 授权成功', 'success')
     })
     return () => { try { unsub?.() } catch { /* 忽略 */ } }
@@ -5623,7 +5623,7 @@ function App() {
       localStorage.setItem('spotify_username', username)
     }
     setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'spotify' } }))
+    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'spotify' } }))
     if (loggedIn) addToast('Spotify 登录成功', 'success')
   }
   const handleSpotifyLogout = () => {
@@ -5639,7 +5639,7 @@ function App() {
     setSpotifyUserId('')
     setSpotifyEntitlement('unknown')
     setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('waveforge-auth-changed', { detail: { platform: 'spotify' } }))
+    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'spotify' } }))
     addToast('Spotify 已退出登录', 'info')
   }
   const handleRemoveFromFavorites = async (song: Song): Promise<boolean> => {
@@ -6779,7 +6779,7 @@ function App() {
               className="absolute inset-0 w-full h-full flex flex-col"
               style={{ willChange: 'transform, opacity, filter' }}
               ref={(el) => { playbackSurfaceRef.current = el; playbackCursorHideRef(el) }}
-              data-waveforge-playback-page="true"
+              data-hyperplayer-playback-page="true"
             >
               <LazyPlaybackRadialMenu
                 song={currentSong}

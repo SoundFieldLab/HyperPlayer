@@ -1,6 +1,6 @@
 # Independent Debug Pages
 
-This file is the registry for standalone developer-only pages in the WaveForge repository. AI agents and developers must check this file before building a new visual debugging surface.
+This file is the registry for standalone developer-only pages in the HyperPlayer repository. AI agents and developers must check this file before building a new visual debugging surface.
 
 ## Weather Lab
 

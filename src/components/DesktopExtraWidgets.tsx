@@ -1,6 +1,6 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -123,7 +123,7 @@ const WIDGET_META: Record<string, { title: string; subtitle: string; icon: typeo
   spectrum: { title: '音频频谱', subtitle: '实时律动', icon: AudioLines },
   quickLauncher: { title: '快捷启动', subtitle: '应用与位置', icon: Rocket },
   systemStatus: { title: '系统状态', subtitle: '设备运行概览', icon: Cpu },
-  volumeControl: { title: '音量控制', subtitle: 'WaveForge 输出', icon: Volume2 },
+  volumeControl: { title: '音量控制', subtitle: 'HyperPlayer 输出', icon: Volume2 },
 }
 
 function loadPreferences(): ExtraWidgetPreferences {

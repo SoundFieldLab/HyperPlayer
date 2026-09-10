@@ -64,19 +64,19 @@ export interface UpdateContext {
   currentText: string;
   beatIntensity: number;
   motionTargets: MotionTargetInfo[];
-  /** WaveForge 扩展：当前行逐字演唱进度 0~1（无逐字时间戳时为 undefined） */
+  /** HyperPlayer 扩展：当前行逐字演唱进度 0~1（无逐字时间戳时为 undefined） */
   wordProgress?: number;
-  /** WaveForge 扩展：当前行逐字时间戳（绝对秒制；overlay 用真实时间驱动逐词动画） */
+  /** HyperPlayer 扩展：当前行逐字时间戳（绝对秒制；overlay 用真实时间驱动逐词动画） */
   words?: LyricWordTiming[];
-  /** WaveForge 扩展：当前行起点（绝对秒；无逐字时合成词级时间戳用） */
+  /** HyperPlayer 扩展：当前行起点（绝对秒；无逐字时合成词级时间戳用） */
   lineStart?: number;
-  /** WaveForge 扩展：当前行时长（秒；无逐字时合成词级时间戳用） */
+  /** HyperPlayer 扩展：当前行时长（秒；无逐字时合成词级时间戳用） */
   lineDuration?: number;
-  /** WaveForge 扩展：当前段落强度 0~1（镜头推近/逐字视觉动态用） */
+  /** HyperPlayer 扩展：当前段落强度 0~1（镜头推近/逐字视觉动态用） */
   intensity?: number;
-  /** WaveForge 扩展：当前行翻译文本 */
+  /** HyperPlayer 扩展：当前行翻译文本 */
   translation?: string;
-  /** WaveForge 扩展：当前行罗马音文本 */
+  /** HyperPlayer 扩展：当前行罗马音文本 */
   roman?: string;
 }
 
@@ -97,7 +97,7 @@ export interface LyricPhrase {
   endTime: number;
 }
 
-/** 逐字时间戳（WaveForge 扩展）：绝对秒制 */
+/** 逐字时间戳（HyperPlayer 扩展）：绝对秒制 */
 export interface LyricWordTiming {
   text: string;
   time: number;
@@ -107,11 +107,11 @@ export interface LyricWordTiming {
 export interface LyricLine {
   time: number;
   text: string;
-  /** WaveForge 扩展：逐字时间戳（绝对秒制） */
+  /** HyperPlayer 扩展：逐字时间戳（绝对秒制） */
   words?: LyricWordTiming[];
-  /** WaveForge 扩展：当前行翻译 */
+  /** HyperPlayer 扩展：当前行翻译 */
   translation?: string;
-  /** WaveForge 扩展：当前行罗马音 */
+  /** HyperPlayer 扩展：当前行罗马音 */
   roman?: string;
   agentId?: string;
   alternateTexts?: Array<{ role: string; language?: string; text: string }>;

@@ -1,7 +1,7 @@
 /**
  * 全局设置注册表（设置镜像机制的核心）
  *
- * 背景 WaveForge 的功能开关一直只在简约模式的 SettingsPanel 里开发，
+ * 背景 HyperPlayer 的功能开关一直只在简约模式的 SettingsPanel 里开发，
  * 传统/探索/桌面模式的设置页只有"当前模式个性化"，用户常用的功能开关在其他模式里无处可调。
  *
  * 本模块把"整软件真正全局的设置"（源自 SettingsPanel 的存储键 / 服务 / 事件）
@@ -83,7 +83,7 @@ export interface GlobalSettingsGroup {
 
 // ─────────────────────────── 基础工具 ───────────────────────────
 
-export const GLOBAL_SETTING_CHANGED_EVENT = 'waveforge:global-setting-changed'
+export const GLOBAL_SETTING_CHANGED_EVENT = 'hyperplayer:global-setting-changed'
 
 /** 通知所有镜像界面重读注册表（镜像 UI 互相同步；简约模式在挂载时重读，同样生效） */
 export function notifyGlobalSettingChanged(): void {
@@ -270,7 +270,7 @@ const updateTaskbarWidget = (partial: Partial<TaskbarWidgetSettings>) => {
 const checkForUpdate = () => {
   void (async () => {
     try {
-      const nativeBridge = (window as any).WaveForgeNative
+      const nativeBridge = (window as any).HyperPlayerNative
       if (nativeBridge?.checkForUpdates) {
         nativeBridge.checkForUpdates()
         toast('已开始检查，如有新版本将弹出提示', 'info')
@@ -298,7 +298,7 @@ const checkForUpdate = () => {
       }
       const winArtifact = manifest?.artifacts?.['win-x64']
       const hotArtifact = manifest?.artifacts?.['win-x64-hot']
-      window.dispatchEvent(new CustomEvent('waveforge:update-open-details', {
+      window.dispatchEvent(new CustomEvent('hyperplayer:update-open-details', {
         detail: {
           version: remoteVersion,
           notes: manifest?.notes || '',
@@ -495,7 +495,7 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         read: () => readBool('thirdPartyLyricsEnabled', true),
         write: (value) => {
           writeBool('thirdPartyLyricsEnabled', Boolean(value))
-          window.dispatchEvent(new Event('waveforge:lyrics-policy-changed'))
+          window.dispatchEvent(new Event('hyperplayer:lyrics-policy-changed'))
           notifyGlobalSettingChanged()
         },
       },
@@ -507,7 +507,7 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         read: () => readBool('adaptiveLyrics', true),
         write: (value) => {
           writeBool('adaptiveLyrics', Boolean(value))
-          window.dispatchEvent(new Event('waveforge:lyrics-policy-changed'))
+          window.dispatchEvent(new Event('hyperplayer:lyrics-policy-changed'))
           notifyGlobalSettingChanged()
         },
       },
@@ -528,7 +528,7 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         read: () => readStr('primaryLyricsSource', 'AMLL'),
         write: (value) => {
           localStorage.setItem('primaryLyricsSource', String(value))
-          window.dispatchEvent(new Event('waveforge:lyrics-policy-changed'))
+          window.dispatchEvent(new Event('hyperplayer:lyrics-policy-changed'))
           notifyGlobalSettingChanged()
         },
         visibleIf: () => readBool('thirdPartyLyricsEnabled', true) && readBool('adaptiveLyrics', true),
@@ -961,9 +961,9 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         label: '过渡调试提示',
         description: '切歌时右上角显示引擎 / 策略 / DJ 效果清单',
         control: { kind: 'toggle' },
-        read: () => readStr('waveforge:transition-debug', '0') === '1',
+        read: () => readStr('hyperplayer:transition-debug', '0') === '1',
         write: (value) => {
-          localStorage.setItem('waveforge:transition-debug', value ? '1' : '0')
+          localStorage.setItem('hyperplayer:transition-debug', value ? '1' : '0')
           notifyGlobalSettingChanged()
         },
         visibleIf: () => readBool('developerMode', false),

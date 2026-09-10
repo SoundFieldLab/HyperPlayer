@@ -1,5 +1,5 @@
 /**
- * 平台常量（WaveForge 减配版）。
+ * 平台常量（HyperPlayer 减配版）。
  *
  * 原实现区分桌面（Electron/Windows）、Android TV、Android 平板与纯浏览器。
  * 随着 Android/TV 形态整体剥离，本文件统一按「桌面版」语义实现，但**保留全部原有
@@ -42,7 +42,7 @@ export function isTvModeActive(): boolean {
   return false
 }
 
-export const TV_SCALE_KEY = 'waveforge:tv-scale'
+export const TV_SCALE_KEY = 'hyperplayer:tv-scale'
 
 /** TV 强制模式开关：TV 形态已剥离，恒为 false（不再读取 localStorage / ?tv=1）。 */
 export function isTvModeForced(): boolean {

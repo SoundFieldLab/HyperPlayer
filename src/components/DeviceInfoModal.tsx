@@ -86,7 +86,7 @@ export default function DeviceInfoModal({ show, onClose, playerTheme = 'dark' }:
   useEffect(() => {
     if (!show) return
     setPerfModeState(getPerfMode())
-    const native = (window as any).WaveForgeNative
+    const native = (window as any).HyperPlayerNative
     if (native?.getDeviceInfo) {
       try {
         setInfo(JSON.parse(String(native.getDeviceInfo())))

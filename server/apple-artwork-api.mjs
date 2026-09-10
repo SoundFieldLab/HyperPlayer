@@ -1,6 +1,6 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 /**
  * Apple Music 动态封面（Animated Artwork）服务端代理
@@ -116,7 +116,7 @@ const normalize = (text) => String(text ?? '')
   .trim()
 
 /** 严格匹配校验：标题必须命中（相等或包含），歌手或时长二选一验证——
- *  避免同名不同曲误判（WaveForge 高置信匹配规则，比 LCS 打分更严） */
+ *  避免同名不同曲误判（HyperPlayer 高置信匹配规则，比 LCS 打分更严） */
 const isHighConfidenceMatch = (item, query) => {
   const t = normalize(item.name)
   const songT = normalize(query.title)

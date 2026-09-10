@@ -1,6 +1,6 @@
 /**
  * 生成 Windows 热更新包：把 win-unpacked 里 resources 下的 app.asar 与 app.asar.unpacked
- * 打包为 waveforge-hot-<version>.zip（客户端下载后替换这两个文件即可完成代码热更新，
+ * 打包为 hyperplayer-hot-<version>.zip（客户端下载后替换这两个文件即可完成代码热更新，
  * 无需重装）。app.asar 涵盖全部代码（前端 dist / desktop / server）；app.asar.unpacked
  * 涵盖 worker 与服务的 .py 解包文件。
  *
@@ -8,8 +8,8 @@
  *   默认 unpacked = release/win-unpacked，输出 = release/。
  *   构建产物前需先执行 npm run build:electron:dir。
  *
- * 发布：node scripts/publish-release.mjs --exe release/WaveForge-<v>-Setup.exe \
- *       --hot release/waveforge-hot-<v>.zip --notes "更新内容"
+ * 发布：node scripts/publish-release.mjs --exe release/HyperPlayer-<v>-Setup.exe \
+ *       --hot release/hyperplayer-hot-<v>.zip --notes "更新内容"
  */
 import AdmZip from 'adm-zip'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'fs'
@@ -30,7 +30,7 @@ if (!existsSync(asarPath)) {
 }
 
 const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version || '0.0.0'
-const out = join(outDir, `waveforge-hot-${version}.zip`)
+const out = join(outDir, `hyperplayer-hot-${version}.zip`)
 mkdirSync(outDir, { recursive: true })
 
 const zip = new AdmZip()

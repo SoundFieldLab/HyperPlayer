@@ -1,6 +1,6 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 /**
  * Apple Music 数据服务（歌词 / 封面 / 对唱）
@@ -386,7 +386,7 @@ export interface AppleLyricsResult {
 }
 
 /**
- * 把 Apple Music / AMLL TTML 转成 WaveForge 时间轴。
+ * 把 Apple Music / AMLL TTML 转成 HyperPlayer 时间轴。
  * - 行时间 = TTML 时间 − leadingSilence（前导静音整体平移）
  * - 词时间保持行内相对（毫秒）
  * - 对唱：line.agent = ttm:agent id，line.agentName 由艺人列表按声明顺序映射

@@ -5,7 +5,7 @@
  * Provides beat intensity (0~1) from either an internal metronome
  * or real-time audio analysis via Web Audio API (all free, built-in browser APIs).
  *
- * WaveForge 扩展：可注入歌曲分析得到的真实节拍时间点（setBeats），
+ * HyperPlayer 扩展：可注入歌曲分析得到的真实节拍时间点（setBeats），
  * getIntensity() 优先基于最近拍点的指数衰减计算 —— 视觉反应精确踩在鼓点上。
  */
 export interface BeatTiming {
@@ -22,7 +22,7 @@ export class BeatProvider {
 
   private _bpm = 120;
   private _useAudio = false;
-  /** WaveForge 扩展：真实节拍时间点（升序） */
+  /** HyperPlayer 扩展：真实节拍时间点（升序） */
   private beats: BeatTiming[] = [];
 
   private energyHistory: number[] = [];
@@ -35,7 +35,7 @@ export class BeatProvider {
 
   get isAudioMode() { return this._useAudio && this.audioEl !== null; }
 
-  /** WaveForge 扩展：注入歌曲节拍时间点（秒，升序） */
+  /** HyperPlayer 扩展：注入歌曲节拍时间点（秒，升序） */
   setBeats(beats: BeatTiming[]): void {
     this.beats = beats
       .filter(b => Number.isFinite(b.time) && b.time >= 0)
@@ -81,7 +81,7 @@ export class BeatProvider {
     return this.internalBeat(time);
   }
 
-  /** WaveForge 扩展：基于真实拍点的强度 —— 距最近拍点越近越大，指数衰减。无拍点返回 null */
+  /** HyperPlayer 扩展：基于真实拍点的强度 —— 距最近拍点越近越大，指数衰减。无拍点返回 null */
   private intensityFromBeats(time: number): number | null {
     if (this.beats.length === 0) return null;
     let idx = -1;

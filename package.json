@@ -1,9 +1,9 @@
 {
-  "name": "waveforge",
-  "productName": "WaveForge 澜音工坊",
+  "name": "hyperplayer",
+  "productName": "HyperPlayer",
   "version": "0.1.4",
   "description": "沉浸式音乐播放器，支持网易云和QQ音乐",
-  "author": "WaveForge",
+  "author": "HyperPlayer",
   "type": "module",
   "main": "desktop/main.cjs",
   "private": true,
@@ -42,8 +42,8 @@
     "predev:electron": "node scripts/build-v3-worklet.mjs"
   },
   "build": {
-    "appId": "com.waveforge.desktop",
-    "productName": "WaveForge 澜音工坊",
+    "appId": "com.hyperplayer.desktop",
+    "productName": "HyperPlayer",
     "directories": {
       "output": "release"
     },
@@ -66,7 +66,7 @@
     ],
     "win": {
       "icon": "build/icon.ico",
-      "executableName": "WaveForge 澜音工坊",
+      "executableName": "HyperPlayer",
       "target": [
         {
           "target": "nsis",
@@ -84,8 +84,8 @@
       "createStartMenuShortcut": true,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "shortcutName": "WaveForge 澜音工坊",
-      "artifactName": "WaveForge-${version}-Setup.${ext}"
+      "shortcutName": "HyperPlayer",
+      "artifactName": "HyperPlayer-${version}-Setup.${ext}"
     }
   },
   "dependencies": {

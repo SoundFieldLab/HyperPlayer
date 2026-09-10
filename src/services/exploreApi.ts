@@ -16,7 +16,7 @@ const exploreHomeMemoryCache = new Map<string, { payload: ExplorePayload; expire
 const exploreHomePending = new Map<string, Promise<ExplorePayload>>()
 // 任一平台登录态变化 → 失效探索页内存缓存，个性化数据立即可见
 if (typeof window !== 'undefined') {
-  window.addEventListener('waveforge-auth-changed', () => { exploreHomeMemoryCache.clear() })
+  window.addEventListener('hyperplayer-auth-changed', () => { exploreHomeMemoryCache.clear() })
 }
 
 export type ExplorePlatform = MusicPlatform

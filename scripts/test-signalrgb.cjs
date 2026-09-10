@@ -15,7 +15,7 @@ async function makeApp(root, version) {
 }
 
 async function main() {
-  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'waveforge-signalrgb-'))
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'hyperplayer-signalrgb-'))
   const tempRoot = path.join(root, 'temp')
   const bundled = path.join(root, 'bundle.html')
   await fs.promises.writeFile(bundled, '<html>bundle-v1</html>')
@@ -42,14 +42,14 @@ async function main() {
     assert.equal(status.currentEffect.id, 'previous')
 
     status = await manager.installEffect()
-    const effectPath = path.join(dynamic100, 'WaveForge.html')
-    const sidecarPath = path.join(dynamic100, 'WaveForge.waveforge.json')
+    const effectPath = path.join(dynamic100, 'HyperPlayer.html')
+    const sidecarPath = path.join(dynamic100, 'HyperPlayer.hyperplayer.json')
     assert.equal(status.effectInstalled, true)
     assert.equal(status.hash, sha256(Buffer.from('<html>bundle-v1</html>')))
     assert.equal(status.effectHash, status.hash)
     assert.equal(await fs.promises.readFile(effectPath, 'utf8'), '<html>bundle-v1</html>')
     let sidecar = JSON.parse(await fs.promises.readFile(sidecarPath, 'utf8'))
-    assert.equal(sidecar.owner, 'WaveForge')
+    assert.equal(sidecar.owner, 'HyperPlayer')
     assert.equal(sidecar.sha256, sha256(Buffer.from('<html>bundle-v1</html>')))
 
     await fs.promises.writeFile(bundled, '<html>bundle-v2</html>')
@@ -68,7 +68,7 @@ async function main() {
     assert.equal(await fs.promises.readFile(effectPath, 'utf8'), '<html>user edit</html>')
 
     await fs.promises.writeFile(effectPath, '<html>bundle-v2</html>')
-    sidecar = { owner: 'WaveForge', file: 'WaveForge.html', version: '2.0.0', sha256: sha256(Buffer.from('<html>bundle-v2</html>')) }
+    sidecar = { owner: 'HyperPlayer', file: 'HyperPlayer.html', version: '2.0.0', sha256: sha256(Buffer.from('<html>bundle-v2</html>')) }
     await fs.promises.writeFile(sidecarPath, JSON.stringify(sidecar))
     await manager.uninstallEffect()
     assert.equal(fs.existsSync(effectPath), false)
@@ -77,7 +77,7 @@ async function main() {
     await manager.installEffect()
     const dynamic110 = await makeApp(root, '1.10.0')
     status = await manager.refreshInstallation().then(() => manager.getStatus())
-    assert.equal(status.effectPath, path.join(dynamic110, 'WaveForge.html'))
+    assert.equal(status.effectPath, path.join(dynamic110, 'HyperPlayer.html'))
     assert.equal(status.restartRequired, true)
     assert.equal(status.effectInstalled, false)
     await manager.installEffect()
@@ -96,8 +96,8 @@ async function main() {
     mock.state.localMode = 'ok'
 
     await manager.applyEffect()
-    assert.equal(mock.metrics.applies.at(-1), 'waveforge')
-    assert.equal(manager.getStatus().currentEffect.id, 'waveforge')
+    assert.equal(mock.metrics.applies.at(-1), 'hyperplayer')
+    assert.equal(manager.getStatus().currentEffect.id, 'hyperplayer')
     await manager.restoreEffect()
     assert.equal(mock.metrics.applies.at(-1), 'previous')
 
@@ -134,7 +134,7 @@ async function main() {
     sent = await manager.sendEvent('accent', { getFallback: true })
     assert.equal(sent.method, 'GET')
     assert.equal(mock.metrics.canvasGets, 1)
-    assert.equal(mock.metrics.canvasEvents.at(-1).sender, 'waveforge')
+    assert.equal(mock.metrics.canvasEvents.at(-1).sender, 'hyperplayer')
 
     const unavailable = new SignalRgbEffectManager({ roots: [root], localApiBase: 'http://127.0.0.1:1/api/v1', requestTimeoutMs: 100, platformSupported: true })
     status = await unavailable.refresh()
@@ -156,7 +156,7 @@ async function main() {
     ipc.dispose()
     assert.equal(handlers.size, 0)
 
-    assert.throws(() => manager.managedPath(dynamic110, '../WaveForge.html'), /unsafe/)
+    assert.throws(() => manager.managedPath(dynamic110, '../HyperPlayer.html'), /unsafe/)
     console.log('SignalRGB integration tests passed: installation ownership, updates, conflicts, migration, Local API, apply/restore, Canvas Events, and IPC cleanup.')
   } finally {
     await mock.stop().catch(() => {})

@@ -172,7 +172,7 @@ if (DO_TAG) {
   if (existing.includes(`v${next}`)) {
     console.log(`⚠️  tag v${next} 已存在，跳过`)
   } else {
-    git(`tag -a v${next} -m "WaveForge v${next}"`)
+    git(`tag -a v${next} -m "HyperPlayer v${next}"`)
     console.log(`✅ 已打 tag: v${next}`)
   }
 } else {
@@ -192,4 +192,4 @@ if (DO_PUSH) {
 
 console.log(`\n下一步（发布，Releases 只发安装版）：`)
 console.log(`  npm run build:electron`)
-console.log(`  gh release create v${next} "release/WaveForge-${next}-Setup.exe" --title "v${next}" --notes "changelog"`)
+console.log(`  gh release create v${next} "release/HyperPlayer-${next}-Setup.exe" --title "v${next}" --notes "changelog"`)

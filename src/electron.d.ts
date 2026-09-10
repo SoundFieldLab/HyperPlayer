@@ -604,7 +604,7 @@ export interface ElectronAPI {
     prepare: (urlOrPath: string, trackKey: string) => Promise<string>
     /** 只读缓存命中检查：已缓存返回本地路径，未缓存返回 null（不触发下载） */
     peekCached?: (trackKey: string) => Promise<string | null>
-    /** 把已下载的音频文件映射为渲染进程可 fetch 的 waveforge-media:// URL（浏览器分析 m4a/aac 用） */
+    /** 把已下载的音频文件映射为渲染进程可 fetch 的 hyperplayer-media:// URL（浏览器分析 m4a/aac 用） */
     getMediaUrl?: (filePath: string) => Promise<string>
     /** 保存渲染进程转码的 WAV（Chromium 解码 m4a/aac → 16bit PCM），返回路径；同 key 复用 */
     saveWav?: (trackKey: string, wavArrayBuffer: ArrayBuffer) => Promise<string>

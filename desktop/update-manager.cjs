@@ -35,8 +35,6 @@ const UPDATE_HOSTS = new Set([
   'raw.githubusercontent.com',
   'release-assets.githubusercontent.com',
   'github-releases.githubusercontent.com',
-  'gitee.com',
-  'giteeusercontent.com',
   'ghproxy.net',
   'mirror.ghproxy.com',
 ])
@@ -196,7 +194,7 @@ async function startBackgroundDownload(version, notes, urls, expectedSha) {
   } catch (e) {
     return { success: false, error: `无法创建更新目录：${e?.message || e}` }
   }
-  const zipPath = path.join(updateDir, `waveforge-hot-${Date.now()}.zip`)
+  const zipPath = path.join(updateDir, `hyperplayer-hot-${Date.now()}.zip`)
   try {
     broadcast('update:download-status', { state: 'progress', percent: 0 })
     const result = await downloadToFile(urls, zipPath, expectedSha, '更新包', ({ received, total }) => {
@@ -247,8 +245,8 @@ function spawnUpdater() {
     const env = {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
-      WAVEFORGE_UPDATE_CONFIG: JSON.stringify(config),
-      WAVEFORGE_UPDATE_WAIT_PID: String(process.pid),
+      HYPERPLAYER_UPDATE_CONFIG: JSON.stringify(config),
+      HYPERPLAYER_UPDATE_WAIT_PID: String(process.pid),
     }
     const updater = spawn(app.getPath('exe'), [applierDst], { env, detached: true, stdio: 'ignore' })
     updater.on('error', () => { /* spawn 失败（如 exe 不存在）时静默，避免未捕获崩溃 */ })
@@ -323,7 +321,7 @@ function setupUpdateIPC(ipcMain, getMainWindow = () => null, isTrustedEvent = nu
     if (!trusted(event)) return rejectUntrusted()
     const downloadDir = UPDATE_DIR()
     try { fs.mkdirSync(downloadDir, { recursive: true }) } catch (e) { return { success: false, error: `无法创建下载目录：${e?.message || e}` } }
-    const destPath = path.join(downloadDir, `WaveForge-Setup-${Date.now()}.exe`)
+    const destPath = path.join(downloadDir, `HyperPlayer-Setup-${Date.now()}.exe`)
     const result = await downloadToFile(urls, destPath, expectedSha, '更新安装包')
     if (!result.success) return result
     const { shell } = require('electron')

@@ -1,4 +1,4 @@
-# WaveForge 交接文档
+# HyperPlayer 交接文档
 
 > 给接手本项目的开发者或 AI 代理的交接说明。包含：项目当前状态、环境、端口、已知问题、性能优化、未决事项、历史决策摘要、常用操作速查。
 > 面向"接下来要干活的人"，读完本文档 + `AGENTS.md` 即可上手。
@@ -41,7 +41,7 @@
 | Python（仅 Apple 播放面） | **系统 Python**（需自行 `pip install pywebview`），无嵌入式运行时。`python-apple-bridge/apple_bridge.py` 由 `main.cjs` spawn，端口 **18790**；`package.json` 的 `asarUnpack` 解包该 `.py`。缺失系统 Python/pywebview 时自动跳过（不影响其余功能） |
 | 平台 | Windows x64（NSIS 每用户安装，`perMachine: false`） |
 
-> ⚠️ **端口占用坑（2026-08-16 实测，仍适用）**：本机另一个项目 **ReWaveForge**（`E:\FolderForVibeCoding\dsh\ReWaveForge\backend-go\bin\waveforge-server.exe`）会抢占 **3001/3101** 端口——WaveForge 后端启动失败（日志"端口已被占用"）、前端连到 Go 服务的空数据（首页/榜单全部"没有加载到内容"）。**症状 = 前端功能大面积不对时先查 3001 是否被其他进程占用**（`netstat -ano | grep :3001`）。
+> ⚠️ **端口占用坑（2026-08-16 实测，仍适用）**：本机另一个项目 **ReWaveForge**（`E:\FolderForVibeCoding\dsh\ReWaveForge\backend-go\bin\waveforge-server.exe`）会抢占 **3001/3101** 端口——HyperPlayer 后端启动失败（日志"端口已被占用"）、前端连到 Go 服务的空数据（首页/榜单全部"没有加载到内容"）。**症状 = 前端功能大面积不对时先查 3001 是否被其他进程占用**（`netstat -ano | grep :3001`）。
 
 **运行时升级历史**：2026-08-13 曾将嵌入式 Python 从 3.11.9 升到 3.13.15——该嵌入式运行时已随减配整体删除，此历史仅作留痕。
 
@@ -60,8 +60,8 @@
 1. **网易云 xeapi 公钥**：`/api/netease/song/url` 报 `xeapi public key is missing` 时，说明 `os.tmpdir()/xeapi_public_key` 被系统清理了 —— 重启后端即可（`initNeteaseAPI()` 启动时自动 `generateConfig()` 重新拉取，见 `local-server.mjs` 约 1664 行）。
 2. **SSRF 守卫与内部代理链**：`proxy-image → cover`（`localhost:3001`）是本应用合法内部代理链，SSRF 守卫必须放行本服务自身端口 3001，否则评论区/歌单封面裂。**不要在守卫中一刀切封 localhost**。见 `local-server.mjs` 中 `isBlockedFetchUrl`（约 1372 行）内的放行分支。
 3. **wallpaper-engine 路径穿越防护**：`/api/wallpaper-engine/preview|media` 用 `resolve + startsWith(base+sep)` 校验（`local-server.mjs` 约 8976 / 9024 行），改动时保持。
-4. **Electron will-navigate 守卫**：主窗口 / 桌面播放器 / 歌词窗 / 任务栏小窗均已挂 `guardAgainstExternalNavigation()`（dev: localhost:3000/127.0.0.1:3000；prod: file:// 入口）。**QQ 音乐 QMK API Key 领取窗口是唯一被允许打开 `y.qq.com` 的窗口**（`QMK_SESSION_PARTITION = 'waveforge-qq-skill-key'`，独立 session 且每次打开前清空避免复用登录态）——不要为其他窗口放宽守卫。
-5. **热路径日志**：播放/动画热路径必须用 `debugLog()`（`src/utils/debugLog.ts`），裸 console.log 会造成内存增长。开关：`localStorage['waveforge:verbose-log']='1'`（gapless 方案提示 `GaplessModeToast` 与过渡调试面板共用此开关）。
+4. **Electron will-navigate 守卫**：主窗口 / 桌面播放器 / 歌词窗 / 任务栏小窗均已挂 `guardAgainstExternalNavigation()`（dev: localhost:3000/127.0.0.1:3000；prod: file:// 入口）。**QQ 音乐 QMK API Key 领取窗口是唯一被允许打开 `y.qq.com` 的窗口**（`QMK_SESSION_PARTITION = 'hyperplayer-qq-skill-key'`，独立 session 且每次打开前清空避免复用登录态）——不要为其他窗口放宽守卫。
+5. **热路径日志**：播放/动画热路径必须用 `debugLog()`（`src/utils/debugLog.ts`），裸 console.log 会造成内存增长。开关：`localStorage['hyperplayer:verbose-log']='1'`（gapless 方案提示 `GaplessModeToast` 与过渡调试面板共用此开关）。
 6. **Apple bridge 依赖系统 Python**：`apple_bridge.py` 需系统 Python + `pywebview`（Windows 上依赖 WebView2）。未安装时 Apple 原生播放面不可用，但应用其余部分正常（自动回退网易云/QQ 播放）。`main.cjs` 会遍历常见安装路径找可用解释器并缓存探测结果。
 7. **过渡策略只有 Fixed Crossfade**：`src/audio/transitionPlanner.ts` 的 `planTransition` / `planTransitionV2` 只产出 `fixed-crossfade`（`smart-rendered` / `smart-rendered-v2` / `beat-crossfade` 生成分支已整体移除）。节拍/结构分析能力（`autoMixAnalysisService.ts`）**保留**，但只服务 MV 对齐、PV 歌词等消费者，不再用于智能混音。别再从 `git log` 里恢复 Smart AutoMix。
 8. **单一音效引擎**：`src/services/audio-engine/` 注册表只有 `v3Manifest` 一项（HSE）。`V3MixingStudio.tsx` 的引擎切换胶囊仍会渲染，但只有 HSE 一个按钮，等同无切换。接入新引擎只需新增 `engines/xxx.ts` + 注册表加一行。
@@ -99,7 +99,7 @@
 
 - 2026-07-10/07-13：两次项目合并（同学版本 + Wave-Forge 桌面版）。
 - 2026-08-13：代码安全修复（SSRF / 路径穿越 / IPC 启动通道 / will-navigate）→ 全链路回归 → 文档整理。
-- 2026-08-13：合并朋友优化版（WaveForge(4)）—— 安全加固 + 音频/渲染修复 + **QQ 音乐 QMK API Key 领取功能** + 打包修复。
+- 2026-08-13：合并朋友优化版（HyperPlayer(4)）—— 安全加固 + 音频/渲染修复 + **QQ 音乐 QMK API Key 领取功能** + 打包修复。
 - 2026-08-14：**Gapless 业务代码模块化** —— 从 `useAudioPlayer.ts` 抽离到 `src/services/gapless/`（`gaplessConstants.ts` / `seamlessJoinController.ts` / `gaplessTransition.ts`），hook 只剩调用接口。**后续改无缝逻辑优先改此处**。
 - 2026-08-14：**UpNext 弹窗修复** —— gapless 启用时「即将播放下一首」通知不显示（`transitionStartTime` null 无 fallback），改为回退 `duration` 倒计时；**EPIPE 防护**（stdout/stderr 管道关闭时主进程不再崩溃）；**版本号更迭机制**（`npm run version:*`）。
 - 2026-08-14：**遥控器 / SongDetail / 模式切换重构 / QQ 音乐修复** —— ⚠️ 遥控器部分**已随减配移除**；其余保留：`SongDetailModal` 与右键/径向菜单入口、`applyMode()` 模式切换重构、QQ 收藏歌单 POST 化 + AI 歌单补封面、PlaylistDetailPanel「收藏」按钮。
@@ -129,11 +129,11 @@ npm run test:desktop          # node --test 桌面/安全用例（apple-url-poli
 npm run test:chroma           # Razer Chroma 插件自测
 npm run test:signalrgb        # SignalRGB 插件自测
 npm run test:installer        # 生成安装器 UI 资产 + 安装器测试
-npx vitest run src/services/waveforge-engine-v3   # 改 HSE 算法前必跑
+npx vitest run src/services/HyperSoundEngine-v1   # 改 HSE 算法前必跑
 
 # 构建
 npm run build                 # vite build -> dist/（三入口：index.html / desktop-player.html / desktop-lyrics.html）
-npm run build:electron        # 发布安装版：build:electron:dir + 安装器美术 + electron-builder NSIS -> release/WaveForge-<version>-Setup.exe
+npm run build:electron        # 发布安装版：build:electron:dir + 安装器美术 + electron-builder NSIS -> release/HyperPlayer-<version>-Setup.exe
 npm run build:electron:dir    # 未打包目录 + EVS VMP 签名/校验/状态 -> release/win-unpacked
 npm run build:electron:dir:unsigned  # 同上但跳过 VMP 签名（仅本地诊断，不可发布）
 npm run build:v3-worklet      # 重生成 HSE AudioWorklet 单文件 -> public/v3-worklet.js（predev/predev:electron/prebuild 自动执行）
@@ -154,8 +154,8 @@ npm run version:dry           # 预览更迭（不落地）
 
 # 发布（⚠️ Releases 只发 NSIS 安装版，不发便携版 win-unpacked/）
 git tag v<version> && git push origin v<version>
-gh release create v<version> release/WaveForge-<version>-Setup.exe --title "v<version>" --notes "changelog"
-# 安装版每用户安装、不携带用户数据；用户配置生成于各机 %APPDATA%\WaveForge 澜音工坊\
+gh release create v<version> release/HyperPlayer-<version>-Setup.exe --title "v<version>" --notes "changelog"
+# 安装版每用户安装、不携带用户数据；用户配置生成于各机 %APPDATA%\HyperPlayer\
 
 # 回滚
 git log --oneline             # 查看历史

@@ -43,11 +43,11 @@ interface SearchPanelProps {
 }
 
 // 搜索历史本地存储key
-const SEARCH_HISTORY_KEY_NETEASE = 'waveforge_search_history_netease'
-const SEARCH_HISTORY_KEY_QQ = 'waveforge_search_history_qq'
-const SEARCH_HISTORY_KEY_APPLE = 'waveforge_search_history_apple'
-const SEARCH_HISTORY_KEY_SPOTIFY = 'waveforge_search_history_spotify'
-const SEARCH_HISTORY_KEY_FUSED = 'waveforge_search_history_fused'
+const SEARCH_HISTORY_KEY_NETEASE = 'hyperplayer_search_history_netease'
+const SEARCH_HISTORY_KEY_QQ = 'hyperplayer_search_history_qq'
+const SEARCH_HISTORY_KEY_APPLE = 'hyperplayer_search_history_apple'
+const SEARCH_HISTORY_KEY_SPOTIFY = 'hyperplayer_search_history_spotify'
+const SEARCH_HISTORY_KEY_FUSED = 'hyperplayer_search_history_fused'
 const MAX_HISTORY = 5
 // 搜索结果缓存上限：每次搜索缓存完整结果集（约 100 首歌对象），面板是常驻单例，
 // 不加上限会导致 Map 无限增长（内存泄漏）。超出上限时按 LRU 淘汰最旧的 cacheKey。
@@ -137,15 +137,15 @@ export default function SearchPanel({
   const hoverBg = playerTheme === 'dark' ? 'hover:bg-white/5' : 'hover:bg-black/5'
   
   const [keyword, setKeyword] = useState(() => {
-    const saved = sessionStorage.getItem('waveforge_search_keyword')
+    const saved = sessionStorage.getItem('hyperplayer_search_keyword')
     return saved || ''
   })
   const [allResults, setAllResults] = useState<Song[]>(() => {
-    const saved = sessionStorage.getItem('waveforge_search_all_results')
+    const saved = sessionStorage.getItem('hyperplayer_search_all_results')
     return parseStoredArray<Song>(saved)
   })
   const [displayedResults, setDisplayedResults] = useState<Song[]>(() => {
-    const saved = sessionStorage.getItem('waveforge_search_displayed_results')
+    const saved = sessionStorage.getItem('hyperplayer_search_displayed_results')
     return parseStoredArray<Song>(saved)
   })
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([])
@@ -177,13 +177,13 @@ export default function SearchPanel({
   const [searchError, setSearchError] = useState('')
   const [loadingMore, setLoadingMore] = useState(false) // 加载更多状态
   const [searched, setSearched] = useState(() => {
-    const saved = sessionStorage.getItem('waveforge_search_searched')
+    const saved = sessionStorage.getItem('hyperplayer_search_searched')
     return saved === 'true'
   })
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(-1) // 键盘选择的索引
   const [displayCount, setDisplayCount] = useState(() => {
-    const saved = sessionStorage.getItem('waveforge_search_display_count')
+    const saved = sessionStorage.getItem('hyperplayer_search_display_count')
     return saved ? parseInt(saved) : 20
   })
   const [isInputFocused, setIsInputFocused] = useState(false) // 输入框是否聚焦
@@ -235,13 +235,13 @@ export default function SearchPanel({
   
   // 从 sessionStorage 读取会话内的平台和搜索模式，否则从 localStorage 读取
   const [platform, setPlatform] = useState<SearchPlatform>(() => {
-    const sessionSaved = sessionStorage.getItem('waveforge_search_platform')
+    const sessionSaved = sessionStorage.getItem('hyperplayer_search_platform')
     if (sessionSaved === 'qq' || sessionSaved === 'netease' || sessionSaved === 'apple' || sessionSaved === 'spotify') {
       if (sessionSaved !== 'netease' && !isPlatformVisible(sessionSaved)) return 'netease'
       return sessionSaved
     }
     if (sessionSaved === 'fused') return 'fused'
-    const saved = localStorage.getItem('waveforge_last_search_platform')
+    const saved = localStorage.getItem('hyperplayer_last_search_platform')
     if (saved === 'qq' || saved === 'netease' || saved === 'apple' || saved === 'spotify') {
       if (saved !== 'netease' && !isPlatformVisible(saved)) return 'netease'
       return saved
@@ -249,9 +249,9 @@ export default function SearchPanel({
     return (saved === 'fused') ? 'fused' : 'netease'
   })
   const [searchType, setSearchType] = useState<'song' | 'artist' | 'album' | 'playlist'>(() => {
-    const sessionSaved = sessionStorage.getItem('waveforge_search_type')
+    const sessionSaved = sessionStorage.getItem('hyperplayer_search_type')
     if (sessionSaved === 'artist' || sessionSaved === 'album' || sessionSaved === 'song') return sessionSaved
-    const saved = localStorage.getItem('waveforge_last_search_type')
+    const saved = localStorage.getItem('hyperplayer_last_search_type')
     return (saved === 'artist' || saved === 'album' || saved === 'song') ? saved : 'song'
   })
   const previousPlatformRef = useRef<SearchPlatform>(platform)
@@ -283,17 +283,17 @@ export default function SearchPanel({
   
   // 歌手和专辑搜索结果
   const [artistResults, setArtistResults] = useState<Artist[]>(() => {
-    const saved = sessionStorage.getItem('waveforge_search_artist_results')
+    const saved = sessionStorage.getItem('hyperplayer_search_artist_results')
     return parseStoredArray<Artist>(saved)
   })
   const [albumResults, setAlbumResults] = useState<Album[]>(() => {
-    const saved = sessionStorage.getItem('waveforge_search_album_results')
+    const saved = sessionStorage.getItem('hyperplayer_search_album_results')
     return parseStoredArray<Album>(saved)
   })
   const [playlistResults, setPlaylistResults] = useState<{ id: string; name: string; coverImgUrl: string; trackCount: number; creator: string; platform: MusicPlatform }[]>([])
   const [fusionUnavailablePlatforms, setFusionUnavailablePlatforms] = useState<MusicPlatform[]>([])
   const [fusionIntent, setFusionIntent] = useState<FusedSearchIntent>(() => {
-    const saved = sessionStorage.getItem('waveforge_search_fusion_intent')
+    const saved = sessionStorage.getItem('hyperplayer_search_fusion_intent')
     return saved === 'artist' || saved === 'album' || saved === 'song' ? saved : 'mixed'
   })
   const [selectedArtist, setSelectedArtist] = useState<Artist | null>(null) // 选中的艺人
@@ -405,24 +405,24 @@ export default function SearchPanel({
 
   // 保存搜索状态到 sessionStorage（会话内记忆）
   useEffect(() => {
-    sessionStorage.setItem('waveforge_search_keyword', keyword)
-    sessionStorage.setItem('waveforge_search_searched', searched.toString())
-    sessionStorage.setItem('waveforge_search_platform', platform)
-    sessionStorage.setItem('waveforge_search_type', searchType)
-    sessionStorage.setItem('waveforge_search_display_count', displayCount.toString())
-    sessionStorage.setItem('waveforge_search_fusion_intent', fusionIntent)
+    sessionStorage.setItem('hyperplayer_search_keyword', keyword)
+    sessionStorage.setItem('hyperplayer_search_searched', searched.toString())
+    sessionStorage.setItem('hyperplayer_search_platform', platform)
+    sessionStorage.setItem('hyperplayer_search_type', searchType)
+    sessionStorage.setItem('hyperplayer_search_display_count', displayCount.toString())
+    sessionStorage.setItem('hyperplayer_search_fusion_intent', fusionIntent)
     
     if (allResults.length > 0) {
-      sessionStorage.setItem('waveforge_search_all_results', JSON.stringify(allResults))
+      sessionStorage.setItem('hyperplayer_search_all_results', JSON.stringify(allResults))
     }
     if (displayedResults.length > 0) {
-      sessionStorage.setItem('waveforge_search_displayed_results', JSON.stringify(displayedResults))
+      sessionStorage.setItem('hyperplayer_search_displayed_results', JSON.stringify(displayedResults))
     }
     if (artistResults.length > 0) {
-      sessionStorage.setItem('waveforge_search_artist_results', JSON.stringify(artistResults))
+      sessionStorage.setItem('hyperplayer_search_artist_results', JSON.stringify(artistResults))
     }
     if (albumResults.length > 0) {
-      sessionStorage.setItem('waveforge_search_album_results', JSON.stringify(albumResults))
+      sessionStorage.setItem('hyperplayer_search_album_results', JSON.stringify(albumResults))
     }
   }, [keyword, searched, platform, searchType, displayCount, allResults, displayedResults, artistResults, albumResults, fusionIntent])
 
@@ -456,7 +456,7 @@ export default function SearchPanel({
   // 监听平台切换，如果已搜索过则重新搜索
   useEffect(() => {
     // 保存平台选择
-    localStorage.setItem('waveforge_last_search_platform', platform)
+    localStorage.setItem('hyperplayer_last_search_platform', platform)
 
     // 首次挂载（包括 React StrictMode 的重复 effect）只恢复缓存，不重新发请求。
     if (previousPlatformRef.current === platform) return
@@ -469,7 +469,7 @@ export default function SearchPanel({
   // 监听搜索类型切换
   useEffect(() => {
     // 保存搜索类型选择
-    localStorage.setItem('waveforge_last_search_type', searchType)
+    localStorage.setItem('hyperplayer_last_search_type', searchType)
 
     if (previousSearchTypeRef.current === searchType) return
     previousSearchTypeRef.current = searchType
@@ -1428,7 +1428,7 @@ export default function SearchPanel({
                         onOpenPlaylist(playlist)
                       } else {
                         // 未接内部打开时回退为外部浏览器打开
-                        const w = (window as any).waveforge
+                        const w = (window as any).hyperplayer
                         if (w?.openExternal) void w.openExternal(`https://y.qq.com/n/ryqq_v2/playlist/${playlist.id}`)
                       }
                     }

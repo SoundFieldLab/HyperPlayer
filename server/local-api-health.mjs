@@ -1,4 +1,4 @@
-export const LOCAL_API_SERVICE = 'waveforge-local-api'
+export const LOCAL_API_SERVICE = 'hyperplayer-local-api'
 export const LOCAL_API_PROTOCOL_VERSION = 1
 
 export function isCompatibleLocalApiHealth(body) {

@@ -1,6 +1,6 @@
 /**
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
- * 版权所有（c）2026 WaveForge 澜音工坊，保留所有权利；未经书面授权禁止复制/移植/再分发。
+ * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 import { useState, useRef, useEffect, useMemo, lazy, Suspense } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -872,7 +872,7 @@ export default function DesktopSettingsModal({
                                 { type: 'spectrum' as const, label: '音频频谱', description: '当前音乐实时律动', icon: AudioLines },
                                 { type: 'quickLauncher' as const, label: '快捷启动器', description: '应用、文件夹与网页', icon: Rocket },
                                 { type: 'systemStatus' as const, label: '系统状态', description: 'CPU、内存与磁盘', icon: Cpu },
-                                { type: 'volumeControl' as const, label: '音量控制', description: 'WaveForge 输出音量', icon: Volume2 },
+                                { type: 'volumeControl' as const, label: '音量控制', description: 'HyperPlayer 输出音量', icon: Volume2 },
                               ]).map(option => {
                                 const selected = desktopCustomization[side].includes(option.type)
                                 const Icon = option.icon

@@ -29,7 +29,7 @@ type LegalStringKey =
 /** 法律条款简体中文全文（唯一内容来源）。 */
 const LEGAL_ZH: Record<LegalStringKey, string> = {
   s1h1: "一、总则与条款接受",
-  s1p1: "欢迎使用 WaveForge（澜音工坊，以下简称\"本软件\"）。本软件是一款免费开源、基于 Electron 构建的音乐播放器，支持网易云音乐、QQ音乐、酷狗音乐、汽水音乐、Apple Music、Spotify 与哔哩哔哩（\"看歌\"MV 播放）等平台的搜索、试听与歌单管理功能。",
+  s1p1: "欢迎使用 HyperPlayer（以下简称\"本软件\"）。本软件是一款免费开源、基于 Electron 构建的音乐播放器，支持网易云音乐、QQ音乐、Apple Music、Spotify 与哔哩哔哩（\"看歌\"MV 播放）等平台的搜索、试听与歌单管理功能。",
   s1p2: "本协议适用于本软件的全部版本与运行形态（包括 Windows、macOS、Linux、Android、iOS 等各平台衍生版本及网页预览版）。本软件目前处于预览阶段，部分功能与稳定性可能随时调整，最终功能以实际发布版本为准。",
   s1p3: "在使用本软件前，请仔细阅读并充分理解《法律声明与用户协议》（以下简称\"本协议\"）的全部内容。安装、启动或以任何方式使用本软件，即视为您已阅读、理解并同意接受本协议的约束；如您不同意本协议的任何条款，请立即停止使用并卸载本软件。",
   s2h1: "二、第三方平台服务与风险告知",
@@ -79,7 +79,7 @@ const LEGAL_ZH: Record<LegalStringKey, string> = {
   s8li1: "登录凭证、播放缓存、配置与歌单等数据仅保存在您的本地设备（本地存储与 IndexedDB），开发者无法访问；",
   s8li2: "智能混音与无缝衔接所需的音频分析缓存（analysis-cache 目录）仅保存在本机，用于节拍分析等本地算法处理，并会按 30 天未使用、超过容量上限或您主动\"清除缓存\"自动删除；",
   s8li3: "天气与灾害预警（天气预报、台风路径、地震、天气地图等）会调用第三方公开数据源，包括 Open-Meteo（天气/空气质量/海洋预报）、中国气象局台风网、中国地震台网、OpenStreetMap / Photon（地理编码与地图）、Esri ArcGIS（地图底图）、阿里云 DataV（行政边界）等，并可能通过 ipinfo.io / ipwho.is / api.ip.sb / bigdatacloud 等服务进行公网 IP 定位；上述请求仅携带位置或查询参数，不包含您的身份信息；",
-  s8li4: "新版本检查会访问 Gitee / GitHub 等仓库的更新清单，仅传输当前版本号等信息；",
+  s8li4: "新版本检查会访问 GitHub 仓库的更新清单，仅传输当前版本号等信息；",
   s8li5: "歌词功能会请求第三方歌词库（Lrclib / AMLL / amlldb 等）以歌曲标识查询歌词；",
   s8li6: "各平台接口调用仅在您已登录并主动使用时发生；",
   s8li7: "设备授权功能仅在本地生成并展示设备标识，不收集设备信息；",
@@ -90,8 +90,8 @@ const LEGAL_ZH: Record<LegalStringKey, string> = {
   s8li12: "远程遥控功能仅在您的局域网内建立点对点连接，不经过第三方服务器；",
   s8li13: "您可随时通过软件内的\"清除缓存\"功能删除本地缓存数据。",
   s9h1: "九、开源与分发",
-  s9p1: "1. 本软件以开源形式发布，源代码托管于 Gitee（gitee.com/kirito666233/wave-forge）与 GitHub（github.com/YoshinoRinn/WaveForge）。请在使用、修改或再分发前查阅项目仓库中的许可证声明；如仓库未附许可证，请联系开发者确认后再行使用。",
-  s9p2: "2. 本软件的音效引擎（v3）内嵌或参考了多项第三方开源组件与算法：随包携带的 soundtouchjs（LGPL-2.1，用于变速/变调，以原样副本随模块分发并通过公开接口动态调用）；可选适配的 signalsmith-stretch（MIT）；以及参考实现的 Freeverb 混响（公有领域 / MIT）、kissfft（BSD-3）、libebur128 与 FFmpeg 响度测量（LGPL，仅作对照参考）、DSPFilters（MIT）、meyda（MIT）、fft-convolver（MIT）等。上述组件的完整清单、许可证文本与署名请参阅项目仓库（如 src/services/waveforge-engine-v3/vendor/ 目录）；其中 LGPL 组件的使用遵循其许可证要求。",
+  s9p1: "1. 本软件以开源形式发布，源代码托管于 GitHub（github.com/SoundFieldLab/HyperPlayer）。请在使用、修改或再分发前查阅项目仓库中的许可证声明；如仓库未附许可证，请联系开发者确认后再行使用。",
+  s9p2: "2. 本软件的音效引擎（v3）内嵌或参考了多项第三方开源组件与算法：随包携带的 soundtouchjs（LGPL-2.1，用于变速/变调，以原样副本随模块分发并通过公开接口动态调用）；可选适配的 signalsmith-stretch（MIT）；以及参考实现的 Freeverb 混响（公有领域 / MIT）、kissfft（BSD-3）、libebur128 与 FFmpeg 响度测量（LGPL，仅作对照参考）、DSPFilters（MIT）、meyda（MIT）、fft-convolver（MIT）等。上述组件的完整清单、许可证文本与署名请参阅项目仓库（如 src/services/HyperSoundEngine-v1/vendor/ 目录）；其中 LGPL 组件的使用遵循其许可证要求。",
   s10h1: "十、协议变更",
   s10p1: "开发者有权根据法律法规变化、平台条款调整或产品发展需要，不时修订本协议。修订后的协议将在本软件内公布并自公布之日起生效。您在修订生效后继续使用本软件，即视为接受修订后的协议。",
   s11h1: "十一、法律适用与争议解决",
@@ -107,14 +107,14 @@ const LEGAL_ZH: Record<LegalStringKey, string> = {
   s15h1: "十五、服务的中止与终止",
   s15p1: "开发者有权根据实际情况随时停止更新、维护或终止提供本软件的部分或全部功能，并将在可行的情况下通过软件内公告或仓库发布说明提前告知。除依法必须承担的责任外，开发者不对服务的中止或终止承担任何补偿责任。",
   s16h1: "十六、权利通知与投诉处理",
-  s16p1: "如您认为本软件或其关联功能侵犯了您的合法权益，或存在不当内容，请通过 GitHub / Gitee 仓库提交 Issue 或向开发者提供书面通知。我们将在核实后及时处理，包括但不限于移除相关功能、停止分发、按权利人要求整改。",
+  s16p1: "如您认为本软件或其关联功能侵犯了您的合法权益，或存在不当内容，请通过 GitHub 仓库提交 Issue 或向开发者提供书面通知。我们将在核实后及时处理，包括但不限于移除相关功能、停止分发、按权利人要求整改。",
   s17h1: "十七、一般条款",
   s17p1: "1. 完整协议：本协议构成您与开发者之间就使用本软件达成的完整约定，取代此前任何口头或书面的约定、承诺与理解。",
   s17p2: "2. 可分割性：本协议任一条款被有权机关认定为无效或不可执行的，不影响其余条款的效力。",
   s17p3: "3. 不放弃权利：开发者未能或延迟行使本协议项下的任何权利，不构成对该权利的放弃；对任何单项权利的放弃不构成对其他权利的放弃。",
   s17p4: "4. 反馈与建议：您通过 Issue、反馈渠道等方式向开发者提交的意见、建议、想法或改进方案，开发者有权在不承担任何义务的前提下免费使用。",
   footer1: "最后更新时间：2026年8月18日",
-  footer2: "如有任何疑问，请通过 GitHub（github.com/YoshinoRinn/WaveForge）或 Gitee（gitee.com/kirito666233/wave-forge）仓库提交 Issue 联系我们。",
+  footer2: "如有任何疑问，请通过 GitHub（github.com/SoundFieldLab/HyperPlayer）仓库提交 Issue 联系我们。",
 }
 
 interface LegalAgreementProps {

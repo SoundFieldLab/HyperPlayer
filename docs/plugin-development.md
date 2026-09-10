@@ -1,6 +1,6 @@
-# WaveForge 插件开发文档
+# HyperPlayer 插件开发文档
 
-> 本文档面向希望为 WaveForge（澜音工坊）开发插件的开发者与 AI 助手。
+> 本文档面向希望为 HyperPlayer 开发插件的开发者与 AI 助手。
 > 插件系统用于承载「小功能 / 不够普适的功能」，通过插件商店式 UI 安装、开关与卸载。
 > 本文档随仓库 Git 提交（标记待上传 GitHub，公开可读）。
 
@@ -19,7 +19,7 @@
 
 ## 1. 什么是插件
 
-插件 = 一份 **manifest（JSON 元信息 + 可选运行时代码）**。WaveForge 提供：
+插件 = 一份 **manifest（JSON 元信息 + 可选运行时代码）**。HyperPlayer 提供：
 
 - **入口**：简约模式底部药丸、桌面模式底部弹出栏、探索模式右上角，均有「插件系统」按钮；
 - **插件中心**：横向 App Store 式弹窗，卡片展示 Logo / 名称 / 简介 / 开关；
@@ -60,7 +60,7 @@
 
 ## 3. 插件生命周期与运行时 API
 
-插件启用/停用时，WaveForge 会调用注册表的生命周期回调。运行时代码支持两种写法：
+插件启用/停用时，HyperPlayer 会调用注册表的生命周期回调。运行时代码支持两种写法：
 
 **写法 A（推荐）——返回生命周期对象：**
 
@@ -131,7 +131,7 @@ interface PluginContext {
 内置插件 `dglab` 是完整参考实现（源码 `src/plugins/DGLabPlugin.ts`）：
 
 - 功能：把音乐波形（低频鼓点 / 中频旋律 / 高频细节）实时转换为郊狼 A/B 双通道电流强度；
-- 链路：WaveForge 渲染端采样 → 本地中继（`server/dglab-relay.cjs`）→ WebSocket → 手机 DG-Lab App（BLE 持有设备）→ 郊狼 3.0(V3) / 4.0(V4)；
+- 链路：HyperPlayer 渲染端采样 → 本地中继（`server/dglab-relay.cjs`）→ WebSocket → 手机 DG-Lab App（BLE 持有设备）→ 郊狼 3.0(V3) / 4.0(V4)；
 - 中继：默认监听 `127.0.0.1:30082`，路径 `/dglab/v3`、`/dglab/v4`（App 扫码连入）、`/dglab/ctrl`（渲染端控制）；
 - 扫码：App 娱乐模式扫二维码（内容为官方 socket URL）；
 - 强度标尺：0-200，输出 `min(用户上限, App softLimit)`，断链/停止/静音自动 `clear` 归零；
@@ -141,7 +141,7 @@ interface PluginContext {
 
 ## 7. 安全边界与限制
 
-导入插件的运行时代码当前与 WaveForge renderer **同权限执行，不是安全沙箱**：
+导入插件的运行时代码当前与 HyperPlayer renderer **同权限执行，不是安全沙箱**：
 
 - 不提供 CommonJS `require`，但代码仍可访问 `window`、`document`、`fetch` 和页面存储；
 - 仅安装来源可信、可审计的插件文件；安装界面会明确标记含运行时代码的插件；
@@ -185,13 +185,13 @@ interface PluginContext {
 - **所见即所得**：`src/plugins/clients/chroma/chromaStyles.ts` 是真机输出与控制台预览共用的唯一灯效引擎，避免预览和硬件行为分叉。
 - **后台门控**：插件仅在启用且用户打开后台联动时持有音频分析器后台租约。插件关闭后必须释放租约和 Chroma 会话，将灯光控制权交还雷云。
 - **兼容策略**：REST 传输封装必须保持独立。若未来迁移到 Wyvrn ChromaRGB SDK，只替换主进程传输层，不改灯效引擎与控制台。
-- **Synapse 应用列表编码**：SDK 注册标题固定使用 ASCII `WaveForge`。Synapse 4 / Chroma SDK 4.0.1 的应用索引 JSON 对非 ASCII helper 名称存在 `invalid UTF-8 byte` 缺陷；该错误会让整个优先级列表为空。控制台只清理 WaveForge 自己生成的旧调试条目，第三方非 ASCII 应用只诊断、不自动修改。
+- **Synapse 应用列表编码**：SDK 注册标题固定使用 ASCII `HyperPlayer`。Synapse 4 / Chroma SDK 4.0.1 的应用索引 JSON 对非 ASCII helper 名称存在 `invalid UTF-8 byte` 缺陷；该错误会让整个优先级列表为空。控制台只清理 HyperPlayer 自己生成的旧调试条目，第三方非 ASCII 应用只诊断、不自动修改。
 
 ## 附录：SignalRGB 插件架构契约
 
-- **官方扩展模型**：SignalRGB 没有稳定的外部逐 LED 写入 API。WaveForge 安装自主编写的 `WaveForge.html` Dynamic Effect，由 Effect 直接读取 `engine.audio` 并绘制 320×200 灯光画布，SignalRGB 负责映射到用户布局与全部受支持设备。
-- **低频通信**：WaveForge 只通过 Canvas Event 发送播放、暂停、重拍、主题、风格和段落等白名单语义事件，不发送频谱或 LED 帧。
+- **官方扩展模型**：SignalRGB 没有稳定的外部逐 LED 写入 API。HyperPlayer 安装自主编写的 `HyperPlayer.html` Dynamic Effect，由 Effect 直接读取 `engine.audio` 并绘制 320×200 灯光画布，SignalRGB 负责映射到用户布局与全部受支持设备。
+- **低频通信**：HyperPlayer 只通过 Canvas Event 发送播放、暂停、重拍、主题、风格和段落等白名单语义事件，不发送频谱或 LED 帧。
 - **Pro 降级**：Local API 只用于自动应用/恢复效果和读取布局。HTTP 403 表示没有 Pro 或未授权，必须降级为用户在 SignalRGB 中手动选择 Effect，不作为插件故障。
-- **安全安装**：Effect 仅在用户于控制台明确确认后写入 SignalRGB 最新版本的 `Effects/Dynamic` 目录。更新和卸载必须校验 WaveForge sidecar 与 SHA-256；无法证明所有权时拒绝覆盖或删除。
+- **安全安装**：Effect 仅在用户于控制台明确确认后写入 SignalRGB 最新版本的 `Effects/Dynamic` 目录。更新和卸载必须校验 HyperPlayer sidecar 与 SHA-256；无法证明所有权时拒绝覆盖或删除。
 - **版本迁移**：SignalRGB 的 `app-*` 目录会随更新变化。检测到 Effect 仅存在于旧版本目录时，提示用户重新确认安装并重启 SignalRGB。
 - **能力边界**：Local API 不公开物理设备型号、LED 拓扑和电量，SignalRGB 控制台不得伪造这些数据。

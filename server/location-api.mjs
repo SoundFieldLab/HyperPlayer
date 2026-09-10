@@ -153,8 +153,8 @@ const requestReverseLocation = async (latitude, longitude) => {
   fallbackUrl.searchParams.set('localityLanguage', 'zh')
 
   const [photonResult, administrativeResult] = await Promise.allSettled([
-    fetchJson(photonUrl.toString(), 'WaveForge/0.1 local desktop weather').then(normalizePhoton),
-    fetchJson(fallbackUrl.toString(), 'WaveForge/0.1 local desktop weather').then(normalizeBigDataCloud),
+    fetchJson(photonUrl.toString(), 'HyperPlayer/0.1 local desktop weather').then(normalizePhoton),
+    fetchJson(fallbackUrl.toString(), 'HyperPlayer/0.1 local desktop weather').then(normalizeBigDataCloud),
   ])
   const photon = photonResult.status === 'fulfilled' ? photonResult.value : null
   const administrative = administrativeResult.status === 'fulfilled' ? administrativeResult.value : null
@@ -170,7 +170,7 @@ const requestReverseLocation = async (latitude, longitude) => {
   nominatimUrl.searchParams.set('accept-language', 'zh-CN')
   const nominatim = normalizeNominatim(await fetchJson(
     nominatimUrl.toString(),
-    'WaveForge/0.1 (local desktop weather reverse geocoder)',
+    'HyperPlayer/0.1 (local desktop weather reverse geocoder)',
   ))
   if (!nominatim.formattedAddress) throw new Error('反向定位服务没有返回有效地址')
   return nominatim

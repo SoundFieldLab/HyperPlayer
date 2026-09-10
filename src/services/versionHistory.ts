@@ -1,7 +1,7 @@
 /**
  * 版本历史（关于 → 更新 → 版本历史）。
  *
- * 内容维护约定：与 GitHub Releases（YoshinoRinn/WaveForge）及 git 版本节点保持同步。
+ * 内容维护约定：与 GitHub Releases（YoshinoRinn/HyperPlayer）及 git 版本节点保持同步。
  * 每次发布新版本时，把上一版条目挪到这里（保留完整说明），并在顶部加入
  * 「当前版本」条目——更新日志（update.json 的 notes）与该处文案保持一致。
  *

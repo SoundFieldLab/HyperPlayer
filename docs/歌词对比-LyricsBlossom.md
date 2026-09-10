@@ -1,14 +1,14 @@
-# WaveForge「现代」歌词模式 × LyricsBlossom(Apple Music) 对比分析
+# HyperPlayer「现代」歌词模式 × LyricsBlossom(Apple Music) 对比分析
 
 > 日期：2026-08-16
-> 目的：把 WaveForge「现代」模式做成与 LyricsBlossom（Apple Music 1:1 还原）一致的逐字歌词动画
-> 依据：WaveForge `src/components/LyricsDisplay.tsx`、`src/desktop-lyrics/DesktopLyricsApp.tsx`、`src/utils/lyricWordTiming.ts`；LyricsBlossom 二进制逆向（RTTI + 反汇编 + 字符串证据）
+> 目的：把 HyperPlayer「现代」模式做成与 LyricsBlossom（Apple Music 1:1 还原）一致的逐字歌词动画
+> 依据：HyperPlayer `src/components/LyricsDisplay.tsx`、`src/desktop-lyrics/DesktopLyricsApp.tsx`、`src/utils/lyricWordTiming.ts`；LyricsBlossom 二进制逆向（RTTI + 反汇编 + 字符串证据）
 
 ---
 
 ## 一、两边的实现方式对比（架构层）
 
-| 维度 | WaveForge「现代」 | LyricsBlossom（Apple Music 还原） |
+| 维度 | HyperPlayer「现代」 | LyricsBlossom（Apple Music 还原） |
 |---|---|---|
 | 渲染技术 | React DOM + CSS + framer-motion | 原生 C++ + Skia GPU（Vulkan）直接绘制 |
 | 逐字高亮实现 | 每个词/字 = 一个 `<span>`，双层绘制：底层未激活色 + 绝对定位填充层（`width%` 裁剪 + CSS `mask-image` 渐变羽化） | Skia：`TextRenderer::getGlyphRects()` 取字形矩形 → 已唱部分用高亮色重绘/分段绘制 |
@@ -17,15 +17,15 @@
 | 当前行呈现 | 播放页：**单行大歌词**（`displayMode="single"`，居中，字号 `lyricSize*1.3~1.65`）+ 现代频谱可视化；桌面：单行/双行 + 超长行横向 marquee | **多行列表**：当前行居中放大（`setupLyricsExpandingHook` 展开动画），上下行缩小、变暗、模糊，滚动按需裁剪只画可视行 |
 | 律动背景 | `ModernAudioVisualizer` 频谱条 + `backgroundEffect`（封面模糊 scale 1.15 / blur / transparent） | 封面模糊层 + **SkSL RuntimeEffect 球体光晕**（uniform `uInvRadius/invRange/uHoldRatio/startY`），跟随节拍律动 + 液态玻璃 shader |
 
-**关键差异（实现方式）**：WaveForge 是"每个词一个 DOM 节点 + CSS mask 填充"；LyricsBlossom 是"字形级 Skia 绘制"。视觉上 WaveForge 完全可行，但有两处结构性不同会影响"像不像 Apple Music"：① 单行 vs 多行列表；② 频谱 vs 律动光晕背景。
+**关键差异（实现方式）**：HyperPlayer 是"每个词一个 DOM 节点 + CSS mask 填充"；LyricsBlossom 是"字形级 Skia 绘制"。视觉上 HyperPlayer 完全可行，但有两处结构性不同会影响"像不像 Apple Music"：① 单行 vs 多行列表；② 频谱 vs 律动光晕背景。
 
 ---
 
 ## 二、逐字歌词动画逐点对比（视觉层）
 
-WaveForge「现代」= 播放页 `displayMode="single"` + 逐字效果（默认 `clear`，桌面/设置可选 `soft`）；逐字实现集中在 `LyricsDisplay.tsx` 的 `renderLyricLine`（L1059-1356）与 `DesktopLyricsApp.tsx` 的 `LyricText`。
+HyperPlayer「现代」= 播放页 `displayMode="single"` + 逐字效果（默认 `clear`，桌面/设置可选 `soft`）；逐字实现集中在 `LyricsDisplay.tsx` 的 `renderLyricLine`（L1059-1356）与 `DesktopLyricsApp.tsx` 的 `LyricText`。
 
-| # | 动画点 | WaveForge 现状 | Apple Music / LyricsBlossom 行为 | 差异程度 |
+| # | 动画点 | HyperPlayer 现状 | Apple Music / LyricsBlossom 行为 | 差异程度 |
 |---|---|---|---|---|
 | 1 | 词填充推进 | 词内 `fillWidth` 按词时间线性推进；**soft 模式 `fillExtension=42%`**：高亮延伸到下一个词 42% 处 + mask 羽化 | 词内独立渐变填充，**不跨词延伸**（词与词之间干净分隔） | ⚠️ 明显：soft 的 42% 延伸是"连续扫描"感，Apple Music 是"逐词点亮"感 |
 | 2 | 词亮起曲线 | `activeProgress = sin(entry × (1-release) × π/2)`（仅用于辉光）；fill 为线性 | 词亮起平滑亮度过渡（先快后慢 ease-out） | 中：辉光有曲线但主填充是线性 |
@@ -35,11 +35,11 @@ WaveForge「现代」= 播放页 `displayMode="single"` + 逐字效果（默认 
 | 6 | 当前行放大 | 单行模式无行对比；滚动模式 `scale 1.006`（几乎不可见）+ 字号 100% vs 63% | 当前行明显放大（展开动画），上下行缩小+模糊+变暗 | ⚠️ 结构性差异（单行 vs 多行） |
 | 7 | 行切换动画 | soft-focus：旧行 `blur(24px) brightness(0.78) scale1.05 y-8` 退出，新行 `blur(28px) brightness(0.72) scale0.9` 进入，0.72s | 行间平滑过渡，新行从下浮入放大 | 中：方向一致，参数需微调 |
 | 8 | 行常驻呼吸 | soft-focus ambient：`y ±3px / scale 1.014 / brightness 1.1`，4.8s 循环 | Apple Music 无此呼吸（静止感更强） | ⚠️ 多余：Apple Music 歌词不动 |
-| 9 | 时间偏移 | `lyricOffset` 全局秒级偏移 | `±50ms` 步长精确补偿 + 播放/暂停重同步 | 低：WaveForge 步长更粗（秒级） |
+| 9 | 时间偏移 | `lyricOffset` 全局秒级偏移 | `±50ms` 步长精确补偿 + 播放/暂停重同步 | 低：HyperPlayer 步长更粗（秒级） |
 | 10 | 无逐词数据回退 | `buildProgressiveLyricGlyphs`：行时长按字符数均分（渐进式） | `no_syllable` 回退整行高亮 | 低 |
 | 11 | 语言处理 | 中文逐字、英文**按字母拆分逐字**、日文假名注音（`<ruby>`） | 逐音节（TTML），词级 | 中：英文按字母拆比 Apple Music 更细 |
 
-**逐字"手感"核心差异**：Apple Music 是**词级"点亮"**（每个词在自己的时间窗口内从暗到亮），词间有节奏停顿感；WaveForge soft 的 `fillExtension=42%` 制造了"高亮拖着尾巴跑"的连续感——这是最可能让用户觉得"不像 Apple Music"的点。clear 模式反而更接近（词内精确填充），但没有羽化渐变、没有词亮起的柔和过渡。
+**逐字"手感"核心差异**：Apple Music 是**词级"点亮"**（每个词在自己的时间窗口内从暗到亮），词间有节奏停顿感；HyperPlayer soft 的 `fillExtension=42%` 制造了"高亮拖着尾巴跑"的连续感——这是最可能让用户觉得"不像 Apple Music"的点。clear 模式反而更接近（词内精确填充），但没有羽化渐变、没有词亮起的柔和过渡。
 
 ---
 
@@ -107,7 +107,7 @@ WaveForge「现代」= 播放页 `displayMode="single"` + 逐字效果（默认 
 
 ### 如何查看效果
 ```bash
-cd D:\opencode\WaveForge
+cd D:\opencode\HyperPlayer
 npm run dev:electron
 ```
 播放一首带逐词数据的歌 → 默认「现代」模式即为 Apple 风格：所有行同字号、当前行逐词点亮（无闪烁）、封面节拍光晕 + 频谱并存；QuickSettings 可切换逐字效果（清晰/柔和/Apple）与律动光晕。

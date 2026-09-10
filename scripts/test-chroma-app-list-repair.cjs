@@ -27,18 +27,18 @@ function fakeChild(onSpawn) {
 }
 
 async function main() {
-  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'waveforge-chroma-repair-'))
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'hyperplayer-chroma-repair-'))
   try {
     await Promise.all(STALE_APPS.map(name => fs.promises.mkdir(path.join(root, name))))
     const records = [
-      { Name: 'WaveForge', Title: 'WaveForge', Path: 'C:\\ProgramData\\Razer Chroma SDK\\Apps\\WaveForge\\WaveForge.exe', Enable: 1 },
-      { Name: 'WaveForgeProbe', Title: 'WaveForge Probe', Path: 'C:\\ProgramData\\Razer Chroma SDK\\Apps\\WaveForgeProbe\\WaveForgeProbe.exe', Enable: 1 },
+      { Name: 'HyperPlayer', Title: 'HyperPlayer', Path: 'C:\\ProgramData\\Razer Chroma SDK\\Apps\\HyperPlayer\\HyperPlayer.exe', Enable: 1 },
+      { Name: 'HyperPlayerProbe', Title: 'HyperPlayer Probe', Path: 'C:\\ProgramData\\Razer Chroma SDK\\Apps\\HyperPlayerProbe\\HyperPlayerProbe.exe', Enable: 1 },
       { Name: 'DeltaForceClient-Win64-Shipping', Title: '三角洲行动', Path: 'E:\\Delta Force\\game.exe', Enable: 1 },
     ]
     const execFileImpl = (_exe, _args, _options, callback) => callback(null, JSON.stringify(records), '')
     const health = await inspectChromaAppList({ appRoot: root, execFileImpl, readRecentUtf8ErrorImpl: () => null })
     assert.equal(health.cleanAppRegistered, true)
-    assert.deepEqual(health.staleRegistry, ['WaveForgeProbe'])
+    assert.deepEqual(health.staleRegistry, ['HyperPlayerProbe'])
     assert.deepEqual(health.staleFolders.sort(), [...STALE_APPS].sort())
     assert.equal(health.nonAsciiApps.length, 1)
     assert.equal(health.nonAsciiApps[0].Title, '三角洲行动')
@@ -85,7 +85,7 @@ async function main() {
             version: REPAIR_PROTOCOL_VERSION,
             ok: true,
             repairedAt: new Date().toISOString(),
-            removed: ['WaveForgeProbe'],
+            removed: ['HyperPlayerProbe'],
             error: null,
           }))
           child.stdout.write('WF_CHROMA_EXIT:0\n')
@@ -94,7 +94,7 @@ async function main() {
       },
     })
     assert.equal(success.outcome, 'succeeded')
-    assert.deepEqual(success.report.removed, ['WaveForgeProbe'])
+    assert.deepEqual(success.report.removed, ['HyperPlayerProbe'])
     assert.equal(fs.readFileSync(path.join(successRoot, 'chroma-repair', 'repair-chroma-app-list.ps1')).subarray(0, 3).toString('hex'), 'efbbbf')
     assert.ok(outerArgs.includes('-EncodedCommand'))
     assert.equal(outerArgs.some(value => value.includes('User Data') || value.includes('涟漪')), false)

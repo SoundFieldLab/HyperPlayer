@@ -170,7 +170,7 @@ register('victimOutline', VictimOutline);
 register('shatterText', ShatterText);
 register('crayonShatter', CrayonShatter);
 
-// WaveForge 专属扩展特效
+// HyperPlayer 专属扩展特效
 register('wfLyricOverlay', WfLyricOverlay);
 
 export function createEffect(

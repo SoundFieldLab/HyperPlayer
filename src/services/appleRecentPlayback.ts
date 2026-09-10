@@ -31,7 +31,7 @@ export const recordAppleRecentPlaybackFallback = (song: Song) => {
   } catch {
     return
   }
-  window.dispatchEvent(new CustomEvent('waveforge-recent-playback-reported', { detail: { platform: 'apple' } }))
+  window.dispatchEvent(new CustomEvent('hyperplayer-recent-playback-reported', { detail: { platform: 'apple' } }))
 }
 
 export const mergeAppleRecentPlayback = (remote: Song[], local = readAppleRecentPlaybackFallback(), limit = MAX_ITEMS) => {

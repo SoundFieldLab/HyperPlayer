@@ -4,7 +4,7 @@
  * 分客户端显示：
  *  - Windows（Electron）：顶部卡片「检测到新版本」→ 立即更新走 downloadAndInstall 真下载安装；
  *  - Android TV：不显示卡片（原生 UpdateChecker 启动时已弹窗），成功弹窗仍生效；
- *  - 浏览器（调试/网页）：显示卡片，但「立即更新」跳转 Gitee 发布页（无安装器）。
+ *  - 浏览器（调试/网页）：显示卡片，但「立即更新」跳转 GitHub 发布页（无安装器）。
  *
  * 成功弹窗三端统一：更新生效后（本地版本 ≥ 标记的目标版本）首次打开时显示
  * 「版本更新成功」+ 更新内容（过长可折叠），点确定清除标记。
@@ -17,7 +17,7 @@ import {
   fetchUpdateManifest,
   compareVersions,
   withDownloadProxies,
-  GITEE_RELEASES_URL,
+  RELEASES_URL,
   type UpdateManifest,
 } from '../services/updateConstants'
 import { getVersionDisplay } from '../services/versionInfo'
@@ -27,9 +27,9 @@ interface UpdatePromptProps {
   playerTheme?: 'dark' | 'light'
 }
 
-const SKIP_VERSION_KEY = 'waveforge:update-skip-version' // 此次版本不再提示（持久）
-const APPLIED_MARKER_KEY = 'waveforge:update-applied' // 更新已生效标记（成功后清除）
-const DISMISS_SESSION_KEY = 'waveforge:update-dismiss-session' // 稍后提示（本次会话）
+const SKIP_VERSION_KEY = 'hyperplayer:update-skip-version' // 此次版本不再提示（持久）
+const APPLIED_MARKER_KEY = 'hyperplayer:update-applied' // 更新已生效标记（成功后清除）
+const DISMISS_SESSION_KEY = 'hyperplayer:update-dismiss-session' // 稍后提示（本次会话）
 
 function readJSON(key: string): { version?: string; notes?: string } | null {
   try {
@@ -100,7 +100,7 @@ export default function UpdatePrompt({ playerTheme = 'dark' }: UpdatePromptProps
     if (isDesktop() && winArtifact?.urls?.length && bridge?.downloadAndInstall) {
       setDownloading(true)
       try {
-        // manifest 的 urls 已按 Gitee → ghproxy(GitHub) → GitHub 排好序，整表传入逐个尝试
+        // manifest 的 urls 已按 ghproxy(GitHub) → GitHub 排好序，整表传入逐个尝试
         const result = await bridge.downloadAndInstall(winArtifact.urls, winArtifact.sha256 || '')
         if (result.success) {
           // 写入成功标记：更新生效后下次启动显示成功弹窗
@@ -116,8 +116,8 @@ export default function UpdatePrompt({ playerTheme = 'dark' }: UpdatePromptProps
       }
       return
     }
-    // 浏览器/网页：跳转 Gitee 发布页
-    window.open(GITEE_RELEASES_URL, '_blank')
+    // 浏览器/网页：跳转 GitHub 发布页
+    window.open(RELEASES_URL, '_blank')
     setCardVisible(false)
   }
 

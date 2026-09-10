@@ -1,4 +1,4 @@
-﻿; WaveForge native assisted setup UI. The electron-builder install Section remains authoritative.
+﻿; HyperPlayer native assisted setup UI. The electron-builder install Section remains authoritative.
 !include "LogicLib.nsh"
 !include "nsDialogs.nsh"
 !include "WinMessages.nsh"
@@ -461,7 +461,7 @@ FunctionEnd
     StrCpy $WaveInstallScope "current"
   ${EndIf}
   !ifdef WF_PREVIEW
-    StrCpy $INSTDIR "D:\WaveForge"
+    StrCpy $INSTDIR "D:\HyperPlayer"
   !else
     !insertmacro GetDParameter $1
     ${If} $1 == ""
@@ -469,7 +469,7 @@ FunctionEnd
     ${AndIf} $hasPerMachineInstallation == "0"
       System::Call 'kernel32::GetDriveTypeW(w "D:\\") i.r2'
       ${If} $2 == 3
-        StrCpy $INSTDIR "D:\WaveForge"
+        StrCpy $INSTDIR "D:\HyperPlayer"
       ${EndIf}
     ${EndIf}
   !endif
@@ -1105,7 +1105,7 @@ Function WaveValidatePathSyntax
   ${EndIf}
   ${If} $2 != ":"
   ${OrIf} $3 != "\"
-    StrCpy $WavePathError "请输入盘符开头的绝对路径，例如 C:\Program Files\WaveForge。"
+    StrCpy $WavePathError "请输入盘符开头的绝对路径，例如 C:\Program Files\HyperPlayer。"
     Return
   ${EndIf}
   StrCpy $4 0

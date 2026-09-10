@@ -99,7 +99,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
           textAlign: 'center',
         }}
       >
-        <div style={{ fontSize: 18, fontWeight: 600 }}>WaveForge 澜音工坊</div>
+        <div style={{ fontSize: 18, fontWeight: 600 }}>HyperPlayer</div>
         <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)', maxWidth: 460, lineHeight: 1.6 }}>
           界面渲染出现异常，已停止渲染以保护数据。点击下方按钮重载窗口通常可恢复正常。
         </div>

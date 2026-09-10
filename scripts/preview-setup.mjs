@@ -1,5 +1,5 @@
 /**
- * 编译 WaveForge 安装器 UI 预览（不打包 App）。
+ * 编译 HyperPlayer 安装器 UI 预览（不打包 App）。
  * 用 electron-builder 缓存的 makensis 编译 scripts/setup-preview/preview.nsi，
  * 输出 release/setup-preview.exe —— 直接运行即可看到真实向导界面。
  * 改 build/installerSidebar.bmp、installerHeader.bmp 或 installer.nsh 后重跑本脚本即可快速迭代。
