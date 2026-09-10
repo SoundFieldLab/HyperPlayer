@@ -120,11 +120,11 @@ WaveForge 共 **4 个界面模式**（简约 minimal / 传统 traditional / 探�
 
 - `README.md` — feature map（音源 / 无缝衔接 / 歌词模式 / 音效 HSE / 空间音频 / 桌面模式）。
 - `HANDOVER.md` — 交接文档（⚠️ 内容早于减配，涉及已删功能/端口的段落已失效，以本文件与源码为准）。
-- `CONTEXT.md` — 音效域词汇表（⚠️ 仍含 v1/v2 与 3003/3004 旧术语，待同步）。
+- `CONTEXT.md` — 音效域词汇表（效果/场景方案/自定义状态/频响补偿等术语定义；引擎相关词条已按 HSE 单引擎现状更新）。
 - `PRIVATE-LICENSE.md` — 私有模块许可（⚠️ 适用范围表仍列出已删模块，以实际存在文件为准）。
 - `DEBUG_PAGES.md` — 独立调试页注册表（新增独立调试页前必读）。
 - `docs/adr/` — 架构决策记录（历史决策，部分针对已移除的 v1/v2 引擎）。
 - `docs/plugin-development.md` — 插件开发文档（插件宿主与导入规范仍适用；文内 DG_LAB 示例对应的内置插件已移除）。
 - `docs/歌词对比-LyricsBlossom.md` — Apple Music 歌词逆向对比分析（Apple 逐字模式参考）。
 - `src/services/waveforge-engine-v3/docs/` — HSE 融合/UI/算法文档（`FUSION_GUIDE.md` / `UI_GUIDE.md` / `音频算法技术文档.md` / `音频算法设计文档.md` / `FEATURES_VERIFICATION.md`）；`架构书.md` 位于模块根目录。
-- `docs/功能清单2.0.md` — 减配后的功能清单（若存在；与源码冲突时以源码为准）。
+- `docs/功能清单2.0.md` — 减配后的功能清单（按代码实测重写，含证据与红线；与源码冲突时以源码为准）。

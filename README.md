@@ -156,8 +156,9 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 ## 文档
 
 - [AGENTS.md](./AGENTS.md) — 给 AI 代理的项目指令（必读）
-- [HANDOVER.md](./HANDOVER.md) — 交接文档（⚠️ 部分内容早于减配，以 AGENTS.md 与源码为准）
-- [CONTEXT.md](./CONTEXT.md) — 音效域词汇表（⚠️ 仍含 v1/v2 旧术语）
+- [docs/功能清单2.0.md](./docs/功能清单2.0.md) — 减配后功能清单（按代码实测，含证据与红线）
+- [HANDOVER.md](./HANDOVER.md) — 交接文档（环境 / 端口 / 已知问题 / 历史决策）
+- [CONTEXT.md](./CONTEXT.md) — 音效域词汇表（术语定义，已按 HSE 单引擎现状更新）
 - [docs/adr/](./docs/adr/) — 架构决策记录
 - [PRIVATE-LICENSE.md](./PRIVATE-LICENSE.md) — 私有模块许可（无缝衔接 / 看歌MV / 桌面模式 / 探索模式 / Apple 接入）
 - [DEBUG_PAGES.md](./DEBUG_PAGES.md) — 独立调试页注册表（Weather Lab 等）
