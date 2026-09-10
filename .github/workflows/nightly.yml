@@ -134,8 +134,10 @@ jobs:
           node-version: 24
           cache: npm
 
+      # --ignore-scripts：跳过第三方 postinstall（useragent-ng 的 ./bin/build.js 在 Windows cmd 下失败）。
+      # Electron 二进制由下面单独的步骤显式下载。
       - name: 安装依赖
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: 写入 nightly 版本号到 package.json 与 lock（仅工作区，不推回仓库）
         env:

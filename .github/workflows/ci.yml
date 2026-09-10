@@ -44,8 +44,10 @@ jobs:
           node-version: 24
           cache: npm
 
+      # --ignore-scripts：跳过第三方 postinstall。其中 useragent-ng 的 `./bin/build.js`
+      # 在 Windows cmd 下会报 “'.' is not recognized” 导致 npm ci 失败；本作业也不需要它。
       - name: 安装依赖
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: 类型检查（tsc --noEmit）
         run: npm run lint
@@ -82,7 +84,7 @@ jobs:
           cache: npm
 
       - name: 安装依赖
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: 下载 Electron 运行时（npm ci 跳过其安装脚本）
         run: node node_modules/electron/install.js
@@ -93,15 +95,29 @@ jobs:
       - name: 校验打包产物关键文件齐全
         shell: pwsh
         run: |
+          # 物理文件：可执行程序与代码包
           $must = @(
             'release/win-unpacked/HyperPlayer.exe',
-            'release/win-unpacked/resources/app.asar',
-            'release/win-unpacked/resources/logo.png',
-            'release/win-unpacked/resources/build/icon.ico'
+            'release/win-unpacked/resources/app.asar'
           )
           $missing = @($must | Where-Object { -not (Test-Path $_) })
           if ($missing.Count -gt 0) {
             Write-Error ("打包产物缺少必需文件：`n" + ($missing -join "`n"))
             exit 1
           }
-          Write-Host '✓ 打包产物关键文件齐全'
+          Write-Host '✓ 可执行程序与 app.asar 已生成'
+
+      - name: 校验应用内资源已打进 app.asar
+        # logo.png（splash 与主窗口图标）与 build/icon.ico（窗口/安装器图标）属应用内文件，
+        # 按 build.files 白名单进 app.asar，而非 resources 目录，故从 asar 目录表校验。
+        # 用 String.fromCharCode(92) 表示反斜杠，避免 YAML→shell→JS 多层转义出错。
+        run: |
+          node -e "
+          const asar = require('@electron/asar');
+          const BS = String.fromCharCode(92);
+          const list = asar.listPackage('release/win-unpacked/resources/app.asar').map(p => p.split(BS).join('/'));
+          const need = ['/logo.png', '/build/icon.ico', '/desktop/splash.html'];
+          const missing = need.filter(f => !list.includes(f));
+          if (missing.length) { console.error('app.asar 缺少：' + missing.join(', ')); process.exit(1); }
+          console.log('✓ app.asar 含 logo.png / build/icon.ico / desktop/splash.html（条目 ' + list.length + ' 条）');
+          "
