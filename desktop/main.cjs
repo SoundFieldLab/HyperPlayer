@@ -347,13 +347,7 @@ if (app.isPackaged) app.setAppUserModelId('com.waveforge.desktop')
 const { execFile, execFileSync, spawn } = require('child_process')
 const os = require('os')
 const { pathToFileURL } = require('url')
-const { createAnalysisRuntime } = require('./analysis-runtime.cjs')
-const { setupRenderIPC, setupAiMixIPC, cleanup: cleanupRender } = require('./render-runtime.cjs')
-const automixLog = require('./automix-log.cjs')
 const { ConfigManager } = require('./config-manager.cjs')
-const deviceLicense = require('./device-license.cjs')
-const { createRemoteServer, getLanIPv4Addresses } = require('./remote-server.cjs')
-const { setupAirplayIpc } = require('./airplay/airplay-ipc.cjs')
 const { setupChromaIpc } = require('./chroma-ipc.cjs')
 const { setupSignalRgbIpc } = require('./signalrgb-ipc.cjs')
 const { createVmpStatusProvider } = require('./vmp-status.cjs')
@@ -705,16 +699,12 @@ async function runAppleAcceptance(win, mode, outputPath) {
 }
 
 let wallpaperWatcher = null
-/** AirPlay 投送端控制器句柄（whenReady 内初始化，模块作用域供冒烟自检引用） */
-let airplayControllerHandle = null
 let chromaControllerHandle = null
 let signalRgbControllerHandle = null
 let qqLoginWindow = null
 let qqLoginWindowOpening = false
 let qqSkillKeyWindow = null
 let analysisRuntime = null
-let stemRuntime = null
-let trackStemRuntime = null
 let mediaKeysEnabled = readMediaKeysEnabled()
 
 const mediaKeyAccelerators = {
@@ -880,26 +870,8 @@ function broadcastDesktopPlayerState() {
   if (desktopLyricsWindow && !desktopLyricsWindow.isDestroyed()) {
     desktopLyricsWindow.webContents.send('desktop-lyrics:state', getDesktopPlayerSnapshot())
   }
-  broadcastRemoteState()
 }
 
-function broadcastRemoteState() {
-  if (remoteServer) remoteServer.broadcastState(getDesktopPlayerSnapshot())
-}
-
-// 遥控器端 state 是整包替换语义（state = msg.state），因此高频增量广播必须带上它依赖的
-// 少量基础字段（song/playing/muted/volume/page），再合并本次增量。不带 playlist/spectrum 等
-// 大字段——playlist 最多 500 条，只在低频完整快照里推送。
-function buildRemoteMinimalState(partial) {
-  const base = {
-    song: desktopPlayerState.song || null,
-    playing: desktopPlayerState.playing,
-    muted: desktopPlayerState.muted,
-    volume: desktopPlayerState.volume,
-    page: desktopPlayerState.page,
-  }
-  return Object.assign(base, partial)
-}
 
 function broadcastDesktopPlayerPartial(partial) {
   if (!partial || Object.keys(partial).length === 0) return
@@ -915,9 +887,6 @@ function broadcastDesktopPlayerPartial(partial) {
       desktopLyricsWindow.webContents.send('desktop-lyrics:state', lyricsPartial)
     }
   }
-  // 高频路径（渲染端每 100ms 推 {spectrum, progress}）只广播最小字段集合，
-  // 避免每 100ms 全量 JSON.stringify 含 500 条 playlist 的完整快照广播给遥控器。
-  if (remoteServer) remoteServer.broadcastState(buildRemoteMinimalState(partial))
 }
 
 function desktopPlayerSetExpanded(expanded) {
@@ -2298,101 +2267,6 @@ ipcMain.handle('taskbar-widget:update-settings', (_event, partial) => {
 })
 
 
-// ===== 遥控器：局域网 Web 服务 + 虚拟鼠标桥接 =====
-let remoteServer = null
-const remoteSettings = { theme: 'dark', topRightAction: 'song', gestures: { doubleTap: true, swipe: true, twoFinger: true, twoFingerTap: true } }
-
-function remoteSettingsPath() {
-  return path.join(app.getPath('userData'), 'remote-settings.json')
-}
-
-function loadRemoteSettings() {
-  try {
-    const raw = fs.readFileSync(remoteSettingsPath(), 'utf8')
-    const parsed = JSON.parse(raw)
-    if (parsed.theme === 'light' || parsed.theme === 'dark') remoteSettings.theme = parsed.theme
-    if (['song', 'comment', 'artist', 'favorite', 'desktop-lyrics', 'mode-switch'].includes(parsed.topRightAction)) remoteSettings.topRightAction = parsed.topRightAction
-    if (parsed.gestures && typeof parsed.gestures === 'object') {
-      if (typeof parsed.gestures.doubleTap === 'boolean') remoteSettings.gestures.doubleTap = parsed.gestures.doubleTap
-      if (typeof parsed.gestures.swipe === 'boolean') remoteSettings.gestures.swipe = parsed.gestures.swipe
-      if (typeof parsed.gestures.twoFinger === 'boolean') remoteSettings.gestures.twoFinger = parsed.gestures.twoFinger
-      if (typeof parsed.gestures.twoFingerTap === 'boolean') remoteSettings.gestures.twoFingerTap = parsed.gestures.twoFingerTap
-    }
-  } catch {
-    // 首次运行 / 文件缺失：使用默认
-  }
-}
-
-function saveRemoteSettings() {
-  try {
-    const tmp = remoteSettingsPath() + '.tmp'
-    fs.writeFileSync(tmp, JSON.stringify(remoteSettings, null, 2), 'utf8')
-    fs.renameSync(tmp, remoteSettingsPath())
-  } catch (err) {
-    console.error('[Remote] 保存设置失败:', err)
-  }
-}
-
-function getRemoteSettings() {
-  return { ...remoteSettings }
-}
-
-function ensureRemoteServer() {
-  if (remoteServer) return remoteServer
-  remoteServer = createRemoteServer({
-    getComputerName: () => os.hostname(),
-    getSettings: () => remoteSettings,
-    getState: () => getDesktopPlayerSnapshot(),
-    sendControl: (action, payload) => {
-      safeSendToWindow(mainWindow, 'desktop-player:control', action, payload)
-    },
-    sendCursor: (cmd, data) => {
-      safeSendToWindow(mainWindow, 'remote:cursor', { cmd, ...(data || {}) })
-    },
-    onClientsChange: (status) => {
-      safeSendToWindow(mainWindow, 'remote:clients', status)
-    },
-  })
-  return remoteServer
-}
-
-ipcMain.handle('remote:start', async (_event, requestedPort) => {
-  const srv = ensureRemoteServer()
-  try {
-    return await srv.start(Number(requestedPort) || 25566)
-  } catch (err) {
-    return { running: false, error: err && err.message ? err.message : String(err) }
-  }
-})
-
-ipcMain.handle('remote:stop', () => {
-  if (remoteServer) remoteServer.stop()
-  return remoteServer ? remoteServer.status() : { running: false, port: 25566, token: '', clientCount: 0, ips: getLanIPv4Addresses() }
-})
-
-ipcMain.handle('remote:get-status', () => (
-  remoteServer
-    ? remoteServer.status()
-    : { running: false, port: 25566, token: '', clientCount: 0, ips: getLanIPv4Addresses() }
-))
-
-ipcMain.handle('remote:get-settings', () => getRemoteSettings())
-
-ipcMain.handle('remote:update-settings', (_event, partial) => {
-  if (partial && typeof partial === 'object') {
-    if (partial.theme === 'light' || partial.theme === 'dark') remoteSettings.theme = partial.theme
-    if (['song', 'comment', 'artist', 'favorite', 'desktop-lyrics', 'mode-switch'].includes(partial.topRightAction)) remoteSettings.topRightAction = partial.topRightAction
-    if (partial.gestures && typeof partial.gestures === 'object') {
-      if (typeof partial.gestures.doubleTap === 'boolean') remoteSettings.gestures.doubleTap = partial.gestures.doubleTap
-      if (typeof partial.gestures.swipe === 'boolean') remoteSettings.gestures.swipe = partial.gestures.swipe
-      if (typeof partial.gestures.twoFinger === 'boolean') remoteSettings.gestures.twoFinger = partial.gestures.twoFinger
-      if (typeof partial.gestures.twoFingerTap === 'boolean') remoteSettings.gestures.twoFingerTap = partial.gestures.twoFingerTap
-    }
-  }
-  saveRemoteSettings()
-  if (remoteServer) remoteServer.pushConfig()
-  return getRemoteSettings()
-})
 
 function getWindowsSystemLocation() {
   const script = `
@@ -2645,7 +2519,7 @@ function createWindow() {
     }
   })
 
-  // ===== WF_SMOKE=1 冒烟自检：验证新增功能（AirPlay / 任务栏播控 / 音频设备）主进程接线，随后自动退出 =====
+  // ===== WF_SMOKE=1 冒烟自检：验证任务栏播控 / 音频设备主进程接线，随后自动退出 =====
   if (process.env.WF_SMOKE === '1') {
     mainWindow.webContents.once('did-finish-load', () => {
       const results = []
@@ -2663,12 +2537,6 @@ function createWindow() {
           if (widgetBounds && pos) check('taskbar widget height == taskbar band', widgetBounds.height === pos.height, `${widgetBounds.height} vs ${pos.height}`)
           if (widgetWin && !widgetWin.isDestroyed()) widgetWin.close()
         }
-        // 2) AirPlay 投送端：服务已启动（mDNS 浏览中）+ 设备列表接口可用
-        const airplayService = airplayControllerHandle?.service
-        check('airplay service started', Boolean(airplayService), '')
-        const airplayStatus = airplayService?.getStatus ? airplayService.getStatus() : null
-        check('airplay status browsing', Boolean(airplayStatus && (airplayStatus.phase === 'browsing' || airplayStatus.phase === 'idle')), JSON.stringify(airplayStatus && { phase: airplayStatus.phase, devices: airplayStatus.devices.length }))
-        check('airplay devices array', Array.isArray(airplayService?.listDevices ? airplayService.listDevices() : null), '')
         // 3) 音频输出设备：渲染进程 enumerateDevices 真实返回 audiooutput（权限 handler 生效）
         mainWindow.webContents.executeJavaScript(`(async () => {
           try {
@@ -3490,261 +3358,6 @@ async function createQQLoginWindow() {
   })
 }
 
-// ── 酷狗音乐登录窗口（Electron 弹窗，登录后抓 kg_token cookie）──────────────
-let kugouLoginWindow = null
-async function createKugouLoginWindow() {
-  return new Promise((resolve) => {
-    if (kugouLoginWindow) {
-      kugouLoginWindow.focus()
-      resolve({ success: false, error: '酷狗音乐登录窗口已打开' })
-      return
-    }
-
-    let settled = false
-    const finish = (result) => {
-      if (settled) return
-      settled = true
-      resolve(result)
-    }
-
-    void (async () => {
-      try {
-        // 注意：不清除 kugou.com 域 Cookie —— 若用户已登录（KuGoo 会话），窗口直接显示已登录态
-        const iconPath = path.join(__dirname, '..', 'build', 'icon.ico')
-        kugouLoginWindow = new BrowserWindow({
-          width: 1000,
-          height: 700,
-          parent: mainWindow,
-          modal: true,
-          frame: false,
-          backgroundColor: '#1a1a1a',
-          titleBarStyle: 'hidden',
-          title: 'WaveForge 澜音工坊 - 酷狗音乐登录',
-          icon: fs.existsSync(iconPath) ? iconPath : undefined,
-          webPreferences: {
-            nodeIntegration: false,
-            contextIsolation: true,
-            session: mainWindow.webContents.session,
-          },
-        })
-        // 伪装为普通 Chrome（酷狗登录页对 Electron UA 偶发拦截）
-        kugouLoginWindow.webContents.setUserAgent(REAL_CHROME_UA)
-
-        // 每次打开清掉 kugou.com 域 Cookie：从干净会话开始，便于登录其他账号
-        // （localStorage 中的 kugou_cookie 在登录成功前保持不变，成功后由新会话覆盖）
-        const kugouSession = kugouLoginWindow.webContents.session
-        try {
-          const cookies = await kugouSession.cookies.get({ domain: '.kugou.com' })
-          await Promise.all(cookies.map(c => removeSessionCookie(kugouSession, c)))
-          console.log('🧹 [酷狗] 已清理 kugou.com 域 Cookie，从干净会话开始登录')
-        } catch { /* 清理失败不阻塞 */ }
-
-        // 导航守卫：只放行 kugou.com 域（登录/认证跳转），外链交系统浏览器
-        const isKugouDomain = (url) => {
-          try {
-            const hostname = new URL(String(url || '')).hostname.toLowerCase()
-            return hostname === 'kugou.com' || hostname.endsWith('.kugou.com')
-          } catch {
-            return false
-          }
-        }
-        kugouLoginWindow.webContents.on('will-navigate', (event, url) => {
-          if (!isKugouDomain(url)) {
-            event.preventDefault()
-            if (/^https?:\/\//i.test(String(url || ''))) shell.openExternal(String(url)).catch(() => {})
-          }
-        })
-        kugouLoginWindow.webContents.setWindowOpenHandler(({ url }) => {
-          if (/^https?:\/\//i.test(String(url || ''))) shell.openExternal(String(url)).catch(() => {})
-          return { action: 'deny' }
-        })
-
-        // 加载酷狗登录页（网页版登录：扫码或手机号）
-        kugouLoginWindow.loadURL('https://www.kugou.com/')
-
-        // 注入关闭按钮
-        kugouLoginWindow.webContents.on('did-finish-load', () => {
-          kugouLoginWindow.webContents.executeJavaScript(`
-            (function() {
-              if (document.getElementById('waveforge-close-btn')) return;
-              const closeBtn = document.createElement('div');
-              closeBtn.id = 'waveforge-close-btn';
-              closeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
-              closeBtn.style.cssText = 'position:fixed;top:12px;right:12px;width:32px;height:32px;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2147483647;color:#fff;';
-              closeBtn.addEventListener('click', () => window.close());
-              document.body.appendChild(closeBtn);
-            })();
-          `).catch(() => {})
-        })
-
-        // 每 2 秒检查登录态：kg_token Cookie 或 用户信息探测命中 → 登录成功
-        // （kg_mid/dfid/ACK_SERVER 等是游客设备 Cookie，不能作为登录依据）
-        const USER_INFO_SCRIPT = `(async () => {
-          const tryFetch = async (url) => {
-            try {
-              const r = await fetch(url, { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-              if (!r.ok) return null;
-              const t = await r.text();
-              try { return JSON.parse(t); } catch { return t; }
-            } catch { return null; }
-          };
-          // 1. 酷狗网页用户接口（登录态下返回昵称/头像）
-          const info = await tryFetch('https://www.kugou.com/yy/index.php?r=user/getinfo');
-          if (info && (info.data || info.user_info || info.user)) {
-            const d = info.data || info.user_info || info.user || {};
-            const name = d.nickname || d.user_name || d.userName || d.name || '';
-            const id = d.user_id || d.userid || d.id || '';
-            const av = d.avatar || d.head_img || d.headimg || d.user_pic || '';
-            if (name || id) return JSON.stringify({ name, id, avatar: av });
-          }
-          // 2. 页面 DOM 抓取顶部用户昵称/头像
-          const nameEl = document.querySelector('.user-info .name, .login-info .user-name, .user-name, [class*="user"] [class*="name"], [class*="userInfo"]');
-          const avEl = document.querySelector('.user-info img, .login-info img, [class*="avatar"] img, img[class*="head"]');
-          return JSON.stringify({
-            name: nameEl ? (nameEl.textContent || '').trim() : '',
-            id: '',
-            avatar: avEl ? (avEl.src || '') : ''
-          });
-        })()`
-        // 带超时的 executeJavaScript（防止页面挂起导致登录流程卡死）
-        const probeUserInfo = async () => {
-          if (!kugouLoginWindow || kugouLoginWindow.isDestroyed()) return ''
-          const raw = await Promise.race([
-            kugouLoginWindow.webContents.executeJavaScript(USER_INFO_SCRIPT).catch(() => ''),
-            new Promise(resolve => setTimeout(() => resolve(''), 8000)),
-          ])
-          return raw || ''
-        }
-        const checkLoginInterval = setInterval(async () => {
-          if (!kugouLoginWindow || kugouLoginWindow.isDestroyed()) {
-            clearInterval(checkLoginInterval)
-            return
-          }
-          try {
-            const cookies = await kugouLoginWindow.webContents.session.cookies.get({ domain: '.kugou.com' })
-            // 登录凭据：KuGoo（网页登录会话，内含 KugooID/NickName/Pic）或 kg_token（客户端令牌）
-            const kuGooCookie = cookies.find(c => c.name === 'KuGoo' && /KugooID=/.test(c.value || ''))
-            const kgToken = cookies.find(c => c.name === 'kg_token')
-            // 从 KuGoo 值直接解析用户信息（%uXXXX 为 UTF-16 编码）
-            const decodeUnicode = (str) => {
-              try { return decodeURIComponent(str.replace(/%u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))) } catch { return str }
-            }
-            let parsed = { name: '', id: '', avatar: '' }
-            if (kuGooCookie?.value) {
-              const kv = new URLSearchParams(String(kuGooCookie.value))
-              parsed = {
-                name: decodeUnicode(kv.get('NickName') || kv.get('UserName') || ''),
-                id: kv.get('KugooID') || '',
-                avatar: decodeUnicode(kv.get('Pic') || ''),
-              }
-            }
-            if (kuGooCookie || (kgToken && kgToken.value)) {
-              const cookieString = cookies
-                .map(c => `${c.name}=${c.value}`)
-                .join('; ')
-              console.log(`✓ [酷狗登录] 登录成功（${kuGooCookie ? 'KuGoo 会话' : 'kg_token'}），Cookie 已捕获`)
-              clearInterval(checkLoginInterval)
-              finish({
-                success: true,
-                cookie: cookieString,
-                username: parsed.name || '',
-                userId: parsed.id || '',
-                avatar: parsed.avatar || '',
-              })
-              kugouLoginWindow.close()
-            } else {
-              // 兜底：探测用户信息（真实登录时页面/接口返回昵称或 ID）
-              const userInfoRaw = await probeUserInfo()
-              let probeParsed = {}
-              try { probeParsed = JSON.parse(userInfoRaw || '{}') } catch { probeParsed = {} }
-              if (probeParsed.name || probeParsed.id) {
-                const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ')
-                console.log('✓ [酷狗登录] 登录成功（用户信息探测命中）')
-                clearInterval(checkLoginInterval)
-                finish({
-                  success: true,
-                  cookie: cookieString,
-                  username: probeParsed.name || '',
-                  userId: probeParsed.id || '',
-                  avatar: probeParsed.avatar || '',
-                })
-                kugouLoginWindow.close()
-              }
-            }
-          } catch (err) {
-            console.error('❌ [酷狗登录] 检查登录状态失败:', err)
-          }
-        }, 2000)
-
-        kugouLoginWindow.on('closed', () => {
-          clearInterval(checkLoginInterval)
-          kugouLoginWindow = null
-          finish({ success: false, error: '用户取消登录' })
-        })
-      } catch (error) {
-        console.error('[酷狗登录] 初始化登录窗口失败:', error)
-        if (kugouLoginWindow && !kugouLoginWindow.isDestroyed()) kugouLoginWindow.destroy()
-        kugouLoginWindow = null
-        finish({ success: false, error: error?.message || '酷狗音乐登录窗口初始化失败' })
-      }
-    })()
-  })
-}
-
-ipcMain.handle('open-kugou-login-window', async () => {
-  try {
-    const result = await createKugouLoginWindow()
-    // 登录成功后把扩展用户信息（用户名/ID/头像）通知渲染进程持久化
-    if (result?.success && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('kugou-auth-result', result)
-    }
-    return result
-  } catch (err) {
-    console.error('❌[酷狗登录] 打开登录窗口失败:', err)
-    return { success: false, error: err.message }
-  }
-})
-
-// 退出登录时清除共享 session 的 kugou.com Cookie（防止登录弹窗带出旧账号，无法换号登录）
-ipcMain.handle('kugou-clear-session', async () => {
-  try {
-    const ses = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.session : null
-    if (!ses) return { success: false }
-    const cookies = await ses.cookies.get({ domain: '.kugou.com' })
-    await Promise.all(cookies.map(c => removeSessionCookie(ses, c)))
-    console.log('🧹 [酷狗] 已清除会话 Cookie（退出登录）')
-    return { success: true }
-  } catch (error) {
-    console.error('❌[酷狗] 清除会话 Cookie 失败:', error)
-    return { success: false }
-  }
-})
-
-// 读取当前会话的酷狗登录态（应用启动时自动恢复已登录状态）
-ipcMain.handle('get-kugou-session', async () => {
-  try {
-    if (!mainWindow || mainWindow.isDestroyed()) return { success: false, loggedIn: false }
-    const cookies = await mainWindow.webContents.session.cookies.get({ domain: '.kugou.com' })
-    const kuGooCookie = cookies.find(c => c.name === 'KuGoo' && /KugooID=/.test(c.value || ''))
-    if (!kuGooCookie?.value) return { success: true, loggedIn: false }
-    const decodeUnicode = (str) => {
-      try { return decodeURIComponent(str.replace(/%u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))) } catch { return str }
-    }
-    const kv = new URLSearchParams(String(kuGooCookie.value))
-    const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ')
-    return {
-      success: true,
-      loggedIn: true,
-      cookie: cookieString,
-      username: decodeUnicode(kv.get('NickName') || kv.get('UserName') || ''),
-      userId: kv.get('KugooID') || '',
-      avatar: decodeUnicode(kv.get('Pic') || ''),
-    }
-  } catch (err) {
-    console.error('❌[酷狗登录] 读取会话失败:', err)
-    return { success: false, loggedIn: false }
-  }
-})
 
 // ── Spotify OAuth 授权（Electron 弹窗，授权码流）──────────────────────────
 // 用公开的 Spotify Client ID（WaveForge 桌面应用）走 OAuth 授权码流程：
@@ -3947,254 +3560,6 @@ ipcMain.handle('open-spotify-login', async (_event, clientId) => {
   }
 })
 
-// ── 汽水音乐登录：汽水自有 Passport 二维码流程（移植自 Mineradio qishui-auth-v6，GPL-3.0-only）──
-// 生成二维码 → 轮询 check_qrconnect → 确认后捕获 .qishui.com 会话 Cookie + 用户资料。
-// 旧方案（sso.douyin.com 抖音 SSO）抓到的是 .douyin.com Cookie，luna Web API 一律 403，已废弃。
-let sodaLoginWindow = null
-
-function sodaLoginPageHtml(qrDataUrl) {
-  return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>汽水音乐扫码登录</title>' +
-    '<style>' +
-    'body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#111318;font-family:"Microsoft YaHei",system-ui,sans-serif;color:#fff}' +
-    '.card{width:340px;text-align:center;padding:32px 28px;border-radius:20px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}' +
-    'h2{margin:0 0 6px;font-size:20px}' +
-    '.sub{margin:0 0 18px;font-size:12px;color:rgba(255,255,255,.45)}' +
-    '.qrbox{position:relative;width:280px;height:280px;margin:0 auto 18px;background:#fff;border-radius:14px;padding:10px;box-sizing:border-box}' +
-    'img{width:100%;height:100%;display:block}' +
-    '#status{font-size:14px;color:rgba(255,255,255,.75);min-height:20px;margin:0 0 14px}' +
-    '.tip{font-size:11px;color:rgba(255,255,255,.3);line-height:1.7}' +
-    '</style></head><body><div class="card">' +
-    '<h2>汽水音乐扫码登录</h2><p class="sub">WaveForge · 澜音工坊</p>' +
-    '<div class="qrbox"><img id="waveforge-qr" src="' + qrDataUrl + '" alt="二维码"></div>' +
-    '<p id="status">请打开「汽水音乐」App 扫描二维码</p>' +
-    '<p class="tip">扫码登录即代表同意汽水音乐用户协议<br>本窗口由 WaveForge 本地渲染，凭据仅保存在本机</p>' +
-    '</div>' +
-    '<script>(function(){var b=document.createElement("div");b.innerHTML="✕";b.style.cssText="position:fixed;top:12px;right:14px;width:30px;height:30px;line-height:30px;text-align:center;background:rgba(255,255,255,.1);border-radius:50%;cursor:pointer;z-index:2147483647;color:#fff;font-size:14px";b.addEventListener("click",function(){window.close()});document.body.appendChild(b)})();' +
-    'window.__wfSetStatus=function(s){var e=document.getElementById("status");if(e)e.textContent=s};' +
-    'window.__wfSetQr=function(src){var e=document.getElementById("waveforge-qr");if(e)e.src=src};' +
-    '</script></body></html>'
-}
-
-async function createSodaLoginWindow() {
-  return new Promise((resolve) => {
-    if (sodaLoginWindow && !sodaLoginWindow.isDestroyed()) {
-      sodaLoginWindow.focus()
-      resolve({ success: false, error: '汽水音乐登录窗口已打开' })
-      return
-    }
-    let settled = false
-    const finish = (result) => {
-      if (settled) return
-      settled = true
-      if (sodaLoginWindow && !sodaLoginWindow.isDestroyed()) sodaLoginWindow.close()
-      resolve(result)
-    }
-    void (async () => {
-      try {
-        const auth = require('./qishui-auth-v6.cjs')
-        // 凭据/设备指纹持久化到 userData（deviceId 稳定可降低风控概率；cookie 登录后写入）
-        const configFile = path.join(app.getPath('userData'), 'soda-qr-login.json')
-        const readCfg = () => { try { return JSON.parse(fs.readFileSync(configFile, 'utf8')) } catch { return {} } }
-        const writeCfg = (patch) => {
-          try { fs.writeFileSync(configFile, JSON.stringify({ ...readCfg(), ...(patch || {}) }, null, 2), 'utf8') } catch {}
-        }
-        auth.configure({
-          getConfig: () => ({
-            deviceId: '', installId: '', verifyPortraitId: '',
-            computerName: os.hostname() || 'Windows-PC', cookie: '', msToken: '',
-            ...readCfg(),
-          }),
-          updateConfig: (patch) => writeCfg(patch),
-        })
-        // 每次打开登录窗都重置凭据文件中的会话字段（保留 deviceId/msToken 设备指纹）：
-        // 1) 防止历史/测试残留会话被成功判定误读为"秒登录"；2) 换账号从干净会话开始
-        writeCfg({ cookie: '' })
-
-        let qrWindow = new BrowserWindow({
-          width: 420,
-          height: 600,
-          parent: mainWindow,
-          modal: true,
-          frame: false,
-          resizable: false,
-          backgroundColor: '#111318',
-          title: 'WaveForge 澜音工坊 - 汽水音乐登录',
-          icon: path.join(__dirname, '..', 'build', 'icon.ico'),
-          webPreferences: {
-            nodeIntegration: false,
-            contextIsolation: true,
-          },
-        })
-        qrWindow.setMenuBarVisibility(false)
-        sodaLoginWindow = qrWindow
-
-        const setStatus = (text) => {
-          try { if (qrWindow && !qrWindow.isDestroyed()) void qrWindow.webContents.executeJavaScript('window.__wfSetStatus && window.__wfSetStatus(' + JSON.stringify(text) + ')') } catch {}
-        }
-
-        // 生成并刷新二维码（过期自动重取，最多 4 次）
-        let qrToken = ''
-        let expiredCount = 0
-        const buildQr = async () => {
-          const qr = await auth.getQrCode()
-          const data = qr.data || {}
-          qrToken = String(data.token || '')
-          if (!qrToken || !data.qrcode) throw new Error('二维码生成数据不完整')
-          if (qrWindow && !qrWindow.isDestroyed()) {
-            await qrWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(sodaLoginPageHtml(String(data.qrcode))))
-          }
-        }
-
-        await buildQr()
-
-        // 轮询扫码状态；check_qrconnect 可能因二次验证(MFA)长时间阻塞——用 inFlight 防止调用堆积。
-        // 成功判定以「凭据文件里的 .qishui 会话 Cookie」为准：无论返回包形状如何、
-        // 甚至轮询中途抛错（MFA 完成后偶发响应异常），只要会话已落盘即视为登录成功。
-        let pollTimer = null
-        let inFlight = false
-        let consecutiveErrors = 0
-        const hasRealSession = (cfg) => {
-          // 不用正则避免转义歧义：按分号拆 Cookie，看是否存在任一会话键
-          const names = String((cfg && cfg.cookie) || '').split(';').map(part => part.trim().split('=')[0].toLowerCase())
-          return names.includes('sessionid') || names.includes('sessionid_ss') || names.includes('sid_guard') || names.includes('sid_tt')
-        }
-        // 登录闭环立即完成，不做任何网络等待：昵称/头像/ID 由渲染层自愈逻辑
-        // （handleSodaLogin 缺字段时经 /api/soda/status 补齐）异步获取。
-        // 此前在这里同步等资料接口，接口一旦迟滞会把整个登录流程卡死在窗口不关。
-        const completeLogin = (cookie) => {
-          if (settled) return
-          if (pollTimer) clearInterval(pollTimer)
-          console.log('[SodaLogin] 会话已建立，完成登录闭环')
-          // 注意：settled 由 finish 内部置位；这里若提前置位会让 finish 的防重护栏短路
-          finish({ success: true, cookie, username: '', avatar: '', userId: '' })
-        }
-        pollTimer = setInterval(async () => {
-          if (!qrWindow || qrWindow.isDestroyed() || settled) { clearInterval(pollTimer); return }
-          if (inFlight) { console.log('[SodaLogin][tick] 跳过：上一次检查仍在进行'); return }
-          inFlight = true
-          try {
-            // 先看凭据文件：MFA/二次验证流程可能在任意时刻把会话写进来
-            const cfgSnapshot = readCfg()
-            console.log('[SodaLogin][tick] cookie字段=', String(cfgSnapshot.cookie || '').slice(0, 60))
-            if (hasRealSession(cfgSnapshot)) { console.log('[SodaLogin][tick] 检测到有效会话 → 完成登录'); completeLogin(String(cfgSnapshot.cookie || '')); return }
-            const envelope = await auth.checkQrConnect(qrToken)
-            consecutiveErrors = 0
-            const d = envelope.data || {}
-            const errorCode = Number(d.error_code)
-            // 返回包确认 → 再核对一次落盘 Cookie（persistSessionCookies 在 check 内部已完成）
-            const cfgAfter = readCfg()
-            if ((errorCode === 0 && (String(d.status) === '3' || d.session_cookie)) || hasRealSession(cfgAfter)) {
-              completeLogin(String(cfgAfter.cookie || ''))
-              return
-            }
-            if (errorCode === 2) {
-              // 二维码已过期：自动刷新
-              expiredCount += 1
-              if (expiredCount > 4) {
-                clearInterval(pollTimer)
-                finish({ success: false, error: '二维码已多次过期，请重新打开登录' })
-                return
-              }
-              setStatus('二维码已过期，正在刷新…')
-              await buildQr()
-              setStatus('请使用「汽水音乐」App 扫描新二维码')
-              return
-            }
-            if (errorCode === 7) {
-              clearInterval(pollTimer)
-              finish({ success: false, error: '请求过于频繁，请一分钟后再试' })
-              return
-            }
-            if (String(d.status) === '2') setStatus('已扫码 ✓ 请在手机上确认登录')
-          } catch (err) {
-            console.error('[SodaLogin][tick] check异常:', err && err.message)
-            // 异常路径同样先查落盘 Cookie：MFA 通过后的收尾请求偶发失败不影响会话有效性
-            const cfgErr = readCfg()
-            if (hasRealSession(cfgErr)) { completeLogin(String(cfgErr.cookie || '')); return }
-            if (err && err.code === 'QISHUI_MFA_CANCELLED') {
-              clearInterval(pollTimer)
-              finish({ success: false, error: err.message || '安全验证已取消' })
-              return
-            }
-            consecutiveErrors += 1
-            if (consecutiveErrors >= 8) {
-              clearInterval(pollTimer)
-              finish({ success: false, error: (err && err.message) || '登录状态检查连续失败' })
-            } else {
-              setStatus(consecutiveErrors >= 2 ? '安全验证处理中/网络波动，正在重试… (' + consecutiveErrors + '/8)' : '正在检查扫码状态…')
-            }
-          } finally {
-            inFlight = false
-          }
-        }, 2000)
-
-        qrWindow.on('closed', () => {
-          if (pollTimer) clearInterval(pollTimer)
-          sodaLoginWindow = null
-          // 手动关闭窗口 ≠ 一定失败：若扫码+验证码已完成、会话已落盘，按登录成功收尾
-          const cfgOnClose = readCfg()
-          if (hasRealSession(cfgOnClose)) {
-            console.log('[SodaLogin] 窗口关闭时会话有效，按成功收尾')
-            finish({ success: true, cookie: String(cfgOnClose.cookie || ''), username: '', avatar: '', userId: '' })
-            return
-          }
-          finish({ success: false, error: '用户取消登录' })
-        })
-      } catch (error) {
-        console.error('[汽水音乐] 初始化登录窗口失败:', error)
-        if (sodaLoginWindow && !sodaLoginWindow.isDestroyed()) sodaLoginWindow.destroy()
-        sodaLoginWindow = null
-        finish({ success: false, error: (error && error.message) || '汽水音乐登录初始化失败' })
-      }
-    })()
-  })
-}
-ipcMain.handle('open-soda-login', async () => {
-  try {
-    const result = await createSodaLoginWindow()
-    // 登录成功后把用户名/头像通知渲染进程持久化
-    if (result?.success && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('soda-auth-result', result)
-    }
-    return result
-  } catch (err) {
-    console.error('❌[汽水音乐] 打开登录窗口失败:', err)
-    return { success: false, error: err.message }
-  }
-})
-
-// 汽水退出登录清理：关登录窗 → 清 persist:mineradio-qishui-auth-v6 分区的 .qishui.com
-// Cookie/localStorage（复用 qishui-auth-v6 的 clear）→ 清凭据文件 soda-qr-login.json 的会话字段。
-// 凭据文件保留 deviceId/installId 等设备指纹（稳定可降低风控概率），只清 cookie/msToken，
-// 与打开登录窗前的重置逻辑（writeCfg({ cookie: '' })）对齐。运行时未初始化时 clear()
-// 会直接按分区名清存储，覆盖「应用重启后 runtime 为空」的场景。
-ipcMain.handle('soda-clear-login', async () => {
-  try {
-    // 顺序关键：先清凭据文件会话字段，再销毁扫码窗——qrWindow 的 closed 处理器会
-    // readCfg() 判断会话是否有效，若先 destroy 会把"刚要被清掉的旧 cookie"误判为登录成功，
-    // 挂起的 open-soda-login 以 success+旧 cookie resolve，渲染层把已清除的登录态落盘
-    const configFile = path.join(app.getPath('userData'), 'soda-qr-login.json')
-    try {
-      const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'))
-      if (cfg && typeof cfg === 'object') {
-        delete cfg.cookie
-        delete cfg.msToken
-        fs.writeFileSync(configFile, JSON.stringify(cfg, null, 2), 'utf8')
-      }
-    } catch { /* 文件不存在/损坏：无残留凭据可清，忽略 */ }
-    if (sodaLoginWindow && !sodaLoginWindow.isDestroyed()) {
-      try { sodaLoginWindow.destroy() } catch {}
-      sodaLoginWindow = null
-    }
-    const auth = require('./qishui-auth-v6.cjs')
-    await auth.clear()
-    console.log('🧹 [汽水音乐] 已清除登录分区与凭据文件会话字段（退出登录）')
-    return { success: true }
-  } catch (err) {
-    console.error('❌[汽水音乐] 清除登录态失败:', err)
-    return { success: false, error: (err && err.message) || String(err) }
-  }
-})
 
 // HSE 开发者模式：把调音室导出的「发布种子」写回仓库源文件 builtinSceneSeed.ts。
 // 仅开发模式可用（打包版没有 src 源码树，app.isPackaged 直接拒绝），
@@ -4261,236 +3626,7 @@ ipcMain.on('app-log', (event, message) => {
   console.log('[渲染进程]', message)
 })
 
-// ── 汽水音乐（抖音）数据桥 ──────────────────────────────────────────
-// 汽水音乐（api.qishui.com/luna）为 protobuf 签名接口，网页直连不可用；
-// 抖音系接口又需要 a_bogus 签名。方案：隐藏窗口加载 www.douyin.com
-// （与主应用共享 session，登录后带抖音会话），导航到抖音页面并由页面自身渲染，
-// 再抓取渲染后的音乐卡片 —— 绕过签名，直接拿到真实抖音音乐数据。
-let douyinBridgeWindow = null
-let douyinBridgeReady = false
-let douyinBridgeLoading = null
 
-function ensureDouyinBridge() {
-  if (douyinBridgeWindow && !douyinBridgeWindow.isDestroyed()) {
-    if (douyinBridgeReady) return Promise.resolve(douyinBridgeWindow)
-    return douyinBridgeLoading || Promise.resolve(douyinBridgeWindow)
-  }
-  douyinBridgeReady = false
-  douyinBridgeWindow = new BrowserWindow({
-    width: 1000,
-    height: 720,
-    show: false,
-    backgroundColor: '#111111',
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      session: mainWindow ? mainWindow.webContents.session : undefined,
-    },
-  })
-  // 隐藏数据桥同样伪装为普通 Chrome（抖音风控对 Electron UA 的抓取接口会限流）
-  douyinBridgeWindow.webContents.setUserAgent(REAL_CHROME_UA)
-  douyinBridgeWindow.setMenuBarVisibility(false)
-  // 拦截 window.open：抖音站点弹窗会产生无引用、无守卫的游离原生窗口，桥窗不需要弹窗
-  douyinBridgeWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  douyinBridgeWindow.webContents.on('destroyed', () => {
-    douyinBridgeReady = false
-    douyinBridgeWindow = null
-  })
-  douyinBridgeWindow.webContents.on('did-finish-load', () => {
-    douyinBridgeReady = true
-  })
-  const loadPromise = douyinBridgeWindow.loadURL('https://www.douyin.com/')
-    .catch(error => console.error('❌ [汽水数据桥] 加载抖音失败:', error))
-  douyinBridgeLoading = loadPromise.then(() => douyinBridgeWindow)
-  return loadPromise.then(() => douyinBridgeWindow)
-}
-
-/** 在隐藏窗口内导航到抖音搜索页并抓取音乐卡片（需已登录抖音） */
-async function scrapeDouyinMusic(keyword) {
-  try {
-    const win = await ensureDouyinBridge()
-    const keywordEnc = encodeURIComponent(String(keyword || '热门'))
-    await win.webContents.loadURL(`https://www.douyin.com/search/${keywordEnc}?type=music`).catch(() => {})
-    // 等待页面渲染出结果（多次尝试）
-    await new Promise(resolve => setTimeout(resolve, 6000))
-    let attempts = 0
-    let items = []
-    while (attempts < 5 && items.length === 0) {
-      items = await win.webContents.executeJavaScript(`
-        (function () {
-          const out = [];
-          // 抖音搜索音乐卡片：链接包含 /music/ 的元素
-          const seen = new Set();
-          const candidates = document.querySelectorAll('a[href*="/music/"], [data-e2e*="music"]');
-          candidates.forEach(function (el) {
-            const link = el.closest('a') || el;
-            const href = (link.getAttribute('href') || '');
-            const m = href.match(/\\/music\\/([0-9]+)/);
-            if (!m) return;
-            const id = m[1];
-            if (seen.has(id)) return;
-            seen.add(id);
-            // 音乐名/作者：从卡片内文本与 alt 提取
-            let name = '';
-            let author = '';
-            let cover = '';
-            const imgs = el.querySelectorAll('img');
-            imgs.forEach(function (img) {
-              const alt = (img.getAttribute('alt') || '').trim();
-              if (alt && alt.length > 1 && alt.length < 40 && !name) name = alt;
-              if (!cover && img.getAttribute('src')) cover = img.getAttribute('src');
-            });
-            const text = (el.textContent || '').replace(/\\s+/g, ' ').trim();
-            if (!name && text) {
-              const parts = text.split(' ');
-              name = parts[0] || '';
-              author = parts.slice(1).join(' ').replace(/^[-·\\s]+/, '');
-            }
-            if (name || text) {
-              out.push({ id: id, name: name || text.slice(0, 20), author: author || '', cover: cover || '', text: text.slice(0, 60) });
-            }
-          });
-          return out.slice(0, 30);
-        })()
-      `).catch(() => [])
-      if (items.length === 0) {
-        await new Promise(resolve => setTimeout(resolve, 3000))
-      }
-      attempts += 1
-    }
-    return items
-  } catch (error) {
-    console.error('❌ [汽水数据桥] 抓取失败:', error)
-    return []
-  }
-}
-
-ipcMain.handle('soda-scrape-search', async (_event, keyword) => {
-  if (typeof keyword !== 'string' || keyword.trim().length === 0) {
-    return { success: false, error: '搜索关键词无效', items: [] }
-  }
-  try {
-    const items = await scrapeDouyinMusic(keyword)
-    return { success: true, items }
-  } catch (err) {
-    console.error('❌[汽水数据桥] 搜索失败:', err)
-    return { success: false, error: err.message, items: [] }
-  }
-})
-
-// ── 酷狗隐藏数据桥：www.kugou.com 对服务端 node fetch 有 TLS/行为指纹风控（返回 Access Deny），
-//    用真实 Chromium 隐藏窗口（共享 mainWindow session，含 KuGoo 登录态）在页面内同源 fetch 用户接口。
-let kugouBridgeWindow = null
-let kugouBridgeReady = false
-let kugouBridgeLoading = null
-
-function ensureKugouBridge() {
-  if (kugouBridgeWindow && !kugouBridgeWindow.isDestroyed()) {
-    if (kugouBridgeReady) return Promise.resolve(kugouBridgeWindow)
-    return kugouBridgeLoading || Promise.resolve(kugouBridgeWindow)
-  }
-  kugouBridgeReady = false
-  kugouBridgeWindow = new BrowserWindow({
-    width: 1000,
-    height: 720,
-    show: false,
-    backgroundColor: '#111111',
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      session: mainWindow ? mainWindow.webContents.session : undefined,
-    },
-  })
-  kugouBridgeWindow.webContents.setUserAgent(REAL_CHROME_UA)
-  kugouBridgeWindow.setMenuBarVisibility(false)
-  // 拦截 window.open：页面弹窗会产生无引用、无守卫的游离原生窗口，桥窗不需要弹窗
-  kugouBridgeWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  kugouBridgeWindow.webContents.on('destroyed', () => {
-    kugouBridgeReady = false
-    kugouBridgeWindow = null
-  })
-  kugouBridgeWindow.webContents.on('did-finish-load', () => {
-    kugouBridgeReady = true
-  })
-  const loadPromise = kugouBridgeWindow.loadURL('https://www.kugou.com/')
-    .catch(error => console.error('❌ [酷狗数据桥] 加载酷狗失败:', error))
-  kugouBridgeLoading = loadPromise.then(() => kugouBridgeWindow)
-  return loadPromise.then(() => kugouBridgeWindow)
-}
-
-/** 页面内同源 fetch 酷狗用户歌单（真实 Chromium 上下文，绕开服务端 WAF） */
-async function scrapeKugouUserPlaylists() {
-  const win = await ensureKugouBridge()
-  // 首次加载等待页面就绪；之后页面已挂载，短暂等待确保会话 cookie 生效
-  await new Promise(resolve => setTimeout(resolve, kugouBridgeReady ? 800 : 4000))
-  const result = await win.webContents.executeJavaScript(`(async () => {
-    const tryFetch = async (url) => {
-      try {
-        const r = await fetch(url, { credentials: 'include' });
-        if (!r.ok) return null;
-        const t = await r.text();
-        try { return JSON.parse(t); } catch { return null; }
-      } catch { return null; }
-    };
-    const pl = await tryFetch('https://www.kugou.com/yy/index.php?r=user/getplaylist&page=1&pagesize=100');
-    const lists = (pl && (pl.data && pl.data.list)) || (pl && pl.data) || [];
-    if (!Array.isArray(lists)) return '[]';
-    return JSON.stringify(lists.map(function (item) {
-      return {
-        specialid: String(item.specialid || item.id || ''),
-        name: String(item.specialname || item.name || ''),
-        img: String(item.img || item.cover || ''),
-        songcount: Number(item.songcount || 0),
-        playcount: Number(item.playcount || 0),
-      };
-    }).filter(function (x) { return x.specialid && x.name; }));
-  })()`)
-  try { return JSON.parse(result || '[]') } catch { return [] }
-}
-
-/** 页面内同源 fetch 酷狗用户信息（昵称/头像/ID，绕开服务端 WAF） */
-async function scrapeKugouUserInfo() {
-  const win = await ensureKugouBridge()
-  await new Promise(resolve => setTimeout(resolve, kugouBridgeReady ? 800 : 4000))
-  const result = await win.webContents.executeJavaScript(`(async () => {
-    const tryFetch = async (url) => {
-      try {
-        const r = await fetch(url, { credentials: 'include' });
-        if (!r.ok) return null;
-        const t = await r.text();
-        try { return JSON.parse(t); } catch { return null; }
-      } catch { return null; }
-    };
-    const info = await tryFetch('https://www.kugou.com/yy/index.php?r=user/getinfo');
-    const d = (info && (info.data || info.user_info || info.user)) || {};
-    return JSON.stringify({
-      nickname: d.nickname || d.user_name || d.userName || d.name || '',
-      user_id: d.user_id || d.userid || d.id || '',
-      avatar: d.avatar || d.head_img || d.headimg || d.user_pic || '',
-    });
-  })()`)
-  try { return JSON.parse(result || '{}') } catch { return {} }
-}
-
-ipcMain.handle('kugou-scrape-user-playlists', async () => {
-  try {
-    const playlists = await scrapeKugouUserPlaylists()
-    return { success: true, playlists }
-  } catch (err) {
-    console.error('❌[酷狗数据桥] 用户歌单抓取失败:', err)
-    return { success: false, error: err.message, playlists: [] }
-  }
-})
-
-ipcMain.handle('kugou-scrape-user-info', async () => {
-  try {
-    const info = await scrapeKugouUserInfo()
-    return { success: true, info }
-  } catch (err) {
-    console.error('❌[酷狗数据桥] 用户信息抓取失败:', err)
-    return { success: false, error: err.message, info: null }
-  }
-})
 
 // ── Apple Music amp-api 代理（Cider mkv3 同款思路）──────────────────────────
 // 渲染进程浏览器直连 amp-api.music.apple.com 会被 CORS 拦截（Failed to fetch）。
@@ -6462,7 +5598,7 @@ const QMK_COPY_GUIDE_JS = `
 
 async function createQQSkillKeyWindow() {
   // 防重入检查必须先于 session 清空：窗口开着时再次点领取，若先清空会把正在使用的
-  // 独立分区 storage 全清掉，正在登录的页面当场掉登录态（对齐 apple/soda 的先检查后清理）
+  // 独立分区 storage 全清掉，正在登录的页面当场掉登录态（对齐 apple 的先检查后清理）
   if (qqSkillKeyWindow && !qqSkillKeyWindow.isDestroyed()) {
     qqSkillKeyWindow.focus()
     return Promise.resolve({ success: false, error: 'QQ 音乐官方增强领取窗口已打开' })
@@ -6606,83 +5742,6 @@ ipcMain.handle('get-developer-mode', () => {
   return { enabled: developerMode }
 })
 
-// Device ID is stored in HKCU\Software\WaveForge; file storage is only a fallback.
-ipcMain.handle('device-license:get-state', () => {
-  try {
-    return { success: true, ...deviceLicense.getState(app) }
-  } catch (error) {
-    console.error('[DeviceLicense] Failed to read state:', error)
-    return { success: false, error: error?.message || 'Unable to copy device ID' }
-  }
-})
-
-// 系统音量（0-100，取左右声道均值）。用 winmm 的 waveOutGetVolume 读取主输出音量，
-// 2 分钟缓存避免频繁 spawn PowerShell。前端频响补偿据此自适应（<50% 时提示开启）。
-let systemVolumeCache = { value: -1, expiresAt: 0 }
-let systemVolumeRequest = null
-ipcMain.handle('audio:get-system-volume', () => {
-  if (process.platform !== 'win32') return { success: true, volume: -1 }
-  const now = Date.now()
-  if (systemVolumeCache.value >= 0 && now < systemVolumeCache.expiresAt) {
-    return { success: true, volume: systemVolumeCache.value }
-  }
-  if (!systemVolumeRequest) {
-    const script = [
-      "Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class VolUtil { [DllImport(\"winmm.dll\")] public static extern int waveOutGetVolume(System.IntPtr hwo, out uint dwVolume); }'",
-      '$v = 0',
-      '[VolUtil]::waveOutGetVolume([IntPtr]::Zero, [ref]$v) | Out-Null',
-      '([math]::Round(((($v -band 0xFFFF) / 65535.0) + ((($v -shr 16) -band 0xFFFF) / 65535.0)) / 2 * 100))',
-    ].join('; ')
-    systemVolumeRequest = new Promise(resolve => {
-      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 5000 }, (error, stdout) => {
-        systemVolumeRequest = null
-        const parsed = parseInt(String(stdout || '').trim(), 10)
-        const volume = error || !isFinite(parsed) ? -1 : Math.max(0, Math.min(100, parsed))
-        systemVolumeCache = { value: volume, expiresAt: Date.now() + 120_000 }
-        resolve({ success: true, volume })
-      })
-    })
-  }
-  return systemVolumeRequest
-})
-
-ipcMain.handle('device-license:copy-id', () => {
-  try {
-    const identity = deviceLicense.getOrCreateDeviceId(app)
-    clipboard.writeText(identity.deviceId)
-    return { success: true, ...identity }
-  } catch (error) {
-    console.error('[DeviceLicense] Failed to copy device ID:', error)
-    return { success: false, error: error?.message || 'Unable to copy device ID' }
-  }
-})
-
-ipcMain.handle('device-license:read-clipboard', () => {
-  try {
-    return { success: true, text: clipboard.readText() }
-  } catch (error) {
-    console.error('[DeviceLicense] Failed to read clipboard:', error)
-    return { success: false, error: error?.message || 'Unable to read clipboard' }
-  }
-})
-
-ipcMain.handle('device-license:redeem', (_event, code) => {
-  try {
-    return deviceLicense.redeem(app, code)
-  } catch (error) {
-    console.warn('[DeviceLicense] Redemption failed:', error?.message || error)
-    return { success: false, error: error?.message || 'Unable to redeem code' }
-  }
-})
-
-ipcMain.handle('device-license:reset', () => {
-  try {
-    return deviceLicense.resetDeviceLicense(app)
-  } catch (error) {
-    console.error('[DeviceLicense] Reset failed:', error?.message || error)
-    return { success: false, error: error?.message || 'Unable to reset device license' }
-  }
-})
 
 // 根据 vendor/设备名判断 GPU 类型（独显 / 核显 / 未知），用于显卡选择 UI 展示
 function classifyGpuKind(device) {
@@ -6928,13 +5987,11 @@ const scheduleWindowStateSave = () => {
 // 挂起的登录 Promise 以"用户取消"收尾（不卡"登录中"）；任务栏 widget 与两个数据桥是
 // 隐藏工具窗，直接 destroy。
 function closeAllDependentWindows() {
-  const closable = [qqLoginWindow, kugouLoginWindow, spotifyLoginWindow, appleLoginWindow, sodaLoginWindow, qqSkillKeyWindow, desktopPlayerWindow, desktopLyricsWindow]
+  const closable = [qqLoginWindow, spotifyLoginWindow, appleLoginWindow, qqSkillKeyWindow, desktopPlayerWindow, desktopLyricsWindow]
   for (const w of closable) {
     try { if (w && !w.isDestroyed()) w.close() } catch { /* 忽略 */ }
   }
   try { if (taskbarWidgetWindow && !taskbarWidgetWindow.isDestroyed()) taskbarWidgetWindow.destroy() } catch { /* 忽略 */ }
-  try { if (douyinBridgeWindow && !douyinBridgeWindow.isDestroyed()) douyinBridgeWindow.destroy() } catch { /* 忽略 */ }
-  try { if (kugouBridgeWindow && !kugouBridgeWindow.isDestroyed()) kugouBridgeWindow.destroy() } catch { /* 忽略 */ }
 }
 
 // 主窗口事件接线：启动创建（createWindow）与融合穿透重建（recreateMainWindow）共用。
@@ -7313,170 +6370,10 @@ ipcMain.handle('get-system-location', async () => {
 
 /**
  * 启动生产版常驻本地后端。Express API（local-server.mjs，端口 3001）通过
- * utilityProcess.fork 启动；Python 3002/3003/3004 服务由 renderer 请求前按需启动。 */
+ * utilityProcess.fork 启动。 */
 let localApiChild = null
 
-const PYTHON_SERVICE_IDLE_MS = Math.max(30_000, Number(process.env.WAVEFORGE_PYTHON_IDLE_MS) || 5 * 60_000)
-const PYTHON_SERVICE_START_TIMEOUT_MS = 20_000
-const pythonServices = new Map([
-  ['beat', { port: 3002, script: 'beat_analyzer.py', label: 'BeatService', child: null, starting: null, idleTimer: null, activeRequests: new Set() }],
-  ['loudness', { port: 3003, script: 'loudness_server.py', label: 'LoudnessService', child: null, starting: null, idleTimer: null, activeRequests: new Set() }],
-  ['compensation', { port: 3004, script: 'compensation_server.py', label: 'CompensationService', child: null, starting: null, idleTimer: null, activeRequests: new Set() }],
-])
-let pythonServicesQuitting = false
 
-function clearPythonIdleTimer(service) {
-  if (service.idleTimer) clearTimeout(service.idleTimer)
-  service.idleTimer = null
-}
-
-function stopPythonService(service, reason) {
-  clearPythonIdleTimer(service)
-  const child = service.child
-  service.child = null
-  if (!child) return
-  try { child.kill() } catch {}
-  if (process.platform === 'win32' && child.pid) {
-    try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5000 }) } catch {}
-  }
-  console.log(`[${service.label}] stopped (${reason})`)
-}
-
-function schedulePythonServiceIdleStop(service) {
-  clearPythonIdleTimer(service)
-  if (pythonServicesQuitting || !service.child || service.activeRequests.size > 0) return
-  service.idleTimer = setTimeout(() => {
-    service.idleTimer = null
-    if (service.activeRequests.size === 0) stopPythonService(service, 'idle')
-  }, PYTHON_SERVICE_IDLE_MS)
-  service.idleTimer.unref?.()
-}
-
-async function probePythonService(service) {
-  try {
-    const response = await net.fetch(`http://127.0.0.1:${service.port}/health`, {
-      headers: { 'X-WaveForge-Local-Token': LOCAL_SERVICE_TOKEN },
-      signal: AbortSignal.timeout(1500),
-    })
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
-async function waitForPythonService(service, child) {
-  const deadline = Date.now() + PYTHON_SERVICE_START_TIMEOUT_MS
-  while (Date.now() < deadline) {
-    if (service.child !== child) throw new Error(`${service.label} exited before becoming ready`)
-    if (await probePythonService(service)) return
-    await new Promise(resolve => setTimeout(resolve, 150))
-  }
-  throw new Error(`${service.label} startup timed out`)
-}
-
-async function ensurePythonService(name) {
-  const service = pythonServices.get(name)
-  if (!service) throw new Error(`Unknown local Python service: ${name}`)
-  clearPythonIdleTimer(service)
-  if (await probePythonService(service)) {
-    schedulePythonServiceIdleStop(service)
-    return true
-  }
-  if (service.child && service.activeRequests.size > 0) return true
-  if (service.child) stopPythonService(service, 'unresponsive')
-  if (!app.isPackaged) return false
-  if (process.env.WAVEFORGE_DISABLE_LOCAL_BACKEND === '1' || pythonServicesQuitting) return false
-  if (service.starting) return service.starting
-
-  const starting = (async () => {
-    const pythonExe = path.join(process.resourcesPath, 'python-embed', 'python.exe')
-    const scriptPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'python-beat-service', service.script)
-    const beatModelPath = path.join(process.resourcesPath, 'beat-this', 'final0.ckpt')
-    if (service.script === 'beat_analyzer.py' && !fs.existsSync(beatModelPath)) throw new Error('Required Beat This final0 model was not packaged')
-    if (!fs.existsSync(pythonExe)) throw new Error('Embedded Python was not found')
-    if (!fs.existsSync(scriptPath)) throw new Error(`${service.script} was not found`)
-    const child = spawn(pythonExe, [scriptPath], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-      env: {
-        ...process.env,
-        WAVEFORGE_LOCAL_TOKEN: LOCAL_SERVICE_TOKEN,
-        WAVEFORGE_CACHE_PATH: configManager.getCachePath(),
-        ...(service.script === 'beat_analyzer.py' ? {
-          BEAT_THIS_CHECKPOINT: beatModelPath,
-          WAVEFORGE_BEAT_MODEL_PATH: beatModelPath,
-        } : {}),
-        PYTHONIOENCODING: 'utf-8',
-        PYTHONUNBUFFERED: '1',
-      },
-    })
-    service.child = child
-    child.stdout?.on('data', chunk => { const text = String(chunk).trim(); if (text) console.log(`[${service.label}]`, text) })
-    child.stderr?.on('data', chunk => { const text = String(chunk).trim(); if (text) console.error(`[${service.label}:err]`, text) })
-    child.on('error', error => {
-      console.error(`[${service.label}] failed to spawn:`, error?.message || error)
-      if (service.child === child) service.child = null
-    })
-    child.on('exit', code => {
-      if (service.child !== child) return
-      service.child = null
-      clearPythonIdleTimer(service)
-      console.warn(`[${service.label}] exited with code`, code)
-    })
-    console.log(`[${service.label}] starting ${service.script} on port ${service.port}`)
-    try {
-      await waitForPythonService(service, child)
-      schedulePythonServiceIdleStop(service)
-      return true
-    } catch (error) {
-      if (service.child === child) stopPythonService(service, 'startup failed')
-      throw error
-    }
-  })()
-  service.starting = starting
-  try {
-    return await starting
-  } finally {
-    if (service.starting === starting) service.starting = null
-  }
-}
-
-function stopAllPythonServices(reason) {
-  pythonServicesQuitting = true
-  for (const service of pythonServices.values()) stopPythonService(service, reason)
-}
-
-ipcMain.handle('local-python:ensure', async (event, name) => {
-  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return false
-  try {
-    return await ensurePythonService(name)
-  } catch (error) {
-    console.error(`[LocalPython] failed to ensure ${String(name)}:`, error?.message || error)
-    return false
-  }
-})
-
-function pythonServiceForUrl(url) {
-  let port
-  try { port = Number(new URL(url).port) } catch { return null }
-  for (const service of pythonServices.values()) {
-    if (service.port === port) return service
-  }
-  return null
-}
-
-function beginPythonServiceRequest(details) {
-  const service = pythonServiceForUrl(details.url)
-  if (!service || new URL(details.url).pathname === '/health') return
-  clearPythonIdleTimer(service)
-  service.activeRequests.add(details.id)
-}
-
-function finishPythonServiceRequest(details) {
-  const service = pythonServiceForUrl(details.url)
-  if (!service || !service.activeRequests.delete(details.id)) return
-  schedulePythonServiceIdleStop(service)
-}
 
 // ── 孤儿后端清扫：上次异常退出残留的子进程会占住后端端口，导致新实例误连旧后端 ──
 // 必须在模块级声明：will-quit 与 AppleBridge 的 python 校验都在模块作用域调用，
@@ -7484,7 +6381,7 @@ function finishPythonServiceRequest(details) {
 // 18790 = Apple 播放面 bridge（apple_bridge.py）控制端口
 const { promisify } = require('util')
 const execFileAsync = promisify(execFile)
-const BACKEND_PORTS = [3001, 3002, 3003, 3004, 18790]
+const BACKEND_PORTS = [3001, 18790]
 async function sweepBackendOrphans(reason) {
   for (const port of BACKEND_PORTS) {
     try {
@@ -7492,7 +6389,7 @@ async function sweepBackendOrphans(reason) {
         '$c = Get-NetTCPConnection -LocalPort ' + port + ' -State Listen -ErrorAction SilentlyContinue',
         'foreach ($x in $c) {',
         '  $pp = Get-Process -Id $x.OwningProcess -ErrorAction SilentlyContinue',
-        '  if ($pp -and ($pp.Path -like "*win-unpacked*" -or $pp.Path -like "*resources\\python-embed*" -or $pp.ProcessName -like "WaveForge*" -or $pp.ProcessName -like "python*")) { Write-Output $x.OwningProcess }',
+        '  if ($pp -and ($pp.Path -like "*win-unpacked*" -or $pp.ProcessName -like "WaveForge*" -or $pp.ProcessName -like "python*")) { Write-Output $x.OwningProcess }',
         '}',
       ].join('; ')
       const out = await execFileAsync('powershell', ['-NoProfile', '-Command', ps], { timeout: 12000 })
@@ -7540,7 +6437,6 @@ async function startLocalBackend() {
     console.error('[LocalAPI] failed to start:', error)
   }
 
-  // Python 3002/3003/3004 services are started by local-python:ensure on demand.
 }
 
 // ── Apple 播放面（WebView2 bridge）子进程管理 ──
@@ -7566,14 +6462,10 @@ async function pythonHasPywebview(pythonExe) {
   return ok
 }
 
-/** 找可用的 Python：环境变量 → 嵌入式 → 常见系统安装位置 → PATH */
+/** 找可用的 Python：环境变量 → 常见系统安装位置 → PATH */
 async function findAppleBridgePython() {
   const candidates = []
   if (process.env.WAVEFORGE_APPLE_BRIDGE_PYTHON) candidates.push(process.env.WAVEFORGE_APPLE_BRIDGE_PYTHON)
-  candidates.push(app.isPackaged
-    ? path.join(process.resourcesPath, 'python-embed', 'python.exe')
-    // dev 模式下 getAppPath() 是 desktop/，用 __dirname 回项目根
-    : path.join(__dirname, '..', 'resources', 'python-embed', 'python.exe'))
   const localAppData = process.env.LOCALAPPDATA || ''
   try {
     for (const dir of fs.readdirSync(path.join(localAppData, 'Programs', 'Python'))) {
@@ -7692,17 +6584,8 @@ async function doStartAppleBridge() {
 app.on('will-quit', async () => {
   persistMainWindowState() // 关闭前做最终窗口状态保存（防抖定时器可能尚未触发）
   try { localApiChild?.kill() } catch {}
-  stopAllPythonServices('app quit')
   await sweepBackendOrphans('quit')
   try { appleBridgeChild?.kill() } catch {}
-  if (stemRuntime) {
-    try { stemRuntime.shutdown() } catch { /* optional runtime cleanup */ }
-    stemRuntime = null
-  }
-  if (trackStemRuntime) {
-    try { trackStemRuntime.shutdown() } catch { /* optional runtime cleanup */ }
-    trackStemRuntime = null
-  }
 })
 
 app.whenReady().then(async () => {
@@ -7762,18 +6645,14 @@ app.whenReady().then(async () => {
 
   // Electron 本地服务请求认证：token 只存在于主进程和受控子进程环境，renderer 无法读取。
   session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['http://localhost:3001/*', 'http://127.0.0.1:3001/*', 'http://localhost:3002/*', 'http://127.0.0.1:3002/*', 'http://localhost:3003/*', 'http://127.0.0.1:3003/*', 'http://localhost:3004/*', 'http://127.0.0.1:3004/*'] },
+    { urls: ['http://localhost:3001/*', 'http://127.0.0.1:3001/*'] },
     (details, callback) => {
       if (mainWindow && details.webContentsId === mainWindow.webContents.id) {
-        beginPythonServiceRequest(details)
         details.requestHeaders['X-WaveForge-Local-Token'] = LOCAL_SERVICE_TOKEN
       }
       callback({ requestHeaders: details.requestHeaders })
     },
   )
-  const pythonServiceRequestFilter = { urls: ['http://localhost:3002/*', 'http://127.0.0.1:3002/*', 'http://localhost:3003/*', 'http://127.0.0.1:3003/*', 'http://localhost:3004/*', 'http://127.0.0.1:3004/*'] }
-  session.defaultSession.webRequest.onCompleted(pythonServiceRequestFilter, finishPythonServiceRequest)
-  session.defaultSession.webRequest.onErrorOccurred(pythonServiceRequestFilter, finishPythonServiceRequest)
 
   // ── Apple 音源 CORS 放行（Cider 式原生音源所需）────────────────────────────
   // 渲染层 hls.js 直接请求 Apple 的 HLS 清单/分段/Widevine license，这些接口的
@@ -7816,7 +6695,6 @@ app.whenReady().then(async () => {
   configManager = new ConfigManager(app)
   const cachePath = configManager.getCachePath()
   console.log('📁 [Config] 缓存路径:', cachePath)
-  loadRemoteSettings()
   
   // 创建缓存目录结构
   const requiredDirs = [
@@ -7834,88 +6712,10 @@ app.whenReady().then(async () => {
     }
   })
   
-  // 启动生产版常驻本地 API（3001）。Python 3002/3003/3004 由 renderer 请求前 ensure；
-  // 开发模式继续由 scripts/dev-electron.mjs 预启动全部服务。
+  // 启动生产版常驻本地 API（3001）。
+  // 开发模式继续由 scripts/dev-electron.mjs 预启动。
   startLocalBackend()
   
-  // 传入缓存路径给 analysis runtime。
-  // 延迟到 setImmediate 初始化：createAnalysisRuntime 内部 AudioDownloadService 构造时会
-  // 同步读取并逐条 statSync 校验音频缓存索引，末尾还会同步 readdirSync 扫描全部缓存目录
-  // 执行清理（缓存文件多时可达数十到数百毫秒）。这些工作与窗口显示无关，先创建 splash/
-  // 主窗口与 loadFile 让界面尽早出现，再执行分析运行时初始化。渲染进程的 analysis:* /
-  // audio-download:* IPC 只在用户实际操作（切歌分析/下载/清理缓存）时才调用，必然晚于
-  // setImmediate 回调，因此 handler 注册顺序不受影响；启动失败也只会让分析功能降级，
-  // 不影响窗口显示与后端服务。
-  setImmediate(() => {
-    analysisRuntime = createAnalysisRuntime(app, ipcMain, () => mainWindow, cachePath)
-  })
-  
-  // Setup render runtime IPC handlers
-  automixLog.init(app)
-
-  // 渲染进程的 automix 事件（在调用后端之前就发生/退出的情况）也写进同一个日志文件
-  ipcMain.handle('automix-log:append', (_event, scope, message) => {
-    if (typeof scope !== 'string' || typeof message !== 'string') return true
-    automixLog.log(`renderer:${scope}`, message.slice(0, 400))
-    return true
-  })
-
-  setupRenderIPC(ipcMain, configManager.getCachePath(), toMediaUrl)
-  try {
-    const stemModels = require('./stem-model-manager.cjs')
-    const { setupStemIPC } = require('./stem-runtime.cjs')
-    const { setupTrackStemIPC } = require('./track-stem-runtime.cjs')
-    stemModels.setupStemModelIPC(ipcMain, guardTrustedIpc)
-    stemRuntime = setupStemIPC(ipcMain, {
-      modelPath: stemModels.getModelPath(),
-      pythonPath: stemModels.getRuntimePath(),
-      isModelTrusted: stemModels.isModelTrusted,
-      isRuntimeTrusted: stemModels.isRuntimeTrusted,
-      modelsPath: stemModels.getModelRoot(),
-      cachePath: path.join(configManager.getCachePath(), 'stem-renders'),
-      ffmpegPath: process.env.WAVEFORGE_FFMPEG_PATH,
-      isInputAllowed: inputPath => Boolean(analysisRuntime?.audioDownload?.isInputAllowed(inputPath)),
-    })
-    trackStemRuntime = setupTrackStemIPC(ipcMain, {
-      modelPath: stemModels.getModelPath(),
-      pythonPath: stemModels.getRuntimePath(),
-      isModelTrusted: stemModels.isModelTrusted,
-      isRuntimeTrusted: stemModels.isRuntimeTrusted,
-      modelsPath: stemModels.getModelRoot(),
-      cachePath: path.join(configManager.getCachePath(), 'track-stems'),
-      ffmpegPath: process.env.WAVEFORGE_FFMPEG_PATH,
-      decoderPythonPath: app.isPackaged
-        ? path.join(process.resourcesPath, 'python-embed', 'python.exe')
-        : path.join(__dirname, '..', 'resources', 'python-embed', 'python.exe'),
-      isInputAllowed: inputPath => Boolean(analysisRuntime?.audioDownload?.isInputAllowed(inputPath)),
-    })
-  } catch (error) {
-    console.error('⚠️ [Stem Model] HTDemucs 模型/运行时初始化失败:', error instanceof Error ? error.message : error)
-  }
-  // AI 混音（DJTransGAN）运行时：严格可选；关闭时 renderer 不调用任何 Torch IPC
-  setupAiMixIPC(ipcMain, configManager.getCachePath())
-  // AI 混音模型（DJTransGAN 仓库 + 预训练权重）下载/删除管理：设置面板「下载模型」用
-  try {
-    const { setupAiModelIPC } = require('./ai-model-manager.cjs')
-    setupAiModelIPC(ipcMain, (scope, message) => automixLog.log(scope, message), guardTrustedIpc)
-  } catch (error) {
-    console.error('⚠️ [AI Model] 模型下载管理器初始化失败:', error instanceof Error ? error.message : error)
-  }
-  // 代理自动配置：模型下载/应用更新走用户本地代理（设置 → 高级 → 代理自动配置）
-  try {
-    const { setupProxyIPC } = require('./proxy-manager.cjs')
-    setupProxyIPC(ipcMain, (scope, message) => automixLog.log(scope, message))
-  } catch (error) {
-    console.error('⚠️ [Proxy] 代理管理器初始化失败:', error instanceof Error ? error.message : error)
-  }
-
-  // AirPlay 投送端：mDNS 设备发现 + RAOP/AirPlay2 会话管理（纯 JS，无原生依赖）
-  try {
-    airplayControllerHandle = setupAirplayIpc({ ipcMain, getMainWindow: () => mainWindow })
-    console.log('🎵 [AirPlay] 投送端已启动（mDNS 设备发现中）')
-  } catch (error) {
-    console.error('🎵 [AirPlay] 启动失败:', error instanceof Error ? error.message : error)
-  }
   // Razer Chroma：本地 REST 会话、设备探测与高频灯效帧。
   try {
     chromaControllerHandle = setupChromaIpc({ ipcMain, getMainWindow: () => mainWindow, repairBasePath: app.getPath('userData') })
@@ -7957,10 +6757,6 @@ app.whenReady().then(async () => {
   })
 
   app.on('will-quit', async () => {
-    if (airplayControllerHandle) {
-      try { airplayControllerHandle.dispose() } catch { /* 忽略 */ }
-      airplayControllerHandle = null
-    }
     if (chromaControllerHandle) {
       try { await chromaControllerHandle.dispose() } catch { /* 忽略 */ }
       chromaControllerHandle = null
@@ -7989,7 +6785,6 @@ app.whenReady().then(async () => {
     }
     const result = await analysisRuntime.audioDownload.prepareAudioFile(urlOrPath, trackKey)
     const ext = String(result || '').split('.').pop()?.toLowerCase() || '?'
-    automixLog.log('download', `trackKey=${trackKey} url=${String(urlOrPath).slice(0, 120)} -> ${result} (ext=${ext})`)
     return result
   }))
 
@@ -8017,7 +6812,6 @@ app.whenReady().then(async () => {
     }
     const resolved = fs.realpathSync.native(filePath)
     const url = toMediaUrl(resolved)
-    automixLog.log('media-url', resolved)
     return url
   }))
 
@@ -8046,7 +6840,6 @@ app.whenReady().then(async () => {
         throw new Error('WAV cache target escapes the audio download cache')
       }
       const existing = fs.realpathSync.native(target)
-      automixLog.log('saveWav', `trackKey=${trackKey} 复用已有 ${existing}`)
       return existing
     }
     const temp = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`
@@ -8060,7 +6853,6 @@ app.whenReady().then(async () => {
     } finally {
       try { fs.rmSync(temp, { force: true }) } catch {}
     }
-    automixLog.log('saveWav', `trackKey=${trackKey} 写入 ${buf.length} bytes -> ${target}`)
     return target
   }))
 
@@ -8302,15 +7094,5 @@ app.on('before-quit', () => {
     clearInterval(wallpaperWatcher)
     wallpaperWatcher = null
   }
-  // 销毁汽水签名引擎的隐藏验证窗（show:false、close 被 preventDefault→hide、无 parent）：
-  // 不销毁会阻断 window-all-closed 与 app.quit()，进程残留且任务栏无入口可关
-  try { require('./qishui-auth-v6.cjs').destroyForQuit() } catch { /* 未初始化无窗口可清 */ }
-  // 停止遥控器局域网服务
-  if (remoteServer) {
-    remoteServer.stop()
-    remoteServer = null
-  }
-  // Cleanup render runtime
-  cleanupRender()
 })
 

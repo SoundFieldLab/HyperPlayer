@@ -217,7 +217,7 @@ function isWaveForgeDevLeftover(commandLine) {
   const normalized = commandLine.replace(/[\\/]+/g, '/')
   const root = projectRoot.replace(/[\\/]+/g, '/')
   if (!normalized.includes(root)) return false
-  return /vite\/bin\/vite|local-server\.mjs|compensation_server\.py|beat_analyzer\.py|loudness_server\.py|apple_bridge\.py/.test(normalized)
+  return /vite\/bin\/vite|local-server\.mjs|apple_bridge\.py/.test(normalized)
 }
 
 async function killProcess(pid) {
@@ -250,118 +250,6 @@ async function freePortIfHijacked(port, serviceName) {
 async function startDev() {
   logStartup('Development launcher started')
   let apiProcess = null
-  let pythonProcess = null
-  let loudnessProcess = null
-  let compensationProcess = null
-
-  // 响度测量服务（3003，独立于节拍服务）——响度归一化按曲目调用
-  const startLoudness = async () => {
-    if (await isPortOpen(3003)) {
-      console.log('Loudness Service already running on http://localhost:3003')
-      return null
-    }
-    console.log('Starting Loudness Service...')
-    const pythonExe = resolve(__dirname, '../resources/python-embed/python.exe')
-    const loudnessServer = resolve(__dirname, '../python-beat-service/loudness_server.py')
-    const loudnessProc = spawn(
-      pythonExe,
-      [loudnessServer],
-      {
-        stdio: ['ignore', 'inherit', 'inherit'],
-        windowsHide: true,
-        env: { ...localServiceEnv, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
-      }
-    )
-    // spawn 失败（嵌入式 python 缺失等）时避免未捕获的 'error' 事件崩掉启动器
-    loudnessProc.on('error', (error) => {
-      console.error(`[LoudnessService] spawn 失败: ${error?.message || error}`)
-    })
-    waitForPort(3003, 15000).then(success => {
-      if (success) {
-        console.log('Loudness Service started successfully on http://localhost:3003')
-      } else {
-        console.warn('Loudness Service did not open port 3003 within 15 seconds')
-      }
-    })
-    return loudnessProc
-  }
-
-  // 频响补偿设计服务（3004，独立于节拍/响度服务）——ISO 226 等响度/预设/自定义 → 多段 Biquad 参数
-  const startCompensation = async () => {
-    if (await isPortOpen(3004)) {
-      console.log('Compensation Service already running on http://localhost:3004')
-      return null
-    }
-    console.log('[CompensationService] starting compensation_server.py on port 3004')
-    const pythonExe = resolve(__dirname, '../resources/python-embed/python.exe')
-    const compensationServer = resolve(__dirname, '../python-beat-service/compensation_server.py')
-    const compensationProc = spawn(
-      pythonExe,
-      [compensationServer],
-      {
-        stdio: ['ignore', 'inherit', 'inherit'],
-        windowsHide: true,
-        env: { ...localServiceEnv, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
-      }
-    )
-    // spawn 失败（嵌入式 python 缺失等）时避免未捕获的 'error' 事件崩掉启动器
-    compensationProc.on('error', (error) => {
-      console.error(`[CompensationService] spawn 失败: ${error?.message || error}`)
-    })
-    waitForPort(3004, 15000).then(success => {
-      if (success) {
-        console.log('Compensation Service started successfully on http://localhost:3004')
-      } else {
-        console.warn('Compensation Service did not open port 3004 within 15 seconds')
-      }
-    })
-    return compensationProc
-  }
-
-  // 并行启动所有服务
-  const startPython = async () => {
-    if (await isPortOpen(3002)) {
-      console.log('Python Beat Service already running on http://localhost:3002')
-      return null
-    }
-    
-    console.log('Starting Python Beat Service...')
-    const pythonExe = resolve(__dirname, '../resources/python-embed/python.exe')
-    const beatAnalyzer = resolve(__dirname, '../python-beat-service/beat_analyzer.py')
-    const beatModel = resolve(__dirname, '../resources/beat-this/final0.ckpt')
-    if (!existsSync(beatModel)) throw new Error(`Required Beat This model missing: ${beatModel}`)
-    
-    const pythonProc = spawn(
-      pythonExe,
-      [beatAnalyzer],
-      { 
-        stdio: ['ignore', 'inherit', 'inherit'],
-        windowsHide: true,
-        env: {
-          ...localServiceEnv,
-          BEAT_THIS_CHECKPOINT: beatModel,
-          WAVEFORGE_BEAT_MODEL_PATH: beatModel,
-          PYTHONIOENCODING: 'utf-8',
-          PYTHONUNBUFFERED: '1'
-        }
-      }
-    )
-    // spawn 失败（嵌入式 python 缺失等）时避免未捕获的 'error' 事件崩掉启动器
-    pythonProc.on('error', (error) => {
-      console.error(`[BeatService] spawn 失败: ${error?.message || error}`)
-    })
-
-    // 后台等待，不阻塞主流程
-    waitForPort(3002, 15000).then(success => {
-      if (success) {
-        console.log('Python Beat Service started successfully on http://localhost:3002')
-      } else {
-        console.warn('Python Beat Service did not open port 3002 within 15 seconds')
-      }
-    })
-    
-    return pythonProc
-  }
 
   const startAPI = async () => {
     if (await isPortOpen(3001)) {
@@ -436,22 +324,14 @@ async function startDev() {
     return server
   }
 
-  // Start backends and the renderer in parallel. The cached production renderer is
-  // the default fast path; set WAVEFORGE_LIVE_UI=1 to restore full Vite HMR.
+  // The cached production renderer is the default fast path; set WAVEFORGE_LIVE_UI=1
+  // to restore full Vite HMR.
   // 先完成 3001 预检，避免旧会话存在时仍启动其余服务并遗留更多进程。
   const api = await startAPI()
-  const [python, loudness, compensation, server] = await Promise.all([
-    startPython(),
-    startLoudness(),
-    startCompensation(),
-    startRendererServer()
-  ])
-  
-  pythonProcess = python
+  const server = await startRendererServer()
+
   apiProcess = api
-  loudnessProcess = loudness
-  compensationProcess = compensation
-  
+
   logStartup('Backend launch tasks dispatched')
   const devServerUrl = server.resolvedUrls?.local?.[0] || 'http://127.0.0.1:3000/'
   console.log(`Electron loading ${devServerUrl}`)
@@ -467,7 +347,6 @@ async function startDev() {
         WAVEFORGE_USER_DATA: userDataRoot,
         WAVEFORGE_DEV_SERVER_URL: devServerUrl,
         WAVEFORGE_STARTUP_LOG: startupLogFile,
-        PYTHONIOENCODING: 'utf-8',
       },
     }
   )
@@ -477,18 +356,6 @@ async function startDev() {
 
     if (apiProcess && !apiProcess.killed) {
       apiProcess.kill()
-    }
-
-    if (pythonProcess && !pythonProcess.killed) {
-      pythonProcess.kill()
-    }
-
-    if (loudnessProcess && !loudnessProcess.killed) {
-      loudnessProcess.kill()
-    }
-
-    if (compensationProcess && !compensationProcess.killed) {
-      compensationProcess.kill()
     }
   }
 

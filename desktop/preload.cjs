@@ -97,122 +97,8 @@ contextBridge.exposeInMainWorld('electron', {
     get: () => ipcRenderer.invoke('get-developer-mode'),
   },
 
-  // Device-bound identifier and signed redemption codes
-  deviceLicense: {
-    getState: () => ipcRenderer.invoke('device-license:get-state'),
-    copyDeviceId: () => ipcRenderer.invoke('device-license:copy-id'),
-    readClipboard: () => ipcRenderer.invoke('device-license:read-clipboard'),
-    redeem: (code) => ipcRenderer.invoke('device-license:redeem', code),
-    reset: () => ipcRenderer.invoke('device-license:reset'),
-  },
+
   
-  // Production Python helpers are started lazily; development may already run them.
-  localPython: {
-    ensure: (service) => ipcRenderer.invoke('local-python:ensure', service),
-  },
-
-  // AutoMix 本地分析与缓存
-  analysis: {
-    startTrackAnalysis: (input) => ipcRenderer.invoke('analysis:start-track', input),
-    getTrackAnalysis: (trackKey) => ipcRenderer.invoke('analysis:get-track', trackKey),
-    saveTrackAnalysis: (analysis) => ipcRenderer.invoke('analysis:save-track', analysis),
-    cancelJob: (jobId) => ipcRenderer.invoke('analysis:cancel-job', jobId),
-    getStatus: () => ipcRenderer.invoke('analysis:get-status'),
-    getCacheStats: () => ipcRenderer.invoke('analysis:get-cache-stats'),
-    clearCache: () => ipcRenderer.invoke('analysis:clear-cache'),
-    onProgress: (callback) => {
-      const listener = (_event, progress) => callback(progress)
-      ipcRenderer.on('analysis:progress', listener)
-      return () => ipcRenderer.removeListener('analysis:progress', listener)
-    },
-  },
-  
-  // Seamless transition rendering
-  render: {
-    transition: (plan, sourceAudioPath, targetAudioPath) => 
-      ipcRenderer.invoke('render:transition', plan, sourceAudioPath, targetAudioPath),
-    getAudioUrl: (filePath) => ipcRenderer.invoke('render:getAudioUrl', filePath),
-
-    readAudioFile: (filePath) => ipcRenderer.invoke('render:readAudioFile', filePath),
-    clearCache: () => ipcRenderer.invoke('render:clearCache'),
-    getCacheStats: () => ipcRenderer.invoke('render:getCacheStats'),
-    // AI 混音（DJTransGAN）可选引擎：未安装时 transitionAiMix 抛错 / aiMixStatus.available=false
-    transitionAiMix: (plan, sourceAudioPath, targetAudioPath) =>
-      ipcRenderer.invoke('render:transitionAiMix', plan, sourceAudioPath, targetAudioPath),
-    aiMixStatus: () => ipcRenderer.invoke('render:aiMixStatus'),
-    // AI 学到的推子/EQ 自动化参数（v2 短过渡用）
-    aiMixAutomation: (plan, sourceAudioPath, targetAudioPath) =>
-      ipcRenderer.invoke('render:aiMixAutomation', plan, sourceAudioPath, targetAudioPath),
-  },
-
-  // HTDemucs stem-aware AutoMix Enhanced（模型缺失时返回 unavailable/null，v2 DSP 继续可用）
-  stems: {
-    status: () => ipcRenderer.invoke('stem:status'),
-    separate: (request) => ipcRenderer.invoke('stem:separate', request),
-    separatePair: (request) => ipcRenderer.invoke('stem:separatePair', request),
-    cancel: (requestId) => ipcRenderer.invoke('stem:cancel', requestId),
-    clearCache: () => ipcRenderer.invoke('stem:clearCache'),
-  },
-  stemModel: {
-    getStatus: () => ipcRenderer.invoke('stem-model:get-status'),
-    download: () => ipcRenderer.invoke('stem-model:download'),
-    pause: () => ipcRenderer.invoke('stem-model:pause'),
-    cancel: () => ipcRenderer.invoke('stem-model:cancel'),
-    delete: () => ipcRenderer.invoke('stem-model:delete'),
-    onProgress: (callback) => {
-      const listener = (_event, progress) => callback(progress)
-      ipcRenderer.on('stem-model:progress', listener)
-      return () => ipcRenderer.removeListener('stem-model:progress', listener)
-    },
-  },
-  trackStems: {
-    status: () => ipcRenderer.invoke('track-stem:status'),
-    materialize: (request) => ipcRenderer.invoke('track-stem:materialize', request),
-    ensureWindow: (request) => ipcRenderer.invoke('track-stem:ensureWindow', request),
-    cancel: (selector) => ipcRenderer.invoke('track-stem:cancel', selector),
-    readChunk: (filePath) => ipcRenderer.invoke('track-stem:readChunk', filePath),
-    getCacheStats: () => ipcRenderer.invoke('track-stem:getCacheStats'),
-    clearCache: () => ipcRenderer.invoke('track-stem:clearCache'),
-  },
-
-  // AI 混音模型（DJTransGAN 仓库 + 预训练权重）下载/删除管理（严格可选）
-  aiModel: {
-    getStatus: () => ipcRenderer.invoke('ai-model:get-status'),
-    download: () => ipcRenderer.invoke('ai-model:download'),
-    pause: () => ipcRenderer.invoke('ai-model:pause'),
-    cancel: () => ipcRenderer.invoke('ai-model:cancel'),
-    delete: () => ipcRenderer.invoke('ai-model:delete'),
-    onProgress: (callback) => {
-      const listener = (_event, progress) => callback(progress)
-      ipcRenderer.on('ai-model:progress', listener)
-      return () => ipcRenderer.removeListener('ai-model:progress', listener)
-    },
-  },
-
-  // 代理自动配置：模型下载/应用更新走本地代理
-  proxyManager: {
-    scan: () => ipcRenderer.invoke('proxy-manager:scan'),
-    enable: (port) => ipcRenderer.invoke('proxy-manager:enable', port),
-    disable: () => ipcRenderer.invoke('proxy-manager:disable'),
-    getState: () => ipcRenderer.invoke('proxy-manager:get-state'),
-    setEnabled: (v) => ipcRenderer.invoke('proxy-manager:set-enabled', v),
-    consumeNotice: () => ipcRenderer.invoke('proxy-manager:consume-notice'),
-    getLatency: () => ipcRenderer.invoke('proxy-manager:get-latency'),
-    probe: () => ipcRenderer.invoke('proxy-manager:probe'),
-    onLatency: (callback) => {
-      const listener = (_event, latency) => callback(latency)
-      ipcRenderer.on('proxy-manager:latency', listener)
-      return () => ipcRenderer.removeListener('proxy-manager:latency', listener)
-    },
-    onNotice: (callback) => {
-      const listener = (_event, notice) => callback(notice)
-      ipcRenderer.on('proxy-manager:notice', listener)
-      return () => ipcRenderer.removeListener('proxy-manager:notice', listener)
-    },
-  },
-  
-  // AutoMix 渲染进程诊断日志：写入后端 automix-backend.log
-  automixLog: (scope, message) => ipcRenderer.invoke('automix-log:append', scope, message),
   
   // Audio download for rendering
   audioDownload: {
@@ -262,28 +148,12 @@ contextBridge.exposeInMainWorld('electron', {
   
   // QQ 音乐登录
   openQQLoginWindow: () => ipcRenderer.invoke('open-qq-login-window'),
-  // 酷狗音乐登录（Electron 弹窗扫码，抓 kg_token/KuGoo）
-  openKugouLoginWindow: () => ipcRenderer.invoke('open-kugou-login-window'),
-  clearKugouSession: () => ipcRenderer.invoke('kugou-clear-session'),
-  // 读取当前会话的酷狗登录态（启动时自动恢复）
-  getKugouSession: () => ipcRenderer.invoke('get-kugou-session'),
   // Spotify OAuth 授权（Electron 弹窗；clientId 可选，自定义 Client ID）
   openSpotifyLogin: (clientId) => ipcRenderer.invoke('open-spotify-login', clientId),
-  // 汽水音乐登录（Electron 弹窗扫码，抓 token）
-  openSodaLogin: () => ipcRenderer.invoke('open-soda-login'),
-  // 汽水音乐登出清理（清 auth 分区 .qishui.com Cookie/本地存储 + 凭据文件会话字段）
-  clearSodaLogin: () => ipcRenderer.invoke('soda-clear-login'),
   // HSE 开发者模式：把场景微调的「发布种子」写回仓库源文件（仅开发模式生效）
   writeHseSceneSeed: (content) => ipcRenderer.invoke('hse-write-scene-seed', content),
   // HSE 离线导出：渲染完成的 MP3 直写用户桌面（<歌曲名>-Modified.mp3）
   saveHseRenderedAudio: (data, fileName) => ipcRenderer.invoke('hse-save-rendered-audio', data, fileName),
-  // 汽水音乐（抖音）数据桥：隐藏窗口导航抖音搜索页抓取音乐卡片
-  sodaScrapeSearch: (keyword) => ipcRenderer.invoke('soda-scrape-search', keyword),
-  // 酷狗数据桥：隐藏窗口页面内同源 fetch 用户歌单/用户信息（绕开服务端 WAF）
-  kugouScrape: {
-    userPlaylists: () => ipcRenderer.invoke('kugou-scrape-user-playlists'),
-    userInfo: () => ipcRenderer.invoke('kugou-scrape-user-info'),
-  },
   // OOBE 完成 flag 文件（userData/.oobe-complete，独立于 localStorage 的双重保险）
   oobe: {
     getFlag: () => ipcRenderer.invoke('oobe:get-flag'),
@@ -294,18 +164,6 @@ contextBridge.exposeInMainWorld('electron', {
     const listener = (_event, result) => callback(result)
     ipcRenderer.on('spotify-auth-result', listener)
     return () => ipcRenderer.removeListener('spotify-auth-result', listener)
-  },
-  // 酷狗登录完成后回调（主进程返回用户名/ID/头像）
-  onKugouAuthResult: (callback) => {
-    const listener = (_event, result) => callback(result)
-    ipcRenderer.on('kugou-auth-result', listener)
-    return () => ipcRenderer.removeListener('kugou-auth-result', listener)
-  },
-  // 汽水登录完成后回调（主进程返回用户名/头像）
-  onSodaAuthResult: (callback) => {
-    const listener = (_event, result) => callback(result)
-    ipcRenderer.on('soda-auth-result', listener)
-    return () => ipcRenderer.removeListener('soda-auth-result', listener)
   },
 
   // Apple Music 网页一键登录：内置窗口登录 Apple ID，自动抓取凭据
@@ -371,45 +229,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
 
-  // 遥控器：局域网 Web 服务（手机扫码连接）+ 虚拟鼠标桥接
-  remote: {
-    start: (port) => ipcRenderer.invoke('remote:start', port),
-    stop: () => ipcRenderer.invoke('remote:stop'),
-    getStatus: () => ipcRenderer.invoke('remote:get-status'),
-    getSettings: () => ipcRenderer.invoke('remote:get-settings'),
-    updateSettings: (partial) => ipcRenderer.invoke('remote:update-settings', partial),
-    onCursor: (callback) => {
-      const listener = (_event, command) => callback(command)
-      ipcRenderer.on('remote:cursor', listener)
-      return () => ipcRenderer.removeListener('remote:cursor', listener)
-    },
-    onClientsChange: (callback) => {
-      const listener = (_event, status) => callback(status)
-      ipcRenderer.on('remote:clients', listener)
-      return () => ipcRenderer.removeListener('remote:clients', listener)
-    },
-  },
 
-  // AirPlay 投送端：发现局域网 AirPlay 设备并推送本地播放的音频（默认关闭，由设置开关启用）
-  airplay: {
-    setEnabled: (enabled) => ipcRenderer.invoke('airplay:set-enabled', enabled),
-    listDevices: () => ipcRenderer.invoke('airplay:list-devices'),
-    getStatus: () => ipcRenderer.invoke('airplay:get-status'),
-    connect: (deviceId, mode = 'auto') => ipcRenderer.invoke('airplay:connect', deviceId, mode),
-    disconnect: () => ipcRenderer.invoke('airplay:disconnect'),
-    setVolume: (volume) => ipcRenderer.invoke('airplay:set-volume', volume),
-    setRestoreVolume: (volume) => ipcRenderer.invoke('airplay:set-restore-volume', volume),
-    setMetadata: (metadata) => ipcRenderer.invoke('airplay:set-metadata', metadata),
-    setProgress: (elapsed, duration) => ipcRenderer.invoke('airplay:set-progress', elapsed, duration),
-    playConnectSound: () => ipcRenderer.invoke('airplay:play-connect-sound'),
-    sendPcm: (chunk) => ipcRenderer.send('airplay:pcm', chunk),
-    setStreaming: (streaming) => ipcRenderer.send('airplay:set-streaming', streaming),
-    onStatus: (callback) => {
-      const listener = (_event, status) => callback(status)
-      ipcRenderer.on('airplay:status', listener)
-      return () => ipcRenderer.removeListener('airplay:status', listener)
-    },
-  },
 
   // Razer Chroma：会话和网络访问收敛在主进程，渲染端只提交已校验的灯效帧。
   chroma: {

@@ -116,12 +116,6 @@ function downloadToFile(urls, destPath, expectedSha = '', label = '下载', onPr
     const url = String(list[index])
     try {
       let digest = ''
-      // 代理自动配置开启时显式路由到本地代理会话
-      let proxySession = null
-      try {
-        const { getState, getProxySession } = require('./proxy-manager.cjs')
-        if (getState().enabled) proxySession = await getProxySession()
-      } catch { /* 代理未配置则直连 */ }
       await new Promise((resolveReq, rejectReq) => {
         const hash = crypto.createHash('sha256')
         const writeStream = fs.createWriteStream(destPath)
@@ -136,9 +130,7 @@ function downloadToFile(urls, destPath, expectedSha = '', label = '下载', onPr
         const requestUrl = (currentUrl, redirects = 0) => {
           if (!isAllowedUpdateUrl(currentUrl)) return fail(new Error('更新重定向目标不在允许的发布源中'))
           if (redirects > 5) return fail(new Error('更新下载重定向次数过多'))
-          const request = proxySession
-            ? net.request({ url: currentUrl, session: proxySession, redirect: 'manual' })
-            : net.request({ url: currentUrl, redirect: 'manual' })
+          const request = net.request({ url: currentUrl, redirect: 'manual' })
           request.on('response', (response) => {
             if (response.statusCode >= 300 && response.statusCode < 400) {
               const location = response.headers.location
