@@ -83,9 +83,16 @@ export class CloudPlaylistSyncService {
     taskCenter.register({ id: CLOUD_SYNC_TASK_ID, kind: 'netease-sync', title: '云歌单同步', actions: ['view'] });
     taskCenter.update(CLOUD_SYNC_TASK_ID, { detail: '正在拉取歌单列表…' });
     try {
-      const uid = this.deps.session.getCookie()?.userId;
+      // 登录 Set-Cookie 不含 userId，cookie 缺失时经 user_account 补齐；
+      // 绝不能拿 NaN/null 当 uid 去请求（服务端 400，且曾误触发登出）。
+      const uid = await this.deps.session.getUserId();
+      if (!uid) {
+        taskCenter.complete(CLOUD_SYNC_TASK_ID, 'failed', '云歌单同步失败：未能获取用户 uid（登录态可能已失效）');
+        this.logger.warn('cloud-sync: 未能获取用户 uid，跳过');
+        return { playlists: 0, tracks: 0 };
+      }
       const answer = (await this.deps.netease.route('/netease/user/playlist', {
-        uid: Number(uid),
+        uid,
         limit: 100,
         offset: 0,
       })) as { body?: { playlist?: RemotePlaylist[] } };

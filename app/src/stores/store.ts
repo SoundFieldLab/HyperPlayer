@@ -14,7 +14,12 @@ import type { NeteaseSlice } from './slices/netease';
 import { createDspSlice } from './slices/dsp';
 import type { DspSlice } from './slices/dsp';
 
-export interface AppStore extends PlaybackSlice, QueueSlice, SettingsSlice, NeteaseSlice, DspSlice {}
+import { createNavSlice } from './slices/nav';
+import type { NavSlice } from './slices/nav';
+import { createUiSlice } from './slices/ui';
+import type { UiSlice } from './slices/ui';
+
+export interface AppStore extends PlaybackSlice, QueueSlice, SettingsSlice, NeteaseSlice, DspSlice, NavSlice, UiSlice {}
 
 export const useAppStore = create<AppStore>()((set) => ({
   ...createPlaybackSlice(set),
@@ -22,4 +27,6 @@ export const useAppStore = create<AppStore>()((set) => ({
   ...createSettingsSlice(set),
   ...createNeteaseSlice(set),
   ...createDspSlice(set),
+  ...createNavSlice(set),
+  ...createUiSlice(set),
 }));

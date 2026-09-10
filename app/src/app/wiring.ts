@@ -3,6 +3,8 @@
  * 原生能力全部经 infra 薄封装；vendored 网易云 API 注入浏览器传输与存储。
  * 本文件被入口引用，确保 vendored CJS 进入打包图并经受 vite 转译验证。
  */
+import { createTauriDirectoryDialog } from '../infra/dialog';
+import type { DirectoryDialog } from '../infra/dialog';
 import { appDataPath } from '../infra/paths';
 import { toAssetUrl } from '../infra/assetUrl';
 import { createTauriHttp } from '../infra/tauriHttp';
@@ -18,7 +20,7 @@ import type { CacheStore } from '../infra/idbCache';
 import { createVault } from '../infra/vault';
 import type { Vault } from '../infra/vault';
 import { getOrCreateVaultPassword } from '../infra/vaultPassword';
-import { wireNeteaseApi, createNeteaseApi } from '../domains/netease/api/neteaseApi';
+import { wireNeteaseApi, createNeteaseApi, fetchXeapiPublicKey } from '../domains/netease/api/neteaseApi';
 import type { NeteaseApi } from '../domains/netease/api/neteaseApi';
 import { SessionService } from '../domains/netease/SessionService';
 import { NeteaseService } from '../domains/netease/NeteaseService';
@@ -26,6 +28,8 @@ import type { SongUrlResult } from '../domains/netease/NeteaseService';
 import { HseController } from '../domains/player/HseController';
 import { TelemetryTap } from '../domains/player/TelemetryTap';
 import { AudioEngineController } from '../domains/player/AudioEngineController';
+import { LyricsTimeline } from '../domains/player/LyricsTimeline';
+import { createLyricsFetchers } from '../domains/player/lyrics/LyricsFetchers';
 import { DualElementSource } from '../domains/player/DualElementSource';
 import { PlaybackStateMachine } from '../domains/player/PlaybackStateMachine';
 import { QueueController } from '../domains/player/QueueController';
@@ -44,6 +48,7 @@ import { TrayService } from '../services/TrayService';
 import { NotificationService } from '../services/NotificationService';
 import { createTauriShortcuts } from '../infra/shortcuts';
 import { createTauriTray, createTauriWindowControl } from '../infra/tray';
+import type { WindowControl } from '../infra/tray';
 import { createTauriNotifications } from '../infra/notifications';
 import { createTauriSingleInstance } from '../infra/singleInstance';
 import { AutostartService } from '../services/AutostartService';
@@ -53,6 +58,9 @@ import { createTauriUpdater } from '../infra/updater';
 import { useAppStore } from '../stores/store';
 import { useLibraryStore } from '../stores/slices/library';
 import { useDspStore } from '../stores/slices/dsp';
+import { useNeteaseStore } from '../stores/slices/netease';
+import { useTasksStore } from '../stores/slices/tasks';
+import { useSessionStore } from '../stores/slices/session';
 import { RingBufferLogger } from '../shared/logger';
 import { FileLogger } from '../shared/fileLogger';
 import { DiagnosticsService } from '../services/DiagnosticsService';
@@ -64,6 +72,7 @@ import type { QueueItem } from '../domains/player/types';
 export interface Services {
   http: TauriHttp;
   fs: TauriFs;
+  dialog: DirectoryDialog;
   store: KeyValueStore;
   sql: SqlDatabase;
   idb: CacheStore;
@@ -73,6 +82,7 @@ export interface Services {
   netease: NeteaseService;
   hse: HseController;
   telemetry: TelemetryTap;
+  lyrics: LyricsTimeline;
   audio: AudioEngineController;
   elements: DualElementSource;
   stateMachine: PlaybackStateMachine;
@@ -87,6 +97,7 @@ export interface Services {
   playHistory: PlayHistoryService;
   shortcut: ShortcutService;
   tray: TrayService;
+  trayWindow: WindowControl;
   notification: NotificationService;
   autostart: AutostartService;
   updater: UpdateService;
@@ -94,6 +105,7 @@ export interface Services {
   covers: CoverService;
   cloudPlaylistSync: CloudPlaylistSyncService;
   player: PlayerController;
+  disposeSubscriptions: () => void;
 }
 
 /**
@@ -101,23 +113,71 @@ export interface Services {
  * 重启复用；Rust 侧 Builder::with_argon2 派生密钥。
  */
 const ANONYMOUS_TOKEN_KEY = 'netease.anonymousToken';
+const DEVICE_ID_KEY = 'netease.deviceId';
+const XEAPI_PUBLIC_KEY_KEY = 'netease.xeapiPublicKey';
 
-/** 匿名 token：首次生成随机值并持久化（网易云 MUSIC_A 语义）。 */
-async function getAnonymousToken(store: KeyValueStore): Promise<string> {
-  const existing = await store.get<string>(ANONYMOUS_TOKEN_KEY);
+/** 52 位大写十六进制设备 id（官方客户端同构），首启生成、持久复用。 */
+async function getOrCreateDeviceId(store: KeyValueStore): Promise<string> {
+  const existing = await store.get<string>(DEVICE_ID_KEY);
   if (existing) return existing;
-  const token = `hyperplayer-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
-  await store.set(ANONYMOUS_TOKEN_KEY, token);
-  return token;
+  const bytes = crypto.getRandomValues(new Uint8Array(26));
+  const deviceId = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase();
+  await store.set(DEVICE_ID_KEY, deviceId);
+  return deviceId;
+}
+
+/**
+ * 真实匿名 token（MUSIC_A）：此处只读 store，注册由 initServices 尾部的后台任务
+ * 完成——若在请求内联注册会经 request.js 的 getAnonymousToken 递归自等待。
+ * 上一版实现伪造过 'hyperplayer-*' 假 token（无效凭据是风控拦截诱因），视为不存在。
+ */
+async function readAnonymousToken(store: KeyValueStore): Promise<string> {
+  const existing = await store.get<string>(ANONYMOUS_TOKEN_KEY);
+  if (existing && !existing.startsWith('hyperplayer-')) return existing;
+  return '';
+}
+
+/** 匿名 token：首次启动后台调 register_anonimous（xeapi）获取服务端签发的真实 token。 */
+async function registerAnonymousToken(store: KeyValueStore, netease: NeteaseService, logger: RingBufferLogger): Promise<void> {
+  if (await readAnonymousToken(store)) return;
+  try {
+    const answer = await netease.call('register_anonimous', {}, { retries: 1, timeoutMs: 12_000 });
+    const cookieSources: string[] = [...(answer.cookie ?? [])];
+    const bodyCookie = (answer.body as { cookie?: unknown } | undefined)?.cookie;
+    if (typeof bodyCookie === 'string') cookieSources.push(bodyCookie);
+    const raw = /MUSIC_A=([^;]+)/.exec(cookieSources.join(';'))?.[1] ?? '';
+    if (!raw) {
+      // FileLogger 会脱敏含 cookie/token 字样的键，这里用位置参数输出形态信息
+      logger.warn(
+        'netease: 匿名注册响应未含 MUSIC_A，匿名态将以无 token 请求',
+        'setCookieCount=' + (answer.cookie?.length ?? 0),
+        'bodyCode=' + String((answer.body as { code?: unknown } | undefined)?.code),
+        'bodyKeys=' + (answer.body && typeof answer.body === 'object' ? Object.keys(answer.body).join('|').slice(0, 80) : typeof answer.body),
+      );
+      return;
+    }
+    let token = raw;
+    try {
+      token = decodeURIComponent(raw);
+    } catch {
+      token = raw; // 非法 % 序列：原样保留
+    }
+    await store.set(ANONYMOUS_TOKEN_KEY, token);
+    logger.info('netease: 匿名注册成功，MUSIC_A 已持久化');
+  } catch (error) {
+    logger.warn('netease: 匿名注册失败（将以无 MUSIC_A 请求，下次启动重试）', error);
+  }
 }
 
 export async function initServices(): Promise<Services> {
   const http = createTauriHttp();
   const fs = createTauriFs();
+  const dialog = createTauriDirectoryDialog();
   const store = await createTauriStore('hyperplayer.json');
   const sql = await loadSqlDatabase('sqlite:hyperplayer.db');
   const idb = await createIdbCache('hyperplayer-cache');
   const vaultPath = await appDataPath('hyperplayer.stronghold');
+  const deviceId = await getOrCreateDeviceId(store);
   let vault: Vault;
   try {
     vault = await createVault({
@@ -142,12 +202,33 @@ export async function initServices(): Promise<Services> {
 
   // —— 网易云协议层 ——
   const request = wireNeteaseApi(http, {
-    getAnonymousToken: () => getAnonymousToken(store),
-    getXeapiPublicKey: async () => null,
+    getAnonymousToken: () => readAnonymousToken(store),
+    getXeapiPublicKey: async () => {
+      const cached = await store.get<{ version?: string; publicKey: string; sk: string }>(XEAPI_PUBLIC_KEY_KEY);
+      if (cached?.publicKey && cached.sk) return cached;
+      const key = await fetchXeapiPublicKey(deviceId);
+      await store.set(XEAPI_PUBLIC_KEY_KEY, key).catch(() => {});
+      return key;
+    },
   });
   const api = createNeteaseApi(request);
-  const session = new SessionService({ api, vault, logger });
-  const netease = new NeteaseService({ api, session, logger });
+  const session = new SessionService({
+    api,
+    vault,
+    onStateChange: (state) => {
+      useNeteaseStore.getState().setSessionState(state);
+      useSessionStore.getState().setSessionState(state);
+    },
+    onNotice: (message) => useSessionStore.getState().setSessionNotice(message),
+    logger,
+  });
+  const netease = new NeteaseService({ api, session, logger, defaultCookie: { deviceId, sDeviceId: deviceId } });
+  const lyrics = new LyricsTimeline({
+    cache: idb,
+    onWordIndex: (index) => useAppStore.getState().setCurrentWordIndex(index),
+  });
+  const lyricsFetchers = createLyricsFetchers({ fs, netease });
+  const settings = new SettingsService({ store, logger });
 
   // —— 音频链（规格书：source→HSE→analyser→tap→outputGain→destination）——
   const hse = new HseController();
@@ -157,19 +238,37 @@ export async function initServices(): Promise<Services> {
     telemetry,
     readPosition: () => elements.active.currentTime,
     writePosition: (position) => useAppStore.getState().setPosition(position),
-    onSinkError: (message) => console.warn(message),
+    onPosition: (position) => lyrics.indexAt(position),
+    onSinkError: (message) => useSessionStore.getState().setSessionNotice(message),
+    initialOutputVolume: () => settings.snapshot.muted ? 0 : settings.snapshot.volume,
+    preferredSinkId: () => settings.snapshot.outputDevice,
   });
   const elements = new DualElementSource(() => {
     const element = document.createElement('audio');
-    audio.attachMediaElement(element);
+    // 跨域音源（网易云 CDN / asset 协议）接入 Web Audio 必须以 CORS 模式加载，
+    // 否则 MediaElementSource 视为污染资源、输出静默（有画面无声的经典成因）。
+    element.crossOrigin = 'anonymous';
     return element;
   });
   const stateMachine = new PlaybackStateMachine({ logger });
-  const queue = new QueueController();
-  const settings = new SettingsService({ store, logger });
+  const queue = new QueueController({
+    keepUpNextOnContextSwitch: () => settings.snapshot.keepUpNextOnContextSwitch,
+  });
+  const unsubscribeSettings = settings.subscribe((next) => {
+    useAppStore.getState().setSettings(next);
+    lyrics.setOffsetMs(settings.lyricOffsetFor(useAppStore.getState().track?.id));
+  });
 
   // —— 状态中心统一任务模型（UI-D29） ——
   const taskCenter = new TaskCenter({ logger });
+  const unsubscribeTasks = taskCenter.subscribe(() => {
+    useTasksStore.getState().setTasks(taskCenter.list());
+  });
+  const subscriptionDisposers: Array<() => void> = [unsubscribeSettings, unsubscribeTasks];
+  subscriptionDisposers.push(useAppStore.subscribe((state, previous) => {
+    if (state.currentEntry === previous.currentEntry || !state.currentEntry || state.currentEntry.routeId === 'onboarding') return;
+    void settings.persistLastPage({ domain: state.activeDomain, entry: state.currentEntry });
+  }));
 
   // —— 缓存 + 曲库 ——
   const cache = new StreamCacheService({
@@ -177,6 +276,7 @@ export async function initServices(): Promise<Services> {
     fs,
     sql,
     cacheDir: await appDataPath('stream-cache'),
+    capacityBytes: () => settings.snapshot.cacheCapacityBytes,
     verifyEntitlement: async (trackId, ownerUserId) => {
       // 权益缓存播放前重验证（P4 简化：登录态有效即视为权益有效；M3 细化 VIP 校验）
       return session.isLoggedIn && session.getCookie()?.userId === ownerUserId;
@@ -207,7 +307,7 @@ export async function initServices(): Promise<Services> {
   // —— M4 音效工作台后端（DSP 跨模式全局，UI-D1） ——
   const dsp = new DspService({
     hse,
-    sampleRate: audio.ensureContext().sampleRate,
+    sampleRate: 44100,
     onStateChange: (state) => useDspStore.getState().setFromService(state),
     logger,
   });
@@ -222,7 +322,7 @@ export async function initServices(): Promise<Services> {
   // —— 本地播放历史（后端补充规划 #48：每曲首次 playing 记录，同曲不重复）——
   const playHistory = new PlayHistoryService({ sql, logger });
   await playHistory.init();
-  playHistory.attach(stateMachine);
+  subscriptionDisposers.push(playHistory.attach(stateMachine));
 
   // —— 播放器（完整 resolveSource 链：本地 → 缓存 → 网易云直链 + 边播边缓存）——
   const resolveSource = async (track: QueueItem) => {
@@ -247,6 +347,7 @@ export async function initServices(): Promise<Services> {
     return { url, kind: 'stream' as const };
   };
 
+  let lyricTrackId: string | null = null;
   const player = new PlayerController({
     stateMachine,
     elements,
@@ -279,6 +380,23 @@ export async function initServices(): Promise<Services> {
       storeState.setStatus(state.status);
       storeState.setTrack(state.track);
       storeState.setError(state.error);
+      if (state.track) {
+        if (lyricTrackId === state.track.id) return;
+        lyricTrackId = state.track.id;
+        const fetchLyrics = state.track.source === 'local' && state.track.localPath
+          ? () => lyricsFetchers.local(state.track?.localPath ?? '')
+          : lyricsFetchers.netease;
+        const trackId = state.track.id;
+        lyrics.setOffsetMs(settings.lyricOffsetFor(trackId));
+        void lyrics.load(trackId, fetchLyrics).catch(() => {
+          if (lyricTrackId !== trackId) return;
+          useAppStore.getState().setCurrentWordIndex(-1);
+        });
+      } else {
+        lyricTrackId = null;
+        lyrics.clear();
+        storeState.setCurrentWordIndex(-1);
+      }
     },
     onQueueChange: (state) => {
       useAppStore.getState().setFromController(state);
@@ -304,9 +422,9 @@ export async function initServices(): Promise<Services> {
     logger,
   });
   await shortcut.init();
-  settings.subscribe(() => {
+  subscriptionDisposers.push(settings.subscribe(() => {
     void shortcut.rebind(); // 快捷键设置变更即时生效
-  });
+  }));
 
   // —— 系统托盘（UI-D77：菜单 + 关闭拦截）+ 桌面通知（后端补充规划 #42/#43）——
   const trayWindow = createTauriWindowControl();
@@ -317,7 +435,12 @@ export async function initServices(): Promise<Services> {
     commands: transportCommands,
     logger,
   });
-  await tray.init();
+  try {
+    await tray.init();
+  } catch (error) {
+    // 托盘失败（如图标环境异常）不阻塞启动，仅降级为无托盘。
+    logger.warn('tray: 初始化失败，已降级为无托盘运行', error);
+  }
 
   const notification = new NotificationService({
     notifications: createTauriNotifications(),
@@ -326,18 +449,18 @@ export async function initServices(): Promise<Services> {
   });
   // 切歌通知：仅在有歌词变化语义的换曲时触发（track 变更，非暂停恢复）
   let notifiedTrackId: string | null = null;
-  stateMachine.subscribe((state) => {
+  subscriptionDisposers.push(stateMachine.subscribe((state) => {
     if (state.status === 'playing' && state.track && state.track.id !== notifiedTrackId) {
       notifiedTrackId = state.track.id;
       void notification.notifyTrackChange(state.track);
     }
-  });
+  }));
 
   // —— 单实例（后端补充规划 #40：聚焦已有窗口 + 载荷透传；文件打开 #41 留待后续）——
   const singleInstance = createTauriSingleInstance(trayWindow);
-  await singleInstance.onSecondInstance((payload) => {
+  subscriptionDisposers.push(await singleInstance.onSecondInstance((payload) => {
     console.info(`single-instance: 二次启动聚焦（args=${payload.args.length}，cwd=${payload.cwd}）`);
-  });
+  }));
 
   // —— 开机自启 + 应用更新（后端补充规划 #39/#54）——
   const autostart = new AutostartService({
@@ -346,10 +469,10 @@ export async function initServices(): Promise<Services> {
     logger,
   });
   await autostart.init();
-  settings.subscribe(() => {
+  subscriptionDisposers.push(settings.subscribe(() => {
     // 设置页自启开关直接走 setAutostart；此处兜底外部对 settings 的直接改写
     void autostart.init();
-  });
+  }));
 
   const updater = new UpdateService({
     updater: createTauriUpdater(),
@@ -377,5 +500,8 @@ export async function initServices(): Promise<Services> {
   await cloudPlaylistSync.init();
   cloudPlaylistSync.startAutoSync();
 
-  return { http, fs, store, sql, idb, vault, api, session, netease, hse, telemetry, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, notification, autostart, updater, diagnostics, covers, cloudPlaylistSync, player };
+  // —— 真实匿名注册（后台一次，为后续请求提供服务端签发的 MUSIC_A）——
+  void registerAnonymousToken(store, netease, logger);
+
+  return { http, fs, dialog, store, sql, idb, vault, api, session, netease, hse, telemetry, lyrics, audio, elements, stateMachine, queue, settings, cache, library, scanMachine, taskCenter, dsp, albumCompletion, playHistory, shortcut, tray, trayWindow, notification, autostart, updater, diagnostics, covers, cloudPlaylistSync, player, disposeSubscriptions: () => { for (const dispose of subscriptionDisposers) dispose(); } };
 }

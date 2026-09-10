@@ -25,11 +25,11 @@ function answer(body: unknown): { status: number; body: unknown; cookie: string[
 }
 
 function makeLoggedInSession(): SessionService {
-  return { isLoggedIn: true, getCookie: () => ({ userId: '100' }) } as unknown as SessionService;
+  return { isLoggedIn: true, getCookie: () => ({ userId: '100' }), getUserId: async () => 100 } as unknown as SessionService;
 }
 
 function makeAnonymousSession(): SessionService {
-  return { isLoggedIn: false, getCookie: () => null } as unknown as SessionService;
+  return { isLoggedIn: false, getCookie: () => null, getUserId: async () => null } as unknown as SessionService;
 }
 
 function makeContext(session: SessionService, api: NeteaseApi) {

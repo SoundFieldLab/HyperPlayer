@@ -43,6 +43,7 @@ export class PlayerController {
   private pendingTrack: QueueItem | null = null;
   private pendingAutoplay = false;
   private prefetchToken = 0;
+  private audioGraphReady: Promise<void> | null = null;
   private readonly unbind: Array<() => void> = [];
 
   constructor(deps: PlayerControllerDeps) {
@@ -66,10 +67,17 @@ export class PlayerController {
     await this.load(track, { autoplay: opts.autoplay ?? true });
   }
 
-  /** 下一首播放（插入临时区并立即播放）。 */
+  /** 选择队列中的歌曲并立即加载。 */
+  async selectQueueItem(id: string): Promise<void> {
+    const target = this.deps.queue.select(id);
+    if (target) await this.load(target, { autoplay: true });
+  }
+
+  /** 下一首播放（插入临时区、原子消费并立即播放）。 */
   async playNext(track: QueueItem): Promise<void> {
     this.deps.queue.playNext(track);
-    await this.load(track, { autoplay: true });
+    const selected = this.deps.queue.select(track.id);
+    if (selected) await this.load(selected, { autoplay: true });
   }
 
   /** 追加到当前上下文（不打断播放）。 */
@@ -107,8 +115,13 @@ export class PlayerController {
   async play(): Promise<void> {
     const current = this.deps.queue.snapshot.current;
     if (!current) return;
-    this.deps.audio.ensureContext();
+    await this.ensureAudioGraph();
     await this.deps.audio.resume();
+    // 重启恢复队列后元素尚无源、或状态机与队列不同步：先加载当前曲再播
+    if (this.deps.stateMachine.snapshot.track?.id !== current.id || !this.deps.elements.active.src) {
+      await this.load(current, { autoplay: true });
+      return;
+    }
     const active = this.deps.elements.active;
     if (active.paused) await active.play();
     this.deps.stateMachine.dispatch({ type: 'PLAY' });
@@ -141,12 +154,41 @@ export class PlayerController {
     await this.load(track, { autoplay: true });
   }
 
+  async clearAll(): Promise<void> {
+    this.pendingElement = null;
+    this.pendingTrack = null;
+    this.pendingAutoplay = false;
+    this.prefetchToken += 1;
+    for (const element of this.deps.elements.all) {
+      element.pause();
+      element.src = '';
+      element.load();
+    }
+    this.deps.queue.clearAll();
+    this.deps.stateMachine.dispatch({ type: 'RESET' });
+  }
+
   dispose(): void {
     for (const unbind of this.unbind) unbind();
     this.unbind.length = 0;
     this.pendingElement = null;
     this.pendingTrack = null;
     this.prefetchToken += 1;
+  }
+
+  private async ensureAudioGraph(): Promise<void> {
+    if (!this.audioGraphReady) {
+      this.audioGraphReady = (async () => {
+        for (const element of this.deps.elements.all) {
+          this.deps.audio.attachMediaElement(element as HTMLMediaElement);
+        }
+        await this.deps.audio.attachHse();
+      })().catch((error: unknown) => {
+        this.audioGraphReady = null;
+        throw error;
+      });
+    }
+    await this.audioGraphReady;
   }
 
   private handleElementEvent(event: (typeof AUDIO_ELEMENT_EVENTS)[number], element: AudioElementLike): void {

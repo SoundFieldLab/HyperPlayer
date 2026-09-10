@@ -1,0 +1,1 @@
+export { LocalArtistsPage } from './LocalPages';

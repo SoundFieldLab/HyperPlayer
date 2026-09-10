@@ -3,12 +3,27 @@
   // src/domains/player/analysis-tap.worklet.ts
   var WAVE_BUCKETS = 64;
   var SPECTRUM_BANDS = 96;
+  var ANALYSIS_QUANTUM_INTERVAL = 13;
   var HyperPlayerAnalysisTap = class extends AudioWorkletProcessor {
     sequence = 0;
-    process(inputs, _outputs, _parameters) {
+    quantum = 0;
+    process(inputs, outputs, _parameters) {
       const input = inputs[0];
-      if (!input || input.length < 2) return true;
-      const ch0 = input[0] ?? new Float32Array(0);
+      const output = outputs[0];
+      if (output) {
+        for (let channel = 0; channel < output.length; channel += 1) {
+          const target = output[channel];
+          if (!target) continue;
+          const source = input?.[channel] ?? input?.[0];
+          if (source) target.set(source.subarray(0, target.length));
+          else target.fill(0);
+        }
+      }
+      if (!input || input.length === 0) return true;
+      this.quantum = (this.quantum + 1) % ANALYSIS_QUANTUM_INTERVAL;
+      if (this.quantum !== 0) return true;
+      const ch0 = input[0];
+      if (!ch0) return true;
       const ch1 = input[1] ?? ch0;
       const frameLength = Math.max(ch0.length, ch1.length);
       if (frameLength === 0) return true;

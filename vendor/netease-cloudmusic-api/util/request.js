@@ -7,7 +7,6 @@ const {
   cookieToJson,
   cookieObjToString,
   toBoolean,
-  generateRandomChineseIP,
 } = require('./index')
 const { URLSearchParams, URL } = globalThis
 const { APP_CONF } = require('../util/config.json')
@@ -18,7 +17,7 @@ const {
   getToken: antiCheatTokenV3,
 } = require('../module/register_checktoken_v3')
 
-// HyperPlayer adaptations: 浏览器无 fs；anonymous_token / xeapi 公钥由注入 storage 提供
+// HyperPlayer adaptations: 浏览器无 fs；xeapi 公钥由注入 storage 提供（含 tauri store 持久化）
 let browserStorage = {
   getAnonymousToken: async () => '',
   getXeapiPublicKey: async () => null,
@@ -26,11 +25,30 @@ let browserStorage = {
 let anonymousTokenPromise = null
 const getAnonymousToken = () => {
   if (!anonymousTokenPromise) {
-    anonymousTokenPromise = browserStorage.getAnonymousToken()
+    // 失败不缓存：否则首次异常会把所有后续请求一起拖死；
+    // 空结果也不缓存：匿名注册后台重试后能自动恢复。
+    anonymousTokenPromise = browserStorage.getAnonymousToken().then((token) => {
+      if (!token) anonymousTokenPromise = null
+      return token
+    }, (error) => {
+      anonymousTokenPromise = null
+      throw error
+    })
   }
   return anonymousTokenPromise
 }
-const loadXeapiPublicKey = async () => browserStorage.getXeapiPublicKey()
+let xeapiPublicKeyState = null
+const loadXeapiPublicKey = async () => {
+  if (xeapiPublicKeyState) return xeapiPublicKeyState
+  try {
+    xeapiPublicKeyState = await browserStorage.getXeapiPublicKey()
+  } catch {
+    xeapiPublicKeyState = null
+  }
+  return xeapiPublicKeyState
+}
+let xeapiSessionId = ''
+let xeapiSessionKey = ''
 
 // 预先绑定常用函数和常量
 const floor = Math.floor
@@ -110,9 +128,6 @@ const XEAPI_DOMAIN = APP_CONF.xeapiDomain
 const ENCRYPT_RESPONSE = APP_CONF.encryptResponse
 const SPECIAL_STATUS_CODES = new Set([201, 302, 400, 502, 800, 801, 802, 803])
 
-let xeapiSessionId = ''
-let xeapiSessionKey = ''
-
 // chooseUserAgent函数
 const chooseUserAgent = (crypto, uaType = 'pc') => {
   return (userAgentMap[crypto] && userAgentMap[crypto][uaType]) || ''
@@ -132,7 +147,7 @@ const processCookieObject = (cookie, uri, anonymousToken) => {
     WNMCID: cookie.WNMCID || WNMCID,
     WEVNSM: cookie.WEVNSM || '1.0.0',
     osver: cookie.osver || os.osver,
-    deviceId: cookie.deviceId || global.deviceId,
+    deviceId: cookie.deviceId || '',
     os: cookie.os || os.os,
     channel: cookie.channel || os.channel,
     appver: cookie.appver || os.appver,
@@ -143,7 +158,10 @@ const processCookieObject = (cookie, uri, anonymousToken) => {
   }
 
   if (!processedCookie.MUSIC_U) {
-    processedCookie.MUSIC_A = processedCookie.MUSIC_A || anonymousToken
+    // MUSIC_A 仅在拿到真实匿名 token 时携带；伪造/空 token 不写入
+    // （无效凭据是网易云风控"设备环境异常"的典型诱因）。
+    const musicA = processedCookie.MUSIC_A || anonymousToken
+    if (musicA) processedCookie.MUSIC_A = musicA
   }
 
   return processedCookie
@@ -181,7 +199,6 @@ const generateRequestId = () => {
 
 const createRequest = async (uri, data, options) => {
   const anonymousToken = await getAnonymousToken()
-  const xeapiPublicKey = await loadXeapiPublicKey()
   let token = ''
   switch (options.checkToken) {
     // HyperPlayer adaptations: 反作弊 token 拉取失败不阻塞请求
@@ -193,187 +210,182 @@ const createRequest = async (uri, data, options) => {
       break
   }
 
+  // HyperPlayer adaptations: 请求装配移出 Promise executor——xeapi 加密是 async
+  // （WebCrypto），executor 内无法 await；装配抛错同样使 createRequest 拒绝。
+  const headers = options.headers ? { ...options.headers } : {}
+  let cookie = options.cookie || {}
+  if (typeof cookie === 'string') {
+    cookie = cookieToJson(cookie)
+  }
+
+  if (typeof cookie === 'object') {
+    cookie = processCookieObject(cookie, uri, anonymousToken)
+    headers['Cookie'] = cookieObjToString(cookie)
+  }
+  let url = ''
+  let encryptData = ''
+  let crypto = options.crypto
+  const csrfToken = cookie['__csrf'] || ''
+
+  // 加密方式选择
+  if (crypto === '') {
+    crypto = APP_CONF.encrypt ? 'eapi' : 'api'
+  }
+
+  const answer = { status: 500, body: {}, cookie: [] }
+
+  data.e_r = toBoolean(
+    options.e_r !== undefined
+      ? options.e_r
+      : data.e_r !== undefined
+        ? data.e_r
+        : ENCRYPT_RESPONSE,
+  )
+  // 根据加密方式处理
+  switch (crypto) {
+    case 'weapi':
+      headers['Referer'] = options.domain || DOMAIN
+      headers['User-Agent'] = options.ua || chooseUserAgent('weapi')
+      data.csrf_token = csrfToken
+      if (options.checkToken) {
+        headers['X-antiCheatToken'] = token
+      }
+      encryptData = encrypt.weapi(data)
+      url = (options.domain || DOMAIN) + '/weapi/' + uri.substr(5)
+      break
+
+    case 'linuxapi':
+      headers['User-Agent'] =
+        options.ua || chooseUserAgent('linuxapi', 'linux')
+      encryptData = encrypt.linuxapi({
+        method: 'POST',
+        url: (options.domain || DOMAIN) + uri,
+        params: data,
+      })
+      url = (options.domain || DOMAIN) + '/api/linux/forward'
+      break
+
+    case 'xeapi': {
+      // HyperPlayer adaptations: 公钥经注入 storage 异步获取（tauri store 持久化）
+      const xeapiPublicKey = await loadXeapiPublicKey()
+      if (!xeapiPublicKey) {
+        throw new Error('xeapi public key is missing')
+      }
+      const xeapiOs = cookie.os === 'android' ? cookie.os : 'android'
+      const xeapiAppver =
+        cookie.os === 'android' && cookie.appver ? cookie.appver : '9.1.65'
+      const xeapiOsver =
+        cookie.os === 'android' && cookie.osver ? cookie.osver : '16'
+      const xeapiBuildver = cookie.buildver || now().toString().substr(0, 10)
+      headers['User-Agent'] = options.ua || chooseUserAgent('api', 'android')
+      headers['X-Client-Enc-State'] = 'ENCRYPTED'
+      headers['x-aeapi'] = true
+      headers['content-type'] =
+        'application/x-www-form-urlencoded;charset=utf-8'
+      headers['x-deviceid'] = cookie.deviceId
+      headers['x-os'] = xeapiOs
+      headers['x-osver'] = xeapiOsver
+      headers['x-appver'] = xeapiAppver
+      headers['x-sdeviceid'] = cookie.sDeviceId || cookie.deviceId
+      headers['x-buildver'] = xeapiBuildver
+      if (cookie.MUSIC_U) headers['x-music-u'] = cookie.MUSIC_U
+      if (options.checkToken) {
+        headers['X-antiCheatToken'] = token
+      }
+      const xeapiCookie = {
+        ...cookie,
+        os: xeapiOs,
+        osver: xeapiOsver,
+        appver: xeapiAppver,
+        buildver: xeapiBuildver,
+        deviceId: cookie.deviceId,
+        sDeviceId: cookie.sDeviceId || cookie.deviceId,
+      }
+      headers['Cookie'] = cookieObjToString(xeapiCookie)
+      url = (options.domain || XEAPI_DOMAIN) + '/xeapi/' + uri.substr(5)
+      encryptData = await encrypt.xeapi(uri, data, {
+        ...options,
+        publicKeyState: xeapiPublicKey,
+        sessionId: xeapiSessionId,
+        sessionKey: xeapiSessionKey,
+        appver: xeapiAppver,
+        deviceId: cookie.deviceId,
+        os: xeapiOs,
+        uid: cookie.uid || cookie.userId || '',
+      })
+      break
+    }
+
+    case 'eapi':
+    case 'api':
+      // header创建
+      var header = {
+        osver: cookie.osver,
+        deviceId: cookie.deviceId,
+        os: cookie.os,
+        appver: cookie.appver,
+        versioncode: cookie.versioncode || '140',
+        mobilename: cookie.mobilename || '',
+        buildver: cookie.buildver || now().toString().substr(0, 10),
+        resolution: cookie.resolution || '1920x1080',
+        __csrf: csrfToken,
+        channel: cookie.channel,
+        requestId: generateRequestId(),
+        // clientSign: APP_CONF.clientSign,
+      }
+
+      if (cookie.MUSIC_U) header['MUSIC_U'] = cookie.MUSIC_U
+      if (cookie.MUSIC_A) header['MUSIC_A'] = cookie.MUSIC_A
+      if (options.checkToken) {
+        header['X-antiCheatToken'] = token
+      }
+
+      headers['Cookie'] = createHeaderCookie(header)
+      headers['User-Agent'] =
+        options.ua ||
+        (cookie.os === 'osx'
+          ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+          : chooseUserAgent('api', 'iphone'))
+
+      if (crypto === 'eapi') {
+        // headers['x-aeapi'] = true // 服务器会使用gzip压缩返回值
+        data.header = header
+
+        encryptData = encrypt.eapi(uri, data)
+        url = (options.domain || EAPI_DOMAIN) + '/eapi/' + uri.substr(5)
+      } else if (crypto === 'api') {
+        url = (options.domain || API_DOMAIN) + uri
+        encryptData = data
+      }
+      break
+
+    default:
+      console.log('[ERR]', 'Unknown Crypto:', crypto)
+      break
+  }
+  // settings创建
+  let settings = {
+    method: 'POST',
+    url: url,
+    headers: headers,
+    data: new URLSearchParams(encryptData).toString(),
+  }
+
+  // 自定义超时
+  if (options.timeout > 0) {
+    settings.timeout = options.timeout
+  }
+
+  // 使用返回值加密
+  const use_e_r = (crypto === 'eapi' || crypto === 'weapi') && data.e_r
+  const use_xeapi = crypto === 'xeapi'
+  if (use_e_r || use_xeapi) {
+    settings.encoding = null
+    settings.responseType = 'arraybuffer'
+  }
+
+  // HyperPlayer adaptations: 浏览器不支持代理（忽略 options.proxy）
   return new Promise((resolve, reject) => {
-    // 变量声明和初始化
-    const headers = options.headers ? { ...options.headers } : {}
-    const ip = options.realIP || options.ip || ''
-
-    // IP头设置
-    if (ip) {
-      headers['X-Real-IP'] = ip
-      headers['X-Forwarded-For'] = ip
-    }
-
-    let cookie = options.cookie || {}
-    if (typeof cookie === 'string') {
-      cookie = cookieToJson(cookie)
-    }
-
-    if (typeof cookie === 'object') {
-      cookie = processCookieObject(cookie, uri, anonymousToken)
-      headers['Cookie'] = cookieObjToString(cookie)
-    }
-    let url = ''
-    let encryptData = ''
-    let crypto = options.crypto
-    const csrfToken = cookie['__csrf'] || ''
-
-    // 加密方式选择
-    if (crypto === '') {
-      crypto = APP_CONF.encrypt ? 'eapi' : 'api'
-    }
-
-    const answer = { status: 500, body: {}, cookie: [] }
-
-    data.e_r = toBoolean(
-      options.e_r !== undefined
-        ? options.e_r
-        : data.e_r !== undefined
-          ? data.e_r
-          : ENCRYPT_RESPONSE,
-    )
-    // 根据加密方式处理
-    switch (crypto) {
-      case 'weapi':
-        headers['Referer'] = options.domain || DOMAIN
-        headers['User-Agent'] = options.ua || chooseUserAgent('weapi')
-        data.csrf_token = csrfToken
-        if (options.checkToken) {
-          headers['X-antiCheatToken'] = token
-        }
-        encryptData = encrypt.weapi(data)
-        url = (options.domain || DOMAIN) + '/weapi/' + uri.substr(5)
-        break
-
-      case 'linuxapi':
-        headers['User-Agent'] =
-          options.ua || chooseUserAgent('linuxapi', 'linux')
-        encryptData = encrypt.linuxapi({
-          method: 'POST',
-          url: (options.domain || DOMAIN) + uri,
-          params: data,
-        })
-        url = (options.domain || DOMAIN) + '/api/linux/forward'
-        break
-
-      case 'xeapi':
-        if (!xeapiPublicKey) {
-          throw new Error('xeapi public key is missing')
-        }
-        const xeapiOs = cookie.os === 'android' ? cookie.os : 'android'
-        const xeapiAppver =
-          cookie.os === 'android' && cookie.appver ? cookie.appver : '9.1.65'
-        const xeapiOsver =
-          cookie.os === 'android' && cookie.osver ? cookie.osver : '16'
-        const xeapiBuildver = cookie.buildver || now().toString().substr(0, 10)
-        headers['User-Agent'] = options.ua || chooseUserAgent('api', 'android')
-        headers['X-Client-Enc-State'] = 'ENCRYPTED'
-        headers['x-aeapi'] = true
-        headers['content-type'] =
-          'application/x-www-form-urlencoded;charset=utf-8'
-        headers['x-deviceid'] = cookie.deviceId
-        headers['x-os'] = xeapiOs
-        headers['x-osver'] = xeapiOsver
-        headers['x-appver'] = xeapiAppver
-        headers['x-sdeviceid'] = cookie.sDeviceId || cookie.deviceId
-        headers['x-buildver'] = xeapiBuildver
-        if (cookie.MUSIC_U) headers['x-music-u'] = cookie.MUSIC_U
-        if (options.checkToken) {
-          headers['X-antiCheatToken'] = token
-        }
-        const xeapiCookie = {
-          ...cookie,
-          os: xeapiOs,
-          osver: xeapiOsver,
-          appver: xeapiAppver,
-          buildver: xeapiBuildver,
-          deviceId: cookie.deviceId,
-          sDeviceId: cookie.sDeviceId || cookie.deviceId,
-        }
-        headers['Cookie'] = cookieObjToString(xeapiCookie)
-        url = (options.domain || XEAPI_DOMAIN) + '/xeapi/' + uri.substr(5)
-        encryptData = encrypt.xeapi(uri, data, {
-          ...options,
-          publicKeyState: xeapiPublicKey,
-          sessionId: xeapiSessionId,
-          sessionKey: xeapiSessionKey,
-          appver: xeapiAppver,
-          deviceId: cookie.deviceId,
-          os: xeapiOs,
-          uid: cookie.uid || cookie.userId || '',
-        })
-        break
-
-      case 'eapi':
-      case 'api':
-        // header创建
-        const header = {
-          osver: cookie.osver,
-          deviceId: cookie.deviceId,
-          os: cookie.os,
-          appver: cookie.appver,
-          versioncode: cookie.versioncode || '140',
-          mobilename: cookie.mobilename || '',
-          buildver: cookie.buildver || now().toString().substr(0, 10),
-          resolution: cookie.resolution || '1920x1080',
-          __csrf: csrfToken,
-          channel: cookie.channel,
-          requestId: generateRequestId(),
-          // clientSign: APP_CONF.clientSign,
-        }
-
-        if (cookie.MUSIC_U) header['MUSIC_U'] = cookie.MUSIC_U
-        if (cookie.MUSIC_A) header['MUSIC_A'] = cookie.MUSIC_A
-        if (options.checkToken) {
-          header['X-antiCheatToken'] = token
-        }
-
-        headers['Cookie'] = createHeaderCookie(header)
-        headers['User-Agent'] =
-          options.ua ||
-          (cookie.os === 'osx'
-            ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-            : chooseUserAgent('api', 'iphone'))
-
-        if (crypto === 'eapi') {
-          // headers['x-aeapi'] = true // 服务器会使用gzip压缩返回值
-          data.header = header
-
-          encryptData = encrypt.eapi(uri, data)
-          url = (options.domain || EAPI_DOMAIN) + '/eapi/' + uri.substr(5)
-        } else if (crypto === 'api') {
-          url = (options.domain || API_DOMAIN) + uri
-          encryptData = data
-        }
-        break
-
-      default:
-        console.log('[ERR]', 'Unknown Crypto:', crypto)
-        break
-    }
-    // settings创建
-    let settings = {
-      method: 'POST',
-      url: url,
-      headers: headers,
-      data: new URLSearchParams(encryptData).toString(),
-    }
-
-    // 自定义超时
-    if (options.timeout > 0) {
-      settings.timeout = options.timeout
-    }
-
-    // 使用返回值加密
-    const use_e_r = (crypto === 'eapi' || crypto === 'weapi') && data.e_r
-    const use_xeapi = crypto === 'xeapi'
-    if (use_e_r || use_xeapi) {
-      settings.encoding = null
-      settings.responseType = 'arraybuffer'
-    }
-
-    // HyperPlayer adaptations: 浏览器不支持代理（忽略 options.proxy）
-    // console.log(settings.headers);
     axios(settings)
       .then(async (res) => {
         const body = res.data
@@ -381,24 +393,14 @@ const createRequest = async (uri, data, options) => {
           x.replace(/\s*Domain=[^(;|$)]+;*/, ''),
         )
 
-        // debug: 统一注释块，需要时取消注释查看请求/返回的原始密文
-
-        // logger.debug(`[${crypto}]`, uri)
-        // logger.debug(`[${crypto}] encrypted data:`, JSON.stringify(encryptData))
-        // logger.debug(
-        //   `[RAW] [${crypto}]`,
-        //   use_xeapi
-        //     ? Buffer.from(body).toString('base64')
-        //     : body.toString('hex').toUpperCase(),
-        // )
-
         try {
           if (use_xeapi) {
-            if (res.headers['x-encr-ssid'] && res.headers['x-encr-sskey']) {
-              xeapiSessionId = res.headers['x-encr-ssid']
-              xeapiSessionKey = res.headers['x-encr-sskey']
-            }
-            answer.body = encrypt.xeapiResDecrypt(Buffer.from(body))
+            // xeapi 会话：服务端经响应头下发会话密钥，后续请求复用（上游语义）
+            if (res.headers['x-encr-ssid']) xeapiSessionId = res.headers['x-encr-ssid']
+            if (res.headers['x-encr-sskey']) xeapiSessionKey = res.headers['x-encr-sskey']
+            answer.body = await encrypt.xeapiResDecrypt(
+              body instanceof Uint8Array ? body : new TextEncoder().encode(String(body ?? '')),
+            )
           } else if (use_e_r) {
             answer.body = await encrypt.eapiResDecrypt(
               bytesToHex(body),
@@ -409,7 +411,7 @@ const createRequest = async (uri, data, options) => {
               typeof body === 'object' ? body : parse(body.toString())
           }
 
-          if (answer.body.code) {
+          if (answer.body && answer.body.code) {
             answer.body.code = Number(answer.body.code)
           }
 
@@ -436,7 +438,9 @@ const createRequest = async (uri, data, options) => {
       })
       .catch((err) => {
         answer.status = 502
-        answer.body = { code: 502, msg: err.message || err }
+        // 传输层可能以 null/undefined/字符串拒绝（tauri invoke、ACL 拒绝等），
+        // err.message 直接解引用会把 Promise 永久挂起。
+        answer.body = { code: 502, msg: err?.message || String(err ?? 'network error') }
         console.log('[ERR]', answer)
         reject(answer)
       })
@@ -448,4 +452,5 @@ module.exports.setBrowserHttpTransport = axios.setBrowserHttpTransport
 module.exports.setBrowserStorage = (storage) => {
   browserStorage = storage
   anonymousTokenPromise = null
+  xeapiPublicKeyState = null
 }

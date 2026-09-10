@@ -69,6 +69,10 @@ export class DualElementSource {
     }
   }
 
+  get all(): readonly [AudioElementLike, AudioElementLike] {
+    return this.elements;
+  }
+
   get active(): AudioElementLike {
     return this.elements[this.activeIndex] as AudioElementLike;
   }

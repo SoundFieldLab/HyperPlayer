@@ -14,7 +14,8 @@ export interface HttpFetchOptions {
 
 export interface HttpResponse {
   status: number;
-  headers: Record<string, string>;
+  /** set-cookie 保留为数组（多个 Set-Cookie 头不能合并，否则扫码登录会丢 MUSIC_U）。 */
+  headers: Record<string, string | string[]>;
   body: ReadableStream<Uint8Array>;
 }
 
@@ -38,10 +39,28 @@ export function createTauriHttp(): TauriHttp {
           body: options?.body,
           signal: controller.signal,
         });
-        const headers: Record<string, string> = {};
+        const headers: Record<string, string | string[]> = {};
+        const rawSetCookie: string[] = [];
         response.headers.forEach((value, key) => {
+          if (key.toLowerCase() === 'set-cookie') {
+            rawSetCookie.push(value);
+            return;
+          }
           headers[key] = value;
         });
+        // plugin-http 用原生 Headers 承载响应头：getSetCookie() 优先（逐条、不失真）；
+        // 缺失时回退 forEach 合并值（需要按 name= 边界拆分，Expires 内逗号安全）。
+        const headersWithGetSetCookie = response.headers as Headers & { getSetCookie?: () => string[] };
+        let setCookie: string[] = [];
+        try {
+          setCookie = headersWithGetSetCookie.getSetCookie?.() ?? [];
+        } catch {
+          setCookie = [];
+        }
+        if (setCookie.length === 0 && rawSetCookie.length > 0) {
+          setCookie = splitSetCookie(rawSetCookie.join(', '));
+        }
+        if (setCookie.length > 0) headers['set-cookie'] = setCookie;
         return {
           status: response.status,
           headers,
@@ -52,4 +71,13 @@ export function createTauriHttp(): TauriHttp {
       }
     },
   };
+}
+
+/** 兜底：把合并后的 set-cookie 头按 "name=" 边界拆回单条（Expires 内逗号安全）。 */
+function splitSetCookie(joined: string | null): string[] {
+  if (!joined) return [];
+  return joined
+    .split(/,(?=\s*[A-Za-z0-9_!#$%&'*+\-.^`|~]+=)/)
+    .map((part) => part.trim())
+    .filter(Boolean);
 }

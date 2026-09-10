@@ -64,10 +64,16 @@ export interface NeteaseServiceDeps {
   api: NeteaseApi;
   session: SessionService;
   logger?: Logger;
+  /**
+   * 默认设备 cookie（持久 deviceId）：所有请求注入，会话 cookie 同名字段优先。
+   * 网易云风控对"无 deviceId 的裸请求"按异常环境处理（扫码被拦截的直接诱因之一）。
+   */
+  defaultCookie?: Record<string, string>;
 }
 
 type RouteEntry =
   | { endpoint: string }
+  | { unsupported: string }
   | { handler: (this: NeteaseService, params: Record<string, unknown>) => Promise<unknown> };
 
 const ROUTES: Record<string, RouteEntry> = {
@@ -107,7 +113,7 @@ const ROUTES: Record<string, RouteEntry> = {
   '/netease/playlist/delete': { endpoint: 'playlist_delete' },
   '/netease/playlist/update': { endpoint: 'playlist_update' },
   '/netease/playlist/subscribe': { endpoint: 'playlist_subscribe' },
-  '/netease/playlist/cover': { endpoint: 'playlist_cover_update' },
+  '/netease/playlist/cover': { unsupported: '浏览器版不支持文件上传操作' },
   '/netease/playlist/catlist': { endpoint: 'playlist_catlist' },
   '/netease/playlist/hot': { endpoint: 'playlist_hot' },
   '/netease/playlist/highquality': { endpoint: 'top_playlist_highquality' },
@@ -148,21 +154,23 @@ const ROUTES: Record<string, RouteEntry> = {
   '/netease/user/subscribe': { endpoint: 'follow' },
   '/netease/record/recent/:type': { endpoint: 'record_recent' },
   '/netease/record/rank/:type': { endpoint: 'user_record' },
-  '/netease/record/recent/report': { endpoint: 'record_recent' },
+  // 听歌打卡上报：映射到 scrobble 模块（record_recent 只是查询类端点族，无 report 端点）
+  '/netease/record/recent/report': { endpoint: 'scrobble' },
+  '/netease/scrobble': { endpoint: 'scrobble' },
   // 喜欢 / 评论
   '/netease/like': { endpoint: 'like' },
   '/netease/likelist': { endpoint: 'likelist' },
   '/netease/comment/music': { endpoint: 'comment_music' },
   '/netease/comment/floor': { endpoint: 'comment_floor' },
   '/netease/comment/hot': { endpoint: 'comment_hot' },
-  '/netease/comment/add': { endpoint: 'comment_add' },
-  '/netease/comment/reply': { endpoint: 'comment_reply' },
-  '/netease/comment/delete': { endpoint: 'comment_delete' },
+  '/netease/comment/add': { unsupported: '浏览器版不支持 xeapi 评论写操作' },
+  '/netease/comment/reply': { unsupported: '浏览器版不支持 xeapi 评论写操作' },
+  '/netease/comment/delete': { unsupported: '浏览器版不支持 xeapi 评论写操作' },
   '/netease/comment/like': { endpoint: 'comment_like' },
   // 其他
   '/netease/banner': { endpoint: 'banner' },
   '/netease/vip/info': { endpoint: 'vip_info' },
-  '/netease/cloud/list': { endpoint: 'cloud' },
+  '/netease/cloud/list': { endpoint: 'user_cloud' },
   '/netease/cloud/url': { endpoint: 'song_cloud_download' },
   '/netease/cloud/delete': { endpoint: 'user_cloud_del' },
   '/netease/event/following': { endpoint: 'event' },
@@ -175,11 +183,13 @@ export class NeteaseService {
   private readonly api: NeteaseApi;
   private readonly session: SessionService;
   private readonly logger: Logger;
+  private readonly defaultCookie: Record<string, string>;
 
   constructor(deps: NeteaseServiceDeps) {
     this.api = deps.api;
     this.session = deps.session;
     this.logger = deps.logger ?? createNullLogger();
+    this.defaultCookie = deps.defaultCookie ?? {};
   }
 
   /**
@@ -190,6 +200,7 @@ export class NeteaseService {
   async route(uri: string, params: Record<string, unknown> = {}): Promise<unknown> {
     const entry = ROUTES[uri];
     if (entry) {
+      if ('unsupported' in entry) throw new Error(`netease: ${entry.unsupported}`);
       if ('handler' in entry) return entry.handler.call(this, params);
       return this.call(entry.endpoint, params);
     }
@@ -200,6 +211,7 @@ export class NeteaseService {
       const match = regex.exec(uri);
       if (match) {
         const type = match[1] ?? '';
+        if ('unsupported' in routeEntry) throw new Error(`netease: ${routeEntry.unsupported}`);
         if ('handler' in routeEntry) return routeEntry.handler.call(this, { ...params, type });
         return this.call(this.resolveTypeEndpoint(routeEntry.endpoint ?? '', type), params);
       }
@@ -229,8 +241,9 @@ export class NeteaseService {
     const retries = opts.retries ?? NETEASE_CALL_RETRIES;
     const timeoutMs = opts.timeoutMs ?? NETEASE_CALL_TIMEOUT_MS;
     const data: Record<string, unknown> = { ...params, timeout: timeoutMs };
-    const cookie = this.session.getCookie();
-    if (cookie && Object.keys(cookie).length > 0) data.cookie = cookie;
+    // 会话 cookie 优先，默认设备 cookie（deviceId/sDeviceId）兜底
+    const cookie = { ...this.defaultCookie, ...(this.session.getCookie() ?? {}) };
+    if (Object.keys(cookie).length > 0) data.cookie = cookie;
 
     let lastError: unknown = null;
     for (let attempt = 0; attempt < retries; attempt += 1) {
@@ -345,10 +358,11 @@ export class NeteaseService {
     return null;
   }
 
-  /** tokenInvalid 全局拦截：会话失效 → 降级匿名 + 局部提示（不炸页面）。 */
+  /** tokenInvalid 全局拦截：会话失效 → 降级匿名 + 局部提示（不炸页面）。
+   *  只认 301/401：400 是"参数错误"（如 uid/ids 传错），误判会把登录用户踢下线。 */
   private checkTokenInvalid(answer: NeteaseApiAnswer): void {
     const code = Number(answer.body?.code);
-    if (code === 301 || code === 401 || code === 400) {
+    if (code === 301 || code === 401) {
       this.session.onTokenInvalid();
     }
   }

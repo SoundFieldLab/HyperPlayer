@@ -29,10 +29,16 @@ export interface AudioEngineControllerDeps {
   readPosition: () => number;
   /** 帧级写入 store.position。 */
   writePosition: (position: number) => void;
+  /** 帧级位置更新后通知歌词时间轴等消费者。 */
+  onPosition?: (position: number) => void;
   /** 窗口隐藏检测（失焦降频）；缺省 document.hidden。 */
   isHidden?: () => boolean;
   /** 设备切换失败提示（UI-D85：保持/回退原设备并提示具体原因）。 */
   onSinkError?: (message: string) => void;
+  /** 首次创建音频图时应用持久化后的有效音量。 */
+  initialOutputVolume?: () => number;
+  /** 首次装配音频图时恢复持久化的输出设备。 */
+  preferredSinkId?: () => string | null;
 }
 
 interface SinkableAudioContext extends AudioContext {
@@ -49,6 +55,7 @@ export class AudioEngineController {
   private clockId: number | null = null;
   private lastPosition = 0;
   private currentSinkId: string | null = null;
+  private readonly attachedElements = new WeakSet<HTMLMediaElement>();
 
   constructor(private readonly deps: AudioEngineControllerDeps) {}
 
@@ -65,8 +72,8 @@ export class AudioEngineController {
     inputBus.gain.value = 1;
     const analyser = ctx.createAnalyser();
     const outputGain = ctx.createGain();
-    outputGain.gain.value = 1;
-    // 输出增益 → destination；analyser（HSE 输出挂点）→ 分析 tap 由 TelemetryTap 装配。
+    outputGain.gain.value = this.deps.initialOutputVolume?.() ?? 1;
+    // Output is connected here; the analyser fan-out is completed by telemetry or its fallback below.
     outputGain.connect(ctx.destination);
     this.ctx = ctx;
     this.inputBus = inputBus;
@@ -99,15 +106,29 @@ export class AudioEngineController {
     };
     await this.deps.hse.attach(handle, params ?? createDefaultParams(ctx.sampleRate));
     // 闭合规格书链图：source→HSE→analyser→tap→outputGain→destination
-    if (this.deps.telemetry && this.analyser && this.outputGain) {
-      await this.deps.telemetry.connect(ctx, this.analyser, this.outputGain);
+    if (this.analyser && this.outputGain) {
+      if (this.deps.telemetry) {
+        try {
+          await this.deps.telemetry.connect(ctx, this.analyser, this.outputGain);
+        } catch (error) {
+          // Telemetry is optional; analyser→outputGain remains the audible fallback.
+          this.analyser.connect(this.outputGain);
+          this.deps.onSinkError?.(`音频分析不可用：${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else {
+        this.analyser.connect(this.outputGain);
+      }
     }
+    const preferredSinkId = this.deps.preferredSinkId?.();
+    if (preferredSinkId) await this.setSinkId(preferredSinkId);
   }
 
   /** MediaElement 接入：元素 → MediaElementSource → 输入总线（每个元素一次）。 */
   attachMediaElement(element: HTMLMediaElement): MediaElementAudioSourceNode | null {
+    if (this.attachedElements.has(element)) return null;
     const ctx = this.ensureContext();
     const source = ctx.createMediaElementSource(element);
+    this.attachedElements.add(element);
     this.wireSource(source);
     return source;
   }
@@ -134,24 +155,32 @@ export class AudioEngineController {
   }
 
   /** 输出设备切换：失败回退原设备并提示（UI-D45/D85）。 */
-  async setSinkId(deviceId: string): Promise<void> {
-    if (!this.ctx) return;
+  async setSinkId(deviceId: string): Promise<boolean> {
+    if (!this.ctx) {
+      this.deps.onSinkError?.('音频尚未启动，请开始播放后再切换输出设备。');
+      return false;
+    }
     const sinkCtx = this.ctx as SinkableAudioContext;
-    if (!sinkCtx.setSinkId) return;
+    if (!sinkCtx.setSinkId) {
+      this.deps.onSinkError?.('当前系统不支持应用内切换输出设备。');
+      return false;
+    }
     try {
       await sinkCtx.setSinkId(deviceId);
       this.currentSinkId = deviceId;
+      return true;
     } catch (error) {
       if (this.currentSinkId !== null) {
         try {
           await sinkCtx.setSinkId(this.currentSinkId);
         } catch {
-          // 回退也失败：保持原设备（不再尝试）。
+          // 回退也失败：系统仍会选择可用的默认输出。
         }
       }
       this.deps.onSinkError?.(
         `切换输出设备失败，已回退原设备：${error instanceof Error ? error.message : String(error)}`,
       );
+      return false;
     }
   }
 
@@ -170,6 +199,7 @@ export class AudioEngineController {
         if (position !== this.lastPosition) {
           this.lastPosition = position;
           this.deps.writePosition(position);
+          this.deps.onPosition?.(position);
         }
       }
       this.clockId = schedule(loop);

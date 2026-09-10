@@ -36,21 +36,13 @@ fetch().catch(() => {})
   }
 }
 
-// 模块加载时自动获取一次 Token，确保 request.js 使用时不为空
-// HyperPlayer adaptations: 启动拉取失败静默（token 为空由 request.js 兜底）
-fetch().catch(() => {})
-  .then((token) => {
-    _token = token
-  })
-  .catch(() => {
-    // 静默失败，后续请求时会重试
-  })
-
-// 给 request.js 读取用
+// HyperPlayer adaptations: 移除模块加载时的自动预取——本模块在 boot 阶段即被
+// request.js 顶层 require，此时浏览器传输尚未注入，预取必然失败且拖慢启动；
+// token 一律在真实请求触发 getToken() 时懒加载。
 module.exports.getToken = () => {
   if (!_token) {
     // 如果 Token 为空，异步触发获取
-    // HyperPlayer adaptations: 启动拉取失败静默（token 为空由 request.js 兜底）
+    // HyperPlayer adaptations: 拉取失败静默（token 为空由 request.js 兜底）
 fetch().catch(() => {})
       .then((token) => {
         _token = token
@@ -59,6 +51,3 @@ fetch().catch(() => {})
   }
   return _token
 }
-
-// HyperPlayer adaptations: 启动拉取失败静默（token 为空由 request.js 兜底）
-fetch().catch(() => {})

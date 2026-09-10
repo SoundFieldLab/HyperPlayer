@@ -43,8 +43,6 @@ import * as playlistUpdateModule from '@neteasecloudmusicapienhanced/api/module/
 const playlistUpdate = unwrapCjs<NeteaseApiModule>(playlistUpdateModule);
 import * as playlistSubscribeModule from '@neteasecloudmusicapienhanced/api/module/playlist_subscribe.js';
 const playlistSubscribe = unwrapCjs<NeteaseApiModule>(playlistSubscribeModule);
-import * as playlistCoverUpdateModule from '@neteasecloudmusicapienhanced/api/module/playlist_cover_update.js';
-const playlistCoverUpdate = unwrapCjs<NeteaseApiModule>(playlistCoverUpdateModule);
 import * as playlistCatlistModule from '@neteasecloudmusicapienhanced/api/module/playlist_catlist.js';
 const playlistCatlist = unwrapCjs<NeteaseApiModule>(playlistCatlistModule);
 import * as playlistHotModule from '@neteasecloudmusicapienhanced/api/module/playlist_hot.js';
@@ -163,12 +161,6 @@ import * as commentFloorModule from '@neteasecloudmusicapienhanced/api/module/co
 const commentFloor = unwrapCjs<NeteaseApiModule>(commentFloorModule);
 import * as commentHotModule from '@neteasecloudmusicapienhanced/api/module/comment_hot.js';
 const commentHot = unwrapCjs<NeteaseApiModule>(commentHotModule);
-import * as commentAddModule from '@neteasecloudmusicapienhanced/api/module/comment_add.js';
-const commentAdd = unwrapCjs<NeteaseApiModule>(commentAddModule);
-import * as commentReplyModule from '@neteasecloudmusicapienhanced/api/module/comment_reply.js';
-const commentReply = unwrapCjs<NeteaseApiModule>(commentReplyModule);
-import * as commentDeleteModule from '@neteasecloudmusicapienhanced/api/module/comment_delete.js';
-const commentDelete = unwrapCjs<NeteaseApiModule>(commentDeleteModule);
 import * as commentLikeModule from '@neteasecloudmusicapienhanced/api/module/comment_like.js';
 const commentLike = unwrapCjs<NeteaseApiModule>(commentLikeModule);
 import * as bannerModule from '@neteasecloudmusicapienhanced/api/module/banner.js';
@@ -177,8 +169,8 @@ import * as playmodeIntelligenceListModule from '@neteasecloudmusicapienhanced/a
 const playmodeIntelligenceList = unwrapCjs<NeteaseApiModule>(playmodeIntelligenceListModule);
 import * as vipInfoModule from '@neteasecloudmusicapienhanced/api/module/vip_info.js';
 const vipInfo = unwrapCjs<NeteaseApiModule>(vipInfoModule);
-import * as cloudModule from '@neteasecloudmusicapienhanced/api/module/cloud.js';
-const cloud = unwrapCjs<NeteaseApiModule>(cloudModule);
+import * as userCloudModule from '@neteasecloudmusicapienhanced/api/module/user_cloud.js';
+const userCloud = unwrapCjs<NeteaseApiModule>(userCloudModule);
 import * as cloudSearchModule from '@neteasecloudmusicapienhanced/api/module/cloudsearch.js';
 const cloudSearch = unwrapCjs<NeteaseApiModule>(cloudSearchModule);
 import * as songCloudDownloadModule from '@neteasecloudmusicapienhanced/api/module/song_cloud_download.js';
@@ -197,6 +189,19 @@ import * as msgNoticesModule from '@neteasecloudmusicapienhanced/api/module/msg_
 const msgNotices = unwrapCjs<NeteaseApiModule>(msgNoticesModule);
 import * as msgCommentsModule from '@neteasecloudmusicapienhanced/api/module/msg_comments.js';
 const msgComments = unwrapCjs<NeteaseApiModule>(msgCommentsModule);
+import * as scrobbleModule from '@neteasecloudmusicapienhanced/api/module/scrobble.js';
+const scrobble = unwrapCjs<NeteaseApiModule>(scrobbleModule);
+import * as registerAnonimousModule from '@neteasecloudmusicapienhanced/api/module/register_anonimous.js';
+const registerAnonimous = unwrapCjs<NeteaseApiModule>(registerAnonimousModule);
+import * as xeapiKeyModule from '@neteasecloudmusicapienhanced/api/util/xeapiKey.js';
+const xeapiKeyUtil = unwrapCjs<{ getXeapiPublicKey?: (current: unknown, deviceId: string) => Promise<{ version?: string; publicKey: string; sk: string; deviceId?: string }> }>(xeapiKeyModule);
+
+/** 浏览器版 xeapi 公钥获取（module/register_xeapikey 经注入传输直连，无 request 依赖）。 */
+export async function fetchXeapiPublicKey(deviceId: string): Promise<{ version?: string; publicKey: string; sk: string; deviceId?: string }> {
+  const fn = xeapiKeyUtil.getXeapiPublicKey;
+  if (!fn) throw new Error('xeapiKey util missing');
+  return fn({}, deviceId);
+}
 
 /** NeteaseApi：端点名 → 调用函数（白名单，仅列出上表）。 */
 /** CJS 模块互操作：namespace.default 或模块本体（rollup commonjs interop）。 */
@@ -227,7 +232,6 @@ const MODULES: Record<string, NeteaseApiModule> = {
   playlist_delete: playlistDelete,
   playlist_update: playlistUpdate,
   playlist_subscribe: playlistSubscribe,
-  playlist_cover_update: playlistCoverUpdate,
   playlist_catlist: playlistCatlist,
   playlist_hot: playlistHot,
   top_playlist_highquality: topPlaylistHighquality,
@@ -287,14 +291,11 @@ const MODULES: Record<string, NeteaseApiModule> = {
   comment_music: commentMusic,
   comment_floor: commentFloor,
   comment_hot: commentHot,
-  comment_add: commentAdd,
-  comment_reply: commentReply,
-  comment_delete: commentDelete,
   comment_like: commentLike,
   banner,
   playmode_intelligence_list: playmodeIntelligenceList,
   vip_info: vipInfo,
-  cloud,
+  user_cloud: userCloud,
   cloudsearch: cloudSearch,
   song_cloud_download: songCloudDownload,
   event_forward: eventForward,
@@ -304,6 +305,8 @@ const MODULES: Record<string, NeteaseApiModule> = {
   follow,
   msg_notices: msgNotices,
   msg_comments: msgComments,
+  scrobble,
+  register_anonimous: registerAnonimous,
 };
 
 export interface NeteaseApiStorage {

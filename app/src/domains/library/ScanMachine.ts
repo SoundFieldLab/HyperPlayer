@@ -127,15 +127,19 @@ export class ScanMachine {
     }
   }
 
-  resume(): void {
+  /** 继续已暂停的扫描，并在剩余队列完成后解析。 */
+  async resume(): Promise<void> {
     if (this.state.phase === 'paused') {
-      this.state = { ...this.state, phase: 'scanning' };
-      this.emit();
+      await this.scan([]);
     }
   }
 
   cancel(): void {
     this.cancelled = true;
+    if (this.state.phase === 'paused') {
+      this.state = { ...this.state, phase: 'cancelled' };
+      this.emit();
+    }
   }
 
   /** 扫描单个文件夹；返回 true = 被取消/暂停中断（未完成提交，回队首续扫）。 */
@@ -189,18 +193,13 @@ export class ScanMachine {
       }
     }
     if (this.cancelled || this.state.phase === 'paused') return true;
-    // 每文件夹原子提交（SQLite 事务；fake-sql 内存操作天然原子）
+    // 每文件夹原子提交：通过 SqlDatabase.transaction 独占连接，避免扫描写入与缓存/历史并发互锁。
     if (changes.length > 0) {
-      await this.deps.sql.execute('BEGIN TRANSACTION');
-      try {
+      await this.deps.sql.transaction(async (tx) => {
         for (const change of changes) {
-          await this.upsertTrack(change.track);
+          await this.upsertTrack(change.track, tx);
         }
-        await this.deps.sql.execute('COMMIT');
-      } catch (error) {
-        await this.deps.sql.execute('ROLLBACK');
-        throw error;
-      }
+      });
     }
     const added = changes.filter((c) => c.mode === 'insert').length;
     const updated = changes.filter((c) => c.mode === 'update').length;
@@ -209,9 +208,12 @@ export class ScanMachine {
     return false;
   }
 
-  private async upsertTrack(track: TrackRecord): Promise<void> {
-    await this.deps.sql.execute('DELETE FROM tracks WHERE id = ?', [track.id]);
-    await this.deps.sql.execute(
+  private async upsertTrack(
+    track: TrackRecord,
+    sql: Pick<SqlDatabase, 'execute'> = this.deps.sql,
+  ): Promise<void> {
+    await sql.execute('DELETE FROM tracks WHERE id = ?', [track.id]);
+    await sql.execute(
       `INSERT INTO tracks (id, path, folder, title, artist, album, album_artist, duration, format, bitrate, size, mtime_ms, added_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -302,15 +304,20 @@ export class ScanMachine {
       paused: 'paused',
       cancelled: 'cancelled',
     };
+    const actions = state.phase === 'paused'
+      ? ['retry', 'cancel', 'view'] as const
+      : state.phase === 'scanning' || state.phase === 'summarizing'
+        ? ['pause', 'cancel', 'view'] as const
+        : ['view'] as const;
     const existing = tc.getTask(id);
     if (existing) {
-      tc.update(id, { state: phaseState[state.phase], progress, detail });
+      tc.update(id, { state: phaseState[state.phase], progress, detail, actions: [...actions] });
     } else {
       tc.register({
         id,
         kind: 'scan',
         title: '本地曲库扫描',
-        actions: state.phase === 'paused' ? ['view'] : ['pause', 'cancel', 'view'],
+        actions: [...actions],
       });
     }
   }

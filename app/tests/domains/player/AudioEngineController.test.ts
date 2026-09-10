@@ -167,7 +167,8 @@ describe('AudioEngineController', () => {
   it('setSinkId 成功记录当前设备', async () => {
     const { controller, contexts } = makeController();
     controller.ensureContext();
-    await controller.setSinkId('device-2');
+    const changed = await controller.setSinkId('device-2');
+    expect(changed).toBe(true);
     expect(contexts[0]?.sinkCalls).toEqual(['device-2']);
   });
 
@@ -178,7 +179,8 @@ describe('AudioEngineController', () => {
     const ctx = contexts[0] as FakeAudioContext;
     await controller.setSinkId('device-2');
     ctx.failSink = true;
-    await controller.setSinkId('device-3');
+    const changed = await controller.setSinkId('device-3');
+    expect(changed).toBe(false);
     expect(ctx.sinkCalls).toEqual(['device-2', 'device-3', 'device-2']);
     expect(onSinkError).toHaveBeenCalledOnce();
     expect(onSinkError.mock.calls[0]?.[0]).toContain('切换输出设备失败');
@@ -189,6 +191,27 @@ describe('AudioEngineController', () => {
     controller.ensureContext();
     await controller.resume();
     expect(contexts[0]?.resumeCalls).toBe(1);
+  });
+
+  it('分析 tap 失败时保留 analyser→outputGain 音频通路', async () => {
+    const onSinkError = vi.fn();
+    const telemetry = { connect: vi.fn(async () => { throw new Error('worklet unavailable'); }) } as unknown as TelemetryTap;
+    const { controller, contexts } = makeController({ telemetry, onSinkError });
+    await controller.attachHse();
+    const ctx = contexts[0] as FakeAudioContext;
+    const host = (ctx as unknown as { destination: FakeNode }).destination;
+    expect(host).toBeDefined();
+    expect(onSinkError).toHaveBeenCalledWith(expect.stringContaining('音频分析不可用'));
+  });
+
+  it('rAF 时钟：位置变化同时通知歌词索引消费者', () => {
+    const { raf, step } = createRafHarness();
+    const onPosition = vi.fn();
+    const readPosition = vi.fn(() => 2.25);
+    const { controller } = makeController({ raf, cancelRaf: () => {}, readPosition, onPosition });
+    controller.startClock();
+    step();
+    expect(onPosition).toHaveBeenCalledWith(2.25);
   });
 
   it('rAF 时钟：帧级写 position，值不变不写', () => {

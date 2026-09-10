@@ -145,6 +145,9 @@ export function playbackReducer(
         ? { ...state, status: 'idle', error: null, watchdog: null }
         : logNoop(input.type, 'not error');
 
+    case 'RESET':
+      return createInitialPlaybackState();
+
     case 'RETRY':
       // error --RETRY--> resolving（保留当前曲目，重新解析）。
       return state.status === 'error' && state.track

@@ -29,6 +29,7 @@ HyperSoundEngine 纯 TS 完整包（引擎核心、浏览器宿主、规格与�
 | 依赖 | 范围 | 许可 |
 | :-- | :-- | :-- |
 | react / react-dom / zustand | npm | MIT |
+| motion / @phosphor-icons/react | npm | MIT |
 | music-metadata | npm | MIT |
 | @tauri-apps/api 及 plugin-{dialog,fs,http,sql,store,stronghold,window-state,global-shortcut,notification,updater,autostart} | npm | MIT / Apache-2.0 双许可 |
 | hypersoundengine / @neteasecloudmusicapienhanced/api | npm（workspace vendored） | 见上方 Vendored 章节 |

@@ -14,6 +14,7 @@
 
 const WAVE_BUCKETS = 64;
 const SPECTRUM_BANDS = 96;
+const ANALYSIS_QUANTUM_INTERVAL = 13;
 
 declare class AudioWorkletProcessor {
   readonly port: { postMessage(message: unknown, transfer?: Transferable[]): void };
@@ -22,13 +23,27 @@ declare class AudioWorkletProcessor {
 declare const sampleRate: number;
 declare function registerProcessor(name: string, ctor: new () => AudioWorkletProcessor): void;
 
-class HyperPlayerAnalysisTap extends AudioWorkletProcessor {
+export class HyperPlayerAnalysisTap extends AudioWorkletProcessor {
   private sequence = 0;
+  private quantum = 0;
 
-  process(inputs: Float32Array[][], _outputs: Float32Array[][], _parameters: Record<string, Float32Array>): boolean {
+  process(inputs: Float32Array[][], outputs: Float32Array[][], _parameters: Record<string, Float32Array>): boolean {
     const input = inputs[0];
-    if (!input || input.length < 2) return true;
-    const ch0 = input[0] ?? new Float32Array(0);
+    const output = outputs[0];
+    if (output) {
+      for (let channel = 0; channel < output.length; channel += 1) {
+        const target = output[channel];
+        if (!target) continue;
+        const source = input?.[channel] ?? input?.[0];
+        if (source) target.set(source.subarray(0, target.length));
+        else target.fill(0);
+      }
+    }
+    if (!input || input.length === 0) return true;
+    this.quantum = (this.quantum + 1) % ANALYSIS_QUANTUM_INTERVAL;
+    if (this.quantum !== 0) return true;
+    const ch0 = input[0];
+    if (!ch0) return true;
     const ch1 = input[1] ?? ch0;
     const frameLength = Math.max(ch0.length, ch1.length);
     if (frameLength === 0) return true;

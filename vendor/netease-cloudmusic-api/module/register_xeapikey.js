@@ -1,4 +1,5 @@
-const { default: axios } = require('axios')
+// HyperPlayer adaptations: 浏览器版 xeapi 公钥注册（axios → 注入传输；xeapiSign → WebCrypto async）。
+const browserHttp = require('../util/browserHttp')
 const encrypt = require('../util/crypto')
 const { APP_CONF } = require('../util/config.json')
 
@@ -10,10 +11,10 @@ const generateNonce = () => {
   return nonce
 }
 
-module.exports = async (query, request) => {
+module.exports = async (query) => {
   const nonce = generateNonce()
   const timestamp = String(Date.now())
-  const deviceId = query.deviceId || global.deviceId || ''
+  const deviceId = query.deviceId || globalThis.deviceId || ''
   const currentKeyVersion = query.currentKeyVersion || ''
 
   const data = {
@@ -23,14 +24,14 @@ module.exports = async (query, request) => {
     nonce,
     os: 'android',
     requestType: 'active',
-    signature: encrypt.xeapiSign(timestamp, nonce),
+    signature: await encrypt.xeapiSign(timestamp, nonce),
     t1: '',
     t2: '',
     timestamp,
     uid: '',
   }
 
-  const res = await axios({
+  const res = await browserHttp({
     method: 'POST',
     url: APP_CONF.apiDomain + '/api/gorilla/anti/crawler/security/key/get',
     headers: {
@@ -39,26 +40,26 @@ module.exports = async (query, request) => {
       Cookie: deviceId ? `deviceId=${encodeURIComponent(deviceId)}` : '',
     },
     data: new URLSearchParams(data).toString(),
-    proxy: false,
   })
 
+  const body = res.data
   if (
-    !res.data ||
-    res.data.code !== 200 ||
-    !res.data.data ||
-    !res.data.data.encryptedData
+    !body ||
+    body.code !== 200 ||
+    !body.data ||
+    !body.data.encryptedData
   ) {
     throw new Error('xeapi public key request failed')
   }
   if (
-    !res.data.data.signature ||
-    encrypt.xeapiSign(res.data.data.timestamp, nonce) !==
-      res.data.data.signature
+    !body.data.signature ||
+    (await encrypt.xeapiSign(body.data.timestamp, nonce)) !==
+      body.data.signature
   ) {
     throw new Error('xeapi public key response signature mismatch')
   }
 
-  const publicKey = encrypt.xeapiDecryptPublicKey(res.data.data.encryptedData)
+  const publicKey = encrypt.xeapiDecryptPublicKey(body.data.encryptedData)
   if (!publicKey.sk) {
     throw new Error('xeapi public key response missing sk')
   }

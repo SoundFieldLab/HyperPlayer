@@ -1,0 +1,39 @@
+.netease-page { max-width: 1100px; margin: 0 auto; padding: 36px 40px 120px; color: var(--ink); }
+.netease-page__header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 30px; }
+.netease-page h1, .netease-page h2, .netease-page p { margin: 0; }
+.netease-page h1 { font-size: clamp(28px, 4vw, 48px); line-height: 1.05; letter-spacing: 0; }
+.netease-page h2 { font-size: 18px; letter-spacing: 0; }
+.netease-eyebrow { margin-bottom: 10px !important; color: var(--ink-secondary); font-size: 11px; letter-spacing: 1.5px; }
+.netease-page__actions { display: flex; gap: 8px; }
+.netease-section { padding-top: 20px; border-top: 1px solid var(--hairline); }
+.netease-section h2 { margin-bottom: 16px; }
+.netease-segments { display: inline-flex; gap: 2px; margin-bottom: 24px; padding: 3px; border: 1px solid var(--hairline); border-radius: var(--radius-pill); background: var(--parchment); box-shadow: inset 0 1px 2px var(--divider-soft); }
+.netease-segments button { min-height: 30px; padding: 5px 14px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--ink-secondary); cursor: pointer; }
+.netease-segments button.is-active { background: var(--canvas); color: var(--ink); box-shadow: var(--chip-shadow); }
+.netease-button, .netease-icon-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 14px; border: 1px solid #d95c73; border-radius: 6px; background: #d95c73; color: #fff; cursor: pointer; }
+.netease-button--secondary { border-color: var(--hairline); background: transparent; color: var(--ink); }
+.netease-icon-button { padding: 9px; border-color: var(--hairline); background: transparent; color: var(--ink); }
+.netease-search { display: flex; align-items: center; gap: 10px; max-width: 680px; margin-bottom: 28px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.netease-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; }
+.netease-list { display: grid; gap: 2px; }
+.netease-list__item { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 14px; background: var(--pearl); }
+.netease-list__item > div { display: grid; min-width: 0; gap: 5px; }
+.netease-list__item span, .netease-list__item time, .netease-list__meta, .netease-muted { color: var(--ink-secondary); font-size: 13px; }
+.netease-list__tail { display: flex; align-items: center; gap: 12px; }
+.netease-row-action, .netease-card__action { display: inline-grid; place-items: center; min-width: 32px; min-height: 30px; padding: 0 10px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--canvas); color: var(--ink); cursor: pointer; }
+.netease-row-action:hover, .netease-card__action:hover { border-color: var(--hyper-blue); color: var(--hyper-blue); }
+.netease-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.netease-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; min-height: 95px; padding: 18px; border: 1px solid var(--hairline); border-radius: 6px; }
+.netease-card strong { grid-column: 1 / -1; }
+.netease-card span { align-self: center; color: var(--ink-secondary); font-size: 13px; }
+.netease-state { display: grid; gap: 10px; justify-items: start; padding: 32px 0; color: var(--ink-secondary); }
+.netease-state strong { color: var(--ink); }
+.netease-state--error, .netease-error { color: var(--error); }
+.netease-heading-icon, .netease-account__status { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.netease-account { display: grid; gap: 16px; max-width: 520px; }
+.netease-account__status { padding-bottom: 20px; border-bottom: 1px solid var(--hairline); }
+.netease-account__status div { display: grid; gap: 5px; }
+.netease-account__status span { color: var(--ink-secondary); font-size: 13px; }
+.netease-qr { width: 220px; height: 220px; border: 1px solid var(--hairline); background: #fff; object-fit: contain; }
+.netease-error { font-size: 13px; }
+@media (max-width: 640px) { .netease-page { padding: 24px 20px 100px; } .netease-page__header { align-items: start; } .netease-list__item { align-items: start; flex-direction: column; gap: 8px; } .netease-list__tail { width: 100%; justify-content: space-between; } }

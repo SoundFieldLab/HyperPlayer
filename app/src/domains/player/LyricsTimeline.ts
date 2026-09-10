@@ -34,6 +34,27 @@ export interface LyricsTimelineDeps {
   onWordIndex?: (index: number) => void;
 }
 
+export type LyricsLoadStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
+
+export interface LyricsSnapshot {
+  status: LyricsLoadStatus;
+  lines: readonly LyricLine[];
+  timingLevel: LyricTimingLevel | null;
+  currentLineIndex: number;
+  /** 全局逐字索引；行级歌词与 currentLineIndex 相同。 */
+  currentWordIndex: number;
+  error: string | null;
+}
+
+const EMPTY_SNAPSHOT: LyricsSnapshot = {
+  status: 'idle',
+  lines: [],
+  timingLevel: null,
+  currentLineIndex: -1,
+  currentWordIndex: -1,
+  error: null,
+};
+
 const CACHE_PREFIX = 'lyric:';
 
 export class LyricsTimeline {
@@ -43,6 +64,9 @@ export class LyricsTimeline {
   private readonly onWordIndex: ((index: number) => void) | undefined;
   /** 时间轴平移（毫秒，正 = 歌词提前；后端补充规划 #12）。 */
   private offsetMs = 0;
+  private loadGeneration = 0;
+  private readonly listeners = new Set<() => void>();
+  private currentSnapshot: LyricsSnapshot = EMPTY_SNAPSHOT;
 
   constructor(deps: LyricsTimelineDeps) {
     this.cache = deps.cache;
@@ -57,27 +81,66 @@ export class LyricsTimeline {
     return this.parsed?.lines ?? [];
   }
 
+  get snapshot(): LyricsSnapshot {
+    return this.currentSnapshot;
+  }
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
   /** 获取并缓存歌词；返回解析结果（无歌词返回 null）。 */
   async load(trackId: string, fetcher: LyricsFetcher): Promise<ParsedLyrics | null> {
+    const generation = ++this.loadGeneration;
+    this.parsed = null;
+    this.glyphs.length = 0;
+    this.publish({ ...EMPTY_SNAPSHOT, status: 'loading' });
+    this.onWordIndex?.(-1);
     const cacheKey = `${CACHE_PREFIX}${trackId}`;
-    let source = await this.cache.get<LyricsSource>(cacheKey);
-    if (!source) {
-      source = await fetcher(trackId);
-      if (source) {
-        try {
-          await this.cache.set(cacheKey, source);
-        } catch {
-          // 缓存失败不阻塞歌词显示
+    try {
+      let source = await this.cache.get<LyricsSource>(cacheKey);
+      if (!source) {
+        source = await fetcher(trackId);
+        if (source) {
+          try {
+            await this.cache.set(cacheKey, source);
+          } catch {
+            // 缓存失败不阻塞歌词显示
+          }
         }
       }
+      if (generation !== this.loadGeneration) return null;
+      if (!source) {
+        this.publish({ ...EMPTY_SNAPSHOT, status: 'empty' });
+        return null;
+      }
+      this.parsed = parseLyricsSource(source);
+      this.rebuildGlyphs();
+      if (this.parsed.lines.length === 0) {
+        this.publish({ ...EMPTY_SNAPSHOT, status: 'empty' });
+        return this.parsed;
+      }
+      this.publish({
+        status: 'ready',
+        lines: this.parsed.lines,
+        timingLevel: this.parsed.timingLevel,
+        currentLineIndex: -1,
+        currentWordIndex: -1,
+        error: null,
+      });
+      return this.parsed;
+    } catch (error) {
+      if (generation !== this.loadGeneration) return null;
+      this.parsed = null;
+      this.glyphs.length = 0;
+      this.publish({
+        ...EMPTY_SNAPSHOT,
+        status: 'error',
+        error: error instanceof Error ? error.message : '歌词加载失败',
+      });
+      throw error;
     }
-    if (!source) {
-      this.clear();
-      return null;
-    }
-    this.parsed = parseLyricsSource(source);
-    this.rebuildGlyphs();
-    return this.parsed;
   }
 
   /** 设置时间轴平移（正 = 歌词提前显示；查询时对播放位置前移，不改动字形数据）。 */
@@ -104,13 +167,24 @@ export class LyricsTimeline {
       }
     }
     const index = result;
-    this.onWordIndex?.(index);
+    if (index !== this.currentSnapshot.currentWordIndex) {
+      const glyph = index >= 0 ? this.glyphs[index] : undefined;
+      this.publish({
+        ...this.currentSnapshot,
+        currentLineIndex: glyph?.lineIndex ?? -1,
+        currentWordIndex: index,
+      });
+      this.onWordIndex?.(index);
+    }
     return index;
   }
 
-  clear(): void {
+  clear(invalidatePending = true): void {
+    if (invalidatePending) this.loadGeneration += 1;
     this.parsed = null;
     this.glyphs.length = 0;
+    this.publish(EMPTY_SNAPSHOT);
+    this.onWordIndex?.(-1);
   }
 
   private rebuildGlyphs(): void {
@@ -129,6 +203,11 @@ export class LyricsTimeline {
         this.glyphs.push({ lineIndex, glyphIndex: this.glyphs.length, start: line.time, end: line.time + 1 });
       }
     }
+  }
+
+  private publish(snapshot: LyricsSnapshot): void {
+    this.currentSnapshot = snapshot;
+    for (const listener of this.listeners) listener();
   }
 }
 

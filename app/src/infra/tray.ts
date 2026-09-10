@@ -4,6 +4,7 @@
  */
 import { TrayIcon } from '@tauri-apps/api/tray';
 import type { TrayIconOptions } from '@tauri-apps/api/tray';
+import { Image } from '@tauri-apps/api/image';
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
 import type { MenuItemOptions } from '@tauri-apps/api/menu/menuItem';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -15,8 +16,8 @@ export interface TrayMenuItem {
 }
 
 export interface Tray {
-  /** 构建托盘图标 + 菜单；菜单项点击按 id 回调。 */
-  build(iconPath: string, items: Array<TrayMenuItem | 'separator'>, onItem: (id: string) => void): Promise<void>;
+  /** 构建托盘图标 + 菜单；iconUrl 为前端内嵌资源（随 dist 打包，dev/prod 均可 fetch）。 */
+  build(iconUrl: string, items: Array<TrayMenuItem | 'separator'>, onItem: (id: string) => void): Promise<void>;
   destroy(): Promise<void>;
 }
 
@@ -25,6 +26,10 @@ export interface WindowControl {
   show(): Promise<void>;
   hide(): Promise<void>;
   setFocus(): Promise<void>;
+  minimize(): Promise<void>;
+  toggleMaximize(): Promise<void>;
+  close(): Promise<void>;
+  startDragging(): Promise<void>;
   /** 直接关闭（不触发 closeRequested）。 */
   destroy(): Promise<void>;
   /** 关闭请求拦截：回调内调用 event.preventDefault() 可阻止关闭。 */
@@ -34,7 +39,7 @@ export interface WindowControl {
 export function createTauriTray(): Tray {
   let tray: TrayIcon | null = null;
   return {
-    build: async (iconPath, items, onItem) => {
+    build: async (iconUrl, items, onItem) => {
       const menuItems = [];
       for (const item of items) {
         if (item === 'separator') {
@@ -45,7 +50,12 @@ export function createTauriTray(): Tray {
         menuItems.push(await MenuItem.new(options));
       }
       const menu = await Menu.new({ items: menuItems });
-      const options: TrayIconOptions = { icon: iconPath, menu };
+      // 图标以内嵌前端资源字节传入（image-png feature）：不依赖 exe 旁的文件路径，
+      // 便携版/NSIS/dev 三种形态一致。
+      const response = await fetch(iconUrl);
+      if (!response.ok) throw new Error(`tray: 图标资源加载失败 ${response.status} ${iconUrl}`);
+      const icon = await Image.fromBytes(new Uint8Array(await response.arrayBuffer()));
+      const options: TrayIconOptions = { icon, menu };
       tray = await TrayIcon.new(options);
     },
     destroy: async () => {
@@ -63,6 +73,13 @@ export function createTauriWindowControl(): WindowControl {
     show: () => window.show(),
     hide: () => window.hide(),
     setFocus: () => window.setFocus(),
+    minimize: () => window.minimize(),
+    toggleMaximize: async () => {
+      if (await window.isMaximized()) await window.unmaximize();
+      else await window.maximize();
+    },
+    close: () => window.close(),
+    startDragging: () => window.startDragging(),
     destroy: () => window.destroy(),
     onCloseRequested: (handler) => window.onCloseRequested((event) => handler(event)),
   };

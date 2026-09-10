@@ -67,8 +67,13 @@ export class FileLogger implements Logger {
 
   async init(): Promise<void> {
     await this.fs.mkdir(this.dir);
-    const stat = await this.fs.stat(this.path(0));
-    this.currentBytes = stat?.size ?? 0;
+    try {
+      const stat = await this.fs.stat(this.path(0));
+      this.currentBytes = stat?.size ?? 0;
+    } catch {
+      // 首装日志文件不存在：真实 fs 的 stat 会拒绝，视为空日志从头写。
+      this.currentBytes = 0;
+    }
   }
 
   debug(message: string, ...args: unknown[]): void {

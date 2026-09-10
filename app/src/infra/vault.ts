@@ -17,14 +17,39 @@ export interface Vault {
 export interface VaultOptions {
   /** stronghold 文件路径（app 配置目录下）。 */
   path: string;
-  /** 解锁密码（M5 向导前使用登记过的 dev 默认值）。 */
   password: string;
 }
 
+interface StrongholdStoreLike {
+  get(key: string): Promise<Uint8Array | null>;
+  insert(key: string, value: number[]): Promise<void>;
+  remove(key: string): Promise<Uint8Array | null>;
+}
+
+interface StrongholdClientLike {
+  getStore(): StrongholdStoreLike;
+}
+
+interface StrongholdLike {
+  loadClient(name: string): Promise<StrongholdClientLike>;
+  createClient(name: string): Promise<StrongholdClientLike>;
+  save(): Promise<void>;
+}
+
+export interface VaultRuntime {
+  load(path: string, password: string): Promise<StrongholdLike>;
+}
+
 /** 创建 stronghold vault 实例（真实加密存储）。 */
-export async function createVault(options: VaultOptions): Promise<Vault> {
-  const stronghold = await Stronghold.load(options.path, options.password);
-  const client = await stronghold.loadClient('hyperplayer');
+export async function createVault(options: VaultOptions, runtime: VaultRuntime = Stronghold): Promise<Vault> {
+  const stronghold = await runtime.load(options.path, options.password);
+  let client: StrongholdClientLike;
+  try {
+    client = await stronghold.loadClient('hyperplayer');
+  } catch {
+    client = await stronghold.createClient('hyperplayer');
+    await stronghold.save();
+  }
   const store = client.getStore();
   const encode = (value: string): number[] => Array.from(new TextEncoder().encode(value));
   const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes);
@@ -35,9 +60,11 @@ export async function createVault(options: VaultOptions): Promise<Vault> {
     },
     setSecret: async (namespace, key, value) => {
       await store.insert(`${namespace}:${key}`, encode(value));
+      await stronghold.save();
     },
     deleteSecret: async (namespace, key) => {
       await store.remove(`${namespace}:${key}`);
+      await stronghold.save();
     },
   };
 }

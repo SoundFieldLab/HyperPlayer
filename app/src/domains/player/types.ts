@@ -58,7 +58,8 @@ export type PlayerCommand =
   | { type: 'SEEK'; position: number }
   | { type: 'NEXT' }
   | { type: 'PREV' }
-  | { type: 'RETRY' };
+  | { type: 'RETRY' }
+  | { type: 'RESET' };
 
 /** 元素原生事件 / 异步结果（由 DualElementSource 与源解析器送入）。 */
 export type PlayerEvent =

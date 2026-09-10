@@ -44,10 +44,17 @@ export function createInitialQueueState(): QueueState {
 }
 
 export interface QueueControllerDeps {
-  /** playNow 换上下文时默认保留临时区（UI-D43，设置可改）。 */
-  keepUpNextOnContextSwitch?: boolean;
+  /** playNow 换上下文时是否保留临时区（UI-D43，设置可动态变更）。 */
+  keepUpNextOnContextSwitch?: boolean | (() => boolean);
   /** 随机源（测试注入固定序列）。 */
   random?: () => number;
+}
+
+export interface RestoredQueueState {
+  current: QueueItem | null;
+  upNext: QueueItem[];
+  context: QueueItem[];
+  mode: PlayMode;
 }
 
 export interface PlayNowOptions {
@@ -70,12 +77,13 @@ function shuffleIds(ids: string[], random: () => number): string[] {
 
 export class QueueController {
   private state: QueueState;
-  private readonly keepUpNextOnContextSwitch: boolean;
+  private readonly keepUpNextOnContextSwitch: () => boolean;
   private readonly random: () => number;
   private readonly listeners = new Set<(state: QueueState) => void>();
 
   constructor(deps: QueueControllerDeps = {}) {
-    this.keepUpNextOnContextSwitch = deps.keepUpNextOnContextSwitch ?? true;
+    const keepUpNext = deps.keepUpNextOnContextSwitch;
+    this.keepUpNextOnContextSwitch = typeof keepUpNext === 'function' ? keepUpNext : () => keepUpNext ?? true;
     this.random = deps.random ?? Math.random;
     this.state = createInitialQueueState();
   }
@@ -87,6 +95,28 @@ export class QueueController {
   subscribe(listener: (state: QueueState) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  restore(restored: RestoredQueueState): void {
+    const pointer = restored.current
+      ? restored.context.findIndex((item) => item.id === restored.current?.id)
+      : -1;
+    const contextId = restored.context[0]?.contextId ?? null;
+    const shuffle = restored.mode === 'shuffle'
+      ? restored.context.map((item) => item.id)
+      : [];
+    this.state = {
+      ...createInitialQueueState(),
+      current: restored.current,
+      upNext: [...restored.upNext],
+      context: [...restored.context],
+      contextId,
+      mode: restored.mode,
+      pointer,
+      shuffle,
+      shuffleIndex: restored.current ? shuffle.indexOf(restored.current.id) : -1,
+    };
+    this.emit();
   }
 
   /** 立即播放：默认替换当前上下文（保留 upNext）；context 缺省时仅置当前曲。 */
@@ -124,7 +154,7 @@ export class QueueController {
       shuffle,
       shuffleIndex,
       history: [...this.state.history, item.id],
-      upNext: this.keepUpNextOnContextSwitch ? this.state.upNext : [],
+      upNext: this.keepUpNextOnContextSwitch() ? this.state.upNext : [],
     };
     this.emit();
   }
@@ -149,6 +179,25 @@ export class QueueController {
       context: this.state.context.filter((t) => t.id !== id),
     };
     this.emit();
+  }
+
+  /** 选择并推进到队列中的指定歌曲；临时区项选中后从临时区消费。 */
+  select(id: string): QueueItem | null {
+    const upNextItem = this.state.upNext.find((item) => item.id === id);
+    const contextItem = this.state.context.find((item) => item.id === id);
+    const item = upNextItem ?? contextItem ?? null;
+    if (!item) return null;
+    const pointer = contextItem ? this.state.context.findIndex((entry) => entry.id === id) : this.state.pointer;
+    this.state = {
+      ...this.state,
+      current: item,
+      upNext: upNextItem ? this.state.upNext.filter((entry) => entry.id !== id) : this.state.upNext,
+      pointer,
+      history: [...this.state.history, item.id],
+      shuffleIndex: this.state.mode === 'shuffle' && contextItem ? this.state.shuffle.indexOf(id) : this.state.shuffleIndex,
+    };
+    this.emit();
+    return item;
   }
 
   /** 上下文内拖拽移动（UI-D43：上下文保留来源顺序允许拖拽）。 */
@@ -213,11 +262,13 @@ export class QueueController {
       if (nextItem) {
         this.state = { ...this.state, current: nextItem, upNext: rest };
         this.pushHistory(nextItem.id);
+        this.emit();
         return nextItem;
       }
     }
     if (this.state.mode === 'single' && this.state.current) {
       this.pushHistory(this.state.current.id);
+      this.emit();
       return this.state.current;
     }
     if (this.state.context.length === 0) return null;
@@ -242,6 +293,7 @@ export class QueueController {
     if (nextItem) {
       this.state = { ...this.state, current: nextItem };
       this.pushHistory(nextItem.id);
+      this.emit();
     }
     return nextItem;
   }
@@ -255,13 +307,17 @@ export class QueueController {
         const item = this.findInQueue(previousId);
         if (item) {
           this.state = { ...this.state, history: history.slice(0, -1), current: item };
+          this.emit();
           return item;
         }
       }
     }
     if (this.state.pointer - 1 >= 0) {
       const item = this.state.context[this.state.pointer - 1] ?? null;
-      if (item) this.state = { ...this.state, pointer: this.state.pointer - 1, current: item };
+      if (item) {
+        this.state = { ...this.state, pointer: this.state.pointer - 1, current: item };
+        this.emit();
+      }
       return item;
     }
     return null;

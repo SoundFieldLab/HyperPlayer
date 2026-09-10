@@ -79,6 +79,16 @@ describe('lyrics 解析（parseLrc / parseLrcTimeTag）', () => {
 });
 
 describe('LyricsTimeline', () => {
+  it('迟到的旧曲歌词不会覆盖新曲', async () => {
+    const timeline = new LyricsTimeline({ cache: createFakeCacheStore() });
+    let resolveOld: ((value: { text: string; format: 'lrc' }) => void) | undefined;
+    const oldLoad = timeline.load('old', () => new Promise((resolve) => { resolveOld = resolve; }));
+    await timeline.load('new', async () => ({ text: '[00:01.00]新曲歌词', format: 'lrc' }));
+    resolveOld?.({ text: '[00:01.00]旧曲歌词', format: 'lrc' });
+    await oldLoad;
+    expect(timeline.lines[0]?.text).toBe('新曲歌词');
+  });
+
   it('indexAt：帧级返回当前逐字索引（YRC 逐字轴，二分查找）', async () => {
     const onWordIndex = vi.fn();
     const timeline = new LyricsTimeline({ cache: createFakeCacheStore(), onWordIndex });
@@ -127,6 +137,23 @@ describe('LyricsTimeline', () => {
     expect(parsed).toBeNull();
     expect(timeline.level).toBeNull();
     expect(timeline.indexAt(0)).toBe(-1);
+  });
+
+  it('发布加载状态并把全局逐字索引映射到当前行', async () => {
+    const timeline = new LyricsTimeline({ cache: createFakeCacheStore() });
+    const statuses: string[] = [];
+    timeline.subscribe(() => statuses.push(timeline.snapshot.status));
+    await timeline.load('t1', async () => ({ text: YRC, format: 'yrc' }));
+    timeline.indexAt(3.6);
+
+    expect(statuses).toEqual(['loading', 'ready', 'ready']);
+    expect(timeline.snapshot).toMatchObject({ timingLevel: 'word', currentLineIndex: 1, currentWordIndex: 4 });
+  });
+
+  it('加载失败发布 error，失败信息可供 UI 诚实显示', async () => {
+    const timeline = new LyricsTimeline({ cache: createFakeCacheStore() });
+    await expect(timeline.load('t1', async () => { throw new Error('network down'); })).rejects.toThrow('network down');
+    expect(timeline.snapshot).toMatchObject({ status: 'error', error: 'network down', lines: [] });
   });
 
   it('clear 重置歌词与索引', async () => {

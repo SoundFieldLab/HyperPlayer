@@ -102,7 +102,12 @@ describe('后端最终验收（fake 环境完整流）', () => {
       void cache.ensureCached(item, `https://cdn/${item.id}.mp3`); // 边播边缓存（异步）
       return { url: `https://cdn/${item.id}.mp3`, kind: 'stream' };
     };
-    const audio = { ensureContext: vi.fn(() => ({}) as unknown as AudioContext), resume: vi.fn(async () => {}) };
+    const audio = {
+      ensureContext: vi.fn(() => ({}) as unknown as AudioContext),
+      attachMediaElement: vi.fn(),
+      attachHse: vi.fn(async () => {}),
+      resume: vi.fn(async () => {}),
+    };
     const controller = new PlayerController({
       stateMachine: machine,
       elements,
@@ -126,6 +131,8 @@ describe('后端最终验收（fake 环境完整流）', () => {
     (elements.inactive as FakeAudioElement).emit('canplay');
     await flush();
     expect(machine.snapshot.status).toBe('playing');
+    expect(audio.attachMediaElement).toHaveBeenCalledTimes(2);
+    expect(audio.attachHse).toHaveBeenCalledTimes(1);
 
     // 3) 缓存写读：t1 流式写盘 → 可播放读取
     await flush();

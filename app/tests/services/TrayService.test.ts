@@ -10,8 +10,9 @@ function makeContext() {
   const tray = createFakeTray();
   const window = createFakeWindowControl();
   const commands = { playPause: vi.fn(), next: vi.fn(), prev: vi.fn() };
-  const service = new TrayService({ tray, window, settings, commands, logger: createNullLogger() });
-  return { settings, tray, window, commands, service };
+  const requestCloseConfirmation = vi.fn();
+  const service = new TrayService({ tray, window, settings, commands, requestCloseConfirmation, logger: createNullLogger() });
+  return { settings, tray, window, commands, requestCloseConfirmation, service };
 }
 
 describe('TrayService（后端补充规划 #42，UI-D77）', () => {
@@ -86,6 +87,18 @@ describe('TrayService（后端补充规划 #42，UI-D77）', () => {
     await Promise.resolve();
     expect(window.lastCloseEvent.prevented).toBe(false);
     expect(window.calls).not.toContain('hide');
+  });
+
+  it('closeBehavior=ask：拦截关闭并请求 UI 显示真实确认层', async () => {
+    const { service, window, settings, requestCloseConfirmation } = makeContext();
+    await settings.load();
+    await service.init();
+    window.triggerCloseRequest();
+    await Promise.resolve();
+    expect(window.lastCloseEvent.prevented).toBe(true);
+    expect(requestCloseConfirmation).toHaveBeenCalledTimes(1);
+    expect(window.calls).not.toContain('hide');
+    expect(window.calls).not.toContain('destroy');
   });
 
   it('dispose 解绑并销毁托盘', async () => {

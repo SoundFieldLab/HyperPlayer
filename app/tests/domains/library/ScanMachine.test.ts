@@ -148,10 +148,10 @@ describe('ScanMachine', () => {
     await machine2.scan(['/music/a', '/music/b']);
     expect(machine2.snapshot.phase).toBe('paused');
 
-    machine2.resume();
-    await new Promise((r) => setTimeout(r, 0));
-    await machine2.scan([]); // 续扫
+    await machine2.resume();
     expect(machine2.snapshot.phase).toBe('done');
+    const tracks = await sql.select<{ path: string }>('SELECT * FROM tracks');
+    expect(tracks.map((item) => item.path)).toContain('/music/b/song2.mp3');
   });
 });
 

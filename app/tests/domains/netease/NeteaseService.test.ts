@@ -103,6 +103,38 @@ describe('NeteaseService（waveforge oracle 对拍）', () => {
     expect(endpoints).not.toContain('artist_sub');
   });
 
+  it('cloud/list 使用只读 user_cloud，不加载上传端点', async () => {
+    const { api, calls } = makeFakeApi();
+    const { session } = makeSession(api);
+    const service = new NeteaseService({ api, session, logger: createNullLogger() });
+
+    await service.route('/netease/cloud/list', { limit: 20 });
+
+    expect(calls.map((call) => call.endpoint)).toEqual(['user_cloud']);
+    expect(calls.some((call) => call.endpoint === 'cloud')).toBe(false);
+  });
+
+  it.each(['/netease/comment/add', '/netease/comment/reply', '/netease/comment/delete'])(
+    '%s 对 xeapi 写操作返回明确的浏览器限制',
+    async (uri) => {
+      const { api, calls } = makeFakeApi();
+      const { session } = makeSession(api);
+      const service = new NeteaseService({ api, session, logger: createNullLogger() });
+
+      await expect(service.route(uri, { id: 1, cid: 2 })).rejects.toThrow('浏览器版不支持 xeapi 评论写操作');
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it('playlist/cover 对文件上传返回明确的浏览器限制', async () => {
+    const { api, calls } = makeFakeApi();
+    const { session } = makeSession(api);
+    const service = new NeteaseService({ api, session, logger: createNullLogger() });
+
+    await expect(service.route('/netease/playlist/cover', { id: 1 })).rejects.toThrow('浏览器版不支持文件上传操作');
+    expect(calls).toHaveLength(0);
+  });
+
   it(':type 参数路由：record/recent/:type 按类型分发 + record/rank/:type → user_record', async () => {
     const { api, calls } = makeFakeApi();
     const { session } = makeSession(api);
@@ -145,6 +177,21 @@ describe('NeteaseService（waveforge oracle 对拍）', () => {
     await service.call('song_detail', { ids: '1' });
     expect(session.snapshot).toBe('anonymous');
     expect(await vault.getSecret('netease', 'cookie')).toBeNull();
+  });
+
+  it('tokenInvalid 不误伤：code 400（参数错误）不触发登出', async () => {
+    const { api } = makeFakeApi({
+      song_detail: async () => answer(400, { msg: '参数错误' }),
+    });
+    const { session, vault } = makeSession(api);
+    await vault.setSecret('netease', 'cookie', JSON.stringify({ MUSIC_U: 'x' }));
+    await session.restoreSession();
+    expect(session.isLoggedIn).toBe(true);
+
+    const service = new NeteaseService({ api, session, logger: createNullLogger() });
+    await service.call('song_detail', { ids: '1' });
+    expect(session.snapshot).toBe('loggedIn');
+    expect(await vault.getSecret('netease', 'cookie')).not.toBeNull();
   });
 
   it("route 透传：'/netease/search' → api.search + 统一重试包装", async () => {

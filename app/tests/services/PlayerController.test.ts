@@ -73,7 +73,7 @@ interface PlayerHarness {
   resolveSource: ReturnType<typeof vi.fn>;
   prefetch: ReturnType<typeof vi.fn>;
   statuses: string[];
-  audio: { ensureContext: ReturnType<typeof vi.fn>; resume: ReturnType<typeof vi.fn> };
+  audio: { attachMediaElement: ReturnType<typeof vi.fn>; attachHse: ReturnType<typeof vi.fn>; resume: ReturnType<typeof vi.fn> };
 }
 
 function makePlayer(): PlayerHarness {
@@ -87,7 +87,8 @@ function makePlayer(): PlayerHarness {
   });
   const prefetch = vi.fn(async () => {});
   const audio = {
-    ensureContext: vi.fn(() => ({}) as unknown as AudioContext),
+    attachMediaElement: vi.fn(() => null),
+    attachHse: vi.fn(async () => {}),
     resume: vi.fn(async () => {}),
   };
   const controller = new PlayerController({
@@ -104,7 +105,7 @@ function makePlayer(): PlayerHarness {
 
 describe('PlayerController 完整事件流（fake 环境）', () => {
   it('LOAD→resolving→buffering→playing→ended→队列推进→预取', async () => {
-    const { controller, elements, machine, queue, prefetch } = makePlayer();
+    const { controller, elements, machine, queue, prefetch, audio } = makePlayer();
     const t1 = track('t1');
     const t2 = track('t2');
     const t3 = track('t3');
@@ -118,6 +119,8 @@ describe('PlayerController 完整事件流（fake 环境）', () => {
     const pending1 = elements.inactive;
     (pending1 as FakeAudioElement).emit('canplay');
     await flush();
+    expect(audio.attachMediaElement).toHaveBeenCalledTimes(2);
+    expect(audio.attachHse).toHaveBeenCalledTimes(1);
     expect(machine.snapshot.status).toBe('playing');
     expect(queue.snapshot.current?.id).toBe('t1');
     expect(elements.active).toBe(pending1);
@@ -172,7 +175,7 @@ describe('PlayerController 完整事件流（fake 环境）', () => {
       stateMachine: machine,
       elements: new DualElementSource(() => new FakeAudioElement()),
       queue: new QueueController(),
-      audio: { ensureContext: vi.fn(), resume: vi.fn() } as unknown as AudioEngineController,
+      audio: { attachMediaElement: vi.fn(), attachHse: vi.fn(async () => {}), resume: vi.fn() } as unknown as AudioEngineController,
       resolveSource,
       autoSkipOnError: () => false,
       logger: createNullLogger(),
@@ -191,11 +194,42 @@ describe('PlayerController 完整事件流（fake 环境）', () => {
     await flush();
 
     const playPromise = controller.playNext(track('x'));
-    expect(queue.snapshot.upNext.map((t) => t.id)).toEqual(['x']);
+    expect(queue.snapshot.current?.id).toBe('x');
+    expect(queue.snapshot.upNext).toHaveLength(0);
     expect(machine.snapshot.status).toBe('resolving');
     await playPromise;
     await flush();
     expect(machine.snapshot.status).toBe('buffering');
+  });
+
+  it('selectQueueItem 委托队列选择并真实加载目标', async () => {
+    const { controller, machine, queue, resolveSource } = makePlayer();
+    const t1 = track('t1');
+    const t2 = track('t2');
+    await controller.playNow(t1, { context: [t1, t2] });
+    resolveSource.mockClear();
+
+    await controller.selectQueueItem('t2');
+    expect(queue.snapshot.current?.id).toBe('t2');
+    expect(machine.snapshot.status).toBe('buffering');
+    expect(resolveSource).toHaveBeenCalledWith(t2);
+  });
+
+  it('clearAll 停止并卸载双元素、清空队列并重置状态机', async () => {
+    const { controller, elements, machine, queue } = makePlayer();
+    await controller.playNow(track('t1'), { context: [track('t1'), track('t2')] });
+
+    await controller.clearAll();
+
+    expect(queue.snapshot.current).toBeNull();
+    expect(queue.snapshot.context).toHaveLength(0);
+    expect(machine.snapshot.status).toBe('idle');
+    for (const element of elements.all) {
+      const fakeElement = element as FakeAudioElement;
+      expect(fakeElement.src).toBe('');
+      expect(fakeElement.pauseCalls).toBeGreaterThan(0);
+      expect(fakeElement.loadCalls).toBeGreaterThan(0);
+    }
   });
 
   it('pause → 元素暂停；元素 pause 事件 → ready', async () => {
@@ -236,7 +270,7 @@ describe('PlayerController 完整事件流（fake 环境）', () => {
       stateMachine: machine,
       elements: el,
       queue,
-      audio: { ensureContext: vi.fn(), resume: vi.fn() } as unknown as AudioEngineController,
+      audio: { attachMediaElement: vi.fn(), attachHse: vi.fn(async () => {}), resume: vi.fn() } as unknown as AudioEngineController,
       resolveSource: vi.fn(async () => ({ url: 'u', kind: 'stream' as const })),
       onDurationChange,
       logger: createNullLogger(),

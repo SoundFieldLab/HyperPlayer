@@ -55,7 +55,7 @@ export interface StreamCacheServiceDeps {
   sql: SqlDatabase;
   cacheDir: string;
   /** 容量预算（字节）；缺省 5 GB。 */
-  capacityBytes?: number;
+  capacityBytes?: number | (() => number);
   /** 权益重验证（P4 接 SessionService：账号/权益/权限）。 */
   verifyEntitlement?: (trackId: string, ownerUserId: string) => Promise<boolean>;
   onTaskChange?: (task: CacheTask) => void;
@@ -268,7 +268,10 @@ export class StreamCacheService {
   /** 容量 LRU 淘汰：locked 优先淘汰，然后最近播放最旧；逐条删除直到满足预算。 */
   async evictToCapacity(): Promise<void> {
     await this.init();
-    const capacity = this.deps.capacityBytes ?? DEFAULT_CACHE_CAPACITY_BYTES;
+    const configuredCapacity = this.deps.capacityBytes;
+    const capacity = typeof configuredCapacity === 'function'
+      ? configuredCapacity()
+      : configuredCapacity ?? DEFAULT_CACHE_CAPACITY_BYTES;
     const rows = await this.deps.sql.select<CacheRow>(
       "SELECT * FROM cache WHERE status != 'fetching' AND status != 'failed'",
     );

@@ -19,6 +19,21 @@ function ctx(ids: string[]): QueueItem[] {
 }
 
 describe('QueueController', () => {
+  it('restore 原子恢复当前项与临时区顺序，不制造播放历史', () => {
+    const q = new QueueController();
+    q.restore({
+      current: track('b'),
+      upNext: [track('x'), track('y')],
+      context: ctx(['a', 'b', 'c']),
+      mode: 'loop',
+    });
+    expect(q.snapshot.current?.id).toBe('b');
+    expect(q.snapshot.pointer).toBe(1);
+    expect(q.snapshot.upNext.map((item) => item.id)).toEqual(['x', 'y']);
+    expect(q.snapshot.mode).toBe('loop');
+    expect(q.snapshot.history).toEqual([]);
+  });
+
   it('playNow：置当前曲、记录播放历史；upNext 为空', () => {
     const q = new QueueController();
     q.playNow(track('a'), { context: ctx(['a', 'b']) });
@@ -117,6 +132,18 @@ describe('QueueController', () => {
     expect(q.snapshot.current?.id).toBe(sequence[1]);
   });
 
+  it('select 从双区选择歌曲并更新当前指针与历史', () => {
+    const q = new QueueController();
+    q.playNow(track('a'), { context: ctx(['a', 'b']) });
+    q.playNext(track('x'));
+
+    expect(q.select('b')?.id).toBe('b');
+    expect(q.snapshot).toMatchObject({ current: expect.objectContaining({ id: 'b' }), pointer: 1 });
+    expect(q.select('x')?.id).toBe('x');
+    expect(q.snapshot.current?.id).toBe('x');
+    expect(q.select('missing')).toBeNull();
+  });
+
   it('clearNext 不动上下文；clearAll 独立清空（保留播放模式）', () => {
     const q = new QueueController();
     q.playNow(track('a'), { context: ctx(['a', 'b', 'c']) });
@@ -167,6 +194,26 @@ describe('QueueController', () => {
     expect(q.peekNext()?.id).toBe('x');
     // 不推进：current 未变
     expect(q.snapshot.current?.id).toBe('a');
+  });
+
+  it('playNow 换上下文按动态设置清理临时区', () => {
+    let keep = true;
+    const q = new QueueController({ keepUpNextOnContextSwitch: () => keep });
+    q.playNow(track('a'), { context: ctx(['a', 'b']) });
+    q.playNext(track('x'));
+    keep = false;
+    q.playNow(track('c'), { context: [track('c', { contextId: 'ctx-b' })] });
+    expect(q.snapshot.upNext).toHaveLength(0);
+  });
+
+  it('next 与 prev 的状态变化会通知订阅者', () => {
+    const q = new QueueController();
+    q.playNow(track('a'), { context: ctx(['a', 'b']) });
+    const seen: string[] = [];
+    q.subscribe((state) => seen.push(state.current?.id ?? 'null'));
+    q.next();
+    q.prev();
+    expect(seen).toEqual(['b', 'a']);
   });
 
   it('subscribe 快照变更通知', () => {

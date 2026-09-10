@@ -20,7 +20,16 @@ pub fn run() {
                 .plugin(tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build())?;
             Ok(())
         })
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 不持久化 VISIBLE 标志：关闭到托盘（hide）后退出若记录 visible=false，
+        // 下次启动会恢复成不可见窗口，表现为"无法启动"。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

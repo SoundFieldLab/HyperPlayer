@@ -23,6 +23,8 @@ const appAllowlist = new Set([
   'react',
   'react-dom',
   'zustand',
+  'motion',
+  '@phosphor-icons/react',
   '@tauri-apps/api',
   '@tauri-apps/plugin-dialog',
   '@tauri-apps/plugin-fs',

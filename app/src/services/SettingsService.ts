@@ -10,6 +10,7 @@ import type { PlayMode, QueueItem } from '../domains/player/types';
 import type { QueueState } from '../domains/player/QueueController';
 import type { KeyValueStore } from '../infra/tauriStore';
 import type { ShortcutAction } from './ShortcutService';
+import type { NavDomain, NavEntry } from '../stores/slices/nav';
 import type { Logger } from '../shared/logger';
 import { createNullLogger } from '../shared/logger';
 
@@ -58,6 +59,11 @@ export interface AppSettings {
   autostart: boolean;
 }
 
+export interface PersistedPage {
+  domain: NavDomain;
+  entry: NavEntry;
+}
+
 export interface PersistedQueue {
   savedAt: number;
   currentId: string | null;
@@ -93,6 +99,7 @@ export function createDefaultSettings(): AppSettings {
 
 const SETTINGS_KEY = 'app.settings';
 const QUEUE_KEY = 'app.queue';
+const LAST_PAGE_KEY = 'app.lastStablePage';
 
 export interface SettingsServiceDeps {
   store: KeyValueStore;
@@ -183,6 +190,14 @@ export class SettingsService {
     await this.store.delete(QUEUE_KEY);
   }
 
+  async persistLastPage(page: PersistedPage): Promise<void> {
+    await this.store.set(LAST_PAGE_KEY, page);
+  }
+
+  async restoreLastPage(): Promise<PersistedPage | null> {
+    return this.store.get<PersistedPage>(LAST_PAGE_KEY);
+  }
+
   private depsNow(): number {
     return Date.now();
   }
@@ -192,6 +207,9 @@ export class SettingsService {
 export function migrateSettings(stored: AppSettings): AppSettings {
   let settings = { ...createDefaultSettings(), ...stored };
   const storedVersion = stored.schemaVersion ?? 0;
+  // 深度归一化嵌套对象：store 损坏/半写可能留下残缺对象（如 onboarding 缺 completedSteps），
+  // 浅合并会让 undefined 混进运行时（completedSteps.includes 直接 TypeError 白屏）。
+  settings = { ...settings, ...normalizeNested(settings) };
   if (storedVersion < 1) {
     // v0 → v1：初始基线（所有字段已含默认，无结构性变更）。
     settings = { ...settings, schemaVersion: 1 };
@@ -227,4 +245,27 @@ export function serializeQueue(queue: QueueState, now: number): PersistedQueue {
     context: queue.context,
     mode: queue.mode,
   };
+}
+
+/** 嵌套对象/数组字段兜底：类型或完整性不符时回退默认值。 */
+function normalizeNested(settings: AppSettings): Pick<AppSettings, 'onboarding' | 'perTrackLyricOffset' | 'shortcuts' | 'libraryFolders'> {
+  const defaults = createDefaultSettings();
+  const onboarding =
+    settings.onboarding &&
+    typeof settings.onboarding === 'object' &&
+    typeof settings.onboarding.started === 'boolean' &&
+    Array.isArray(settings.onboarding.completedSteps) &&
+    (settings.onboarding.completedAt === null || typeof settings.onboarding.completedAt === 'number')
+      ? settings.onboarding
+      : defaults.onboarding;
+  const perTrackLyricOffset =
+    settings.perTrackLyricOffset && typeof settings.perTrackLyricOffset === 'object' && !Array.isArray(settings.perTrackLyricOffset)
+      ? settings.perTrackLyricOffset
+      : defaults.perTrackLyricOffset;
+  const shortcuts =
+    settings.shortcuts && typeof settings.shortcuts === 'object' && !Array.isArray(settings.shortcuts)
+      ? settings.shortcuts
+      : defaults.shortcuts;
+  const libraryFolders = Array.isArray(settings.libraryFolders) ? settings.libraryFolders : defaults.libraryFolders;
+  return { onboarding, perTrackLyricOffset, shortcuts, libraryFolders };
 }

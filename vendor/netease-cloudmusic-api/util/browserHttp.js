@@ -54,6 +54,12 @@ async function browserHttp(options = {}) {
   if (!transport) throw new Error('browserHttp: transport not injected (HyperPlayer wiring)')
   const method = options.method || 'GET'
   const headers = { ...(options.headers || {}) }
+  // axios 语义：字符串 body 自动带 urlencoded Content-Type；fetch 传输不会补，
+  // 缺失时网易云解析不了表单，静默返回 200 + 空 body。
+  if (typeof options.data === 'string' && options.data.length > 0) {
+    const hasContentType = Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')
+    if (!hasContentType) headers['content-type'] = 'application/x-www-form-urlencoded;charset=UTF-8'
+  }
   const timeoutMs = typeof options.timeout === 'number' && options.timeout > 0 ? options.timeout : undefined
   const response = await transport.fetch(options.url, {
     method,
@@ -63,7 +69,8 @@ async function browserHttp(options = {}) {
   })
   const responseHeaders = normalizeHeaders(response.headers)
   const setCookie = responseHeaders['set-cookie']
-  const body = await readAllBytes(response.body)
+  // 204/304 等响应在 plugin-http 下 body 为 null，直接读流会 TypeError。
+  const body = response.body ? await readAllBytes(response.body) : new Uint8Array(0)
   let data
   if (options.responseType === 'arraybuffer') {
     data = body

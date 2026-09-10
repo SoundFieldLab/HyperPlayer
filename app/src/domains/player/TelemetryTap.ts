@@ -32,13 +32,12 @@ export interface AudioWorkletNodeLike {
   disconnect(): void;
 }
 
-type AudioWorkletNodeFactory = (name: string, options?: object) => AudioWorkletNodeLike;
-
-/** 真实上下文创建 tap 节点（AudioContext 类型的 createAudioWorkletNode 由运行时提供）。 */
+/** 真实上下文创建 tap 节点（标准 AudioWorkletNode 构造器）。 */
 function createTapNode(context: AudioContext): AudioWorkletNodeLike {
-  const factory = (context as AudioContext & { createAudioWorkletNode?: AudioWorkletNodeFactory }).createAudioWorkletNode;
-  if (!factory) throw new Error('telemetry-tap: AudioContext.createAudioWorkletNode is unavailable');
-  return factory(ANALYSIS_TAP_PROCESSOR_NAME);
+  if (typeof AudioWorkletNode === 'undefined') {
+    throw new Error('telemetry-tap: AudioWorkletNode is unavailable');
+  }
+  return new AudioWorkletNode(context, ANALYSIS_TAP_PROCESSOR_NAME) as unknown as AudioWorkletNodeLike;
 }
 
 export interface TelemetryTapDeps {

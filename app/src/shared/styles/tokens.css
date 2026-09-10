@@ -1,0 +1,80 @@
+
+:root {
+  color-scheme: light;
+  font-family: 'Segoe UI Variable', 'Segoe UI', 'Source Han Sans SC', 'Microsoft YaHei UI', system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --canvas: rgba(255, 255, 255, 0.78);
+  --parchment: #f5f5f7;
+  --pearl: #fafafc;
+  --ink: #1d1d1f;
+  --ink-secondary: #6e6e73;
+  --ink-muted: #86868b;
+  --hairline: #e0e0e0;
+  --divider-soft: rgba(0, 0, 0, 0.04);
+  --hyper-blue: #3f55f9;
+  --pulse-orange: #ff761c;
+  --success: #248a3d;
+  --warning: #b25000;
+  --error: #d70015;
+  --chrome: rgba(245, 245, 247, 0.72);
+  --chrome-border: rgba(255, 255, 255, 0.4);
+  --surface-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --chip-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --splash-window-tint: rgba(16, 17, 20, 0.42);
+  --splash-text-primary: #ffffff;
+  --splash-text-secondary: rgba(255, 255, 255, 0.72);
+  --splash-control: rgba(255, 255, 255, 0.1);
+  --splash-control-hover: rgba(255, 255, 255, 0.16);
+  --splash-control-strong: rgba(255, 255, 255, 0.2);
+  --splash-control-border: rgba(255, 255, 255, 0.24);
+  --splash-control-border-strong: rgba(255, 255, 255, 0.4);
+  --radius-control: 8px;
+  --radius-surface: 18px;
+  --radius-pill: 999px;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: rgba(28, 28, 30, 0.78);
+  --parchment: #2c2c2e;
+  --pearl: #3a3a3c;
+  --ink: #f5f5f7;
+  --ink-secondary: rgba(235, 235, 245, 0.6);
+  --ink-muted: rgba(235, 235, 245, 0.42);
+  --hairline: rgba(255, 255, 255, 0.12);
+  --divider-soft: rgba(255, 255, 255, 0.08);
+  --hyper-blue: #5b6cff;
+  --pulse-orange: #ff8a3d;
+  --success: #30d158;
+  --warning: #ff9f0a;
+  --error: #ff453a;
+  --chrome: rgba(28, 28, 30, 0.68);
+  --chrome-border: rgba(255, 255, 255, 0.16);
+  --surface-shadow: 0 8px 32px rgba(0, 0, 0, 0.36);
+  --chip-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; min-width: 320px; height: 100%; margin: 0; background: transparent; }
+body { overflow: hidden; color: var(--ink); }
+button, input, select { font: inherit; }
+button { color: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--hyper-blue); outline-offset: 2px; }
+
+.hp-display { font-size: 32px; line-height: 1.15; letter-spacing: -0.02em; font-weight: 600; }
+.hp-title { font-size: 24px; line-height: 1.2; letter-spacing: -0.015em; font-weight: 600; }
+.hp-heading { font-size: 17px; line-height: 1.3; font-weight: 600; }
+.hp-body { font-size: 14px; line-height: 1.47; font-weight: 400; }
+.hp-caption { font-size: 12px; line-height: 1.35; letter-spacing: 0.01em; font-weight: 400; color: var(--ink-secondary); }
+.hp-time { font-variant-numeric: tabular-nums; font-family: 'Cascadia Mono', ui-monospace, monospace; }
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root { --chrome: var(--parchment); --chrome-border: var(--hairline); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 200ms !important; animation-iteration-count: 1 !important; transition-duration: 200ms !important; }
+  .player-layer, .overlay-backdrop, .splash { transform: none !important; }
+}

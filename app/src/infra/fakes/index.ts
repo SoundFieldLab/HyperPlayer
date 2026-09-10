@@ -99,6 +99,10 @@ export function createFakeWindowControl(): WindowControl & {
     show: async () => { calls.push('show'); },
     hide: async () => { calls.push('hide'); },
     setFocus: async () => { calls.push('setFocus'); },
+    minimize: async () => { calls.push('minimize'); },
+    toggleMaximize: async () => { calls.push('toggleMaximize'); },
+    close: async () => { calls.push('close'); },
+    startDragging: async () => { calls.push('startDragging'); },
     destroy: async () => { calls.push('destroy'); },
     onCloseRequested: async (handler) => {
       closeHandler = handler;

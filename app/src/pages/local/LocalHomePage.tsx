@@ -1,0 +1,1 @@
+export { LocalHomePage } from './LocalPages';

@@ -3,7 +3,7 @@
  *
  * - 托盘菜单：显示主窗口 / 播放暂停 / 上一首 / 下一首 / 完全退出（UI-D77 清单）；
  * - 关闭拦截：closeBehavior=minimize → preventDefault + hide（最小化到托盘）；
- *   closeBehavior=quit → 放行关闭；ask 由 UI 先行落定后再写入设置。
+ *   closeBehavior=quit → 放行关闭；ask → preventDefault + 请求 UI 确认。
  */
 import type { Tray, TrayMenuItem, WindowControl } from '../infra/tray';
 import type { SettingsService } from './SettingsService';
@@ -23,10 +23,11 @@ export interface TrayServiceDeps {
   window: WindowControl;
   settings: SettingsService;
   commands: TrayCommands;
+  requestCloseConfirmation?: () => void;
   logger?: Logger;
 }
 
-const TRAY_ICON = 'icons/icon.png';
+const TRAY_ICON = '/logo.png';
 
 export class TrayService {
   private readonly deps: TrayServiceDeps;
@@ -86,7 +87,14 @@ export class TrayService {
       event.preventDefault();
       void this.deps.window.hide();
       this.logger.info('tray: 关闭行为为最小化到托盘，窗口已隐藏');
+      return;
     }
-    // closeBehavior=quit / ask（ask 已由 UI 落定）→ 放行正常关闭
+    if (this.deps.settings.snapshot.closeBehavior === 'ask') {
+      event.preventDefault();
+      if (this.deps.requestCloseConfirmation) this.deps.requestCloseConfirmation();
+      else window.dispatchEvent(new CustomEvent('hyperplayer:request-close-confirmation'));
+      this.logger.info('tray: 请求用户确认关闭行为');
+    }
+    // closeBehavior=quit → 放行正常关闭
   }
 }

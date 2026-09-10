@@ -167,6 +167,29 @@ export class SessionService {
     return this.cookie;
   }
 
+  /**
+   * 当前登录用户 uid。登录 Set-Cookie 不含 userId 字段，cookie 缺失时经
+   * user_account 补齐并持久化（云歌单同步等按 uid 查询的调用依赖它）。
+   */
+  async getUserId(): Promise<number | null> {
+    const existing = Number(this.cookie?.userId);
+    if (Number.isFinite(existing) && existing > 0) return existing;
+    try {
+      const answer = await this.api.user_account!({});
+      const profile = (answer.body as { profile?: { userId?: number | string } } | undefined)?.profile;
+      const uid = Number(profile?.userId);
+      if (Number.isFinite(uid) && uid > 0) {
+        this.cookie = { ...(this.cookie ?? {}), userId: String(uid) };
+        await this.vault.setSecret('netease', 'cookie', JSON.stringify(this.cookie));
+        return uid;
+      }
+      this.logger.warn('session: user_account 响应未含 profile.userId', answer.body?.code);
+    } catch (error) {
+      this.logger.warn('session: user_account 获取 uid 失败', error);
+    }
+    return null;
+  }
+
   private async refreshQr(): Promise<void> {
     try {
       await this.startQrLogin();
