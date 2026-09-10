@@ -7,7 +7,21 @@ const { execFile, spawn } = require('node:child_process')
 
 const APP_ROOT = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'Razer Chroma SDK', 'Apps')
 const SDK_REGISTRY = 'HKLM\\SOFTWARE\\WOW6432Node\\Razer Chroma SDK\\Apps'
-const STALE_APPS = Object.freeze(['HyperPlayer', 'HyperPlayerProbe', 'HyperPlayerMousepadProbe'])
+/**
+ * 需要从 Razer Chroma 应用列表/注册表中清理的**历史残留**名称。
+ *
+ * 本应用当前注册名为 `HyperPlayer`（见 chroma-ipc.cjs 的 REGISTRATION）——**不要把它列进来**，
+ * 否则「清理陈旧项」会把自身注册判定为陈旧并删除。
+ *
+ * 这里列的是改名前的 WaveForge 时期遗留：正式注册名、含中文显示名的变体，以及开发期探针残留。
+ * 从旧版本升级的用户，其 Chroma 应用列表里可能仍留有这些条目。
+ */
+const STALE_APPS = Object.freeze([
+  'WaveForge',
+  'WaveForge澜音工坊',
+  'WaveForgeProbe',
+  'WaveForgeMousepadProbe',
+])
 const APP_MANAGER_LOG = path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Razer Chroma SDK', 'logs', 'RzSDKServer.exe.log')
 const REPAIR_PROTOCOL_VERSION = 1
 const DEFAULT_REPAIR_TIMEOUT_MS = 120000

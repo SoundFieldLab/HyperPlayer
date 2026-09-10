@@ -30,15 +30,18 @@ async function main() {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'hyperplayer-chroma-repair-'))
   try {
     await Promise.all(STALE_APPS.map(name => fs.promises.mkdir(path.join(root, name))))
+    // 注册表里同时存在：当前应用自身（HyperPlayer，不得被判为陈旧）、
+    // 改名前的残留（WaveForge，应被清理）、以及第三方应用（不该被碰）。
     const records = [
       { Name: 'HyperPlayer', Title: 'HyperPlayer', Path: 'C:\\ProgramData\\Razer Chroma SDK\\Apps\\HyperPlayer\\HyperPlayer.exe', Enable: 1 },
-      { Name: 'HyperPlayerProbe', Title: 'HyperPlayer Probe', Path: 'C:\\ProgramData\\Razer Chroma SDK\\Apps\\HyperPlayerProbe\\HyperPlayerProbe.exe', Enable: 1 },
+      { Name: 'WaveForge', Title: 'WaveForge', Path: 'C:\\ProgramData\\Razer Chroma SDK\\Apps\\WaveForge\\WaveForge.exe', Enable: 1 },
       { Name: 'DeltaForceClient-Win64-Shipping', Title: '三角洲行动', Path: 'E:\\Delta Force\\game.exe', Enable: 1 },
     ]
     const execFileImpl = (_exe, _args, _options, callback) => callback(null, JSON.stringify(records), '')
     const health = await inspectChromaAppList({ appRoot: root, execFileImpl, readRecentUtf8ErrorImpl: () => null })
     assert.equal(health.cleanAppRegistered, true)
-    assert.deepEqual(health.staleRegistry, ['HyperPlayerProbe'])
+    // 自身注册名不在清理名单内：只清理改名前的残留
+    assert.deepEqual(health.staleRegistry, ['WaveForge'])
     assert.deepEqual(health.staleFolders.sort(), [...STALE_APPS].sort())
     assert.equal(health.nonAsciiApps.length, 1)
     assert.equal(health.nonAsciiApps[0].Title, '三角洲行动')
@@ -85,7 +88,7 @@ async function main() {
             version: REPAIR_PROTOCOL_VERSION,
             ok: true,
             repairedAt: new Date().toISOString(),
-            removed: ['HyperPlayerProbe'],
+            removed: ['WaveForge'],
             error: null,
           }))
           child.stdout.write('WF_CHROMA_EXIT:0\n')
@@ -94,7 +97,7 @@ async function main() {
       },
     })
     assert.equal(success.outcome, 'succeeded')
-    assert.deepEqual(success.report.removed, ['HyperPlayerProbe'])
+    assert.deepEqual(success.report.removed, ['WaveForge'])
     assert.equal(fs.readFileSync(path.join(successRoot, 'chroma-repair', 'repair-chroma-app-list.ps1')).subarray(0, 3).toString('hex'), 'efbbbf')
     assert.ok(outerArgs.includes('-EncodedCommand'))
     assert.equal(outerArgs.some(value => value.includes('User Data') || value.includes('涟漪')), false)
