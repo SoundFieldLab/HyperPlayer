@@ -458,7 +458,8 @@ describe('Chroma frames', () => {
     expect(frameLight(slowRelease)).toBeGreaterThan(frameLight(fastRelease))
   })
 
-  it('keeps decay timing approximately frame-rate independent', () => {
+  // 逐帧跑完整衰减序列，单跑约 2.3s；全量并发争抢 CPU 时会突破默认 5s。
+  it('keeps decay timing approximately frame-rate independent', { timeout: 30000 }, () => {
     const config = settings({
       smoothing: 0.45,
       decay: 5,

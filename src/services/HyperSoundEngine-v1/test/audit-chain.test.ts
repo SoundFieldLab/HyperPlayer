@@ -260,7 +260,8 @@ describe('⑤ 尾块/自激检查（输入停止后有界、衰减、非自激�
     expect(tails[tails.length - 1]).toBeLessThan(1e-3)
   })
 
-  it('卷积混响（引擎级）：128 样本块长流无 NaN（修复 H-1）', () => {
+  // 128 样本块长流卷积混响，单跑约 1.1s；并发下会突破默认 5s。
+  it('卷积混响（引擎级）：128 样本块长流无 NaN（修复 H-1）', { timeout: 30000 }, () => {
     const p = createDefaultParams(FS)
     p.reverb.enabled = true
     p.reverb.mode = 'convolution'
@@ -288,8 +289,8 @@ describe('⑤ 尾块/自激检查（输入停止后有界、衰减、非自激�
 })
 
 describe('⑥ 场景与组合链路', () => {
-  it('全部 11 个场景：128 样本块长跑 2s 无 NaN、输出有界（≤3）', () => {
-    // HyperPlayer 侧 vitest 4 对同步长测试也强制默认 5s 超时（本机实测 ~8s），显式放宽
+  // 11 个场景各跑 2s 音频（128 样本块），单跑约 15s，必须显式放宽超时。
+  it('全部 11 个场景：128 样本块长跑 2s 无 NaN、输出有界（≤3）', { timeout: 60000 }, () => {
     const B = 128
     const l = sine(B, 330, 0.5, FS)
     const r = zeros(B)

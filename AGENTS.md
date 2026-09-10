@@ -39,7 +39,6 @@ npm run start            # electron .（直接起已构建产物）
 Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./DEBUG_PAGES.md). It registers developer-only visual tools, their launch command, local URL, data/network constraints, and production-build status.
 
 - **Weather Lab**: run the existing `npm run dev`, then open `http://127.0.0.1:3000/weather-debug.html`. Use it to compare all Apple weather scenes and desktop `full`/`simple` cards with local mock data. Do not add `weather-debug.html` to production Vite inputs（`vite.config.ts` 的 `rollupOptions.input` 已显式白名单为三个入口）。
-- 注意：`DEBUG_PAGES.md` 里"端口 3002 保留给 Python 节拍服务"的说明已过时——该端口不再被任何服务占用。
 
 **打包规则（electron-builder）**：`build.files` 白名单 = `desktop/**/*`、`dist/**/*`、`server/**/*`、`shared/**/*`、`python-apple-bridge/**/*`、`local-server.mjs`、`package.json`、`logo.png`、`build/**/*`（清单里还列了 `THIRD_PARTY_NOTICES.md`，但该文件当前不存在于仓库根，属悬空条目）。`build.asarUnpack` 解包 `python-apple-bridge/**/*.py`（Python 脚本不能从 asar 内执行）。已无 Python 节拍服务与离线 wheels，无需任何排除规则。
 

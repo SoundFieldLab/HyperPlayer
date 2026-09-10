@@ -41,7 +41,7 @@ card=simple: increase hourly forecast readability
 
 - Do not import `DesktopWidgetZone` or `WeatherWidget` into this page. They perform real weather and hazard refreshes.
 - Keep all data in `scenarios.ts`; do not call Open-Meteo, Nominatim, location services, or hazard APIs from the page.
-- Do not use port `3002`; it is reserved for the Python beat-analysis service. Use the existing Vite `3000` server and open `/weather-debug.html`.
+- Reuse the existing Vite `3000` server and open `/weather-debug.html`; do not start a second dev server.
 - Keep this page outside production build inputs. It is a visual validation tool, not a customer-facing route.
 - When adding another independent debug page, add a separate section in this registry with its URL, command, scope, source files, production status, and API/network constraints.
 
