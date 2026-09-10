@@ -308,7 +308,7 @@ describe('⑥ 场景与组合链路', () => {
       }
       expect(peak, sc.id).toBeLessThan(3)
     }
-  }, 30_000)
+  })
 
   it('场景 A→B→A 热切换无 NaN、无爆音（边界跳变 << 稳态）', () => {
     const e = new EngineV3(FS, 2)

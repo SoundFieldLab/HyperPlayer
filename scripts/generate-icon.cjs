@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const logoPath = path.join(__dirname, '..', 'logo超分.png');
+const logoPath = path.join(__dirname, '..', 'logo.png');
 const buildDir = path.join(__dirname, '..', 'build');
 const iconPath = path.join(buildDir, 'icon.ico');
 
@@ -11,7 +11,7 @@ if (!fs.existsSync(buildDir)) {
   fs.mkdirSync(buildDir, { recursive: true });
 }
 
-console.log('Generating icon.ico from logo超分.png...');
+console.log('Generating icon.ico from logo.png...');
 
 try {
   // 使用 sharp 生成多尺寸 PNG

@@ -93,7 +93,7 @@ function rail(theme, phase, phaseNames = PHASES) {
   return `<rect width="${W}" height="${H}" fill="${THEMES[theme].bg}"/><rect width="${RAIL}" height="${H}" fill="${THEMES[theme].rail}"/>
     <image href="data:image/png;base64,${logoB64}" x="72" y="28" width="88" height="88"/>
     <text x="116" y="145" font-family="${FONT}" font-size="19" font-weight="700" fill="#fff" text-anchor="middle">HyperPlayer</text>
-    <text x="116" y="168" font-family="${FONT}" font-size="12" fill="#9FC3FF" text-anchor="middle">HyperPlayer</text>
+    <text x="116" y="168" font-family="${FONT}" font-size="12" fill="#9FC3FF" text-anchor="middle">Hyper Player</text>
     <rect x="46" y="188" width="140" height="2" rx="1" fill="#4B91F7"/>${steps}
     <text x="116" y="488" font-family="${FONT}" font-size="11" fill="#607086" text-anchor="middle">NATIVE SETUP</text>`
 }
