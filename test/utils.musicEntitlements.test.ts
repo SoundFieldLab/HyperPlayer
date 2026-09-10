@@ -3,7 +3,6 @@ import {
   createPlatformEntitlements,
   detectQQMusicVip,
   entitlementSatisfies,
-  entitlementTierFromSodaMembership,
   entitlementTierFromSpotifyProduct,
   getSongRequiredTier,
   shouldShowEntitlementBadge,
@@ -62,17 +61,13 @@ describe('cross-platform entitlement tiers', () => {
     expect(entitlementSatisfies('svip', 'vip')).toBe(true)
     expect(entitlementSatisfies('vip', 'svip')).toBe(false)
     expect(entitlementSatisfies('unknown', 'vip')).toBe(false)
-    expect(createPlatformEntitlements({ qq: 'vip' })).toMatchObject({ qq: 'vip', kugou: 'unknown' })
+    expect(createPlatformEntitlements({ qq: 'vip' })).toMatchObject({ qq: 'vip', netease: 'unknown' })
   })
 
-  it('maps Spotify product and Soda membership evidence', () => {
+  it('maps Spotify product evidence', () => {
     expect(entitlementTierFromSpotifyProduct('premium')).toBe('vip')
     expect(entitlementTierFromSpotifyProduct('free')).toBe('free')
     expect(entitlementTierFromSpotifyProduct(undefined)).toBe('unknown')
-    expect(entitlementTierFromSodaMembership({ isSvip: true })).toBe('svip')
-    expect(entitlementTierFromSodaMembership({ isVip: true })).toBe('vip')
-    expect(entitlementTierFromSodaMembership({ membershipKnown: true })).toBe('free')
-    expect(entitlementTierFromSodaMembership({})).toBe('unknown')
   })
 
   it('honors explicit requiredTier and treats legacy song.vip as vip', () => {

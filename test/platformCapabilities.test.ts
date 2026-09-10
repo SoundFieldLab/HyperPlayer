@@ -9,8 +9,6 @@ describe('platform capability contracts', () => {
     expect(getPlatformCapabilities('qq')).toMatchObject({ searchPlaylists: true, updatePlaylist: false, deletePlaylist: true, sharePlaylist: true, removeTracksFromPlaylist: true })
     expect(getPlatformCapabilities('apple')).toMatchObject({ searchPlaylists: true, updatePlaylist: true, deletePlaylist: true, subscribePlaylist: false, removeTracksFromPlaylist: true })
     expect(getPlatformCapabilities('spotify')).toMatchObject({ searchPlaylists: true, updatePlaylist: true, deletePlaylist: false, sharePlaylist: true, removeTracksFromPlaylist: true })
-    expect(getPlatformCapabilities('kugou')).toMatchObject({ searchPlaylists: false, createPlaylist: false, removeTracksFromPlaylist: false })
-    expect(getPlatformCapabilities('soda')).toMatchObject({ searchPlaylists: false, createPlaylist: false, removeTracksFromPlaylist: false, recentPlayed: true })
   })
 
   it('preserves Spotify artist and album identifiers in Song mappings', () => {

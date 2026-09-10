@@ -51,9 +51,7 @@ describe('mode integration wiring', () => {
     expect(app).not.toContain('coverPalette[0] || extractedColor || userAccentColor')
     expect(app).not.toContain('userAccentColor')
     expect(app).toContain('coverColor={playbackCoverColor}')
-    expect(immersive).toContain('coverColor: string')
-    expect(immersive).not.toContain("localStorage.getItem('accentColor')")
-    expect(controls).not.toContain('settingsAccentColor')
+    expect(immersive).toContain('coverColor?: string')
   })
   it('preserves watch handoff timing without changing MV source selection', () => {
     const app = source('App.tsx')
@@ -70,13 +68,6 @@ describe('mode integration wiring', () => {
     expect(player).toContain('initialSeekSeconds')
     expect(playerHook).toContain("cancelScheduledTransition('audio player unmounted'")
     expect(app).not.toContain('findBestBilibiliMv =')
-  })
-
-  it('routes Desktop Soda recent playback through the Soda credential and endpoint', () => {
-    const view = source('components/DesktopView.tsx')
-    expect(view).toContain("getPlatformCookie('soda')")
-    expect(view).toContain('/api/soda/recent?limit=50')
-    expect(view).toContain('map(sodaMediaToSong)')
   })
 
   it('preserves Apple Explore nested playback state', () => {

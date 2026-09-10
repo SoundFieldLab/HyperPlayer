@@ -12,21 +12,16 @@ const spotifyTrackToSong = vi.fn((track: any) => ({
   duration: 0,
   platform: 'spotify',
 }))
-const fetchSodaAlbumTracks = vi.fn()
-const fetchSodaArtistSongs = vi.fn()
 
+// 减配后 kugou / soda 平台及其服务已移除，本文件只保留 Spotify 跨平台路由用例。
 vi.mock('../src/services/spotifyService', () => ({
   searchSpotifyPlaylists,
   fetchSpotifyAlbum,
   fetchSpotifyArtistTopTracks,
   spotifyTrackToSong,
 }))
-vi.mock('../src/services/sodaService', () => ({
-  fetchSodaAlbumTracks,
-  fetchSodaArtistSongs,
-}))
 
-const { getAlbumDetail, getAlbumSongs, getArtistAllSongs, searchPlaylists } = await import('../src/services/musicApi')
+const { getAlbumSongs, searchPlaylists } = await import('../src/services/musicApi')
 
 describe('cross-platform service routing', () => {
   beforeEach(() => {
@@ -42,24 +37,11 @@ describe('cross-platform service routing', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it.each(['kugou', 'soda'] as const)('marks %s playlist search unsupported', async platform => {
-    await expect(searchPlaylists('mix', platform)).resolves.toEqual({ playlists: [], unsupported: true })
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
   it('routes Spotify album tracks through Spotify services', async () => {
     fetchSpotifyAlbum.mockResolvedValue({ songs: [{ id: 'track', name: 'Song', artists: [{ name: 'Artist', id: 'artist' }], album: { id: 'album', name: 'Album' } }] })
     const songs = await getAlbumSongs('album', 'spotify')
     expect(fetchSpotifyAlbum).toHaveBeenCalledWith('album')
     expect(songs[0]).toMatchObject({ mid: 'track', platform: 'spotify' })
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  it('routes Soda album and artist details through Soda services', async () => {
-    fetchSodaAlbumTracks.mockResolvedValue({ album: { id: '42', name: 'Album', coverUrl: 'cover' }, tracks: [{ name: 'Song', artists: [{ name: 'Artist' }], album: { name: 'Album', picUrl: 'cover' } }] })
-    fetchSodaArtistSongs.mockResolvedValue([{ name: 'Song', artists: [{ name: 'Artist' }], album: { name: 'Album', picUrl: 'cover' } }])
-    await expect(getAlbumDetail('42', 'soda')).resolves.toMatchObject({ mid: '42', name: 'Album', platform: 'soda' })
-    await expect(getArtistAllSongs('Artist', 'soda', 0, 20)).resolves.toMatchObject({ total: 1 })
     expect(fetch).not.toHaveBeenCalled()
   })
 })

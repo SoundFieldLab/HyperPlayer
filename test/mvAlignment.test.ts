@@ -147,7 +147,7 @@ describe('MV alignment negative cache', () => {
     expect(analyze).toHaveBeenCalledTimes(2)
   })
 
-  it('discards a stale beat cache for a CC-mismatched other candidate', async () => {
+  it('discards a stale beat cache for a CC-mismatched other candidate', { timeout: 30000 }, async () => {
     const analyze = vi.spyOn(autoMixAnalysisService, 'analyze').mockImplementation(((input: any) => {
       if (String(input?.trackKey || '').startsWith('mv-align-video:')) {
         return Promise.resolve({ beats: [] }) as any

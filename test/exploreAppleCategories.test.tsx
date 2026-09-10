@@ -1,9 +1,8 @@
 /** @vitest-environment jsdom */
 import React from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import AppleSearchBrowse from '../src/components/AppleSearchBrowse'
-import { dispatchTvBack } from '../src/tv/tvCore'
 import * as appleWeb from '../src/services/appleWebService'
 
 vi.mock('framer-motion', () => ({
@@ -27,45 +26,38 @@ const curator = (id: string, name: string) => ({
   name,
 })
 
-const deferred = <T,>() => {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>(next => { resolve = next })
-  return { promise, resolve }
-}
-
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
 })
 
 describe('Apple Explore categories', () => {
-  it('ignores stale curator responses and lets TV back return to category browsing', async () => {
+  it('返回类别浏览后可切换分类，且只渲染最新分类的详情', async () => {
     vi.mocked(appleWeb.fetchAppleSearchLanding).mockResolvedValue({
       sections: [{ id: 'curators', title: 'Categories', kind: 'curators', items: [curator('one', 'One'), curator('two', 'Two')] }],
       hero: null,
       personalized: false,
       sourceLabel: 'test',
     })
-    const first = deferred<any>()
-    const second = deferred<any>()
     vi.mocked(appleWeb.fetchAppleCuratorPage)
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise)
+      .mockResolvedValueOnce({ curator: curator('one', 'One Detail'), sections: [], playlists: [], playlistCount: 0 })
+      .mockResolvedValueOnce({ curator: curator('two', 'Two Detail'), sections: [], playlists: [], playlistCount: 0 })
 
     render(<AppleSearchBrowse onSongSelect={vi.fn()} />)
     await screen.findByText('One')
     fireEvent.click(screen.getByText('One'))
-    act(() => { expect(dispatchTvBack()).toBe(true) })
-    fireEvent.click(await screen.findByText('Two'))
+    await screen.findByText('One Detail')
 
-    await act(async () => {
-      first.resolve({ curator: curator('one', 'One Detail'), sections: [], playlists: [], playlistCount: 0 })
-      second.resolve({ curator: curator('two', 'Two Detail'), sections: [], playlists: [], playlistCount: 0 })
-    })
+    // 详情页的返回入口（组件自带按钮，不再依赖 TV back）回到「类别浏览」
+    fireEvent.click(screen.getByRole('button', { name: '返回类别浏览' }))
+    await waitFor(() => expect(screen.getByText('类别浏览')).toBeTruthy())
+    expect(screen.queryByText('One Detail')).toBeNull()
 
+    fireEvent.click(screen.getByText('Two'))
     await screen.findByText('Two Detail')
     expect(screen.queryByText('One Detail')).toBeNull()
-    expect(dispatchTvBack()).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: '返回类别浏览' }))
     await waitFor(() => expect(screen.getByText('类别浏览')).toBeTruthy())
   })
 

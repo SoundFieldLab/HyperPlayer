@@ -54,9 +54,47 @@ import TraditionalSearch from '../src/components/TraditionalSearch'
 import TraditionalComments from '../src/components/TraditionalComments'
 import TraditionalAlbumDetail from '../src/components/TraditionalAlbumDetail'
 import TraditionalPlaylistDetail from '../src/components/TraditionalPlaylistDetail'
-import { dispatchTvBack } from '../src/tv/tvCore'
-import { contrastRatio } from '../src/services/foliaReadableColor'
 import { isPlaylistOwner } from '../src/services/playlistOwnership'
+
+/**
+ * 内联 WCAG 对比度计算：原 `src/services/foliaReadableColor` 已随减配删除，
+ * 该测试只需验证「浅色封面下主播放按钮图标色仍保持 ≥4.5:1 可读对比」这一契约，
+ * 因此在此内联等价实现，避免测试依赖已删除模块。
+ */
+function parseCssColor(input: string): { r: number; g: number; b: number } | null {
+  const hexMatch = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(input.trim())
+  if (hexMatch) {
+    let hex = hexMatch[1]
+    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('')
+    return {
+      r: parseInt(hex.slice(0, 2), 16),
+      g: parseInt(hex.slice(2, 4), 16),
+      b: parseInt(hex.slice(4, 6), 16),
+    }
+  }
+  const rgbMatch = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(input.trim())
+  if (!rgbMatch) return null
+  const [r, g, b] = [Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3])]
+  if ([r, g, b].some(v => v < 0 || v > 255)) return null
+  return { r, g, b }
+}
+
+function relativeLuminance({ r, g, b }: { r: number; g: number; b: number }): number {
+  const linear = (c: number) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+}
+
+function contrastRatio(foreground: string, background: string): number | null {
+  const fg = parseCssColor(foreground)
+  const bg = parseCssColor(background)
+  if (!fg || !bg) return null
+  const lighter = Math.max(relativeLuminance(fg), relativeLuminance(bg))
+  const darker = Math.min(relativeLuminance(fg), relativeLuminance(bg))
+  return (lighter + 0.05) / (darker + 0.05)
+}
 
 const analyzerSnapshot = {
   bass: 0, mid: 0, high: 0, overall: 0, beat: 0, accent: 0, flux: 0,
@@ -129,10 +167,6 @@ const baseProps = {
   appleUsername: '',
   spotifyLoggedIn: false,
   spotifyUsername: '',
-  kugouLoggedIn: false,
-  kugouUsername: '',
-  sodaLoggedIn: false,
-  sodaUsername: '',
   authRevision: 0,
   onLoginClick: vi.fn(),
   onProfileClick: vi.fn(),
@@ -267,11 +301,6 @@ describe('传统模式 TraditionalView', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('汽水搜索隐藏当前不支持的歌单标签', () => {
-    render(<TraditionalSearch platform="soda" accent="#38bdf8" isDark currentSong={null} onBack={() => undefined} onSongSelect={vi.fn()} onOpenPlaylist={vi.fn()} />)
-    expect(screen.queryByRole('button', { name: '歌单' })).toBeNull()
-  })
-
   it('搜索结果行支持 Space 键播放', async () => {
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
@@ -302,11 +331,15 @@ describe('传统模式 TraditionalView', () => {
     expect(String(fetchMock.mock.calls[1][0])).toContain('pagenum=2')
   })
 
-  it('恢复 traditional-search 来源并由 TV back 返回首页', async () => {
+  it('恢复 traditional-search 来源并可经后退返回首页', async () => {
     render(<TraditionalView {...baseProps} restorePlaybackOrigin={{ revision: 1, mode: 'traditional', surface: 'traditional-search', platform: 'netease' }} />)
     await waitFor(() => expect(screen.getByPlaceholderText(/搜索 网易云/)).toBeTruthy())
-    expect(dispatchTvBack()).toBe(true)
+    // 页面历史：恢复搜索页后「后退」可用，点击后回到首页（不再依赖已移除的 TV back）
+    const back = screen.getByLabelText('后退') as HTMLButtonElement
+    expect(back.disabled).toBe(false)
+    fireEvent.click(back)
     await waitFor(() => expect(screen.queryByPlaceholderText(/搜索 网易云/)).toBeNull())
+    expect(screen.getByText('排行榜')).toBeTruthy()
   })
 
   it('旧偏好中的关闭推荐不再隐藏排行榜和推荐歌单', async () => {
@@ -475,8 +508,8 @@ describe('传统模式 TraditionalView', () => {
   })
 
   it('所有者歌单不应被判定为可收藏', () => {
-    expect(isPlaylistOwner({ id: 's1', platform: 'soda', userId: 'u1' }, { sodaUserId: 'u1' })).toBe(true)
-    expect(isPlaylistOwner({ id: 's1', platform: 'soda', userId: 'u1', isCollected: true }, { sodaUserId: 'u1' })).toBe(false)
+    expect(isPlaylistOwner({ id: 's1', platform: 'netease', userId: 'u1' }, { neteaseUserId: 'u1' })).toBe(true)
+    expect(isPlaylistOwner({ id: 's1', platform: 'netease', userId: 'u1', isCollected: true }, { neteaseUserId: 'u1' })).toBe(false)
   })
 
   it('进度条时间使用同一行并保持可访问滑块', () => {

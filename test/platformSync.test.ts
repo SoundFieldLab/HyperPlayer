@@ -28,7 +28,7 @@ describe('platformSync', () => {
   })
 
   it('restores every supported platform across views and respects visibility', () => {
-    const all = ['netease', 'qq', 'apple', 'spotify', 'kugou', 'soda'] as const
+    const all = ['netease', 'qq', 'apple', 'spotify'] as const
     for (const platform of all) {
       localStorage.clear()
       syncPlatformAcrossViews(platform)
