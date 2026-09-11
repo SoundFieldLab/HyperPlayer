@@ -126,4 +126,4 @@ HyperPlayer 共 **4 个界面模式**（简约 minimal / 传统 traditional / �
 - `docs/plugin-development.md` — 插件开发文档（插件宿主与导入规范仍适用；文内 DG_LAB 示例对应的内置插件已移除）。
 - `docs/歌词对比-LyricsBlossom.md` — Apple Music 歌词逆向对比分析（Apple 逐字模式参考）。
 - `src/services/HyperSoundEngine-v1/docs/` — HSE 融合/UI/算法文档（`FUSION_GUIDE.md` / `UI_GUIDE.md` / `音频算法技术文档.md` / `音频算法设计文档.md` / `FEATURES_VERIFICATION.md`）；`架构书.md` 位于模块根目录。
-- `docs/功能清单2.0.md` — 减配后的功能清单（按代码实测重写，含证据与红线；与源码冲突时以源码为准）。
+- `docs/功能清单3.0.md` — 功能清单（12 个功能域 A–L，按代码实测，含统计、红线文件、已知限制、文档索引；与源码冲突时以源码为准）。

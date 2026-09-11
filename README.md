@@ -156,7 +156,7 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 ## 文档
 
 - [AGENTS.md](./AGENTS.md) — 给 AI 代理的项目指令（必读）
-- [docs/功能清单2.0.md](./docs/功能清单2.0.md) — 减配后功能清单（按代码实测，含证据与红线）
+- [docs/功能清单3.0.md](./docs/功能清单3.0.md) — 功能清单（12 个域 A–L，按代码实测，含统计与红线）
 - [HANDOVER.md](./HANDOVER.md) — 交接文档（环境 / 端口 / 已知问题 / 历史决策）
 - [CONTEXT.md](./CONTEXT.md) — 音效域词汇表（术语定义，已按 HSE 单引擎现状更新）
 - [docs/adr/](./docs/adr/) — 架构决策记录
