@@ -16,7 +16,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Download, RefreshCw, CheckCircle2, AlertTriangle, Rocket } from 'lucide-react'
-import { fetchUpdateManifest, compareVersions } from '../services/updateConstants'
+import { fetchUpdateManifest, compareVersions, readUpdateChannel, UPDATE_CHANNEL_LABEL, type UpdateChannel } from '../services/updateConstants'
 import { getVersionDisplay } from '../services/versionInfo'
 import { parseStoredBoolean } from '../utils/storage'
 import packageInfo from '../../package.json'
@@ -24,6 +24,8 @@ import packageInfo from '../../package.json'
 interface UpdateInfo {
   version: string
   notes: string
+  /** 来源渠道（正式版 / 每日构建），供弹窗标注 */
+  channel?: UpdateChannel
   hotUrls?: string[]
   hotSha?: string
   installUrls?: string[]
@@ -115,24 +117,37 @@ export default function UpdateManager() {
   }, [])
 
   // 启动：自动检测新版本（每次启动延时 6s 检测，可关闭、失败静默；已跳过的版本不再提示）
+  // 渠道变更时也会重新检测（切到 nightly 可立即发现当天构建）
+  const [updateChannel, setUpdateChannel] = useState<UpdateChannel>(() => readUpdateChannel())
+  useEffect(() => {
+    const sync = () => setUpdateChannel(readUpdateChannel())
+    window.addEventListener('hyperplayer:update-channel-changed', sync)
+    window.addEventListener('hyperplayer:global-setting-changed', sync)
+    return () => {
+      window.removeEventListener('hyperplayer:update-channel-changed', sync)
+      window.removeEventListener('hyperplayer:global-setting-changed', sync)
+    }
+  }, [])
+
   useEffect(() => {
     if (!autoCheck) return
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const manifest = await fetchUpdateManifest()
+          const manifest = await fetchUpdateManifest(updateChannel)
           if (!manifest?.version) return
           // 「跳过此版本」后该版本不再自动提示（手动检查仍可用）
           if (manifest.version === localStorage.getItem('skippedUpdateVersion')) return
           if (compareVersions(manifest.version, packageInfo.version) > 0) {
-            toast(`检测到新版本 ${getVersionDisplay(manifest.version)}，可前往「关于」查看更新`, 'info', 8000)
+            const suffix = updateChannel === 'nightly' ? `（${UPDATE_CHANNEL_LABEL.nightly}）` : ''
+            toast(`检测到新版本 ${getVersionDisplay(manifest.version)}${suffix}，可前往「关于」查看更新`, 'info', 8000)
           }
         } catch { /* 静默失败，下次启动再试 */ }
       })()
     }, 6000)
     return () => window.clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoCheck])
+  }, [autoCheck, updateChannel])
 
   const startDownload = async () => {
     if (!info?.hotUrls?.length) return
@@ -253,7 +268,7 @@ export default function UpdateManager() {
                 <div className="flex-1 min-w-0">
                   <h3 className="text-base font-semibold text-white">{viewTitle(view)}</h3>
                   <p className="text-white/55 text-xs mt-0.5">
-                    {view === 'changelog' ? `已更新至 ${getVersionDisplay(info?.version || '')}` : view === 'applied' ? '热更新已完成文件替换' : `HyperPlayer ${packageInfo.version} → ${getVersionDisplay(info?.version || '')}`}
+                    {view === 'changelog' ? `已更新至 ${getVersionDisplay(info?.version || '')}` : view === 'applied' ? '热更新已完成文件替换' : `HyperPlayer ${packageInfo.version} → ${getVersionDisplay(info?.version || '')}${info?.channel ? ` · ${UPDATE_CHANNEL_LABEL[info.channel]}` : ''}`}
                   </p>
                 </div>
                 {canCloseBackdrop && (

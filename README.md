@@ -96,6 +96,17 @@ gh release create v<version> release/HyperPlayer-<version>-Setup.exe --title "v<
 
 Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `castlabs-evs`。签名发生在构建机，正式构建要求 production streaming VMP 至少剩余 30 天，并将无敏感信息的有效期元数据写入安装包；低于门槛或签名无效会直接阻断发布。最终用户安装后**不需要 EVS、签名工具或任何手动签名步骤**；Apple Music 用户只需在应用内登录具有有效订阅的账号。CI：`.github/workflows/ci.yml`（类型/单测/构建 + tag 出包）、`nightly.yml`（每日 nightly 预发布）。
 
+### 更新渠道
+
+应用支持两条更新渠道，在「设置 → 关于」的「更新渠道」处切换（默认**正式版**）：
+
+| 渠道 | 更新清单 | 内容 | 发布形式 |
+|---|---|---|---|
+| 正式版（stable） | `main/update.json` | 打 `v*` tag 的正式发布 | GitHub Pre-release；纯语义版本号时额外写 update.json 推向全体用户 |
+| 每日构建（Nightly） | `main/update-nightly.json` | 每天 21:00 自动构建 | 每个 `nightly-<日期>` 各自独立 Pre-release |
+
+两个清单都是**版本无关的固定地址**，各自指向对应 release 的产物，因此切换渠道不必关心 tag 命名细节。Nightly 版本号取「正式版 patch + 1」再挂构建日期（如 `1.0.1-nightly.20260911`）：按 semver 高于当前正式版、低于下一个正式版，保证正式版用户切到 Nightly 后能立即检测到当日构建。点「检查新版本」的结果会标注当前所用渠道。
+
 ## 端口一览
 
 | 端口 | 服务 | 说明 |

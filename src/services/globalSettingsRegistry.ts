@@ -24,6 +24,7 @@ import {
   type PlaybackShortcutSettings,
 } from './playbackShortcutSettings'
 import { getVersionDisplay } from './versionInfo'
+import { UPDATE_CHANNEL_KEY as UPDATE_CHANNEL_STORAGE_KEY } from './updateConstants'
 import packageInfo from '../../package.json'
 import type { DesktopLyricsColorMode, DesktopLyricsSettings, TaskbarWidgetSettings } from '../electron'
 
@@ -266,7 +267,7 @@ const updateTaskbarWidget = (partial: Partial<TaskbarWidgetSettings>) => {
     .catch(() => notifyGlobalSettingChanged())
 }
 
-// 检查更新：多源清单 → 比版本 → 有更新交给全局 UpdateManager 弹详情
+// 检查更新：按当前渠道拉清单 → 比版本 → 有更新交给全局 UpdateManager 弹详情
 const checkForUpdate = () => {
   void (async () => {
     try {
@@ -276,24 +277,13 @@ const checkForUpdate = () => {
         toast('已开始检查，如有新版本将弹出提示', 'info')
         return
       }
-      const { UPDATE_MANIFEST_URLS, withDownloadProxies } = await import('./updateConstants')
-      let manifest: { version?: string; notes?: string; artifacts?: Record<string, { urls?: string[]; sha256?: string }> } | null = null
-      for (const url of UPDATE_MANIFEST_URLS) {
-        try {
-          const res = await fetch(url, { cache: 'no-store' })
-          if (res.ok) { manifest = await res.json(); break }
-        } catch { /* 换下一个源 */ }
-      }
+      const { fetchUpdateManifest, compareVersions, withDownloadProxies, readUpdateChannel, UPDATE_CHANNEL_LABEL } = await import('./updateConstants')
+      const channel = readUpdateChannel()
+      const manifest = await fetchUpdateManifest(channel)
       const remoteVersion = String(manifest?.version || '')
       if (!remoteVersion) { toast('更新清单不可用，请检查网络', 'error'); return }
-      const parse = (value: string) => value.replace(/^v/i, '').split(/[.-]/).slice(0, 3).map(part => Number(part) || 0)
-      const cmp = (a: string, b: string) => {
-        const pa = parse(a); const pb = parse(b)
-        for (let i = 0; i < 3; i += 1) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0) ? 1 : -1 }
-        return 0
-      }
-      if (cmp(remoteVersion, packageInfo.version) <= 0) {
-        toast(`当前版本 ${getVersionDisplay(packageInfo.version)} 已是最新`)
+      if (compareVersions(remoteVersion, packageInfo.version) <= 0) {
+        toast(`当前版本 ${getVersionDisplay(packageInfo.version)} 已是最新（${UPDATE_CHANNEL_LABEL[channel]}渠道）`)
         return
       }
       const winArtifact = manifest?.artifacts?.['win-x64']
@@ -302,6 +292,7 @@ const checkForUpdate = () => {
         detail: {
           version: remoteVersion,
           notes: manifest?.notes || '',
+          channel,
           hotUrls: hotArtifact?.urls?.[0] ? withDownloadProxies(hotArtifact.urls[0]) : undefined,
           hotSha: hotArtifact?.sha256 || '',
           installUrls: winArtifact?.urls?.[0] ? withDownloadProxies(winArtifact.urls[0]) : undefined,
@@ -360,6 +351,24 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         write: (value) => {
           localStorage.setItem('accentColor', String(value))
           window.dispatchEvent(new CustomEvent('accentColorChanged', { detail: value }))
+          notifyGlobalSettingChanged()
+        },
+      },
+      {
+        id: 'updateChannel',
+        label: '更新渠道',
+        description: '正式版只接收稳定版本；每日构建可提前体验最新测试版（可能不稳定）',
+        control: {
+          kind: 'choice',
+          options: [
+            { value: 'stable', label: '正式版', hint: '接收正式发布版本，最稳定' },
+            { value: 'nightly', label: '每日构建（Nightly）', hint: '每天自动构建的测试版，可能有 bug' },
+          ],
+        },
+        read: () => readStr(UPDATE_CHANNEL_STORAGE_KEY, 'stable'),
+        write: (value) => {
+          localStorage.setItem(UPDATE_CHANNEL_STORAGE_KEY, value === 'nightly' ? 'nightly' : 'stable')
+          window.dispatchEvent(new CustomEvent('hyperplayer:update-channel-changed'))
           notifyGlobalSettingChanged()
         },
       },

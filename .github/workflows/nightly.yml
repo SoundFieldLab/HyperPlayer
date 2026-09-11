@@ -1,13 +1,15 @@
 # 每日构建（Nightly）—— 每天北京时间 21:00 从默认分支自动构建 Windows 测试版。
 #
 # 行为约定：
-#   - 不 bump 正式版本号：仅在工作区拼 "<基础版本>-nightly.<YYYYMMDD>" 用于产物命名，不推回仓库。
+#   - 不 bump 正式版本号：仅在工作区拼「基础版本 patch+1 -nightly.<YYYYMMDD>」用于产物命名与
+#     更新清单版本号，不推回仓库（package.json 保持正式版本号不变）。
 #   - **每次构建生成唯一 tag（nightly-<YYYYMMDD>）并创建独立的 GitHub Pre-release**，
 #     历史 nightly 全部保留（与 pre-release.yml 一致，一律以 Pre-release 形式发布）。
 #     同一天重复构建（当天又有了新提交 / force=true）会覆盖当天的 tag 与 release，
 #     保持「每天一个 nightly」语义；跨天则各自独立、互不覆盖。
 #   - 自上一个 nightly tag 以来的提交生成 changelog。
-#   - **不写/不推 update.json** —— 不干扰「设置 → 检查更新」的正式版通道。
+#   - 生成并提交 `update-nightly.json`（nightly 渠道的更新清单）——供客户端
+#     「更新渠道 = 每日构建（Nightly）」时拉取；正式版清单 `update.json` 不受影响。
 #   - 无新增提交时自动跳过（手动触发时可用 force=true 强制构建）。
 #
 # 需要仓库 Secrets：EVS_ACCOUNT_NAME / EVS_PASSWD（castLabs Widevine VMP 签名）。
@@ -63,9 +65,17 @@ jobs:
           DATE=$(TZ=Asia/Shanghai date +%Y%m%d)
           NIGHTLY_TAG="nightly-${DATE}"
 
-          # 基础版本只读 package.json，不改仓库；nightly 版本仅用于产物命名
+          # 基础版本只读 package.json，不改仓库；nightly 版本仅用于产物命名与更新清单。
+          # 版本号取「基础版本的 patch + 1」再挂 -nightly.<日期>（如 1.0.0 -> 1.0.1-nightly.20260911）：
+          # 按 semver，1.0.1-nightly < 1.0.1 但 > 1.0.0，因此装了正式版 1.0.0 的用户
+          # 切到 nightly 渠道后能立即检测到该 nightly（而 1.0.0-nightly.x 会低于 1.0.0 检测不到）。
           BASE_VERSION=$(node -p "require('./package.json').version")
-          NIGHTLY_VERSION="${BASE_VERSION}-nightly.${DATE}"
+          NEXT_PATCH=$(BASE_VERSION="$BASE_VERSION" node -e "
+            const v = process.env.BASE_VERSION.replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+            const major = v[0] || 0, minor = v[1] || 0, patch = (v[2] || 0) + 1;
+            process.stdout.write([major, minor, patch].join('.'));
+          ")
+          NIGHTLY_VERSION="${NEXT_PATCH}-nightly.${DATE}"
 
           # changelog 覆盖上一个 nightly tag 之后的提交；首次运行回退最近正式版 tag，再无则回退最近 50 条
           # 排除当天自己的 tag：当天重复构建时，changelog 应覆盖「上一个 nightly 之后」的全部提交，
@@ -105,7 +115,7 @@ jobs:
             echo ""
             echo ""
             echo "---"
-            echo "⚠️ 自动构建的每日测试版本，可能不稳定。仅用于测试，不推送 update.json，不影响正式版检查更新。"
+            echo "⚠️ 自动构建的每日测试版本，可能不稳定。仅供主动切换到「每日构建（Nightly）」渠道的用户，不影响正式版更新通道。"
           } > changelog.md
 
           echo "nightly_tag=${NIGHTLY_TAG}" >> "$GITHUB_OUTPUT"
@@ -245,4 +255,65 @@ jobs:
             --prerelease \
             --verify-tag \
             artifacts/*
-          echo "已发布 Nightly 预发布：${NIGHTLY_TAG}（预发布，不覆盖正式 latest，不写 update.json）"
+          echo "已发布 Nightly 预发布：${NIGHTLY_TAG}（预发布，不覆盖正式 latest）"
+
+      # ---------- 生成 nightly 渠道清单并提交 ----------
+      # update-nightly.json 是「每日构建」渠道的更新清单（version 无关的固定地址）。
+      # 客户端在渠道 = nightly 时拉取它；它指向当天的 pre-release 产物，
+      # 与正式版清单 update.json 完全隔离，互不影响。
+      - name: 生成 update-nightly.json
+        env:
+          NIGHTLY_TAG: ${{ needs.prepare.outputs.nightly_tag }}
+          NIGHTLY_VERSION: ${{ needs.prepare.outputs.nightly_version }}
+        run: |
+          set -euo pipefail
+          cat > gen-nightly-manifest.cjs <<'JS'
+          const fs = require('fs')
+          const crypto = require('crypto')
+          const path = require('path')
+
+          const repo = process.env.GITHUB_REPOSITORY
+          const tag = process.env.NIGHTLY_TAG
+          const version = process.env.NIGHTLY_VERSION
+          const dir = 'artifacts'
+          const base = `https://github.com/${repo}/releases/download/${tag}`
+
+          const files = fs.readdirSync(dir)
+          const installer = files.find(f => /-Setup\.exe$/i.test(f))
+          if (!installer) throw new Error('未找到 NSIS 安装包（*-Setup.exe）')
+
+          const sha256 = (f) => crypto.createHash('sha256')
+            .update(fs.readFileSync(path.join(dir, f)))
+            .digest('hex')
+
+          const manifest = {
+            channel: 'nightly',
+            version,
+            notes: fs.readFileSync('changelog.md', 'utf8').trim(),
+            artifacts: {
+              'win-x64': { urls: [`${base}/${installer}`], sha256: sha256(installer) },
+            },
+          }
+
+          fs.writeFileSync('update-nightly.json', JSON.stringify(manifest, null, 2) + '\n')
+          console.log('已生成 update-nightly.json：')
+          console.log(JSON.stringify(manifest, null, 2))
+          JS
+          node gen-nightly-manifest.cjs
+          rm -f gen-nightly-manifest.cjs
+
+      - name: 提交 update-nightly.json 到默认分支
+        env:
+          NIGHTLY_VERSION: ${{ needs.prepare.outputs.nightly_version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add update-nightly.json
+          if git diff --cached --quiet; then
+            echo "update-nightly.json 无变化，跳过提交"
+          else
+            git commit -m "chore(nightly): 更新 update-nightly.json 至 ${NIGHTLY_VERSION}"
+            git push origin HEAD:main
+            echo "已推送 update-nightly.json（nightly 渠道用户「检查更新」可收到 ${NIGHTLY_VERSION}）"
+          fi

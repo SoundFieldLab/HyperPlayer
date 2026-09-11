@@ -17,7 +17,10 @@ import {
   fetchUpdateManifest,
   compareVersions,
   withDownloadProxies,
+  readUpdateChannel,
+  UPDATE_CHANNEL_LABEL,
   RELEASES_URL,
+  type UpdateChannel,
   type UpdateManifest,
 } from '../services/updateConstants'
 import { getVersionDisplay } from '../services/versionInfo'
@@ -59,13 +62,25 @@ export default function UpdatePrompt({ playerTheme = 'dark' }: UpdatePromptProps
   }, [])
 
   // 检查更新（Android 端由原生 UpdateChecker 弹窗，卡片跳过避免重复提示）
+  // 按当前更新渠道拉清单；渠道变更时重新检测
+  const [channel, setChannel] = useState<UpdateChannel>(() => readUpdateChannel())
+  useEffect(() => {
+    const sync = () => setChannel(readUpdateChannel())
+    window.addEventListener('hyperplayer:update-channel-changed', sync)
+    window.addEventListener('hyperplayer:global-setting-changed', sync)
+    return () => {
+      window.removeEventListener('hyperplayer:update-channel-changed', sync)
+      window.removeEventListener('hyperplayer:global-setting-changed', sync)
+    }
+  }, [])
+
   useEffect(() => {
     if (isAndroid()) return
     let cancelled = false
     const run = async () => {
       setChecking(true)
       try {
-        const m = await fetchUpdateManifest()
+        const m = await fetchUpdateManifest(channel)
         if (cancelled || !m?.version) return
         if (compareVersions(m.version, packageInfo.version) <= 0) return
         // 跳过逻辑：持久跳过 / 本次会话稍后
@@ -85,7 +100,7 @@ export default function UpdatePrompt({ playerTheme = 'dark' }: UpdatePromptProps
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [channel])
 
   const isNewer = manifest?.version ? compareVersions(manifest.version, packageInfo.version) > 0 : false
   const notes = manifest?.notes || ''
@@ -187,6 +202,7 @@ export default function UpdatePrompt({ playerTheme = 'dark' }: UpdatePromptProps
               </div>
               <div className={`mt-1 text-xs ${textSecondary}`}>
                 版本号：{getVersionDisplay(manifest.version || '')}
+                {channel === 'nightly' && ` · ${UPDATE_CHANNEL_LABEL.nightly}`}
               </div>
               {notes && (
                 <p className={`mt-2 text-xs leading-relaxed ${textSecondary}`}>{displayedNotes}</p>

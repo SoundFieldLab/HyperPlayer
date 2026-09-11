@@ -304,6 +304,7 @@ jobs:
             .digest('hex')
 
           const manifest = {
+            channel: 'stable',
             version,
             notes: fs.readFileSync('changelog.md', 'utf8').trim(),
             artifacts: {

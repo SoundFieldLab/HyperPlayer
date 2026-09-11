@@ -41,6 +41,16 @@ import FontPicker from './FontPicker'
 import CacheClearModal from './CacheClearModal'
 import packageInfo from '../../package.json'
 import { getVersionDisplay, getVersionLabel } from '../services/versionInfo'
+import {
+  compareVersions,
+  fetchUpdateManifest,
+  withDownloadProxies,
+  readUpdateChannel,
+  writeUpdateChannel,
+  UPDATE_CHANNEL_LABEL,
+  UPDATE_CHANNEL_KEY,
+  type UpdateChannel,
+} from '../services/updateConstants'
 import { VERSION_HISTORY } from '../services/versionHistory'
 import { isTvModeActive } from '../platform'
 import {
@@ -87,6 +97,8 @@ type UpdateCheckState = {
 type UpdateDetail = {
   version: string
   notes: string
+  /** 来源渠道（正式版 / 每日构建），供弹窗标注 */
+  channel?: UpdateChannel
   hotUrls?: string[]
   hotSha?: string
   installUrls?: string[]
@@ -108,16 +120,6 @@ const audioQualityLabel = (quality: AudioQualityPreference | 'aac' | 'hi-res-los
 }[quality])
 
 const appLogoUrl = new URL('../../logo.png', import.meta.url).href
-
-const compareVersions = (left: string, right: string) => {
-  const parse = (value: string) => value.replace(/^v/i, '').split(/[.-]/).slice(0, 3).map(part => Number(part) || 0)
-  const a = parse(left)
-  const b = parse(right)
-  for (let index = 0; index < 3; index++) {
-    if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1
-  }
-  return 0
-}
 
 interface SettingsPanelProps {
   show: boolean
@@ -547,12 +549,25 @@ function SettingsPanel({
   const [showVersionHistory, setShowVersionHistory] = useState(false)
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(() => parseStoredBoolean(localStorage.getItem('autoCheckUpdate'), true))
   const [skippedVersion, setSkippedVersion] = useState<string | null>(() => localStorage.getItem('skippedUpdateVersion'))
+  // 更新渠道（正式版 / 每日构建）——与设置注册表同 localStorage 键，双端同步
+  const [updateChannel, setUpdateChannel] = useState<UpdateChannel>(() => readUpdateChannel())
 
   // 待应用更新常驻提示（上次「稍后」/ 已下载完成的更新，重启即生效）
   useEffect(() => {
     void window.electron?.update?.getPending?.().then((p) => {
       if (p?.version) setPendingUpdate(p)
     }).catch(() => {})
+  }, [])
+
+  // 更新渠道可能被其他模式（设置镜像）改动：监听注册表事件保持同步
+  useEffect(() => {
+    const sync = () => setUpdateChannel(readUpdateChannel())
+    window.addEventListener('hyperplayer:global-setting-changed', sync)
+    window.addEventListener('hyperplayer:update-channel-changed', sync)
+    return () => {
+      window.removeEventListener('hyperplayer:global-setting-changed', sync)
+      window.removeEventListener('hyperplayer:update-channel-changed', sync)
+    }
   }, [])
 
   // 灰色歌曲跨平台补全：开启前必须阅读免责声明并等待倒计时结束
@@ -597,30 +612,31 @@ function SettingsPanel({
         return
       }
 
-      // 桌面/网页：拉多源更新清单（ghproxy 加速的 GitHub → GitHub 直连），比较版本号
-      const { UPDATE_MANIFEST_URLS, withDownloadProxies } = await import('../services/updateConstants')
-      let manifest: { version?: string; notes?: string; artifacts?: Record<string, { urls?: string[]; sha256?: string }> } | null = null
+      // 桌面/网页：按当前渠道拉更新清单（ghproxy 加速的 GitHub → GitHub 直连），比较版本号
+      // fetchUpdateManifest 内部已按 readUpdateChannel() 选择 update.json / update-nightly.json
       let httpStatus = 0
-      for (const url of UPDATE_MANIFEST_URLS) {
-        try {
-          const res = await fetch(url, { cache: 'no-store' })
-          if (res.ok) {
-            manifest = await res.json()
-            break
+      const manifest = await (async () => {
+        const { getManifestUrls } = await import('../services/updateConstants')
+        for (const url of getManifestUrls(updateChannel)) {
+          try {
+            const res = await fetch(url, { cache: 'no-store' })
+            if (res.ok) return await res.json() as { version?: string; notes?: string; artifacts?: Record<string, { urls?: string[]; sha256?: string }> }
+            httpStatus = res.status // 404 等：清单大概率还没发布
+          } catch {
+            // 网络异常，继续尝试下一个源
           }
-          httpStatus = res.status // 404 等：清单大概率还没发布
-        } catch {
-          // 网络异常，继续尝试下一个源
         }
-      }
+        return null
+      })()
       if (!manifest?.version) {
         // 区分「未发布」与「网络问题」，方便用户判断
-        throw new Error(httpStatus ? `更新清单不可用（HTTP ${httpStatus}），请确认已发布更新` : '更新清单不可用，请检查网络')
+        const channelHint = updateChannel === 'nightly' ? '该渠道尚无构建' : '请确认已发布更新'
+        throw new Error(httpStatus ? `更新清单不可用（HTTP ${httpStatus}），${channelHint}` : '更新清单不可用，请检查网络')
       }
 
       const remoteVersion = String(manifest.version)
       if (compareVersions(remoteVersion, packageInfo.version) <= 0) {
-        setUpdateCheck({ status: 'current', message: `当前版本 ${packageInfo.version} 为最新版本` })
+        setUpdateCheck({ status: 'current', message: `当前版本 ${packageInfo.version} 为最新版本（${UPDATE_CHANNEL_LABEL[updateChannel]}）` })
         return
       }
 
@@ -631,6 +647,7 @@ function SettingsPanel({
       const detail: UpdateDetail = {
         version: remoteVersion,
         notes: manifest.notes || '',
+        channel: updateChannel,
         hotUrls: hotUrl ? withDownloadProxies(hotUrl) : undefined,
         hotSha: hotArtifact?.sha256 || '',
         installUrls: winUrl ? withDownloadProxies(winUrl) : undefined,
@@ -657,11 +674,10 @@ function SettingsPanel({
     await window.electron?.update?.restartForUpdate?.()
   }
 
-  // 跳过此版本：把当前最新版本记入跳过列表，自动检测不再提示；手动检查仍可更新
+  // 跳过此版本：把当前渠道最新版本记入跳过列表，自动检测不再提示；手动检查仍可更新
   const handleSkipVersion = async () => {
     try {
-      const { fetchUpdateManifest } = await import('../services/updateConstants')
-      const manifest = await fetchUpdateManifest()
+      const manifest = await fetchUpdateManifest(updateChannel)
       const remote = manifest?.version
       if (!remote) {
         window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '当前无法获取更新清单，请稍后再试', type: 'info' } }))
@@ -3135,8 +3151,41 @@ function SettingsPanel({
                       </div>
 
                       <div className={`mt-4 pt-4 border-t ${borderColor}`}>
+                        {/* 更新渠道：正式版 / 每日构建 */}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className={`text-sm font-medium ${textPrimary}`}>更新渠道</p>
+                            <p className={`text-xs ${textTertiary} mt-0.5`}>
+                              {updateChannel === 'nightly'
+                                ? '接收每天自动构建的测试版，可能不稳定'
+                                : '接收正式发布版本，最稳定'}
+                            </p>
+                          </div>
+                          <div className={`flex shrink-0 rounded-xl p-1 ${playerTheme === 'dark' ? 'bg-white/10' : 'bg-black/5'}`}>
+                            {(['stable', 'nightly'] as const).map((channel) => (
+                              <button
+                                key={channel}
+                                type="button"
+                                onClick={() => {
+                                  if (channel === updateChannel) return
+                                  writeUpdateChannel(channel)
+                                  setUpdateChannel(channel)
+                                  // 切渠道后旧检查结果/跳过记录不适用，重置避免误导
+                                  setUpdateCheck({ status: 'idle' })
+                                  setSkippedVersion(null)
+                                  localStorage.removeItem('skippedUpdateVersion')
+                                }}
+                                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${updateChannel === channel ? 'text-white' : textSecondary}`}
+                                style={updateChannel === channel ? { backgroundColor: accentColor } : undefined}
+                              >
+                                {UPDATE_CHANNEL_LABEL[channel]}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
                         {/* 检查新版本 + 版本历史 */}
-                        <div className="flex gap-3 w-full">
+                        <div className="mt-4 flex gap-3 w-full">
                           <button onClick={() => void checkForUpdates()} disabled={updateCheck.status === 'checking'} className={`flex-1 py-3 px-4 rounded-xl ${playerTheme === 'dark' ? 'bg-white/10 hover:bg-white/15' : 'bg-black/5 hover:bg-black/10'} ${textPrimary} font-medium transition-colors disabled:opacity-60`}>
                             {updateCheck.status === 'checking' ? '正在检查新版本…' : '检查新版本'}
                           </button>

@@ -44,7 +44,19 @@ Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./D
 
 **发布策略（releases）**：**GitHub Releases 只发 NSIS 安装版**（`npm run build:electron` → `release/HyperPlayer-<version>-Setup.exe`），**不发便携版**（`release/win-unpacked/` 是本地调试产物，不随 releases 分发）。发布时：打 `v<version>` tag → push tag → `gh release create v<version> release/HyperPlayer-<version>-Setup.exe`（附 changelog）。安装版为每用户安装（`nsis.perMachine: false`），**不携带任何用户数据/配置**——用户配置生成于各机 `%APPDATA%\HyperPlayer\`，安装后自动适配当前用户。CI 见 `.github/workflows/ci.yml`（类型/单测/构建 + tag 出包）与 `nightly.yml`（每日 nightly）；两者都要求 EVS secrets，正式构建需 production streaming VMP 剩余 ≥30 天。
 
-**发布形式一律为 Pre-release**：本仓库处于测试阶段，版本化发版（`pre-release.yml`，打 `v*` tag）与每日构建（`nightly.yml`）**全部以 GitHub Pre-release 形式发布**，不占用正式 latest。`nightly.yml` 每次构建生成唯一 tag `nightly-<YYYYMMDD>` 并创建**独立** Pre-release（历史全部保留；当天重复构建覆盖当天同名 tag/release）；只有 `pre-release.yml` 在 tag 为**纯语义版本号**（如 `1.0.0`）时才额外生成并提交 `update.json`，用作「设置 → 检查更新」的推送通道。nightly 不写 update.json。
+**发布形式一律为 Pre-release**：本仓库处于测试阶段，版本化发版（`pre-release.yml`，打 `v*` tag）与每日构建（`nightly.yml`）**全部以 GitHub Pre-release 形式发布**，不占用正式 latest。`nightly.yml` 每次构建生成唯一 tag `nightly-<YYYYMMDD>` 并创建**独立** Pre-release（历史全部保留；当天重复构建覆盖当天同名 tag/release）。
+
+**更新渠道（两条，客户端可切换）**：`src/services/updateConstants.ts` 是渠道定义的唯一事实源。
+
+| 渠道 | 清单文件 | 产出方 | 规则 |
+|---|---|---|---|
+| 正式版 stable | `update.json` | `pre-release.yml` | 仅当 tag 为**纯语义版本号**（如 `1.0.0`）时生成并提交，推向全体用户 |
+| 每日构建 nightly | `update-nightly.json` | `nightly.yml` | 每次构建都生成并提交，仅被主动切到 nightly 渠道的用户拉取 |
+
+- 两个清单都是**版本无关的固定地址**（`raw.githubusercontent.com/.../main/<文件>`，代理优先 + 直连兜底），各自指向对应 release 的产物（正式 tag / `nightly-<日期>` pre-release）。清单内带 `channel` 字段。
+- **Nightly 版本号 = 正式版 patch + 1 再挂日期**（`1.0.0` → `1.0.1-nightly.<YYYYMMDD>`）：按 semver 高于当前正式版，保证正式版用户切到 nightly 能立即检测到；`package.json` 的正式版本号不因此改动。
+- `compareVersions` 遵循 semver **预发布规则**（`1.0.1-nightly.x < 1.0.1`，数字标识 < 字母标识）。**勿改回「按 `.` 切分取前 3 段」的旧实现**——那会把预发布后缀丢掉，导致 nightly 永远检测不到。
+- 渠道选择持久化于 `localStorage['hyperplayer:update-channel']`（默认 `stable`），在设置注册表 `general` 分组登记为 `choice` 条目（`updateChannel`），故简约/传统/探索/桌面四种模式的设置页都能切换并互相同步。
 
 **版本号更迭机制**：版本号唯一事实来源是 `package.json` 的 `version`（设置→关于页显示 `v{version} 预览版`，"检查新版本"功能对比 GitHub tag 与本地 version）。**版本号起点为 `1.0.0`**——本仓库自 1.0.0 起重新编号（减配 + 改名后的首个版本），此前的 0.x 记录已不再保留。使用 `scripts/bump-version.mjs` 自动更迭：
 
