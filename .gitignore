@@ -37,6 +37,9 @@ local-page.*
 probe*.wav
 logs/
 
+# 本地便携版解压测试目录（解压 release/*-portable.zip 后试运行的临时目录）
+.portable-extract/
+
 # TV 壁纸扫码上传（dev-tv-server.mjs 存项目根，运行时生成不入库）
 hyperplayer-wallpapers/
 

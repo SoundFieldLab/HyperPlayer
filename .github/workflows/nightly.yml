@@ -8,6 +8,8 @@
 #     同一天重复构建（当天又有了新提交 / force=true）会覆盖当天的 tag 与 release，
 #     保持「每天一个 nightly」语义；跨天则各自独立、互不覆盖。
 #   - 自上一个 nightly tag 以来的提交生成 changelog。
+#   - 产物：NSIS 安装包（`.exe`）与便携版（`.zip`，解压即用）**都作为独立资产直接提供**，
+#     不再把 exe 包进 zip 里（用户下载页能直接看到安装包）。
 #   - 生成并提交 `update-nightly.json`（nightly 渠道的更新清单）——供客户端
 #     「更新渠道 = 每日构建（Nightly）」时拉取；正式版清单 `update.json` 不受影响。
 #   - 无新增提交时自动跳过（手动触发时可用 force=true 强制构建）。
@@ -115,6 +117,11 @@ jobs:
             echo ""
             echo ""
             echo "---"
+            echo "**下载**"
+            echo ""
+            echo "- \`HyperPlayer-*-Setup.exe\` —— NSIS 安装包，双击安装（推荐普通用户）"
+            echo "- \`HyperPlayer-*-portable.zip\` —— 便携版，解压后根目录即 \`HyperPlayer.exe\`，免安装可直接运行"
+            echo ""
             echo "⚠️ 自动构建的每日测试版本，可能不稳定。仅供主动切换到「每日构建（Nightly）」渠道的用户，不影响正式版更新通道。"
           } > changelog.md
 
@@ -194,11 +201,28 @@ jobs:
           npm run build:electron:unsigned
         timeout-minutes: 40
 
-      - name: 上传安装包
+      # 便携版 zip：直接对已构建的 win-unpacked 再跑一次 electron-builder 的 zip 目标，
+      # 用官方 7za 流式压缩（不会把 1GB 目录读进内存），解压后根目录即 HyperPlayer.exe，免安装可直接运行。
+      # 产物名固定为 HyperPlayer-<版本>-portable.zip（默认的 -win.zip 对用户不够直观）。
+      - name: 生成便携版 zip（解压即用，免安装）
+        run: npx electron-builder --prepackaged release/win-unpacked --win zip --publish never -c.win.artifactName='HyperPlayer-${version}-portable.${ext}'
+        timeout-minutes: 20
+
+      - name: 列出构建产物
+        shell: pwsh
+        run: Get-ChildItem release -File | Select-Object Name, Length
+
+      - name: 上传安装包（.exe）
         uses: actions/upload-artifact@v4
         with:
           name: nightly-windows-installer
           path: release/*.exe
+
+      - name: 上传便携版（.zip）
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-windows-portable
+          path: release/*.zip
 
   # ---------- 发布独立的 Nightly 预发布 ----------
   release:
@@ -218,10 +242,11 @@ jobs:
         with:
           name: nightly-meta
 
-      - name: 下载 Windows 安装包
+      - name: 下载 Windows 安装包与便携版
         uses: actions/download-artifact@v4
         with:
-          name: nightly-windows-installer
+          pattern: nightly-windows-*
+          merge-multiple: true
           path: artifacts
 
       - name: 创建并推送当日 nightly tag
@@ -249,7 +274,8 @@ jobs:
         run: |
           set -euo pipefail
           ls -la artifacts
-          gh release create "$NIGHTLY_TAG" \
+          # 两个产物都作为独立资产直接提供（不再把 exe 塞进 zip）：
+          #   *.exe = NSIS 安装包，双击安装；*.zip = 便携版，解压后根目录即 HyperPlayer.exe，免安装。          gh release create "$NIGHTLY_TAG" \
             --title "HyperPlayer Nightly (${NIGHTLY_VERSION})" \
             --notes-file changelog.md \
             --prerelease \
