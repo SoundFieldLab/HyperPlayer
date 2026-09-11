@@ -65,6 +65,7 @@ import { checkBridgeRunning, ensureBridgeRunning, bridgeShowWindow, bridgeHideWi
 import BilibiliLoginPanel from './BilibiliLoginPanel'
 import BilibiliProfileModal from './BilibiliProfileModal'
 import VmpStatusCard from './VmpStatusCard'
+import LegalAgreement from './legal/LegalAgreement'
 import {
   isBilibiliLoggedIn,
   getStoredBilibiliUser,
@@ -557,6 +558,8 @@ function SettingsPanel({
   // 灰色歌曲跨平台补全：开启前必须阅读免责声明并等待倒计时结束
   const [showFallbackDisclaimer, setShowFallbackDisclaimer] = useState(false)
   const [fallbackCountdown, setFallbackCountdown] = useState(20)
+  // 法律声明 / 用户协议弹窗（关于页入口；条款为简体中文单语）
+  const [showLegalModal, setShowLegalModal] = useState(false)
 
   useEffect(() => {
     if (!showFallbackDisclaimer || fallbackCountdown <= 0) return
@@ -3216,6 +3219,24 @@ function SettingsPanel({
                     </div>
                   </section>
 
+                  {/* 法律声明 / 用户协议入口（条款含免责声明，对外分发必需） */}
+                  <section className={`${bgCard} rounded-2xl border ${borderColor} overflow-hidden`}>
+                    <button
+                      type="button"
+                      onClick={() => setShowLegalModal(true)}
+                      className={`w-full p-5 flex items-center justify-between gap-4 text-left ${hoverBg} transition-colors`}
+                    >
+                      <div className="flex items-start gap-4">
+                        <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: `${accentColor}20`, color: accentColor }}><Info className="w-5 h-5" /></div>
+                        <div>
+                          <h3 className={`text-lg font-semibold ${textPrimary}`}>法律声明 / 用户协议</h3>
+                          <p className={`mt-1.5 text-sm leading-6 ${textSecondary}`}>查看完整条款，含版权、免责声明与责任限制</p>
+                        </div>
+                      </div>
+                      <ChevronRight className={`w-5 h-5 shrink-0 ${textTertiary}`} />
+                    </button>
+                  </section>
+
                   <div className="flex items-center justify-center px-1">
                     <p className={`${textTertiary} text-xs`}>© 2026 HyperPlayer. All rights reserved.</p>
                   </div>
@@ -3398,6 +3419,43 @@ function SettingsPanel({
             </div>
             <div className="relative z-10 p-5 pt-0">
               <button type="button" onClick={() => setShowVersionHistory(false)} className="w-full py-2.5 px-4 rounded-xl font-medium text-white transition-colors hover:bg-white/10" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>关闭</button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* 法律声明 / 用户协议弹窗（关于页入口；条款为简体中文单语，保留免责声明） */}
+      {showLegalModal && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}
+          onClick={() => setShowLegalModal(false)}
+        >
+          <motion.div
+            initial={{ scale: 0.95, y: 16 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.97, y: 10 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+            className={`relative w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl border ${borderColor}`}
+            style={{ backgroundColor: playerTheme === 'dark' ? 'rgba(18,18,20,0.98)' : 'rgba(255,255,255,0.98)' }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className={`flex items-center justify-between gap-4 border-b ${borderColor} px-6 py-4`}>
+              <h2 className={`text-xl font-bold ${textPrimary}`}>法律声明与用户协议</h2>
+              <button
+                type="button"
+                onClick={() => setShowLegalModal(false)}
+                aria-label="关闭"
+                className={`rounded-full p-2 ${hoverBg} transition-colors`}
+              >
+                <X className={`w-5 h-5 ${textSecondary}`} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8">
+              <LegalAgreement theme={playerTheme} />
             </div>
           </motion.div>
         </motion.div>
