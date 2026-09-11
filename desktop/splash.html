@@ -1,220 +1,331 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HyperPlayer</title>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-      user-select: none;
-      -webkit-user-select: none;
-      -moz-user-select: none;
-      -ms-user-select: none;
-    }
-    
-    html, body {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      padding: 0;
-      background: linear-gradient(135deg, #0a0f14 0%, #1a1f2e 100%);
-      overflow: hidden;
-    }
-    
-    .splash-wrapper {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: linear-gradient(135deg, #0a0f14 0%, #1a1f2e 100%);
-      position: relative;
-      overflow: hidden;
-    }
-    
-    /* 动态渐变背景
-       注意：不使用 filter: blur —— 软件合成（GPU 加速禁用）下 blur 会强制软件栅格化
-       整层 200% 尺寸渐变，首帧渲染极慢，导致 splash 显示时内容还没画完（只剩深色底 ≈ 黑屏）。
-       这里用半透明渐变本身（opacity 0.15）+ 纯 transform 旋转，软件合成可快速渲染。 */
-    .gradient-bg {
-      position: absolute;
-      top: -50%;
-      left: -50%;
-      width: 200%;
-      height: 200%;
-      background: linear-gradient(45deg, 
-        #FF6B6B 0%, 
-        #FFB347 15%, 
-        #FFE66D 30%, 
-        #4ECDC4 45%, 
-        #5B9FFF 60%, 
-        #A78BFA 75%, 
-        #EC4899 90%, 
-        #FF6B6B 100%);
-      opacity: 0.15;
-      animation: gradientShift 15s ease infinite;
-    }
-    
-    .splash-container {
-      text-align: center;
-      /* 基础可见性：容器默认不透明。入场动画只做位移，不依赖 opacity 淡入——
-         CSS 动画在窗口显示前不运行，若从 opacity:0 开始，首帧提交时内容透明，
-         窗口只剩深色背景，用户会看到黑屏。默认 opacity:1 保证任何时刻内容可见。 */
-      opacity: 1;
-      animation: splashEnter 0.8s cubic-bezier(0.16, 1, 0.3, 1);
-      position: relative;
-      z-index: 1;
-    }
-    
-    /* Logo图标 */
-    .logo-icon {
-      width: 120px;
-      height: 120px;
-      margin: 0 auto 24px;
-      border-radius: 28px;
-      overflow: hidden;
-      animation: logoFloat 3s ease-in-out infinite;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    }
-    
-    .logo-icon img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      pointer-events: none;
-      -webkit-user-drag: none;
-      user-drag: none;
-    }
-    
-    /* Logo文字 */
-    .logo-text {
-      font-size: 48px;
-      font-weight: 700;
-      background: linear-gradient(135deg, 
-        #FF6B6B 0%, 
-        #FFB347 20%, 
-        #4ECDC4 40%, 
-        #5B9FFF 60%, 
-        #A78BFA 80%, 
-        #EC4899 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      margin-bottom: 48px;
-      letter-spacing: -1.5px;
-      animation: textShimmer 3s ease infinite;
-      background-size: 200% 100%;
-    }
-    
-    /* 音波容器 */
-    .wave-container {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 5px;
-      height: 70px;
-    }
-    
-    .wave-bar {
-      width: 5px;
-      border-radius: 3px;
-      animation: wave 1.4s ease-in-out infinite;
-      box-shadow: 0 0 20px currentColor;
-    }
-    
-    .wave-bar:nth-child(1) { height: 25px; animation-delay: 0s; background: linear-gradient(180deg, #FF6B6B, #FF6B6B80); }
-    .wave-bar:nth-child(2) { height: 40px; animation-delay: 0.1s; background: linear-gradient(180deg, #FFB347, #FFB34780); }
-    .wave-bar:nth-child(3) { height: 55px; animation-delay: 0.2s; background: linear-gradient(180deg, #FFE66D, #FFE66D80); }
-    .wave-bar:nth-child(4) { height: 45px; animation-delay: 0.3s; background: linear-gradient(180deg, #4ECDC4, #4ECDC480); }
-    .wave-bar:nth-child(5) { height: 60px; animation-delay: 0.4s; background: linear-gradient(180deg, #5B9FFF, #5B9FFF80); }
-    .wave-bar:nth-child(6) { height: 35px; animation-delay: 0.5s; background: linear-gradient(180deg, #A78BFA, #A78BFA80); }
-    .wave-bar:nth-child(7) { height: 50px; animation-delay: 0.6s; background: linear-gradient(180deg, #EC4899, #EC489980); }
-    .wave-bar:nth-child(8) { height: 30px; animation-delay: 0.7s; background: linear-gradient(180deg, #FF6B6B, #FF6B6B80); }
-    .wave-bar:nth-child(9) { height: 45px; animation-delay: 0.8s; background: linear-gradient(180deg, #FFB347, #FFB34780); }
-    .wave-bar:nth-child(10) { height: 40px; animation-delay: 0.9s; background: linear-gradient(180deg, #4ECDC4, #4ECDC480); }
-    .wave-bar:nth-child(11) { height: 55px; animation-delay: 1s; background: linear-gradient(180deg, #5B9FFF, #5B9FFF80); }
-    .wave-bar:nth-child(12) { height: 35px; animation-delay: 1.1s; background: linear-gradient(180deg, #A78BFA, #A78BFA80); }
-    
-    @keyframes splashEnter {
-      from {
-        transform: translateY(30px) scale(0.95);
-      }
-      to {
-        transform: translateY(0) scale(1);
-      }
-    }
-    
-    @keyframes gradientShift {
-      0%, 100% {
-        transform: translate(0, 0) rotate(0deg);
-      }
-      33% {
-        transform: translate(5%, 10%) rotate(120deg);
-      }
-      66% {
-        transform: translate(-5%, -10%) rotate(240deg);
-      }
-    }
-    
-    @keyframes logoFloat {
-      0%, 100% {
-        transform: translateY(0px);
-      }
-      50% {
-        transform: translateY(-10px);
-      }
-    }
-    
-    @keyframes textShimmer {
-      0% {
-        background-position: 0% 50%;
-      }
-      50% {
-        background-position: 100% 50%;
-      }
-      100% {
-        background-position: 0% 50%;
-      }
-    }
-    
-    @keyframes wave {
-      0%, 100% {
-        transform: scaleY(0.4);
-        opacity: 0.5;
-      }
-      50% {
-        transform: scaleY(1);
-        opacity: 1;
-      }
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; script-src 'none'">
+<title>HyperPlayer</title>
+<!--
+  启动画面（Splash）—— 由设计稿 new-splash/splash-flow-tailwind.html 移植而来。
+
+  移植时做了三件事（设计稿无法直接作为 Electron 启动页使用）：
+
+  1. **彻底离线化**：设计稿依赖两个 CDN（cdn.tailwindcss.com 与 fonts.googleapis.com/fonts.gstatic.com）。
+     Electron 启动页是 file:// 加载的离线页面，CDN 一旦取不到就会样式全丢 / 字体回退。
+     故：Tailwind 类名全部改写为等价的原生 CSS；Space Grotesk 字体已本地化到
+     desktop/fonts/SpaceGrotesk-Bold.woff2（Latin 子集，SIL OFL 1.1，许可证见同目录 OFL.txt）。
+     CSP（上方 meta）显式禁止一切外部资源（script-src 'none'），从机制上防止再次引入网络依赖。
+
+  2. **等比适配任意窗口**：设计稿是 1920×1080 定死的绝对定位。这里把舞台做成严格 16:9 的
+     容器（min(100vw, 100vh*16/9)），所有几何量用百分比、模糊/圆角/字号/位移用 cqw（容器宽度百分比，
+     1cqw = 舞台宽/100，对应设计稿的 19.2px），因此整套视觉在任意窗口尺寸下都与设计稿等比一致。
+
+  3. **首帧兜底（避免黑屏）**：本机 GPU 合成为 disabled_software（软件合成），大面积 blur 的
+     首帧栅格化很慢。设计稿里 "Color Wash" 是无模糊的满屏渐变，这里让它作为最底层，
+     **任何情况下首帧都能立刻画出彩色底**；上层模糊光斑只在此基础上叠加动效，
+     即使光斑还没栅格化完，用户看到的也是渐变而非黑屏。
+     同时把最耗的「全屏 backdrop-filter: blur(24px)」玻璃层替换为等价的半透明白色叠加层
+     （背景本身已是重度模糊，视觉差异不可辨，但省掉每帧一次全屏模糊），
+     并把几个最大的 blur 半径下调约 10% 以进一步降低软件合成压力。
+
+  动画关键帧 hp-flow-1..12 来自设计稿（由 animate-fluid.py 生成），未改时长/缓动/延迟；
+  仅把其中的 px 位移换算为 cqw 以随窗口等比缩放。prefers-reduced-motion 下全部停用。
+-->
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%; margin: 0; padding: 0;
+    overflow: hidden;
+    background: #EEF2FF;              /* 兜底色：与舞台渐变起点一致，进一步杜绝首帧闪黑 */
+    user-select: none; -webkit-user-select: none;
+    cursor: default;
+  }
+
+  /* 本地化字体：仅用于 "HyperPlayer" 词标（纯拉丁字符，已取 Latin 子集） */
+  @font-face {
+    font-family: 'Space Grotesk';
+    font-style: normal;
+    font-weight: 700;
+    font-display: block;
+    src: url('./fonts/SpaceGrotesk-Bold.woff2') format('woff2');
+  }
+
+  body { display: flex; align-items: center; justify-content: center; }
+
+  /* 舞台：始终严格 16:9（与设计稿一致），按「cover」铺满窗口——
+     窗口比例不是 16:9 时宁可裁掉边缘的抽象渐变，也不拉伸变形/留黑边。
+     因为舞台内部恒为 16:9，下面所有百分比坐标与 cqw 尺寸都与设计稿严格等比。
+     （主窗口默认 1400×900 并非 16:9，故不能用 contain，否则会上下留出色带。） */
+  .stage {
+    position: relative;
+    width: max(100vw, calc(100vh * 16 / 9));
+    height: max(100vh, calc(100vw * 9 / 16));
+    flex: 0 0 auto;
+    overflow: hidden;
+    container-type: inline-size;
+    background: linear-gradient(147.095deg, #EEF2FF 19.002%, #FDF2EA 80.998%);
+  }
+
+  /* 所有光斑层的公共基类：定位于舞台左上角，圆角为全圆 */
+  .flow {
+    position: absolute;
+    border-radius: 9999px;
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    transform-origin: top left;
+    will-change: transform, opacity;
+  }
+
+  /* ── 底层：无模糊满屏渐变（首帧兜底 + Color Wash 本体） ── */
+  .flow-color-wash {
+    left: 0; top: 0; width: 100%; height: 100%;
+    border-radius: 0;
+    opacity: 1;
+    background-image: linear-gradient(140.342deg, #3A2BE0 19.093%, #3E55FB 33.928%, #55D9FF 48.764%, #FFB347 64.836%, #FF7618 80.907%);
+    animation: hp-flow-1 30s cubic-bezier(.4,0,.6,1) -8s infinite both;
+  }
+
+  /* ── 彩色光斑（模糊半径较设计稿约 -10%，视觉几乎无差别，软件合成更稳） ── */
+  .flow-pool-indigo {
+    left: -9.8958%; top: 48.1481%; width: 52.0833%; height: 79.6296%;
+    opacity: .86; filter: blur(3.9844cqw);
+    background-image: linear-gradient(-116.405deg, #101070 12.175%, #3E55FB 87.825%);
+    animation: hp-flow-2 25s cubic-bezier(.4,0,.6,1) -6s infinite both;
+  }
+  .flow-mass-blue {
+    left: -12.5%; top: -14.8148%; width: 59.8958%; height: 115.7407%;
+    opacity: .92; filter: blur(4.1146cqw); transform: rotate(16deg);
+    background-image: linear-gradient(-37.667deg, #0B2BE8 14.257%, #4B8CFF 85.743%);
+    animation: hp-flow-3 21s cubic-bezier(.4,0,.6,1) -14s infinite both;
+  }
+  .flow-smoke-azure {
+    left: -7.2917%; top: 24.0741%; width: 78.125%; height: 38.8889%;
+    opacity: .8; filter: blur(3.2813cqw); transform: rotate(12deg);
+    background-image: linear-gradient(-52.429deg, #00C8FF 27.603%, #3E7BFF 72.397%);
+    animation: hp-flow-4 18s cubic-bezier(.4,0,.6,1) -3s infinite both;
+  }
+  .flow-haze-violet {
+    left: 29.1667%; top: -24.0741%; width: 54.6875%; height: 97.2222%;
+    opacity: .86; filter: blur(4.3229cqw); transform: rotate(-8deg);
+    background-image: linear-gradient(-70deg, #6A3CFF 10.99%, #A22BF5 89.01%);
+    animation: hp-flow-5 23s cubic-bezier(.4,0,.6,1) -18s infinite both;
+  }
+  .flow-bloom-magenta {
+    left: 52.6042%; top: 22.2222%; width: 49.4792%; height: 83.3333%;
+    opacity: .8; filter: blur(4.1146cqw); transform: rotate(10deg);
+    background-image: linear-gradient(-128.482deg, #FF1FA8 14.345%, #B53CFF 85.655%);
+    animation: hp-flow-6 20s cubic-bezier(.4,0,.6,1) -9s infinite both;
+  }
+  .flow-heat-coral {
+    left: 71.875%; top: 27.7778%; width: 54.6875%; height: 92.5926%;
+    opacity: .88; filter: blur(4.1146cqw); transform: rotate(-12deg);
+    background-image: linear-gradient(-61.195deg, #FF5C00 12.989%, #FFA800 87.011%);
+    animation: hp-flow-7 22s cubic-bezier(.4,0,.6,1) -21s infinite both;
+  }
+  .flow-amber-sun {
+    left: 69.2708%; top: -27.7778%; width: 44.7917%; height: 79.6296%;
+    opacity: .62; filter: blur(3.6458cqw);
+    background-image: linear-gradient(-150deg, #FFC42E 13.397%, #FF7A1F 86.603%);
+    animation: hp-flow-8 19s cubic-bezier(.4,0,.6,1) -12s infinite both;
+  }
+  .flow-ribbon-mint {
+    left: 3.125%; top: 64.8148%; width: 59.8958%; height: 21.2963%;
+    opacity: .48; filter: blur(2.7083cqw); transform: rotate(7deg);
+    background-image: linear-gradient(-53.262deg, #2BFFC4 32.467%, #35D9FF 67.533%);
+    animation: hp-flow-9 17s cubic-bezier(.4,0,.6,1) -5s infinite both;
+  }
+  .flow-ribbon-aqua {
+    left: 17.1875%; top: 23.1481%; width: 78.125%; height: 16.6667%;
+    opacity: .3; filter: blur(2.8125cqw); transform: rotate(-9deg);
+    background-image: linear-gradient(-78.258deg, #35D9FF 24.555%, #6A5CFF 75.445%);
+    animation: hp-flow-10 21s cubic-bezier(.4,0,.6,1) -16s infinite both;
+  }
+  .flow-vein-light {
+    left: 13.0208%; top: 50%; width: 83.3333%; height: 15.7407%;
+    opacity: .34; filter: blur(3.0469cqw); transform: rotate(-11deg);
+    background-image: linear-gradient(106.274deg, #FFFFFF8C 32%, #FFFFFF00 68%);
+    animation: hp-flow-11 16s cubic-bezier(.4,0,.6,1) -8s infinite both;
+  }
+  .flow-glass-streak {
+    left: 9.375%; top: 37.037%; width: 83.3333%; height: 12.037%;
+    filter: blur(1.5104cqw); transform: rotate(-11deg);
+    background: #FFFFFF33;
+    animation: hp-flow-12 26s cubic-bezier(.4,0,.6,1) -11s infinite both;
+  }
+
+  /* ── 玻璃罩：设计稿为全屏 backdrop-filter: blur(24px)。
+       背景已被上层光斑重度模糊，再叠一次全屏模糊视觉上无从分辨，却要每帧一次全屏栅格化，
+       软件合成下代价极高 —— 故等价替换为半透明白 + 细边框（保留原白色罩色 #FFFFFF66）。 ── */
+  .glass-sheet {
+    position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    background: #FFFFFF66;
+    border: 0.1042cqw solid #FFFFFFB8;
+  }
+
+  /* ── 高光斜向渐变（Sheen） ── */
+  .sheen {
+    position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    background-image: linear-gradient(-149.988deg, #FFFFFF2E 18.711%, #FFFFFF00 50%);
+  }
+
+  /* ── 品牌锁定组：Logo 方块 + 词标 ── */
+  .lockup {
+    position: absolute; left: 27.96875%; top: 38.1481%;
+    display: flex; flex-direction: row; align-items: center;
+  }
+
+  .logo-tile {
+    position: relative; flex: 0 0 auto;
+    width: 13.3333cqw; height: 13.3333cqw;
+    border-radius: 3.9583cqw;
+    background: #FFFFFFC2;
+    border: 0.1042cqw solid #FFFFFFE6;
+    box-shadow: 0 1.5625cqw 3.6458cqw rgba(30, 44, 122, 0.22);
+    -webkit-backdrop-filter: blur(0.7813cqw);
+    backdrop-filter: blur(0.7813cqw);
+    overflow: hidden;
+  }
+
+  /* Logo 图形：设计稿引用 ./logo-mark.png（该文件不存在）——改用仓库根 logo.png。
+     注意 logo.png 画布 1024×1024 中实际图形仅占 584×584（约 57.0%），四周是透明留白；
+     若直接 contain 会显得过小，故按 1/0.5703 ≈ 175.4% 放大，使可见图形正好铺满设计稿的 166/256 比例。 */
+  .logo-mark {
+    position: absolute;
+    left: calc(45 / 256 * 100%);
+    top: calc(45 / 256 * 100%);
+    width: calc(166 / 256 * 100%);
+    height: calc(166 / 256 * 100%);
+    background: url('../logo.png') no-repeat center / 175.4% auto;
+  }
+
+  .lockup-gap { flex: 0 0 auto; width: 2.3438cqw; height: 0; }
+
+  .wordmark {
+    flex: 0 0 auto;
+    font-family: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-weight: 700;
+    font-size: 5cqw;
+    line-height: normal;
+    letter-spacing: -0.1042cqw;
+    color: #16161C;
+    white-space: nowrap;
+  }
+
+  /* ── 关键帧（来自设计稿；px → cqw 等比换算，时长/缓动/延迟保持原样） ── */
+  @keyframes hp-flow-1 {
+    0%   { transform: translate3d(0, 0, 0) scale(1); opacity: 1; }
+    25%  { transform: translate3d(2.8125cqw, -2.2917cqw, 0) scale(1.036); opacity: 1; }
+    50%  { transform: translate3d(6.25cqw, -4.1667cqw, 0) scale(1.08); opacity: 1; }
+    75%  { transform: translate3d(2.1875cqw, -4.7917cqw, 0) scale(1.028); opacity: 1; }
+    100% { transform: translate3d(0, 0, 0) scale(1); opacity: 1; }
+  }
+  @keyframes hp-flow-2 {
+    0%   { transform: translate3d(0, 0, 0) scale(1); opacity: .86; }
+    25%  { transform: translate3d(4.6875cqw, -3.4375cqw, 0) scale(1.054); opacity: .832; }
+    50%  { transform: translate3d(10.4167cqw, -6.25cqw, 0) scale(1.12); opacity: .791; }
+    75%  { transform: translate3d(3.6458cqw, -7.1875cqw, 0) scale(1.042); opacity: .832; }
+    100% { transform: translate3d(0, 0, 0) scale(1); opacity: .86; }
+  }
+  @keyframes hp-flow-3 {
+    0%   { transform: translate3d(0, 0, 0) scale(1) rotate(16deg); opacity: .92; }
+    25%  { transform: translate3d(6.0938cqw, 4.2969cqw, 0) scale(1.063) rotate(17deg); opacity: .92; }
+    50%  { transform: translate3d(13.5417cqw, 7.8125cqw, 0) scale(1.14) rotate(18deg); opacity: .92; }
+    75%  { transform: translate3d(4.7396cqw, 8.9844cqw, 0) scale(1.049) rotate(15deg); opacity: .92; }
+    100% { transform: translate3d(0, 0, 0) scale(1) rotate(16deg); opacity: .92; }
+  }
+  @keyframes hp-flow-4 {
+    0%   { transform: translate3d(0, 0, 0) scale(1) rotate(12deg); opacity: .8; }
+    25%  { transform: translate3d(10.0781cqw, -3.151cqw, 0) scale(1.045) rotate(14.5deg); opacity: .768; }
+    50%  { transform: translate3d(22.3958cqw, -5.7292cqw, 0) scale(1.1) rotate(17deg); opacity: .72; }
+    75%  { transform: translate3d(7.8385cqw, -6.5885cqw, 0) scale(1.035) rotate(9.5deg); opacity: .768; }
+    100% { transform: translate3d(0, 0, 0) scale(1) rotate(12deg); opacity: .8; }
+  }
+  @keyframes hp-flow-5 {
+    0%   { transform: translate3d(0, 0, 0) scale(1) rotate(-8deg); opacity: .86; }
+    25%  { transform: translate3d(-5.3906cqw, 4.8698cqw, 0) scale(1.054) rotate(-9deg); opacity: .86; }
+    50%  { transform: translate3d(-11.9792cqw, 8.8542cqw, 0) scale(1.12) rotate(-10deg); opacity: .86; }
+    75%  { transform: translate3d(-4.1927cqw, 10.1823cqw, 0) scale(1.042) rotate(-7deg); opacity: .86; }
+    100% { transform: translate3d(0, 0, 0) scale(1) rotate(-8deg); opacity: .86; }
+  }
+  @keyframes hp-flow-6 {
+    0%   { transform: translate3d(0, 0, 0) scale(1) rotate(10deg); opacity: .8; }
+    25%  { transform: translate3d(-7.0313cqw, -4.2969cqw, 0) scale(1.063) rotate(11.5deg); opacity: .774; }
+    50%  { transform: translate3d(-15.625cqw, -7.8125cqw, 0) scale(1.14) rotate(13deg); opacity: .736; }
+    75%  { transform: translate3d(-5.4688cqw, -8.9844cqw, 0) scale(1.049) rotate(8.5deg); opacity: .774; }
+    100% { transform: translate3d(0, 0, 0) scale(1) rotate(10deg); opacity: .8; }
+  }
+  @keyframes hp-flow-7 {
+    0%   { transform: translate3d(0, 0, 0) scale(1) rotate(-12deg); opacity: .88; }
+    25%  { transform: translate3d(-6.0938cqw, 4.0104cqw, 0) scale(1.054) rotate(-11deg); opacity: .88; }
+    50%  { transform: translate3d(-13.5417cqw, 7.2917cqw, 0) scale(1.12) rotate(-10deg); opacity: .88; }
+    75%  { transform: translate3d(-4.7396cqw, 8.3854cqw, 0) scale(1.042) rotate(-13deg); opacity: .88; }
+    100% { transform: translate3d(0, 0, 0) scale(1) rotate(-12deg); opacity: .88; }
+  }
+  @keyframes hp-flow-8 {
+    0%   { transform: translate3d(0, 0, 0) scale(1); opacity: .62; }
+    25%  { transform: translate3d(-4.4531cqw, 5.4427cqw, 0) scale(1.045); opacity: .595; }
+    50%  { transform: translate3d(-9.8958cqw, 9.8958cqw, 0) scale(1.1); opacity: .558; }
+    75%  { transform: translate3d(-3.4635cqw, 11.3802cqw, 0) scale(1.035); opacity: .595; }
+    100% { transform: translate3d(0, 0, 0) scale(1); opacity: .62; }
+  }
+  @keyframes hp-flow-9 {
+    0%   { transform: translate3d(0, 0, 0) scale(1) rotate(7deg); opacity: .48; }
+    25%  { transform: translate3d(12.1875cqw, -4.0104cqw, 0) scale(1.036) rotate(10.5deg); opacity: .457; }
+    50%  { transform: translate3d(27.0833cqw, -7.2917cqw, 0) scale(1.08) rotate(14deg); opacity: .422; }
+    75%  { transform: translate3d(9.4792cqw, -8.3854cqw, 0) scale(1.028) rotate(3.5deg); opacity: .457; }
+    100% { transform: translate3d(0, 0, 0) scale(1) rotate(7deg); opacity: .48; }
+  }
+  @keyframes hp-flow-10 {
+    0%   { transform: translate3d(0, 0, 0) scale(1) rotate(-9deg); opacity: .3; }
+    25%  { transform: translate3d(-11.25cqw, 3.4375cqw, 0) scale(1.036) rotate(-12.5deg); opacity: .286; }
+    50%  { transform: translate3d(-25cqw, 6.25cqw, 0) scale(1.08) rotate(-16deg); opacity: .264; }
+    75%  { transform: translate3d(-8.75cqw, 7.1875cqw, 0) scale(1.028) rotate(-5.5deg); opacity: .286; }
+    100% { transform: translate3d(0, 0, 0) scale(1) rotate(-9deg); opacity: .3; }
+  }
+  @keyframes hp-flow-11 {
+    0%   { transform: translate3d(0, 0, 0) scale(1) rotate(-11deg); opacity: .34; }
+    25%  { transform: translate3d(9.8438cqw, 4.5833cqw, 0) scale(1.027) rotate(-9.5deg); opacity: .321; }
+    50%  { transform: translate3d(21.875cqw, 8.3333cqw, 0) scale(1.06) rotate(-8deg); opacity: .292; }
+    75%  { transform: translate3d(7.6563cqw, 9.5833cqw, 0) scale(1.021) rotate(-12.5deg); opacity: .321; }
+    100% { transform: translate3d(0, 0, 0) scale(1) rotate(-11deg); opacity: .34; }
+  }
+  @keyframes hp-flow-12 {
+    0%   { transform: translate3d(0, 0, 0) scale(1) rotate(-11deg); opacity: 1; }
+    25%  { transform: translate3d(4.6875cqw, -2.0052cqw, 0) scale(1.0225) rotate(-10deg); opacity: 1; }
+    50%  { transform: translate3d(10.4167cqw, -3.6458cqw, 0) scale(1.05) rotate(-9deg); opacity: 1; }
+    75%  { transform: translate3d(3.6458cqw, -4.1927cqw, 0) scale(1.0175) rotate(-12deg); opacity: 1; }
+    100% { transform: translate3d(0, 0, 0) scale(1) rotate(-11deg); opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .flow { animation: none !important; }
+  }
+</style>
 </head>
 <body>
-  <div class="splash-wrapper">
-    <div class="gradient-bg"></div>
-    
-    <div class="splash-container">
-      <div class="logo-icon">
-        <img src="../logo.png" alt="HyperPlayer">
+  <div class="stage">
+    <!-- 底层无模糊渐变：首帧兜底，永不透明 -->
+    <div class="flow flow-color-wash"></div>
+    <div class="flow flow-pool-indigo"></div>
+    <div class="flow flow-mass-blue"></div>
+    <div class="flow flow-smoke-azure"></div>
+    <div class="flow flow-haze-violet"></div>
+    <div class="flow flow-bloom-magenta"></div>
+    <div class="flow flow-heat-coral"></div>
+    <div class="flow flow-amber-sun"></div>
+    <div class="flow flow-ribbon-mint"></div>
+    <div class="flow flow-ribbon-aqua"></div>
+    <div class="flow flow-vein-light"></div>
+    <div class="flow flow-glass-streak"></div>
+    <div class="glass-sheet"></div>
+    <div class="sheen"></div>
+    <div class="lockup">
+      <div class="logo-tile">
+        <div class="logo-mark"></div>
       </div>
-      <div class="logo-text">HyperPlayer</div>
-      <div class="wave-container">
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-        <div class="wave-bar"></div>
-      </div>
+      <div class="lockup-gap"></div>
+      <div class="wordmark">HyperPlayer</div>
     </div>
   </div>
 </body>

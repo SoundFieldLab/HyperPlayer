@@ -33,9 +33,12 @@ dns.setDefaultResultOrder('ipv4first')
 
 const { selectHyperPlayerUserData } = require('./user-data-profile.cjs')
 
-// 开发版历史上因首次 getPath(userData) 过早而长期使用 %APPDATA%/Electron。
-// 只在该目录有明确 HyperPlayer 标记时继续沿用，避免设置、登录和 Chromium profile 丢失；
-// 打包版始终使用正式目录。仅切换路径，不复制或覆盖任何凭据/数据库。
+// HyperPlayer 拥有**独占**的配置目录，绝不与 WaveForge 或其他 Electron 应用共用：
+// 打包版与开发版都固定使用 %APPDATA%/HyperPlayer（开发版仅认显式的绝对路径 override）。
+// 历史：开发版曾因首次 getPath(userData) 时机过早而落在 Electron 的公共默认目录
+// （%APPDATA%/Electron，所有 Electron 应用共享）；旧代码靠文件标记「认领」它，
+// 随功能减配已不可靠，现彻底切断回退（详见 user-data-profile.cjs 注释）。
+// 仅切换路径，不复制或覆盖任何凭据/数据库。
 const appDataRoot = process.platform === 'win32'
   ? (process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'))
   : (process.env.XDG_CONFIG_HOME || path.join(require('os').homedir(), '.config'))
@@ -2346,15 +2349,50 @@ protocol.registerSchemesAsPrivileged([
 
 function createWindow() {
   // 开发模式下主页面加载很快，必须让启动画面先完成绘制并保持可见，
-  // 否则 splash 的淡入和音波动画还没显示就会被主窗口关闭。
+  // 否则 splash 的动画还没显示就会被主窗口关闭。
   // 软件合成（GPU 加速禁用）下内容层提交慢，splash 最短可见时间动态加长，
-  // 给 logo/文字/音波足够时间真正上屏（否则只见深色底 ≈ 黑屏）。
+  // 给流体光斑/logo/文字足够时间真正上屏（否则只见渐变底，观感像未加载）。
   const splashMinVisibleMs = isDev ? 1800 : (gpuCompositingDisabled ? 3500 : 1200)
   let splashShownAt = 0
 
+  // ── 先解析主窗口的目标布局，供 splash 与主窗口共用 ──
+  // splash 必须在主窗口之前创建，但主窗口尺寸取决于「窗口状态记忆」（userData/window-state.json）。
+  // 若两者尺寸不一致，启动画面 → 主界面会出现明显的窗口跳动，故这里提前算出同一份 bounds：
+  //   1) 有可用记忆且版本一致 → 用记忆的 bounds（钳制进所在显示器工作区）；
+  //   2) 否则用软件默认 1400×900（与 window-state.cjs 的 DEFAULT_* 一致）。
+  // 最大化 / kiosk 状态无法在窗口创建时套用到 splash（那是 show 之后才生效的状态），
+  // 此时 splash 用还原后的 bounds（getNormalBounds 语义），切到主窗口时自然放大，属预期行为。
+  const DEFAULT_MAIN_WIDTH = 1400
+  const DEFAULT_MAIN_HEIGHT = 900
+  let targetBounds = { width: DEFAULT_MAIN_WIDTH, height: DEFAULT_MAIN_HEIGHT }
+  let savedWindowState = null
+  try {
+    const { screen } = require('electron')
+    savedWindowState = loadWindowState(app)
+    if (savedWindowState) {
+      const displays = screen.getAllDisplays()
+      const targetDisplay = displays.find((d) => d.id === savedWindowState.displayId) || screen.getPrimaryDisplay()
+      targetBounds = clampBoundsToWorkArea(savedWindowState.bounds, targetDisplay.workArea)
+    } else {
+      // 无窗口记忆：沿用「系统居中 + 默认尺寸」，但先按工作区收窄尺寸，
+      // 避免小屏上 1400×900 超出可用区域（x/y 不指定，交给系统居中）。
+      const { workArea } = screen.getPrimaryDisplay()
+      targetBounds = {
+        width: Math.max(1200, Math.min(DEFAULT_MAIN_WIDTH, workArea.width)),
+        height: Math.max(800, Math.min(DEFAULT_MAIN_HEIGHT, workArea.height)),
+      }
+    }
+  } catch (error) {
+    // 屏幕/状态不可用：退回默认尺寸（不使用 x/y，交给系统居中）
+    targetBounds = { width: DEFAULT_MAIN_WIDTH, height: DEFAULT_MAIN_HEIGHT }
+  }
+
   const splashWindow = new BrowserWindow({
-    width: 500,
-    height: 400,
+    width: targetBounds.width,
+    height: targetBounds.height,
+    ...(typeof targetBounds.x === 'number' && typeof targetBounds.y === 'number'
+      ? { x: targetBounds.x, y: targetBounds.y }
+      : {}),
     frame: false,
     transparent: false,
     alwaysOnTop: true,
@@ -2369,9 +2407,10 @@ function createWindow() {
     // 窗口隐藏时渲染器默认暂停绘制（paintWhenInitiallyHidden=false），首帧可能
     // 不完整；ready-to-show 触发≠内容已上屏，show 时窗口表面可能是 OS 默认白。
     // 修复：paintWhenInitiallyHidden:true 让渲染器在隐藏时也持续绘制，
-    // 首帧内容（深色底+logo+文字+音波）在 show 前已完整就绪。
+    // 首帧内容（渐变底+光斑+logo+词标）在 show 前已完整就绪。
     show: false,
-    backgroundColor: '#0a0f14',
+    // 底色与 splash.html 的最底层渐变起点一致（浅色），避免首帧出现深色闪烁
+    backgroundColor: '#EEF2FF',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -2417,9 +2456,13 @@ function createWindow() {
   // 创建主窗口：默认原生不透明窗口（Windows 11 系统圆角/阴影/对齐吸附）。
   // 桌面融合穿透需要透明窗口，而 transparent 仅创建时生效——开启/关闭融合时
   // 由 recreateMainWindow 销毁重建切换透明属性，普通模式始终用原生窗口。
+  // 尺寸/位置复用上面为 splash 解析好的 targetBounds，保证启动画面与主窗口完全重合、无跳动。
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: targetBounds.width,
+    height: targetBounds.height,
+    ...(typeof targetBounds.x === 'number' && typeof targetBounds.y === 'number'
+      ? { x: targetBounds.x, y: targetBounds.y }
+      : {}),
     minWidth: 1200,
     minHeight: 800,
     frame: false,
@@ -2444,14 +2487,9 @@ function createWindow() {
 
   // ── 窗口状态记忆：恢复上次关闭时的窗口布局（大小/位置/显示器/全屏或最大化） ──
   // 仅当记录的版本与当前版本一致（未经过应用内更新）时恢复，否则保持默认（主屏 + 1400×900）。
-  const savedWindowState = loadWindowState(app)
+  // 尺寸/位置已在创建窗口时按同一份记录（targetBounds）套用，此处只处理「状态」（最大化 / kiosk）。
   if (savedWindowState) {
     try {
-      const { screen } = require('electron')
-      const displays = screen.getAllDisplays()
-      const targetDisplay = displays.find((d) => d.id === savedWindowState.displayId) || screen.getPrimaryDisplay()
-      const bounds = clampBoundsToWorkArea(savedWindowState.bounds, targetDisplay.workArea)
-      mainWindow.setBounds(bounds)
       if (savedWindowState.state === 'maximized') {
         // 窗口尚未显示时 maximize 可能不生效，等 show 后再设置
         mainWindow.once('show', () => {
