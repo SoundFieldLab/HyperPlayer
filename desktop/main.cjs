@@ -2352,7 +2352,11 @@ function createWindow() {
   // 否则 splash 的动画还没显示就会被主窗口关闭。
   // 软件合成（GPU 加速禁用）下内容层提交慢，splash 最短可见时间动态加长，
   // 给流体光斑/logo/文字足够时间真正上屏（否则只见渐变底，观感像未加载）。
-  const splashMinVisibleMs = isDev ? 1800 : (gpuCompositingDisabled ? 3500 : 1200)
+  //
+  // 注意：gpuCompositingDisabled 由异步探测填充（见 app.whenReady 中的 readStableGpuStatus），
+  // 创建窗口时可能尚未就绪 —— 故这里用「延迟求值」：真正读取该值是在「切主窗口」那一刻
+  // （splashMinVisibleMsFor），那时 GPU 状态早已稳定，避免误判成软件合成而白等 2.3s。
+  const splashMinVisibleMsFor = () => (isDev ? 1800 : (gpuCompositingDisabled ? 3500 : 1200))
   let splashShownAt = 0
 
   // ── 先解析主窗口的目标布局，供 splash 与主窗口共用 ──
@@ -2636,9 +2640,10 @@ function createWindow() {
     if (!mainFirstFrameReady || !mainLoaded) return
     mainShown = true
     const visibleForMs = splashShownAt > 0 ? Date.now() - splashShownAt : 0
-    // splash 实际显示过才保证最短可见时间；未显示（加载失败等）则立即切换主窗
+    // splash 实际显示过才保证最短可见时间；未显示（加载失败等）则立即切换主窗。
+    // splashMinVisibleMsFor() 在此刻才求值：GPU 状态早已稳定，不会误判成软件合成。
     const remainingMs = splashShownAt > 0
-      ? Math.max(0, splashMinVisibleMs - visibleForMs)
+      ? Math.max(0, splashMinVisibleMsFor() - visibleForMs)
       : 0
 
     setTimeout(() => {
@@ -6637,17 +6642,42 @@ app.whenReady().then(async () => {
     console.error('⚠️ [更新] 启动应用待更新失败:', error instanceof Error ? error.message : error)
   }
   // GPU 状态诊断：区分"splash 未渲染出来"（GPU 合成器异常）与"未加载出来"（资源失败）。
-  // 每次启动写入日志，便于排查 splash 黑/白屏问题。
-  try {
-    const gpuInfo = app.getGPUFeatureStatus()
-    logStartupTiming(`GPU feature status: accelerated=${gpuInfo.gpu_compositing || '?'} webgl=${gpuInfo.webgl || '?'}`)
+  //
+  // ⚠️ 时机陷阱（2026-09-11 实测）：app ready 后的一小段时间内 GPU 进程尚未初始化完成，
+  // 此时 getGPUFeatureStatus() 返回过渡值 gpu_compositing='disabled_software'，
+  // 约 300~400ms 后才变为 'enabled'。本机实测时间线：
+  //   +128ms / +236ms → disabled_software ；+393ms 起 → enabled（并稳定保持）
+  // 若在此窗口内读一次就定论，会把「显卡完全正常」的机器误判为软件合成 ——
+  // 既误导排查方向（本机曾因此误以为走了虚拟显示器），又让 splashMinVisibleMs
+  // 被错误地由 1200ms 拉长到 3500ms（白等 2.3s）。
+  //
+  // 修复要点：
+  //   1. 轮询等待状态稳定（读到 'enabled' 立即返回；过渡值需连续两次一致才算稳定；2s 超时兜底）；
+  //   2. **异步执行、不 await**，绝不阻塞窗口创建 —— splash 最短可见时间在「切主窗口」时才读取，
+  //      那时状态早已稳定（见 createWindow 内的 splashMinVisibleMsFor()）。
+  const readStableGpuStatus = async () => {
+    const TRANSITIONAL = new Set(['disabled_software', 'disabled_off', 'unknown'])
+    const deadline = Date.now() + 2000
+    let previous = null
+    while (Date.now() < deadline) {
+      const status = app.getGPUFeatureStatus()
+      const value = status.gpu_compositing
+      if (value === 'enabled') return { status, settled: true }
+      if (previous === value && !TRANSITIONAL.has(value)) return { status, settled: true }
+      previous = value
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    return { status: app.getGPUFeatureStatus(), settled: false }
+  }
+  void readStableGpuStatus().then(({ status: gpuInfo, settled }) => {
+    logStartupTiming(`GPU feature status: accelerated=${gpuInfo.gpu_compositing || '?'} webgl=${gpuInfo.webgl || '?'} (settled=${settled})`)
     // 软件合成（GPU 加速禁用）下，窗口内容层提交明显变慢（可达 2s+）。
     // 记录该状态，createWindow 据此动态延长 splash 最短可见时间，
     // 给内容层足够时间真正上屏，避免 splash 显示 1.2s 后就被关闭、用户只见深色底（≈黑）。
     gpuCompositingDisabled = gpuInfo.gpu_compositing === 'disabled_software' || gpuInfo.gpu_compositing === 'disabled'
-  } catch (error) {
+  }).catch((error) => {
     logStartupTiming(`GPU feature status unavailable: ${error.message}`)
-  }
+  })
   // Electron 默认不会自动放行渲染进程的定位权限。
   // 放行后，天气组件才能优先使用 Windows/Chromium 的设备定位，再回退到公网 IP。
   // media 权限：放行后渲染进程才能用 navigator.mediaDevices.enumerateDevices()
