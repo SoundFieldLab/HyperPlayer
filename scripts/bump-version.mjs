@@ -3,10 +3,10 @@
  * 版本号更迭工具（semver bump）
  *
  * 用法：
- *   node scripts/bump-version.mjs patch            # 0.1.0 -> 0.1.1
- *   node scripts/bump-version.mjs minor            # 0.1.0 -> 0.2.0
- *   node scripts/bump-version.mjs major            # 0.1.0 -> 1.0.0
- *   node scripts/bump-version.mjs pre              # 0.1.0 -> 0.1.1-beta.0
+ *   node scripts/bump-version.mjs patch            # 1.0.0 -> 1.0.1
+ *   node scripts/bump-version.mjs minor            # 1.0.0 -> 1.1.0
+ *   node scripts/bump-version.mjs major            # 1.0.0 -> 2.0.0
+ *   node scripts/bump-version.mjs pre              # 1.0.0 -> 1.0.1-beta.0
  *   node scripts/bump-version.mjs 1.2.3            # 指定具体版本
  *
  * 选项：
@@ -16,12 +16,13 @@
  *   --no-push   不推送（commit/tag 只在本地）
  *   --force     忽略工作区未提交改动（默认拒绝，避免污染版本提交）
  *
- * 默认流程：更新 package.json + package-lock.json 版本号
- *   → git add 两个文件 → git commit "chore: bump version to vX.Y.Z"
+ * 默认流程：更新 package.json + package-lock.json 版本号（lockfile 的顶层 `version`
+ *   与 `packages[""].version` 两处都改）→ git add 两个文件
+ *   → git commit "chore: bump version to vX.Y.Z"
  *   → git tag vX.Y.Z → git push origin <分支> && git push origin vX.Y.Z
  *
  * 与发布策略配套（AGENTS.md）：bump 后执行 `npm run build:electron`
- * 产出安装版，再 `gh release create` 发布（Releases 只发安装版）。
+ * 产出安装版，再 `gh release create` 发布（Releases 只发安装版，且一律 Pre-release）。
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -85,7 +86,7 @@ function nextVersion(current, bump) {
       v.pre = null
       return formatVersion(v)
     case 'pre': {
-      // 0.1.0 -> 0.1.1-beta.0；0.1.1-beta.0 -> 0.1.1-beta.1
+      // 1.0.0 -> 1.0.1-beta.0；1.0.1-beta.0 -> 1.0.1-beta.1
       if (v.pre && /^beta\.\d+$/.test(v.pre)) {
         const n = Number(v.pre.split('.')[1]) + 1
         v.pre = `beta.${n}`
@@ -137,8 +138,13 @@ const next = nextVersion(current, bumpArg)
 if (!DRY_RUN && !FORCE) ensureCleanWorktree()
 
 // 校验 lock 版本一致性
+// package-lock.json 有两处版本号：顶层 version 与 packages[""].version（lockfileVersion 3 起），
+// 两者都要与 package.json 一致，否则 `npm ci` 会因根包版本不匹配而报错。
 if (lock.version !== current) {
-  console.warn(`⚠️  package-lock.json 版本(${lock.version})与 package.json(${current})不一致，将一并同步`)
+  console.warn(`⚠️  package-lock.json 顶层版本(${lock.version})与 package.json(${current})不一致，将一并同步`)
+}
+if (lock.packages?.[''] && lock.packages[''].version !== current) {
+  console.warn(`⚠️  package-lock.json packages[""] 版本(${lock.packages[''].version})与 package.json(${current})不一致，将一并同步`)
 }
 
 console.log(`版本更迭: ${current} -> ${next}`)
@@ -153,9 +159,14 @@ if (DRY_RUN) {
 // 1. 更新版本号
 pkg.version = next
 lock.version = next
+if (lock.packages?.['']) {
+  lock.packages[''].version = next
+} else if (lock.packages) {
+  console.warn('⚠️  package-lock.json 缺少 packages[""] 根包条目，已跳过其版本同步')
+}
 writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8')
 writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, 'utf8')
-console.log(`✅ 已更新 package.json / package-lock.json -> ${next}`)
+console.log(`✅ 已更新 package.json / package-lock.json（含 packages[""]）-> ${next}`)
 
 // 2. 提交
 if (DO_COMMIT) {

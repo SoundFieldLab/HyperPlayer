@@ -42,19 +42,23 @@ Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./D
 
 **打包规则（electron-builder）**：`build.files` 白名单 = `desktop/**/*`、`dist/**/*`、`server/**/*`、`shared/**/*`、`python-apple-bridge/**/*`、`local-server.mjs`、`package.json`、`logo.png`、`build/**/*`（清单里还列了 `THIRD_PARTY_NOTICES.md`，但该文件当前不存在于仓库根，属悬空条目）。`build.asarUnpack` 解包 `python-apple-bridge/**/*.py`（Python 脚本不能从 asar 内执行）。已无 Python 节拍服务与离线 wheels，无需任何排除规则。
 
-**发布策略（releases）**：**GitHub Releases 只发 NSIS 安装版**（`npm run build:electron` → `release/HyperPlayer-<version>-Setup.exe`），**不发便携版**（`release/win-unpacked/` 是本地调试产物，不随 releases 分发）。发布时：打 `v<version>` tag → push tag → `gh release create v<version> release/HyperPlayer-<version>-Setup.exe`（附 changelog）。安装版为每用户安装（`nsis.perMachine: false`），**不携带任何用户数据/配置**——用户配置生成于各机 `%APPDATA%\HyperPlayer\`，安装后自动适配当前用户。CI 见 `.github/workflows/ci.yml`（类型/单测/构建 + tag 出包）与 `nightly.yml`（每日 nightly 预发布）；两者都要求 EVS secrets，正式构建需 production streaming VMP 剩余 ≥30 天。
+**发布策略（releases）**：**GitHub Releases 只发 NSIS 安装版**（`npm run build:electron` → `release/HyperPlayer-<version>-Setup.exe`），**不发便携版**（`release/win-unpacked/` 是本地调试产物，不随 releases 分发）。发布时：打 `v<version>` tag → push tag → `gh release create v<version> release/HyperPlayer-<version>-Setup.exe`（附 changelog）。安装版为每用户安装（`nsis.perMachine: false`），**不携带任何用户数据/配置**——用户配置生成于各机 `%APPDATA%\HyperPlayer\`，安装后自动适配当前用户。CI 见 `.github/workflows/ci.yml`（类型/单测/构建 + tag 出包）与 `nightly.yml`（每日 nightly）；两者都要求 EVS secrets，正式构建需 production streaming VMP 剩余 ≥30 天。
 
-**版本号更迭机制**：版本号唯一事实来源是 `package.json` 的 `version`（设置→关于页显示 `v{version} Beta`，"检查新版本"功能对比 GitHub tag 与本地 version）。使用 `scripts/bump-version.mjs` 自动更迭：
+**发布形式一律为 Pre-release**：本仓库处于测试阶段，版本化发版（`pre-release.yml`，打 `v*` tag）与每日构建（`nightly.yml`）**全部以 GitHub Pre-release 形式发布**，不占用正式 latest。`nightly.yml` 每次构建生成唯一 tag `nightly-<YYYYMMDD>` 并创建**独立** Pre-release（历史全部保留；当天重复构建覆盖当天同名 tag/release）；只有 `pre-release.yml` 在 tag 为**纯语义版本号**（如 `1.0.0`）时才额外生成并提交 `update.json`，用作「设置 → 检查更新」的推送通道。nightly 不写 update.json。
+
+**版本号更迭机制**：版本号唯一事实来源是 `package.json` 的 `version`（设置→关于页显示 `v{version} 预览版`，"检查新版本"功能对比 GitHub tag 与本地 version）。**版本号起点为 `1.0.0`**——本仓库自 1.0.0 起重新编号（减配 + 改名后的首个版本），此前的 0.x 记录已不再保留。使用 `scripts/bump-version.mjs` 自动更迭：
 
 ```bash
-npm run version:patch   # 0.1.0 -> 0.1.1（修复）
-npm run version:minor   # 0.1.0 -> 0.2.0（新功能）
-npm run version:major   # 0.1.0 -> 1.0.0（破坏性）
-npm run version:pre     # 0.1.0 -> 0.1.1-beta.0（预发布）
+npm run version:patch   # 1.0.0 -> 1.0.1（修复）
+npm run version:minor   # 1.0.0 -> 1.1.0（新功能）
+npm run version:major   # 1.0.0 -> 2.0.0（破坏性）
+npm run version:pre     # 1.0.0 -> 1.0.1-beta.0（预发布）
 npm run version:dry     # 预览将要执行的操作（不落地）
 ```
 
-脚本默认流程：更新 `package.json` + `package-lock.json` 版本 → commit `chore: bump version to vX.Y.Z` → 打 `vX.Y.Z` tag → push 分支与 tag。选项：`--no-commit` / `--no-tag` / `--no-push` / `--force`（工作区有未提交改动时默认拒绝，避免污染版本提交）。bump 后走发布流程：`npm run build:electron` → `gh release create`。
+脚本默认流程：更新 `package.json` + `package-lock.json`（顶层 `version` 与 `packages[""].version` **两处都改**，漏改会导致 `npm ci` 校验失败）→ commit `chore: bump version to vX.Y.Z` → 打 `vX.Y.Z` tag → push 分支与 tag。选项：`--no-commit` / `--no-tag` / `--no-push` / `--force`（工作区有未提交改动时默认拒绝，避免污染版本提交）。bump 后走发布流程：`npm run build:electron` → `gh release create`。
+
+**版本标识唯一事实源**：`src/services/versionInfo.ts` 的 `VERSION_CHANNEL_LABEL`（当前为「预览版」）与 `getVersionLabel()`——关于页与文档都引用它，勿在别处写死标识文案。1.0 起代号统一为「澜 おおなみ」（`getVersionCodename`，`major >= 1`）。
 
 **打包三大约束（破坏任一条便携版就会黑屏/缺资源）**：
 1. `vite.config.ts` 的 **`base` 必须保持 `'./'`**（顶层配置，不要移进 `build` 子对象）——打包版用 `loadFile()`（file://）加载 `dist/index.html`，若 base 是 `'/'`，资源以 `/assets/...` 绝对路径引用全部 404，React 不挂载 → 整窗黑屏（症状：启动日志 `Renderer resources: 0`）。

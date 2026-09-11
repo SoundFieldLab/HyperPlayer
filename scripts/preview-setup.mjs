@@ -18,7 +18,7 @@ const UNINSTALL_NSI = join(ROOT, 'scripts', 'setup-preview', 'uninstall-preview.
 const OUT = join(ROOT, 'release', 'setup-preview.exe')
 const UNINSTALL_OUT = join(ROOT, 'release', 'uninstall-preview.exe')
 const UNINSTALL_BUILDER = join(ROOT, 'release', 'uninstall-preview-builder.exe')
-const APP_VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version || '0.1.4'
+const APP_VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version || '1.0.0'
 
 function directorySize(path) {
   if (!existsSync(path)) return 0

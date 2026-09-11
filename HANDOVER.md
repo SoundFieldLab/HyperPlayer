@@ -10,7 +10,7 @@
 ## 1. 项目状态（2026-09-10）
 
 - **阶段**：减配（slimdown）已完成，处于维护/优化阶段。核心功能（五音源搜索/播放/歌词/无缝衔接/桌面模式/音效 HSE/空间音频）均已实现。
-- **代码基线**：分支 `slimdown`，HEAD `19c717a`（`docs: 新增减配功能总览与序号版清单`）；`package.json` 版本 **0.1.4**。
+- **代码基线**：分支 `main`；`package.json` 版本 **1.0.0**（自 1.0.0 起重新编号，0.x 记录已废弃）。
 - **稳定性（2026-09-10 本机实测 `npm run test`）**：**145 文件 = 144 过 + 1 跳过；1292 用例 = 1286 过 + 5 跳过 + 1 todo**。跳过的 5 项是 HSE 模块 LGPL 可选依赖未装（属设计行为）。`test/chromaStyles.test.ts` 的 `keeps decay timing approximately frame-rate independent` 在满载并发时会 5s 超时，单独运行通过——属**已有偶发抖动**，不是减配引入的回归。
 - **代码规模**：`src/` 约 540 个 `.ts`/`.tsx`；后端 `local-server.mjs` 单文件 **约 11.3k 行**（端口 3001）。**已无任何 Python 节拍/响度/补偿代码**。
 
@@ -149,7 +149,7 @@ npm run vmp:sign:release / vmp:verify:release / vmp:status:release   # castLabs 
 npm run benchmark:mv          # B站 MV 相关基准
 
 # 版本更迭
-npm run version:patch         # 0.1.0 -> 0.1.1（自动 commit/tag/push）
+npm run version:patch         # 1.0.0 -> 1.0.1（自动 commit/tag/push）
 npm run version:dry           # 预览更迭（不落地）
 
 # 发布（⚠️ Releases 只发 NSIS 安装版，不发便携版 win-unpacked/）

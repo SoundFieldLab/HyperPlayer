@@ -40,7 +40,7 @@ import AudioQualitySettingsModal from './AudioQualitySettingsModal'
 import FontPicker from './FontPicker'
 import CacheClearModal from './CacheClearModal'
 import packageInfo from '../../package.json'
-import { getVersionDisplay } from '../services/versionInfo'
+import { getVersionDisplay, getVersionLabel } from '../services/versionInfo'
 import { VERSION_HISTORY } from '../services/versionHistory'
 import { isTvModeActive } from '../platform'
 import {
@@ -3097,7 +3097,7 @@ function SettingsPanel({
                           <h2 className={`text-2xl font-bold ${textPrimary}`}>关于 HyperPlayer</h2>
                         </div>
                         <span className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold ${playerTheme === 'dark' ? 'bg-white/10 text-white/70' : 'bg-black/5 text-black/60'}`}>
-                          {getVersionDisplay(packageInfo.version)} · 预览版
+                          {getVersionLabel(packageInfo.version)}
                         </span>
                       </div>
 

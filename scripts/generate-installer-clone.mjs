@@ -18,6 +18,9 @@ const ROOT = join(__dirname, '..')
 const OUT = join(ROOT, 'build', 'ui-clone')
 const FONT = 'Microsoft YaHei, SimHei, "Noto Sans CJK SC", sans-serif'
 
+// 版本号唯一事实源：package.json（避免安装器美术里再出现写死的旧版本号）
+const APP_VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+
 const W = 896
 const H = 609
 // 雪豹配色
@@ -139,7 +142,7 @@ ${segBarSvg(0, 484, W, 4, SEG_BOT)}
 <text x="610" y="394" font-family='${FONT}' font-size="12" fill="#8A6B45">排行榜 · 歌手 / 专辑 · AI 推荐</text>
 <!-- 版本框（左下） -->
 <rect x="36" y="436" width="140" height="36" rx="8" fill="#FFFFFF" opacity="0.7" stroke="${GOLD}" stroke-width="1"/>
-<text x="106" y="459" font-family='${FONT}' font-size="13" fill="${GOLD_DARK}" text-anchor="middle">v0.1.4</text>
+<text x="106" y="459" font-family='${FONT}' font-size="13" fill="${GOLD_DARK}" text-anchor="middle">v${APP_VERSION}</text>
 </svg>`
 }
 
@@ -155,7 +158,7 @@ ${segBarSvg(0, 484, W, 4, SEG_BOT)}
 <!-- 进度条轨道（金色） -->
 <rect x="196" y="330" width="504" height="8" rx="4" fill="#F0D9C2"/>
 <rect x="36" y="436" width="140" height="36" rx="8" fill="#FFFFFF" stroke="${GOLD}" stroke-width="1"/>
-<text x="106" y="459" font-family='${FONT}' font-size="13" fill="${GOLD_DARK}" text-anchor="middle">v0.1.4</text>
+<text x="106" y="459" font-family='${FONT}' font-size="13" fill="${GOLD_DARK}" text-anchor="middle">v${APP_VERSION}</text>
 </svg>`
 }
 
@@ -169,7 +172,7 @@ ${segBarSvg(0, 484, W, 4, SEG_BOT)}
 <text x="448" y="300" font-family='${FONT}' font-size="28" font-weight="700" fill="${DARK}" text-anchor="middle">安装完成</text>
 <text x="448" y="334" font-family='${FONT}' font-size="14" fill="#8A6B45" text-anchor="middle">HyperPlayer 已成功安装到你的电脑</text>
 <rect x="36" y="436" width="140" height="36" rx="8" fill="#FFFFFF" opacity="0.7" stroke="${GOLD}" stroke-width="1"/>
-<text x="106" y="459" font-family='${FONT}' font-size="13" fill="${GOLD_DARK}" text-anchor="middle">v0.1.4</text>
+<text x="106" y="459" font-family='${FONT}' font-size="13" fill="${GOLD_DARK}" text-anchor="middle">v${APP_VERSION}</text>
 </svg>`
 }
 

@@ -6,7 +6,8 @@ Unicode true
   !error "SRC not defined - run via npm run preview:setup"
 !endif
 !ifndef APP_VERSION
-  !define APP_VERSION "0.1.4"
+  ; 兜底值：正经编译时由 preview-setup.mjs 传入 /DAPP_VERSION（源自 package.json）
+  !define APP_VERSION "1.0.0"
 !endif
 !ifndef ESTIMATED_SIZE
   !define ESTIMATED_SIZE 0
