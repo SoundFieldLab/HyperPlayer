@@ -2,8 +2,11 @@
 #
 # 行为约定：
 #   - 不 bump 正式版本号：仅在工作区拼 "<基础版本>-nightly.<YYYYMMDD>" 用于产物命名，不推回仓库。
-#   - 固定使用 nightly 这个 tag/release，每次发布前覆盖上一版，仓库始终只保留一个当前 nightly。
-#   - 自上次 nightly 构建以来的提交生成 changelog。
+#   - **每次构建生成唯一 tag（nightly-<YYYYMMDD>）并创建独立的 GitHub Pre-release**，
+#     历史 nightly 全部保留（与 pre-release.yml 一致，一律以 Pre-release 形式发布）。
+#     同一天重复构建（当天又有了新提交 / force=true）会覆盖当天的 tag 与 release，
+#     保持「每天一个 nightly」语义；跨天则各自独立、互不覆盖。
+#   - 自上一个 nightly tag 以来的提交生成 changelog。
 #   - **不写/不推 update.json** —— 不干扰「设置 → 检查更新」的正式版通道。
 #   - 无新增提交时自动跳过（手动触发时可用 force=true 强制构建）。
 #
@@ -58,14 +61,16 @@ jobs:
           FORCE: ${{ github.event.inputs.force }}
         run: |
           DATE=$(TZ=Asia/Shanghai date +%Y%m%d)
-          NIGHTLY_TAG="nightly"
+          NIGHTLY_TAG="nightly-${DATE}"
 
           # 基础版本只读 package.json，不改仓库；nightly 版本仅用于产物命名
           BASE_VERSION=$(node -p "require('./package.json').version")
           NIGHTLY_VERSION="${BASE_VERSION}-nightly.${DATE}"
 
-          # changelog 覆盖上一次 nightly 之后的提交；首次运行回退最近正式版 tag，再无则回退最近 50 条
-          LAST_NIGHTLY=$(git tag -l 'nightly' --sort=-creatordate | head -1)
+          # changelog 覆盖上一个 nightly tag 之后的提交；首次运行回退最近正式版 tag，再无则回退最近 50 条
+          # 排除当天自己的 tag：当天重复构建时，changelog 应覆盖「上一个 nightly 之后」的全部提交，
+          # 而不是从当天 tag 起（否则当天第二次构建的 changelog 会丢失当天已有提交）。
+          LAST_NIGHTLY=$(git tag -l 'nightly-*' --sort=-creatordate | grep -vx "$NIGHTLY_TAG" | head -1 || true)
           LAST_STABLE=$(git tag -l 'v*' --sort=-creatordate | head -1)
           if [ -n "$LAST_NIGHTLY" ]; then
             RANGE="${LAST_NIGHTLY}..HEAD"
@@ -73,7 +78,8 @@ jobs:
             RANGE="${LAST_STABLE:+${LAST_STABLE}..HEAD}"
           fi
 
-          # 无新增提交判定（仅当存在上一个 nightly tag 且非 force 时生效）
+          # 无新增提交判定：与「上一个 nightly tag」比较，相同则跳过（force=true 时强制构建）
+          # 当天 tag 已存在（重复构建）时，仍与上一个 nightly tag 比较，确保有新提交才发。
           HAS_CHANGES="true"
           if [ "$FORCE" != "true" ] && [ -n "$LAST_NIGHTLY" ]; then
             if [ "$(git rev-parse "$LAST_NIGHTLY")" = "$(git rev-parse HEAD)" ]; then
@@ -184,15 +190,15 @@ jobs:
           name: nightly-windows-installer
           path: release/*.exe
 
-  # ---------- 覆盖旧 nightly + 发布固定 nightly 预发布 ----------
+  # ---------- 发布独立的 Nightly 预发布 ----------
   release:
-    name: 覆盖并发布固定 Nightly 预发布
+    name: 发布 Nightly 预发布
     needs: [prepare, build-windows]
     if: ${{ needs.prepare.outputs.has_changes == 'true' && needs.build-windows.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: 拉取代码（供 gh release 使用当前默认分支 HEAD）
+      - name: 拉取代码（完整历史 + tags，供打 tag 使用）
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -208,23 +214,35 @@ jobs:
           name: nightly-windows-installer
           path: artifacts
 
-      - name: 删除上一版固定 nightly（保留 tag，避免破坏变更检测）
+      - name: 创建并推送当日 nightly tag
+        # 用轻量 tag 指向本次构建的 SHA；同名 tag 已存在（当天重复构建）则强制移动到最新提交，
+        # 保证「每天一个 nightly」，跨天的 tag 各自独立保留。
         env:
-          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_TAG: ${{ needs.prepare.outputs.nightly_tag }}
         run: |
-          gh release delete nightly -y || echo "没有需要删除的固定 nightly release"
-          git tag -f nightly "$GITHUB_SHA"
-          git push origin refs/tags/nightly --force
+          set -euo pipefail
+          git tag -f "$NIGHTLY_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$NIGHTLY_TAG" --force
 
-      - name: 创建固定 nightly 预发布
+      - name: 清理当天同名 release（重复构建时覆盖）
         env:
           GH_TOKEN: ${{ github.token }}
+          NIGHTLY_TAG: ${{ needs.prepare.outputs.nightly_tag }}
         run: |
+          gh release delete "$NIGHTLY_TAG" -y || echo "当天尚无同名 release，无需清理"
+
+      - name: 创建 Nightly 预发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_TAG: ${{ needs.prepare.outputs.nightly_tag }}
+          NIGHTLY_VERSION: ${{ needs.prepare.outputs.nightly_version }}
+        run: |
+          set -euo pipefail
           ls -la artifacts
-          gh release create nightly \
-            --title "HyperPlayer Nightly" \
+          gh release create "$NIGHTLY_TAG" \
+            --title "HyperPlayer Nightly (${NIGHTLY_VERSION})" \
             --notes-file changelog.md \
             --prerelease \
-            --target main \
+            --verify-tag \
             artifacts/*
-          echo "已发布固定 nightly（预发布，不覆盖正式 latest）"
+          echo "已发布 Nightly 预发布：${NIGHTLY_TAG}（预发布，不覆盖正式 latest，不写 update.json）"
