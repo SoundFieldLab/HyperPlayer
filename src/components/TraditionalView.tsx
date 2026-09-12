@@ -1951,7 +1951,7 @@ function TraditionalRecent({ platform, accent, isDark, loggedIn, currentSong, au
 
 // ─────────────────────────── 设置页 ───────────────────────────
 // QQ 音乐式顶部标签 + 全宽内容，分两类：
-// 1. 镜像全局设置（常规/播放/歌词/快捷键/桌面集成/性能/网络/高级/关于）：
+// 1. 镜像全局设置（常规/播放/歌词/快捷键/桌面集成/性能/高级/关于）：
 //    来自 services/globalSettingsRegistry，与简约模式设置同键同事件，任意一端改动实时互通；
 // 2. 「传统自定义」：仅影响传统模式自身的布局 / 背景氛围 / 平台排序显隐。
 // 「全局设置」独立入口已移除 —— 全局设置现在就是本页的主体。
@@ -1965,7 +1965,6 @@ const SETTINGS_TABS: Array<{ id: TraditionalSettingsTabId; label: string }> = [
   { id: 'shortcuts', label: '快捷键' },
   { id: 'desktop', label: '桌面集成' },
   { id: 'performance', label: '性能' },
-  { id: 'network', label: '网络' },
   { id: 'advanced', label: '高级' },
   { id: 'about', label: '关于' },
   { id: 'traditional', label: '传统自定义' },
@@ -1985,7 +1984,7 @@ function TraditionalSettingsPage({ preferences, playerTheme, onChange, onOpenQua
     active?.scrollIntoView?.({ block: 'nearest', inline: 'center' })
   }, [activeTab])
 
-  // 当前环境下没有可见条目的分组，对应标签隐藏（如 Web / TV 下的「桌面集成」「网络」）
+  // 当前环境下没有可见条目的分组，对应标签隐藏（如 Web / TV 下的「桌面集成」）
   const visibleTabs = useMemo(() => SETTINGS_TABS.filter(tab => {
     if (tab.id === 'traditional') return true
     const group = GLOBAL_SETTINGS_GROUPS.find(item => item.id === tab.id)

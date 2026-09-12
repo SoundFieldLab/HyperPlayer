@@ -39,7 +39,6 @@ export type GlobalSettingsGroupId =
   | 'shortcuts'    // 快捷键与播放提示
   | 'desktop'      // 桌面集成（桌面歌词 / 播放器 / 任务栏 / 窗口）
   | 'performance'  // 性能
-  | 'network'      // 网络与代理
   | 'advanced'     // 高级
   | 'about'        // 关于
 
@@ -47,10 +46,6 @@ export type MirrorActionId =
   | 'audio-quality'   // 打开"各平台播放音质"弹窗（各模式自备弹窗挂载）
   | 'cache-clear'     // 打开缓存清理弹窗
   | 'check-update'    // 检查更新（注册表内实现）
-  // 以下两个 actionId 对应的设置项已随减配移除，联合类型成员保留仅为不破坏
-  // 其它模式（传统/探索）既有调用点的类型兼容；注册表内不再产生这两个 action。
-  | 'remote-settings' // （已废弃）遥控器个性化弹窗
-  | 'proxy-rescan'    // （已废弃）重新扫描代理
 
 export type SettingControl =
   | { kind: 'toggle' }
@@ -968,7 +963,7 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
       {
         id: 'transitionDebugEnabled',
         label: '过渡调试提示',
-        description: '切歌时右上角显示引擎 / 策略 / DJ 效果清单',
+        description: '切歌时右上角显示本次衔接方式',
         control: { kind: 'toggle' },
         read: () => readStr('hyperplayer:transition-debug', '0') === '1',
         write: (value) => {
@@ -1082,7 +1077,7 @@ export function useGlobalSettings() {
     },
     runAction: (actionId: MirrorActionId) => {
       if (actionId === 'check-update') checkForUpdate()
-      // 已减配：proxy-rescan 不再实现；audio-quality / cache-clear 由各模式渲染器打开自己的弹窗
+      // audio-quality / cache-clear 由各模式渲染器打开自己的弹窗
     },
   }), [version])
 }

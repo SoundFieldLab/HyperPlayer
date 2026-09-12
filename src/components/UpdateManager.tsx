@@ -317,7 +317,7 @@ export default function UpdateManager() {
               )}
               {view === 'confirm-restart' && (
                 <>
-                  <p className="text-white/80 text-sm leading-relaxed">更新将重启软件，正在进行的操作（播放、下载、AI 混音等）会中断，未保存的内容可能会丢失。</p>
+                  <p className="text-white/80 text-sm leading-relaxed">更新将重启软件，正在进行的操作（播放、下载等）会中断，未保存的内容可能会丢失。</p>
                   <p className="text-white/40 text-xs mt-2">选择「稍后」则退出应用时再自动应用。</p>
                 </>
               )}

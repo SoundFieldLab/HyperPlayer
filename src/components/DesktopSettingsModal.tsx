@@ -48,7 +48,7 @@ export default function DesktopSettingsModal({
 }: DesktopSettingsModalProps) {
   // 二级菜单状态
   const [activeSubmenu, setActiveSubmenu] = useState<SubmenuType>(null)
-  // 全局设置镜像里打开的共享弹窗（音质 / 缓存清理 / 遥控器个性化）
+  // 全局设置镜像里打开的共享弹窗（音质 / 缓存清理）
   const [globalModal, setGlobalModal] = useState<MirrorActionId | null>(null)
   useTvBack(() => {
     if (!show) return false

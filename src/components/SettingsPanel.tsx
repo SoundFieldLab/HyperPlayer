@@ -791,7 +791,7 @@ function SettingsPanel({
     const saved = localStorage.getItem('developerMode')
     return parseStoredBoolean(saved, isTvModeActive())
   })
-  // 过渡调试：开启后切歌/过渡时右上角弹窗显示引擎/策略/DJ 效果清单
+  // 过渡调试：开启后切歌/过渡时右上角弹窗显示引擎/衔接方式
   const [transitionDebugEnabled, setTransitionDebugEnabled] = useState(() => {
     try {
       return localStorage.getItem('hyperplayer:transition-debug') === '1'
@@ -1723,79 +1723,113 @@ function SettingsPanel({
                     </div>
                   </div>
                   
-                  {/* 歌词翻译位置 */}
+                  {/* 歌词（逐字 / 翻译） */}
                   <div>
-                    <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>歌词翻译</h3>
+                    <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>歌词</h3>
                     <div className={`${bgCard} rounded-xl p-4 border ${borderColor}`}>
-                      <div className="mb-4">
-                        <div className={`${textPrimary} font-medium mb-1`}>翻译显示位置</div>
-                        <div className={`${textSecondary} text-sm`}>
-                          选择歌词翻译在播放界面的显示位置
+                      <div className="flex items-center justify-between gap-6">
+                        <div>
+                          <div className={`${textPrimary} font-medium mb-1`}>逐字歌词</div>
+                          <div className={`${textSecondary} text-sm`}>卡拉OK 逐字高亮；关闭后按行高亮</div>
                         </div>
+                        <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={wordByWordLyrics}
+                            onChange={(event) => handleWordByWordToggle(event.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:rounded-full after:h-5 after:w-5 after:transition-all after:bg-white after:shadow-[0_1px_3px_rgba(0,0,0,0.35)]`} style={{ backgroundColor: wordByWordLyrics ? accentColor : '' }} />
+                        </label>
                       </div>
-                      
-                      <div className="grid grid-cols-2 gap-3">
-                        <button
-                          onClick={() => {
-                            setTranslationPosition('traditional')
-                            localStorage.setItem('translationPosition', 'traditional')
-                            window.dispatchEvent(new CustomEvent('translationPositionChanged', { detail: 'traditional' }))
-                          }}
-                          className={`p-4 rounded-xl transition-all border-2 ${
-                            translationPosition === 'traditional'
-                              ? 'border-2'
-                              : 'border-transparent'
-                          }`}
-                          style={{
-                            borderColor: translationPosition === 'traditional' ? accentColor : 'transparent',
-                            backgroundColor: translationPosition === 'traditional' 
-                              ? `${accentColor}20`
-                              : playerTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'
-                          }}
-                        >
-                          <div className="flex flex-col items-center gap-2">
-                            <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${accentColor}30` }}>
-                              <svg className="w-6 h-6" style={{ color: accentColor }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                              </svg>
-                            </div>
-                            <div>
-                              <div className={`${textPrimary} text-sm font-medium`}>传统</div>
-                              <div className={`${textTertiary} text-xs mt-1`}>显示于歌词下方</div>
-                            </div>
+
+                      <div className="pt-4 mt-4 border-t flex items-center justify-between gap-6" style={{ borderColor: playerTheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                        <div>
+                          <div className={`${textPrimary} font-medium mb-1`}>显示歌词翻译</div>
+                          <div className={`${textSecondary} text-sm`}>在播放界面显示歌词翻译</div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={translationEnabled}
+                            onChange={(event) => handleTranslationToggle(event.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:rounded-full after:h-5 after:w-5 after:transition-all after:bg-white after:shadow-[0_1px_3px_rgba(0,0,0,0.35)]`} style={{ backgroundColor: translationEnabled ? accentColor : '' }} />
+                        </label>
+                      </div>
+
+                      <div className="pt-4 mt-4 border-t" style={{ borderColor: playerTheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                        <div className="mb-4">
+                          <div className={`${textPrimary} font-medium mb-1`}>翻译显示位置</div>
+                          <div className={`${textSecondary} text-sm`}>
+                            选择歌词翻译在播放界面的显示位置
                           </div>
-                        </button>
-                        
-                        <button
-                          onClick={() => {
-                            setTranslationPosition('bottom-right')
-                            localStorage.setItem('translationPosition', 'bottom-right')
-                            window.dispatchEvent(new CustomEvent('translationPositionChanged', { detail: 'bottom-right' }))
-                          }}
-                          className={`p-4 rounded-xl transition-all border-2 ${
-                            translationPosition === 'bottom-right'
-                              ? 'border-2'
-                              : 'border-transparent'
-                          }`}
-                          style={{
-                            borderColor: translationPosition === 'bottom-right' ? accentColor : 'transparent',
-                            backgroundColor: translationPosition === 'bottom-right' 
-                              ? `${accentColor}20`
-                              : playerTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'
-                          }}
-                        >
-                          <div className="flex flex-col items-center gap-2">
-                            <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${accentColor}30` }}>
-                              <svg className="w-6 h-6" style={{ color: accentColor }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                              </svg>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            onClick={() => {
+                              setTranslationPosition('traditional')
+                              localStorage.setItem('translationPosition', 'traditional')
+                              window.dispatchEvent(new CustomEvent('translationPositionChanged', { detail: 'traditional' }))
+                            }}
+                            className={`p-4 rounded-xl transition-all border-2 ${
+                              translationPosition === 'traditional'
+                                ? 'border-2'
+                                : 'border-transparent'
+                            }`}
+                            style={{
+                              borderColor: translationPosition === 'traditional' ? accentColor : 'transparent',
+                              backgroundColor: translationPosition === 'traditional'
+                                ? `${accentColor}20`
+                                : playerTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'
+                            }}
+                          >
+                            <div className="flex flex-col items-center gap-2">
+                              <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${accentColor}30` }}>
+                                <svg className="w-6 h-6" style={{ color: accentColor }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                                </svg>
+                              </div>
+                              <div>
+                                <div className={`${textPrimary} text-sm font-medium`}>传统</div>
+                                <div className={`${textTertiary} text-xs mt-1`}>显示于歌词下方</div>
+                              </div>
                             </div>
-                            <div>
-                              <div className={`${textPrimary} text-sm font-medium`}>现代</div>
-                              <div className={`${textTertiary} text-xs mt-1`}>右下角浮动显示</div>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setTranslationPosition('bottom-right')
+                              localStorage.setItem('translationPosition', 'bottom-right')
+                              window.dispatchEvent(new CustomEvent('translationPositionChanged', { detail: 'bottom-right' }))
+                            }}
+                            className={`p-4 rounded-xl transition-all border-2 ${
+                              translationPosition === 'bottom-right'
+                                ? 'border-2'
+                                : 'border-transparent'
+                            }`}
+                            style={{
+                              borderColor: translationPosition === 'bottom-right' ? accentColor : 'transparent',
+                              backgroundColor: translationPosition === 'bottom-right'
+                                ? `${accentColor}20`
+                                : playerTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'
+                            }}
+                          >
+                            <div className="flex flex-col items-center gap-2">
+                              <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${accentColor}30` }}>
+                                <svg className="w-6 h-6" style={{ color: accentColor }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </div>
+                              <div>
+                                <div className={`${textPrimary} text-sm font-medium`}>现代</div>
+                                <div className={`${textTertiary} text-xs mt-1`}>右下角浮动显示</div>
+                              </div>
                             </div>
-                          </div>
-                        </button>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>

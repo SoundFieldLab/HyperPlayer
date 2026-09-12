@@ -529,7 +529,7 @@ function App() {
   const [showSearch, setShowSearch] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showMixingStudio, setShowMixingStudio] = useState(false)
-  // 播放设备控制弹窗（音频输出设备 / AirPlay 投送）
+  // 播放设备控制弹窗（音频输出设备）
   const [showDeviceControl, setShowDeviceControl] = useState(false)
   const [showSongDetail, setShowSongDetail] = useState(false)
   const [songDetailSong, setSongDetailSong] = useState<Song | null>(null)
@@ -1696,38 +1696,6 @@ function App() {
     }
     // eslint 无：adapter 通过 ref 读取最新实例
   }, [audioEngineVersion])
-
-  // 服务健康检测：应用启动后约 3s（等待 Python 子进程就绪），检测频响补偿（3004）与响度（3003）
-  // 服务是否正常；就绪时各弹一次 toast（localStorage 防重复）。失败静默——服务降级已有回退，
-  // 浏览器预览等无服务环境不会弹提示。
-  useEffect(() => {
-    let cancelled = false
-    const timer = window.setTimeout(() => {
-      const checkService = async (port: number, readyMessage: string, storageKey: string) => {
-        try {
-          if (localStorage.getItem(storageKey)) return
-          const controller = new AbortController()
-          const timeoutId = window.setTimeout(() => controller.abort(), 2000)
-          const res = await fetch(`http://localhost:${port}/health`, { signal: controller.signal })
-          window.clearTimeout(timeoutId)
-          if (cancelled || !res.ok) return
-          localStorage.setItem(storageKey, '1')
-          addToast(readyMessage, 'info')
-        } catch {
-          // 忽略：服务未就绪 / 不存在（浏览器预览、服务未启动等），静默降级
-        }
-      }
-      void checkService(3004, '频响补偿服务已就绪', 'hyperplayer:service-3004-toasted')
-      void checkService(3003, '响度服务已就绪', 'hyperplayer:service-3003-toasted')
-    }, 3000)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-    // 仅挂载时检测一次；addToast 为渲染内稳定函数，闭包读取最新 state
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // 响度归一化：开关在调音室切换时即时应用/回退（按 capabilities 判断，v1/v3 no-op）
   useEffect(() => {
@@ -5899,7 +5867,6 @@ function App() {
     onNeteaseLoginClick: () => void
     onQQLoginClick: () => void
     onSearchClick: () => void
-    onRemoteClick: () => void
     onOpenDeviceControl: () => void
     onSettingsClick: () => void
     onProfileClick: (platform: MusicPlatform, initialTab?: 'created' | 'subscribed' | 'detail' | 'recent') => void
@@ -5946,8 +5913,6 @@ function App() {
       setShowLogin(true)
     },
     onSearchClick: () => setShowSearch(true),
-    // 遥控器面板已随减配移除：保留回调占位（下游视图仍要求该 prop），点击无操作
-    onRemoteClick: () => undefined,
     onOpenDeviceControl: () => setShowDeviceControl(true),
     onSettingsClick: () => setShowSettings(true),
     onProfileClick: (platform, initialTab = 'created') => {
@@ -6015,7 +5980,6 @@ function App() {
       onNeteaseLoginClick: () => latest.current.onNeteaseLoginClick(),
       onQQLoginClick: () => latest.current.onQQLoginClick(),
       onSearchClick: () => latest.current.onSearchClick(),
-      onRemoteClick: () => latest.current.onRemoteClick(),
       onOpenDeviceControl: () => setShowDeviceControl(true),
       onSettingsClick: () => latest.current.onSettingsClick(),
       onProfileClick: (platform, initialTab) => latest.current.onProfileClick(platform, initialTab),
@@ -6354,7 +6318,6 @@ function App() {
               onLoginClick={handleMinimalLogin}
               onProfileClick={handleViewProfileClick}
               onSearchClick={viewCallbacks.onSearchClick}
-              onRemoteClick={viewCallbacks.onRemoteClick}
               onPlayPause={viewCallbacks.onPlayPause}
               onNext={viewCallbacks.onNext}
               onPrevious={viewCallbacks.onPrevious}
@@ -6427,7 +6390,6 @@ function App() {
               onOpenAlbum={viewCallbacks.onOpenAlbum}
               onCopyInfo={viewCallbacks.onCopyInfo}
               onExitDesktopMode={viewCallbacks.onExitDesktopMode}
-              onRemoteClick={viewCallbacks.onRemoteClick}
               onOpenDeviceControl={viewCallbacks.onOpenDeviceControl}
             />
           </motion.div>
@@ -6753,7 +6715,6 @@ function App() {
               onAppleProfileClick={openAppleLogin}
               onLoginClick={handleMinimalLogin}
               onSearchClick={viewCallbacks.onSearchClick}
-              onRemoteClick={viewCallbacks.onRemoteClick}
               onOpenDeviceControl={viewCallbacks.onOpenDeviceControl}
               onSettingsClick={viewCallbacks.onSettingsClick}
               onProfileClick={viewCallbacks.onProfileClick}

@@ -1049,7 +1049,7 @@ export function compareCandidates(a: CandidateScore, b: CandidateScore): number 
  * - 多歌手分隔：feat/ft、&、,，、、；等 → 拆成多个歌手名
  * - 括号中文/英文翻译：如「ずっと真夜中でいいのに。 (永远是深夜有多好｡)」→ 同时产出
  *   原串与去括号主体（两者都是候选，匹配标题/UP主/搜索词时任一命中即算）
- * 覆盖网易云/QQ音乐/酷狗等平台对同一艺人返回不同字段格式的情况。
+ * 覆盖网易云/QQ音乐/Apple Music/Spotify 等平台对同一艺人返回不同字段格式的情况。
  * 注意：不做「/」切分——Leo/need 等乐队名自带斜杠，误切会破坏完整乐队名。
  */
 export function expandArtistNames(raw: string): string[] {

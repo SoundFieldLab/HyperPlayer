@@ -376,7 +376,7 @@ export interface MirroredGlobalSettingsProps {
   variant: 'classic' | 'panel'
   /** 只渲染某个分组（传统模式按标签页渲染）；不传 = 渲染全部 */
   groupId?: GlobalSettingsGroupId
-  /** 打开各模式自备的弹窗（音质设置 / 缓存清理 / 遥控器个性化） */
+  /** 打开各模式自备的弹窗（音质设置 / 缓存清理） */
   onOpenModal?: (actionId: MirrorActionId) => void
   className?: string
 }

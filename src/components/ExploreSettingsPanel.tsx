@@ -166,7 +166,7 @@ interface ExploreSettingsPanelProps {
   onClose: () => void
   onPlatformChange: (platform: ExplorePlatform) => void
   onChange: (preferences: ExplorePreferences) => void
-  /** 打开全局设置里的共享弹窗（音质 / 缓存清理 / 遥控器个性化），由 ExploreView 挂载 */
+  /** 打开全局设置里的共享弹窗（音质 / 缓存清理），由 ExploreView 挂载 */
   onOpenGlobalModal?: (actionId: MirrorActionId) => void
 }
 

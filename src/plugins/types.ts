@@ -34,7 +34,7 @@ export interface PluginManifest {
   screenshots?: string[]
   /** 详细介绍段落。 */
   detail?: string[]
-  /** 需要「使用须知」门控（如 DG_LAB）。 */
+  /** 需要「使用须知」门控。 */
   requireNotice?: boolean
   notice?: PluginNotice
   /** 导入插件的运行时代码（可选，受限沙箱执行）。 */

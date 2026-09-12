@@ -45,10 +45,6 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
     errorLogSize: 0,
     audioCount: 0,
     audioSize: 0,
-    analysisCount: 0,
-    analysisSize: 0,
-    transitionCount: 0,
-    transitionSize: 0,
     totalSize: 0
   })
   
@@ -129,9 +125,6 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
     const localStats = cacheManager.getCacheStats()
     const indexedStats = await indexedDBCache.getCacheStats().catch(() => ({ coverCount: 0, coverSize: 0, playlistCount: 0, playlistSize: 0, lyricsCount: 0, lyricsSize: 0 }))
     const audioStats = await window.electron?.audioDownload?.getStats().catch(() => null) || null
-    const analysisStats = await window.electron?.analysis?.getCacheStats().catch(() => null) || null
-    const transitionStats = await window.electron?.render?.getCacheStats().catch(() => null) || null
-    const trackStemStats = await window.electron?.trackStems?.getCacheStats?.().catch(() => null) || null
     if (audioStats) setAudioCacheDir(audioStats.cachePath)
 
     const coverCount = localStats.coverCount + indexedStats.coverCount
@@ -148,12 +141,8 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
       errorLogSize: localStats.errorLogSize,
       audioCount: audioStats?.fileCount || 0,
       audioSize: audioStats?.totalSize || 0,
-      analysisCount: analysisStats?.fileCount || 0,
-      analysisSize: analysisStats?.totalSize || 0,
-      transitionCount: (transitionStats?.count || 0) + (trackStemStats?.count || 0),
-      transitionSize: (transitionStats?.size || 0) + (trackStemStats?.size || 0),
       totalSize: coverSize + localStats.playlistSize + indexedStats.playlistSize + indexedStats.lyricsSize + localStats.errorLogSize
-        + (audioStats?.totalSize || 0) + (analysisStats?.totalSize || 0) + (transitionStats?.size || 0) + (trackStemStats?.size || 0),
+        + (audioStats?.totalSize || 0),
     })
   }
 
@@ -214,37 +203,6 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
     }
   }
 
-  const handleClearAnalysisCache = async () => {
-    if (!window.electron?.analysis) return
-    try {
-      const result = await window.electron.analysis.clearCache()
-      if (!result.success) throw new Error(result.error || '分析缓存清理失败')
-      await refreshStats()
-      showToastMessage('分析缓存清理成功')
-    } catch (err) {
-      console.error('Failed to clear analysis cache:', err)
-      showToastMessage('分析缓存清理失败')
-    }
-  }
-
-  const handleClearTransitionCache = async () => {
-    if (!window.electron?.render) return
-    try {
-      window.dispatchEvent(new Event('hyperplayer:track-stem-cache-clearing'))
-      const [renderResult, stemResult, trackStemResult] = await Promise.all([
-        window.electron.render.clearCache(),
-        window.electron.stems?.clearCache?.() ?? Promise.resolve({ success: true, cleared: 0 }),
-        window.electron.trackStems?.clearCache?.() ?? Promise.resolve({ success: true, cleared: 0 }),
-      ])
-      if (!renderResult.success || !stemResult.success || !trackStemResult.success) throw new Error('过渡音频缓存清理失败')
-      await refreshStats()
-      showToastMessage('过渡音频与分轨缓存清理成功')
-    } catch (err) {
-      console.error('Failed to clear transition cache:', err)
-      showToastMessage('过渡音频缓存清理失败')
-    }
-  }
-  
   const handleClearAll = async () => {
     if (!clearAllConfirm) {
       // 第一次点击，进入确认状态
@@ -260,7 +218,6 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
     } else {
       // 第二次点击，执行清理
       let failed = false
-      window.dispatchEvent(new Event('hyperplayer:track-stem-cache-clearing'))
       cacheManager.clearAll()
       clearUserPlaylistsMemoryCache()
       window.dispatchEvent(new Event('hyperplayer:lyrics-cache-cleared'))
@@ -279,42 +236,6 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
         } catch (err) {
           failed = true
           console.error('Failed to clear audio cache:', err)
-        }
-      }
-      if (window.electron?.analysis) {
-        try {
-          const result = await window.electron.analysis.clearCache()
-          if (!result.success) throw new Error(result.error || '分析缓存清理失败')
-        } catch (err) {
-          failed = true
-          console.error('Failed to clear analysis cache:', err)
-        }
-      }
-      if (window.electron?.render) {
-        try {
-          const result = await window.electron.render.clearCache()
-          if (!result.success) throw new Error('过渡音频缓存清理失败')
-        } catch (err) {
-          failed = true
-          console.error('Failed to clear transition cache:', err)
-        }
-      }
-      if (window.electron?.stems) {
-        try {
-          const result = await window.electron.stems.clearCache()
-          if (!result.success) throw new Error('过渡分轨缓存清理失败')
-        } catch (err) {
-          failed = true
-          console.error('Failed to clear transition stem cache:', err)
-        }
-      }
-      if (window.electron?.trackStems) {
-        try {
-          const result = await window.electron.trackStems.clearCache()
-          if (!result.success) throw new Error('歌曲分轨缓存清理失败')
-        } catch (err) {
-          failed = true
-          console.error('Failed to clear track stem cache:', err)
         }
       }
       
@@ -412,7 +333,7 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
                   {cacheManager.formatSize(cacheStats.totalSize)}
                 </div>
                 <div className={`${textSecondary} text-sm`}>
-                  共 {cacheStats.coverCount + cacheStats.playlistCount + cacheStats.errorLogCount + cacheStats.audioCount + cacheStats.analysisCount} 项缓存
+                  共 {cacheStats.coverCount + cacheStats.playlistCount + cacheStats.errorLogCount + cacheStats.audioCount} 项缓存
                 </div>
               </div>
               
@@ -608,31 +529,6 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
                 <button onClick={() => void handleClearLyrics()} disabled={cacheStats.lyricsCount === 0} className="absolute bottom-3 right-3 p-2 rounded-lg transition-all disabled:opacity-30" style={{ backgroundColor: `${accentColor}20`, color: accentColor }} title="清理歌词缓存"><Trash2 className="w-4 h-4" /></button>
               </div>
 
-              {window.electron?.render && (
-                <div className={`p-4 rounded-xl mb-6 ${bgCard} border ${borderColor} relative`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${accentColor}20` }}><HardDrive className="w-5 h-5" style={{ color: accentColor }} /></div><div><div className={`${textPrimary} text-sm font-medium`}>过渡与歌曲分轨缓存</div><div className={`${textTertiary} text-xs`}>{cacheStats.transitionCount} 个文件</div></div></div>
-                    <div className={`${textPrimary} text-sm font-bold`}>{cacheManager.formatSize(cacheStats.transitionSize)}</div>
-                  </div>
-                  <div className={`${textSecondary} text-xs mb-2`}>限制为 512MB，超过 24 小时未使用会自动清理</div>
-                  <button onClick={() => void handleClearTransitionCache()} disabled={cacheStats.transitionCount === 0} className="absolute bottom-3 right-3 p-2 rounded-lg transition-all disabled:opacity-30" style={{ backgroundColor: `${accentColor}20`, color: accentColor }} title="清理过渡与歌曲分轨缓存"><Trash2 className="w-4 h-4" /></button>
-                </div>
-              )}
-
-              {window.electron?.analysis && (
-                <div className={`p-4 rounded-xl mb-6 ${bgCard} border ${borderColor} relative`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${accentColor}20` }}><HardDrive className="w-5 h-5" style={{ color: accentColor }} /></div>
-                      <div><div className={`${textPrimary} text-sm font-medium`}>音频分析缓存</div><div className={`${textTertiary} text-xs`}>{cacheStats.analysisCount} 个分析文件</div></div>
-                    </div>
-                    <div className={`${textPrimary} text-sm font-bold`}>{cacheManager.formatSize(cacheStats.analysisSize)}</div>
-                  </div>
-                  <div className={`${textSecondary} text-xs mb-2`}>节拍与段落分析缓存（自动按时间和容量清理）</div>
-                  <button onClick={() => void handleClearAnalysisCache()} disabled={cacheStats.analysisCount === 0} className="absolute bottom-3 right-3 p-2 rounded-lg transition-all disabled:opacity-30" style={{ backgroundColor: `${accentColor}20`, color: accentColor }} title="清理分析缓存"><Trash2 className="w-4 h-4" /></button>
-                </div>
-              )}
-              
               {/* 自动清理设置 */}
               <div className={`p-4 rounded-xl mb-6 ${bgCard} border ${borderColor}`}>
                 <div className="flex items-center gap-3 mb-4">
@@ -754,8 +650,6 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
                         {([
                           ['lyrics', '歌词'],
                           ['audio', '音频下载'],
-                          ['analysis', '音频分析'],
-                          ['transitions', '过渡音频'],
                         ] as const).map(([target, label]) => (
                           <button
                             key={target}

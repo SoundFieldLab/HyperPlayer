@@ -387,5 +387,5 @@ async function addCoverToEngine(engine: PVEngine, coverUrl: string): Promise<voi
   }
 }
 
-/** 默认导出组件本体：App.tsx 用 lazy(() => import('.../PvLyricsPage')) 直接消费（与 Folia/看歌一致） */
+/** 默认导出组件本体：App.tsx 用 lazy(() => import('.../PvLyricsPage')) 直接消费（与看歌一致） */
 export default PvLyricsPage

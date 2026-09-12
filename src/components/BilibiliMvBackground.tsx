@@ -751,7 +751,7 @@ export default function BilibiliMvBackground({
             showNotice('未找到相关 MV')
           }
         } else if (result.status === 'none') {
-          // B站无匹配 → 兜底搜索其他平台（网易云/QQ/酷狗等）
+          // B站无匹配 → 兜底搜索网易云 MV
           setStatus('searching')
           const fallbackUrl = await findFallbackMvUrl(ctx, controller.signal)
           if (!isCurrentSearch()) return

@@ -78,7 +78,7 @@ export default function PluginNoticeModal({ open, pluginId, kind, onResolve, pla
 
           <div className="flex-1 overflow-y-auto px-6 py-5">
             <p className={`text-[13px] mb-4 ${dark ? 'text-amber-300/80' : 'text-amber-700'}`}>
-              此内容涉及成人向设备，请谨慎阅读：
+              请在使用前仔细阅读以下须知：
             </p>
             <ul className="space-y-2.5">
               {(lines ?? ['请仔细阅读并确认后再继续。']).map((line, index) => (

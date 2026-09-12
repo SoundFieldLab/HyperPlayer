@@ -13,9 +13,6 @@ interface TransitionDebugToastProps {
 }
 
 const STRATEGY_LABEL: Record<string, string> = {
-  'smart-rendered': '智能渲染',
-  'smart-rendered-v2': '智能渲染',
-  'beat-crossfade': '节拍交叉淡化',
   'fixed-crossfade': '交叉淡化',
   'gapless': '无缝拼接',
   'none': '无',
@@ -46,7 +43,7 @@ export default function TransitionDebugToast({ info, playerTheme = 'dark' }: Tra
             }}
           >
             <div className="text-sm font-semibold mb-1">
-              {info.engine === 'v2' ? '🟢' : info.engine === 'fallback' ? '🟠' : '🔵'} 过渡 · {STRATEGY_LABEL[info.strategy] || info.strategy}
+              {info.engine === 'fallback' ? '🟠' : '🔵'} 过渡 · {STRATEGY_LABEL[info.strategy] || info.strategy}
             </div>
             <div className="text-xs mb-1" style={{ color: isDark ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.65)' }}>
               {info.effects?.length ? info.effects.join(' · ') : '（无附加特效）'}

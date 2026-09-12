@@ -7,7 +7,7 @@ import { PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } f
 import { useTvMode, useRemoteCursorMode, useTvBack } from '../tv/tvCore'
 import { lazy, Suspense, memo, useState, useEffect, useRef, useMemo, useCallback, useSyncExternalStore } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, Search, Settings, X, Play, Clock, Volume2, VolumeX, LogIn, Captions, Heart, MonitorSmartphone, Speaker } from 'lucide-react'
+import { ChevronDown, Search, Settings, X, Play, Clock, Volume2, VolumeX, LogIn, Captions, Heart, Speaker } from 'lucide-react'
 import PluginShortcuts from './PluginShortcuts'
 import PlaylistCarousel3D from './PlaylistCarousel3D'
 import PlaylistContextMenu from './PlaylistContextMenu'
@@ -105,8 +105,7 @@ interface DesktopViewProps {
   
   // 其他
   onExitDesktopMode: () => void
-  onRemoteClick: () => void
-  /** 播放设备控制（音频输出设备 / AirPlay 投送）弹窗 */
+  /** 播放设备控制（音频输出设备）弹窗 */
   onOpenDeviceControl: () => void
 }
 
@@ -196,7 +195,6 @@ function DesktopView({
   onOpenAlbum,
   onCopyInfo,
   onExitDesktopMode,
-  onRemoteClick,
   onOpenDeviceControl,
 }: DesktopViewProps) {
   const fallbackPlaybackSnapshot = useMemo(() => ({
@@ -1971,23 +1969,6 @@ function DesktopView({
                 <Speaker className="w-5 h-5 text-white" />
               </motion.button>
 
-              {/* 遥控器按钮 */}
-              <motion.button
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={onRemoteClick}
-                className="rounded-full flex items-center justify-center transition-all"
-                style={{
-                  width: '48px',
-                  height: '48px',
-                  background: 'rgba(255, 255, 255, 0.1)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
-                }}
-              >
-                <MonitorSmartphone className="w-5 h-5 text-white" />
-              </motion.button>
-
               {/* 搜索按钮 */}
               <motion.button
                 whileHover={{ scale: 1.1 }}
@@ -2254,7 +2235,7 @@ function DesktopView({
         )}
       </AnimatePresence>
 
-      {/* 歌单详情 - 3D 网格视图（参考 folia-major） */}
+      {/* 歌单详情 - 3D 网格视图 */}
       <AnimatePresence
         onExitComplete={() => {
           if (!showPlaylistDetail) {

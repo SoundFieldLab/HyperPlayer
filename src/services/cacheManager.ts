@@ -36,8 +36,6 @@ interface AutoClearSettings {
     lyrics: boolean
     errorLogs: boolean
     audio: boolean
-    analysis: boolean
-    transitions: boolean
   }
 }
 
@@ -512,7 +510,7 @@ class CacheManager {
       enabled: false,
       days: 14,
       clearOnClose: false,
-      targets: { covers: true, playlists: false, lyrics: false, errorLogs: true, audio: false, analysis: false, transitions: false }
+      targets: { covers: true, playlists: false, lyrics: false, errorLogs: true, audio: false }
     }
     const saved = localStorage.getItem(this.AUTO_CLEAR_SETTINGS_KEY)
     if (saved) {
@@ -528,8 +526,6 @@ class CacheManager {
             lyrics: parsed.targets?.lyrics === true,
             errorLogs: parsed.targets?.errorLogs !== false,
             audio: parsed.targets?.audio === true,
-            analysis: parsed.targets?.analysis === true,
-            transitions: parsed.targets?.transitions === true,
           },
         }
       } catch {}
@@ -617,25 +613,6 @@ class CacheManager {
     if (targets.audio && window.electron?.audioDownload) {
       const result = await window.electron.audioDownload.clearCache()
       if (!result.success) throw new Error('音频缓存清理失败')
-      cleared = true
-    }
-
-    if (targets.analysis && window.electron?.analysis) {
-      const result = await window.electron.analysis.clearCache()
-      if (!result.success) throw new Error(result.error || '分析缓存清理失败')
-      cleared = true
-    }
-
-    if (targets.transitions && window.electron?.render) {
-      window.dispatchEvent(new Event('hyperplayer:track-stem-cache-clearing'))
-      const [renderResult, stemResult, trackStemResult] = await Promise.all([
-        window.electron.render.clearCache(),
-        window.electron.stems?.clearCache?.() ?? Promise.resolve({ success: true, cleared: 0 }),
-        window.electron.trackStems?.clearCache?.() ?? Promise.resolve({ success: true, cleared: 0 }),
-      ])
-      if (!renderResult.success || !stemResult.success || !trackStemResult.success) {
-        throw new Error('过渡或分轨缓存清理失败')
-      }
       cleared = true
     }
     

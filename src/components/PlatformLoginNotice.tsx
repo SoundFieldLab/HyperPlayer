@@ -1,9 +1,10 @@
 /**
  * 首次平台登录风险提示（自包含）
  *
- * 监听 hyperplayer-auth-changed（六音乐平台登录成功）与 bilibili-auth-changed（看歌登录成功），
+ * 监听 hyperplayer-auth-changed（音乐平台登录成功）与 bilibili-auth-changed（看歌登录成功），
  * 在用户首次登录任意平台后弹出一次，提示第三方客户端登录可能违反平台用户协议；
  * 点击"我已了解"后写入本地标记，之后不再弹出。
+ * 音乐平台共 4 个（网易云 / QQ / Apple Music / Spotify），哔哩哔哩为独立"看歌"功能。
  */
 import { useEffect, useState } from 'react'
 import { ShieldAlert, X } from 'lucide-react'
@@ -94,7 +95,7 @@ export default function PlatformLoginNotice({ playerTheme = 'dark' }: PlatformLo
             </div>
             <ul className="list-disc pl-5 space-y-1.5">
               <li>本软件与各音乐平台不存在任何合作或授权关系，亦非各平台官方发布的客户端；</li>
-              <li>通过 Cookie / Token 登录并调用其非官方接口，可能违反相关平台用户协议（如网易云音乐《服务条款》第 8.5 条、QQ音乐《服务许可协议》第 5.1.1 条、酷狗《用户服务协议》第 5.1.9 条、汽水音乐《用户服务协议》第 5.1 条、哔哩哔哩《用户协议》等）；</li>
+              <li>通过 Cookie / Token 登录并调用其非官方接口，可能违反相关平台用户协议（如网易云音乐《服务条款》第 8.5 条、QQ音乐《服务许可协议》第 5.1.1 条、哔哩哔哩《用户协议》等）；</li>
               <li>可能导致账号风控、功能受限或账号封禁；</li>
               <li>相关账号风险与纠纷由您自行承担，本软件开发者不承担任何责任。</li>
             </ul>

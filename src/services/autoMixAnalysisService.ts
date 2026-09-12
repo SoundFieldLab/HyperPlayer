@@ -847,12 +847,8 @@ class AutoMixAnalysisService {
         return { ...analysis, lastAccessAt: Date.now() }
       }
     }
-    try {
-      const persisted = await window.electron?.analysis?.getTrackAnalysis(normalizedTrackKey) || null
-      return persisted && hasUsableBeats(persisted) && !isWeakBrowserFallback(persisted) ? persisted : null
-    } catch {
-      return null
-    }
+    // Electron 分析 runtime 已移除：只认内存缓存，无磁盘持久化可读。
+    return null
   }
 
   /**
@@ -923,19 +919,14 @@ class AutoMixAnalysisService {
       analysis = metadataOnly(input, 'metadata-only')
     }
 
-    // Only cache/persist genuine analyses. A transient metadata-only fallback
-    // is still returned so the current transition keeps working via the
-    // fallback, but it is not stored under the normal key: caching it would pin
-    // the track to an empty beat grid (fixed-crossfade) until eviction and mask
-    // any later good analysis. The same applies to weak browser-fallback grids
+    // Only cache genuine analyses. A transient metadata-only fallback is still
+    // returned so the current transition keeps working via the fallback, but it
+    // is not stored under the normal key: caching it would pin the track to an
+    // empty beat grid (fixed-crossfade) until eviction and mask any later good
+    // analysis. The same applies to weak browser-fallback grids
     // (低置信度节拍网格，如 MV 音频被锁到慢拍子谐波时的假网格)。
     if (!isTransientFallback && !isWeakBrowserFallback(analysis)) {
       cacheInMemory(key, analysis)
-      try {
-        await window.electron?.analysis?.saveTrackAnalysis(analysis)
-      } catch {
-        // Browser mode and read-only runtimes intentionally use memory cache only.
-      }
     }
     return analysis
   }
@@ -990,7 +981,6 @@ class AutoMixAnalysisService {
 
   async clearCache() {
     this.clearMemoryCache()
-    await window.electron?.analysis?.clearCache()
   }
 }
 

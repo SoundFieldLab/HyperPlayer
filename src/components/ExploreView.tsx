@@ -19,7 +19,6 @@ import {
   Headphones,
   Loader2,
   LogIn,
-  MonitorSmartphone,
   Music2,
   Play,
   Radio,
@@ -136,7 +135,6 @@ interface ExploreViewProps {
   onLoginClick: (platform: ExplorePlatform) => void
   onProfileClick: (platform: ExplorePlatform) => void
   onSearchClick: () => void
-  onRemoteClick: () => void
   onPlayPause: () => void
   onNext: () => void
   onPrevious: () => void
@@ -531,7 +529,6 @@ function ExploreView({
   onLoginClick,
   onProfileClick,
   onSearchClick,
-  onRemoteClick,
   onPlayPause,
   onNext,
   onPrevious,
@@ -745,7 +742,7 @@ function ExploreView({
     return () => window.removeEventListener('viewModeChanged', closeForModeSwitch)
   }, [])
   const [settingsOpen, setSettingsOpen] = useState(false)
-  // 全局设置镜像里打开的共享弹窗（音质 / 缓存清理 / 遥控器个性化）
+  // 全局设置镜像里打开的共享弹窗（音质 / 缓存清理）
   const [globalModal, setGlobalModal] = useState<MirrorActionId | null>(null)
   // 空闲时预热共享弹窗 chunk，消除首次点击的卡顿
   useEffect(() => preloadOnIdle([
@@ -1489,15 +1486,6 @@ function ExploreView({
                 <Film className="h-[18px] w-[18px]" />
               </button>
               )}
-              <button
-                type="button"
-                onClick={onRemoteClick}
-                className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.045] text-white/58 transition hover:bg-white/[0.1] hover:text-white"
-                aria-label="遥控器"
-                title="遥控器"
-              >
-                <MonitorSmartphone className="h-[18px] w-[18px]" />
-              </button>
               <button
                 type="button"
                 onClick={onSearchClick}

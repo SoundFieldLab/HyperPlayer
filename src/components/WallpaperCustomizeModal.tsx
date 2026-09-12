@@ -1,10 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Upload, Trash2, Image as ImageIcon, Video, Check, RotateCcw, QrCode } from 'lucide-react'
-import { QRCodeSVG } from 'qrcode.react'
+import { X, Upload, Trash2, Image as ImageIcon, Video, Check, RotateCcw } from 'lucide-react'
 import { wallpaperManager, WallpaperFile, WallpaperMode, WallpaperSwitchMode } from '../services/wallpaperManager'
-import { isTvModeActive } from '../platform'
-import { useTvBack } from '../tv/tvCore'
 
 interface WallpaperCustomizeModalProps {
   show: boolean
@@ -13,14 +10,6 @@ interface WallpaperCustomizeModalProps {
 }
 
 export default function WallpaperCustomizeModal({ show, onClose, playerTheme = 'dark' }: WallpaperCustomizeModalProps) {
-  // TV 遥控器 BACK：关闭壁纸自定义弹窗
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  }, [show, onClose])
   const textPrimary = playerTheme === 'dark' ? 'text-white' : 'text-black'
   const textSecondary = playerTheme === 'dark' ? 'text-white/60' : 'text-black/60'
   const textTertiary = playerTheme === 'dark' ? 'text-white/40' : 'text-black/40'
@@ -39,11 +28,6 @@ export default function WallpaperCustomizeModal({ show, onClose, playerTheme = '
   const [currentIndex, setCurrentIndex] = useState(0)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string>('')
-  // TV：手机扫码上传壁纸
-  const [tvQrUrl, setTvQrUrl] = useState('')
-  const [tvImporting, setTvImporting] = useState(false)
-  const [tvWallpapers, setTvWallpapers] = useState<Array<{ name: string; url: string; uploadTime: number }>>([])
-  const [tvError, setTvError] = useState('')
   
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -74,70 +58,6 @@ export default function WallpaperCustomizeModal({ show, onClose, playerTheme = '
     setSwitchMode(settings.switchMode)
     setIntervalMinutes(settings.intervalMinutes)
     setCurrentIndex(settings.currentIndex)
-  }
-
-  // TV：手机扫码上传壁纸（手机浏览器 → 设备 25567 → 设备存储 → 这里拉回导入 IndexedDB）
-  useEffect(() => {
-    if (!show || !isTvModeActive()) return
-    void (async () => {
-      try {
-        const stRes = await fetch('http://localhost:3001/api/tv/remote-status', { cache: 'no-store' })
-        const st = stRes.ok ? await stRes.json() : null
-        const ip = st?.ips?.[0]?.address
-        if (ip) setTvQrUrl(`http://${ip}:25567/wallpaper`)
-      } catch {
-        // ignore
-      }
-      try {
-        const res = await fetch('http://localhost:3001/api/tv/wallpapers', { cache: 'no-store' })
-        const data = res.ok ? await res.json() : null
-        setTvWallpapers(data?.wallpapers || [])
-      } catch {
-        // ignore
-      }
-    })()
-  }, [show])
-
-  const importTvWallpapers = async () => {
-    setTvImporting(true)
-    setTvError('')
-    try {
-      // 已导入文件名记录在 localStorage，避免重复导入
-      const importedKey = 'hyperplayer:tv-wallpapers-imported'
-      let importedNames: string[] = []
-      try {
-        importedNames = JSON.parse(localStorage.getItem(importedKey) || '[]')
-      } catch {
-        // ignore
-      }
-      const res = await fetch('http://localhost:3001/api/tv/wallpapers', { cache: 'no-store' })
-      const data = res.ok ? await res.json() : { wallpapers: [] }
-      let imported = 0
-      for (const wp of data.wallpapers || []) {
-        if (importedNames.includes(wp.name)) continue
-        const imgRes = await fetch('http://localhost:3001' + wp.url)
-        if (!imgRes.ok) continue
-        const blob = await imgRes.blob()
-        const file = new File([blob], wp.name, { type: blob.type || 'image/jpeg' })
-        const result = await wallpaperManager.addWallpaper(file)
-        if (result.success) {
-          imported++
-          importedNames.push(wp.name)
-        }
-      }
-      try {
-        localStorage.setItem(importedKey, JSON.stringify(importedNames))
-      } catch {
-        // ignore
-      }
-      setTvWallpapers(data.wallpapers || [])
-      if (imported === 0 && (data.wallpapers || []).length) setTvError('没有需要导入的新壁纸')
-      await loadData()
-    } catch (err) {
-      setTvError(err instanceof Error ? err.message : '导入失败')
-    } finally {
-      setTvImporting(false)
-    }
   }
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -219,7 +139,6 @@ export default function WallpaperCustomizeModal({ show, onClose, playerTheme = '
 
           {/* 弹窗内容 */}
           <motion.div
-            data-tv-scope
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -357,44 +276,6 @@ export default function WallpaperCustomizeModal({ show, onClose, playerTheme = '
                     className="hidden"
                   />
                 </div>
-
-                {/* TV：手机扫码上传壁纸 */}
-                {isTvModeActive() && (
-                  <div className={`mb-6 rounded-xl ${bgCard} border ${borderColor} p-4`}>
-                    <div className="flex items-center gap-3 mb-3">
-                      <QrCode className="w-5 h-5" style={{ color: accentColor }} />
-                      <h3 className={`text-base font-semibold ${textPrimary}`}>手机扫码上传壁纸</h3>
-                    </div>
-                    <p className={`text-xs ${textSecondary} mb-3 leading-5`}>
-                      电视端无法直接选择本地图片。用手机扫下方二维码选图上传，上传后点「导入到电视」即可使用。
-                    </p>
-                    <div className="flex items-center gap-4">
-                      {tvQrUrl ? (
-                        <div className="shrink-0 rounded-lg bg-white p-2">
-                          <QRCodeSVG value={tvQrUrl} size={120} level="M" />
-                        </div>
-                      ) : (
-                        <div className={`shrink-0 w-[120px] h-[120px] rounded-lg ${bgCard} flex items-center justify-center text-xs ${textTertiary}`}>
-                          获取地址中…
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        {tvWallpapers.length > 0 && (
-                          <p className={`text-xs ${textSecondary} mb-2`}>已上传 {tvWallpapers.length} 张，等待导入</p>
-                        )}
-                        <button
-                          onClick={() => void importTvWallpapers()}
-                          disabled={tvImporting}
-                          className="w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-                          style={{ backgroundColor: accentColor }}
-                        >
-                          {tvImporting ? '导入中…' : '导入到电视'}
-                        </button>
-                        {tvError && <p className="text-red-400 text-xs mt-2">{tvError}</p>}
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {/* 切换模式 */}
                 <div className="mb-6">

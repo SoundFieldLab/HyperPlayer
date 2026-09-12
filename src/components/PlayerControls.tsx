@@ -30,11 +30,6 @@ interface PlayerControlsProps {
   playerTheme?: 'light' | 'dark'
   backgroundEffect?: 'transparent' | 'blur' | 'immersive'
   isTransitioning?: boolean
-  isAutoMixTransition?: boolean
-  /** AutoMix 增强版（v2）：过渡指示显示「AutoMix 增强版」独立样式（缺省时与历史一致） */
-  enhancedAutoMix?: boolean
-  /** automix 介入（armed/准备/过渡中）即显示增强版字样（不等过渡动画窗口） */
-  enhancedAutoMixActive?: boolean
   transitionStartTime?: number | null
   immersiveTranslation?: string
   immersiveRoman?: string
@@ -190,9 +185,6 @@ export default function PlayerControls({
   playerTheme = 'dark',
   backgroundEffect = 'blur',
   isTransitioning = false,
-  isAutoMixTransition = false,
-  enhancedAutoMix = false,
-  enhancedAutoMixActive = false,
   transitionStartTime = null,
   immersiveTranslation = '',
   immersiveRoman = '',
@@ -547,13 +539,10 @@ export default function PlayerControls({
   const inAnimationWindow = transitionStartTime === null || currentTime >= transitionStartTime
   // 检查是否即将过渡：动画窗口内（automix 动画起点）或歌曲自然结束前 5 秒
   const isNearTransition = (isTransitioning && inAnimationWindow) || (duration - currentTime <= 5 && duration - currentTime > 0)
-  // 过渡指示：动画窗口内 = AutoMix Enhanced（金色）；介入中（running 未到动画窗口）= AutoMix 正在介入（白色）
+  // 过渡指示：仅在过渡动画窗口内显示「过渡」；窗口外不显示
   const inTransitionAnimation = isTransitioning && inAnimationWindow
-  const showTransitionBadge = inTransitionAnimation || enhancedAutoMixActive
-  const badgeIsEnhanced = inTransitionAnimation && enhancedAutoMix
-  const transitionLabel = inTransitionAnimation
-    ? (enhancedAutoMix ? 'AutoMix Enhanced' : isAutoMixTransition ? 'AutoMix' : '过渡')
-    : (enhancedAutoMixActive ? 'AutoMix 正在介入' : '')
+  const showTransitionBadge = inTransitionAnimation
+  const transitionLabel = '过渡'
   
   // 进度条发光强度
   const glowIntensity = isNearTransition ? 1.5 : 1
@@ -687,11 +676,9 @@ export default function PlayerControls({
                 <span
                   className="text-xs font-medium"
                   style={{
-                    color: badgeIsEnhanced ? 'rgba(255,215,0,0.98)' : 'rgba(255,255,255,0.9)',
+                    color: 'rgba(255,255,255,0.9)',
                     letterSpacing: '0.1em',
-                    textShadow: badgeIsEnhanced
-                      ? '0 0 20px rgba(255,200,0,0.85), 0 0 40px rgba(255,180,0,0.45), 0 2px 8px rgba(0,0,0,0.5)'
-                      : '0 0 20px rgba(255,255,255,0.6), 0 2px 8px rgba(0,0,0,0.5)',
+                    textShadow: '0 0 20px rgba(255,255,255,0.6), 0 2px 8px rgba(0,0,0,0.5)',
                     animation: 'glow 2s ease-in-out infinite',
                   }}
                 >

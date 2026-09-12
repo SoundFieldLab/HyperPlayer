@@ -4,7 +4,7 @@ import { motion, AnimatePresence, animate, useMotionValue } from 'framer-motion'
 import { useTvMode, useRemoteCursorMode } from '../tv/tvCore'
 import { isTvModeActive } from '../platform'
 import { usePerfMode } from '../tv/perfMode'
-import { Play, Music, TrendingUp, Flame, Clock, LogOut, Crown, User, Heart, MonitorSmartphone, Search, Settings, History, Speaker } from 'lucide-react'
+import { Play, Music, TrendingUp, Flame, Clock, LogOut, Crown, User, Heart, Search, Settings, History, Speaker } from 'lucide-react'
 import { Song, getProxiedImageUrl, resolveSongAlbumIdentifier, getSongUrl, isSameSong } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
 import { getVisiblePlatforms, PLATFORM_VISIBILITY_EVENT, PLATFORM_ORDER_EVENT } from '../services/platforms'
@@ -66,7 +66,6 @@ interface HomeViewProps {
   onLoginClick?: (platform: MusicPlatform) => void
   onProfileClick: (platform: MusicPlatform, initialTab?: 'created' | 'subscribed' | 'detail' | 'recent') => void
   onSearchClick: () => void
-  onRemoteClick: () => void
   /** 播放设备控制（音频输出设备）弹窗 */
   onOpenDeviceControl: () => void
   onSettingsClick: () => void
@@ -243,7 +242,6 @@ function HomeView({
   onLoginClick,
   onProfileClick,
   onSearchClick,
-  onRemoteClick,
   onOpenDeviceControl,
   onSettingsClick,
   onOpenArtist,
@@ -3122,17 +3120,6 @@ function HomeView({
                   title="播放设备控制"
                 >
                   <Speaker className="w-5 h-5" />
-                </motion.button>
-
-                {/* 遥控器按钮 */}
-                <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="p-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white transition-all shadow-lg"
-                  onClick={onRemoteClick}
-                  title="遥控器"
-                >
-                  <MonitorSmartphone className="w-5 h-5" />
                 </motion.button>
 
                 {/* 搜索按钮 */}

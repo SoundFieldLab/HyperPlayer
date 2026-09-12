@@ -238,10 +238,10 @@ export default function V3MixingStudio({
             >
               <div className="flex items-center gap-4">
                 <span className="text-sm font-semibold text-white">调音室</span>
-                {/* 引擎切换（displayName 由适配层注册表提供：v1 / v2 / HSE） */}
-                {onSwitchEngine && (
+                {/* 引擎切换（仅在注册了多个引擎时显示；displayName 由适配层注册表提供） */}
+                {onSwitchEngine && availableEngines && availableEngines.length > 1 && (
                   <div className="flex items-center rounded-full px-1 py-0.5" style={{ background: theme.inputBg, border: `1px solid ${theme.panelBorder}` }}>
-                    {(availableEngines || [{ id: 'v1', displayName: 'v1', description: '' }, { id: 'v2', displayName: 'v2', description: '' }, { id: 'v3', displayName: 'HSE', description: 'HyperSoundEngine' }]).map((eng) => (
+                    {availableEngines.map((eng) => (
                       <button
                         key={eng.id}
                         type="button"
