@@ -11,6 +11,7 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "dev:electron": "node scripts/dev-electron.mjs",
     "build:apple-weather": "node scripts/build-apple-weather-scenes.mjs",
+    "build:splash": "node scripts/build-splash.mjs",
     "build": "vite build",
     "gen:installer-art": "node scripts/generate-installer-art.mjs",
     "preview:setup": "node scripts/preview-setup.mjs",

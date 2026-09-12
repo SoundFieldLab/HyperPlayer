@@ -108,8 +108,9 @@ jobs:
           Write-Host '✓ 可执行程序与 app.asar 已生成'
 
       - name: 校验应用内资源已打进 app.asar
-        # logo.png（splash 与主窗口图标）与 build/icon.ico（窗口/安装器图标）属应用内文件，
+        # logo.png（主进程窗口图标）与 build/icon.ico（窗口/安装器图标）属应用内文件，
         # 按 build.files 白名单进 app.asar，而非 resources 目录，故从 asar 目录表校验。
+        # desktop/splash.html 是启动页（生成物，字体与 logo 已内联），同样须在包内。
         # 用 String.fromCharCode(92) 表示反斜杠，避免 YAML→shell→JS 多层转义出错。
         run: |
           node -e "
