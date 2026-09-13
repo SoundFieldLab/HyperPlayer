@@ -24,6 +24,8 @@ interface QuickSettingsProps {
 
 type WordByWordEffectMode = 'clear' | 'soft' | 'apple'
 type LyricDisplayMode = 'modern' | 'immersive' | 'video' | 'pv'
+/** 背景律动强度档（与 App.tsx 的 CoverPulseMode 同集合） */
+type CoverPulseMode = 'dynamic' | 'soft' | 'restless'
 
 // 大体积设置面板（约 900 行 JSX）：props 均为原语（forceClose/playerTheme/isPureMusic），
 // memo 让 1Hz 播放重渲染（经 ImmersiveControls 传递）不再连带重渲染整个面板
@@ -124,6 +126,17 @@ export default memo(function QuickSettings({
     return (saved as 'dark' | 'light') || 'dark'
   })
 
+  // 背景律动（封面模糊铺底随音频脉冲缩放/提亮）——与 App.tsx 的 coverPulseEnabled 同键同事件
+  const [coverPulseEnabled, setCoverPulseEnabled] = useState(() => {
+    const saved = localStorage.getItem('coverPulseEnabled')
+    return saved !== null ? JSON.parse(saved) : false
+  })
+  const [coverPulseMode, setCoverPulseMode] = useState<CoverPulseMode>(() => {
+    const saved = localStorage.getItem('coverPulseMode')
+    if (saved === 'precise') return 'restless'
+    return saved === 'dynamic' || saved === 'restless' ? saved : 'soft'
+  })
+
   const [backgroundEffect, setBackgroundEffect] = useState<'transparent' | 'blur' | 'immersive'>(() => {
     const saved = localStorage.getItem('backgroundEffect')
     return (saved as 'transparent' | 'blur' | 'immersive') || 'blur'
@@ -216,6 +229,20 @@ export default memo(function QuickSettings({
     setTheme(newTheme)
     localStorage.setItem('playerTheme', newTheme)
     window.dispatchEvent(new CustomEvent('playerThemeChanged', { detail: newTheme }))
+  }
+
+  // 背景律动开关/强度：与 App.tsx 的 coverPulseEnabled / coverPulseMode 同键同事件
+  const handleCoverPulseToggle = () => {
+    const newValue = !coverPulseEnabled
+    setCoverPulseEnabled(newValue)
+    localStorage.setItem('coverPulseEnabled', JSON.stringify(newValue))
+    window.dispatchEvent(new CustomEvent('coverPulseChanged', { detail: newValue }))
+  }
+
+  const handleCoverPulseModeChange = (mode: CoverPulseMode) => {
+    setCoverPulseMode(mode)
+    localStorage.setItem('coverPulseMode', mode)
+    window.dispatchEvent(new CustomEvent('coverPulseModeChanged', { detail: mode }))
   }
 
   const handleBackgroundEffectChange = (effect: 'transparent' | 'blur' | 'immersive') => {
@@ -511,6 +538,76 @@ export default memo(function QuickSettings({
                         ))}
                       </div>
                     </div>
+
+                    <div className="flex items-center justify-between">
+                      <span className={`text-sm ${playerTheme === 'dark' ? 'text-white/80' : 'text-black/80'}`}>
+                        背景律动
+                      </span>
+                      <button
+                        onClick={handleCoverPulseToggle}
+                        className="relative w-12 h-7 rounded-full transition-all duration-300"
+                        style={{
+                          backgroundColor: coverPulseEnabled
+                            ? accentColor
+                            : playerTheme === 'dark'
+                            ? 'rgba(255,255,255,0.15)'
+                            : 'rgba(0,0,0,0.15)',
+                          boxShadow: coverPulseEnabled
+                            ? `0 0 12px ${accentColor}40, inset 0 1px 1px rgba(255,255,255,0.2)`
+                            : 'inset 0 1px 2px rgba(0,0,0,0.1)',
+                        }}
+                      >
+                        <motion.div
+                          animate={{
+                            x: coverPulseEnabled ? 22 : 2,
+                            scale: coverPulseEnabled ? 1 : 0.9,
+                          }}
+                          transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                          className="absolute top-1 w-5 h-5 bg-white rounded-full"
+                          style={{
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.2), 0 0 2px rgba(0,0,0,0.1)',
+                          }}
+                        />
+                      </button>
+                    </div>
+
+                    {coverPulseEnabled && (
+                      <div className="flex flex-col gap-2">
+                        <span className={`text-xs ${playerTheme === 'dark' ? 'text-white/60' : 'text-black/60'}`}>
+                          律动效果
+                        </span>
+                        <div className="grid grid-cols-3 gap-2">
+                          {([
+                            ['dynamic', '动感'],
+                            ['soft', '柔和'],
+                            ['restless', '躁动'],
+                          ] as const).map(([mode, label]) => (
+                            <button
+                              key={mode}
+                              onClick={() => handleCoverPulseModeChange(mode)}
+                              className="py-1.5 rounded-lg text-xs font-medium transition-all"
+                              style={{
+                                backgroundColor:
+                                  coverPulseMode === mode
+                                    ? accentColor
+                                    : playerTheme === 'dark'
+                                    ? 'rgba(255,255,255,0.1)'
+                                    : 'rgba(0,0,0,0.1)',
+                                color:
+                                  coverPulseMode === mode
+                                    ? '#fff'
+                                    : playerTheme === 'dark'
+                                    ? 'rgba(255,255,255,0.65)'
+                                    : 'rgba(0,0,0,0.65)',
+                                boxShadow: coverPulseMode === mode ? `0 0 8px ${accentColor}30` : 'none',
+                              }}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="flex flex-col gap-2">
                       <span className={`text-sm ${playerTheme === 'dark' ? 'text-white/80' : 'text-black/80'}`}>

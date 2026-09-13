@@ -6,6 +6,7 @@ import { isPerfModeEfficiency } from './tv/perfMode'
 import { lazy, memo, Suspense, useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore, type ComponentProps, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import AlbumCoverPlayer from './components/AlbumCoverPlayer'
+import CrossfadeBackground from './components/CrossfadeBackground'
 import LyricsDisplay from './components/LyricsDisplay'
 import PlayerControls from './components/PlayerControls'
 import TitleBar from './components/TitleBar'
@@ -21,7 +22,7 @@ import { extractDominantColor, useColorThief } from './hooks/useColorThief'
 import { useAudioPlayer, type AudioGraphHandle } from './hooks/useAudioPlayer'
 import { useAudioAnalyzer } from './hooks/useAudioAnalyzer'
 import { useAppleDynamicCover } from './hooks/useAppleDynamicCover'
-import { useAudioPulseStore } from './hooks/useAudioPulse'
+import { useAudioPulseStore, type AudioPulseStore } from './hooks/useAudioPulse'
 import { useAutoHideCursor } from './hooks/useAutoHideCursor'
 import { Song, getSongUrl, invalidateSongUrl, getLyrics, getProxiedImageUrl, getProxiedAudioUrl, getLocalAlbumIdentifier, resolveSongAlbumIdentifier, LyricLine } from './services/musicApi'
 import { recordAppleRecentPlaybackFallback } from './services/appleRecentPlayback'
@@ -336,6 +337,87 @@ function loadVisibleLyricModes(): LyricDisplayMode[] {
   }
   return [...ALL_LYRIC_MODES]
 }
+
+// 播放页背景层：封面模糊铺底（CrossfadeBackground）+ 随音频脉冲缩放/提亮。
+// 这一层是常驻最底兜底层 —— MV 背景叠在它上面（加载期间 MV 透明露出封面），
+// 未开启 MV / 未匹配到 MV 时用户看到的就是它，而不是纯黑。
+// 2026-09-10 减配时曾随"律动背景"一并被整块删除（封面模糊铺底属陪葬），
+// 2026-09-13 按用户要求完整恢复（含脉冲）；勿再与歌词模式的重构混在一起删。
+interface PulsingCrossfadeBackgroundProps {
+  coverUrl: string
+  transitionFromUrl?: string
+  transitionToUrl?: string
+  isTransitioning: boolean
+  transitionProgress: number
+  pulseStore: AudioPulseStore
+  backgroundEffect: 'transparent' | 'blur' | 'immersive'
+  backgroundBlur: number
+}
+
+const PulsingCrossfadeBackground = memo(function PulsingCrossfadeBackground({
+  pulseStore,
+  backgroundEffect,
+  backgroundBlur,
+  ...crossfadeProps
+}: PulsingCrossfadeBackgroundProps) {
+  const pulseRootRef = useRef<HTMLDivElement>(null)
+  const pulseHighlightRef = useRef<HTMLDivElement>(null)
+  const baseScale = backgroundEffect === 'immersive' ? 1.15 : 1.1
+
+  useEffect(() => {
+    const applyPulse = () => {
+      const root = pulseRootRef.current
+      const highlight = pulseHighlightRef.current
+      if (!root || !highlight) return
+
+      const pulse = pulseStore.getSnapshot()
+      root.style.setProperty('--cover-pulse-scale', String(pulse.scale))
+      // 亮度/饱和度若每帧重建全屏 filter，会持续重栅格化大半径模糊（很贵）；
+      // 改用一层 composited soft-light 叠加，观感相同而模糊栅格保持稳定。
+      highlight.style.opacity = String(Math.min(0.22, pulse.brightness * 0.72 + pulse.saturation * 0.055))
+    }
+
+    applyPulse()
+    return pulseStore.subscribe(applyPulse)
+  }, [pulseStore])
+
+  const staticFilter = backgroundEffect === 'transparent'
+    ? `blur(${backgroundBlur}px) brightness(1.1)`
+    : backgroundEffect === 'blur'
+      ? 'blur(40px)'
+      : `blur(${backgroundBlur}px) saturate(1.3)`
+  const crossfadeImageStyle = useMemo(() => ({
+    filter: staticFilter,
+    transform: `translate3d(0, 0, 0) scale(calc(${baseScale} + var(--cover-pulse-scale, 0)))`,
+    transition: 'transform 0.055s linear, opacity 0.5s',
+    willChange: 'transform' as const,
+  }), [baseScale, staticFilter])
+
+  return (
+    <div
+      ref={pulseRootRef}
+      className="absolute inset-0 overflow-hidden"
+      style={{ ['--cover-pulse-scale' as string]: 0 }}
+    >
+      <CrossfadeBackground
+        {...crossfadeProps}
+        imageStyle={crossfadeImageStyle}
+      />
+      <div
+        ref={pulseHighlightRef}
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          opacity: 0,
+          background: 'rgba(255, 255, 255, 0.34)',
+          mixBlendMode: 'soft-light',
+          transition: 'opacity 0.12s ease-out',
+          willChange: 'opacity',
+        }}
+      />
+    </div>
+  )
+})
 
 function getSongKey(song: Song): string {
   // Apple：id 可能为 0（库内曲目 l. 前缀非数字），必须用 appleId 保证每首歌唯一——
@@ -6481,8 +6563,22 @@ function App() {
         }}
       />
 
-      {/* 背景层：MV 层（加载期间透明，就绪后渐入） */}
+      {/* 背景层：封面模糊铺底常驻最底，MV 叠其上
+          （加载期间 MV 层透明 → 露出封面；MV 未开启/未匹配/失败 → 也留在封面上，
+           回退契约 onFallbackChange 就是回到这一层，不再露纯黑渐变） */}
       <div className="absolute inset-0">
+        {currentSong && lyricDisplayMode !== 'video' && (
+          <PulsingCrossfadeBackground
+            coverUrl={displayCoverUrl}
+            transitionFromUrl={transitionFromTrack?.coverUrl}
+            transitionToUrl={transitionToTrack?.coverUrl}
+            isTransitioning={isVisualTransitioning}
+            transitionProgress={transitionProgress}
+            pulseStore={audioPulseStore}
+            backgroundEffect={backgroundEffect}
+            backgroundBlur={backgroundBlur}
+          />
+        )}
         {currentSong && !isAppleRadioPlayback && (
           <LazyBilibiliMvBackground
             songTitle={currentSong.name}
