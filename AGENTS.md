@@ -2,7 +2,8 @@
 
 Desktop music player (Windows/Electron)，共 **5 个音源**：网易云 / QQ / Apple Music / Spotify 四个音乐平台（`src/services/platforms.ts` 的 `MusicPlatform`）+ **B站看歌**（`BilibiliMvPlayer` / 歌词模式 `video`）。Frontend React 19 + TypeScript + Tailwind CSS 4 + Vite 6, backend Node/Express（`local-server.mjs`，端口 3001）；Python 只用于 **Apple Music 播放面 bridge**（`python-apple-bridge/apple_bridge.py`，端口 18790，依赖系统 Python + pywebview，无嵌入式运行时）。UI text and code comments are predominantly **Chinese** — keep new user-facing strings consistent with the existing language. 仓库含 **Apple 歌词/探索分支**（`src/components/Apple*`）——改桌面端时勿破坏。
 
-**本仓库为减配版（slimdown）**：已移除 Android TV（`android/`、TV 键盘/媒体键桥、nodejs-mobile 构建）、Python 节拍/响度/频响补偿服务（端口 3002/3003/3004 全部不再使用，`resources/python-embed/` 嵌入式运行时已删）、汽水（Qishui/Soda）与酷狗音源、音效引擎 v1/v2（**只剩 HSE v3 一个引擎**）、Folia/多维 Diorama/摩登/光荣/壁纸歌词/律动背景等歌词模式（收敛为 4 种）、DG_LAB 插件、AirPlay / 分轨 Stem / 远程遥控 / 设备授权 / 代理管理 / 爱发电同步 / Smart AutoMix（只保留 Fixed Crossfade + gapless + 专辑无缝）。**旧文档中描述这些功能的段落一律失效，勿据此恢复。**
+**本仓库为减配版（slimdown）**：已移除 Android TV（`android/`、TV 键盘/媒体键桥、nodejs-mobile 构建）、Python 节拍/响度/频响补偿服务（端口 3002/3003/3004 全部不再使用，`resources/python-embed/` 嵌入式运行时已删）、汽水（Qishui/Soda）与酷狗音源、音效引擎 v1/v2（**只剩 HSE v3 一个引擎**）、Folia/多维 Diorama/摩登/光荣/壁纸歌词等歌词模式（收敛为 4 种）、DG_LAB 插件、AirPlay / 分轨 Stem / 远程遥控 / 设备授权 / 代理管理 / 爱发电同步 / Smart AutoMix（只保留 Fixed Crossfade + gapless + 专辑无缝）。**旧文档中描述这些功能的段落一律失效，勿据此恢复。**
+  - ⚠️ **例外：播放页「封面模糊铺底 + 背景律动」已按用户要求恢复**（2026-09-13）。减配时它随"律动背景"被整块删除（`6b5f1aa` 删组件、`51fdd0d` 删接线），但那是陪葬——它是**播放页的常驻兜底背景**，MV 未开启/未匹配时用户看到的就是它，删掉后播放页只剩近黑渐变（用户实测反馈"怎么只剩黑色"）。现状：`src/components/CrossfadeBackground.tsx`（封面交叉淡入 + 模糊）+ `App.tsx` 的 `PulsingCrossfadeBackground` 包装（随音频脉冲缩放/提亮）+ 挂载点在 MV 层之前 + `QuickSettings.tsx` 的「背景律动」开关与三档强度。**勿再当作减配残留删除。**
 
 ## Commands
 
@@ -10,7 +11,7 @@ Desktop music player (Windows/Electron)，共 **5 个音源**：网易云 / QQ /
 npm run dev:electron     # Full dev: Vite (3000) + API server (3001) + Electron window
 npm run dev              # Vite dev server only (port 3000; Weather Lab: http://127.0.0.1:3000/weather-debug.html)
 npm run lint             # Typecheck: tsc --noEmit (covers src/ only; no ESLint in repo)
-npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-09-10 实测：145 文件 = 144 过 + 1 跳过；1292 用例 = 1286 过 + 5 跳过 + 1 todo。跳过的 5 项是 v3 LGPL 可选依赖未装自动跳过)
+npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-09-13 实测：140 文件 = 139 过 + 1 跳过；1269 用例 = 1264 过 + 5 跳过 + 0 todo。跳过的 5 项是 v3 LGPL 可选依赖未装自动跳过)
 npm run build:v3-worklet # 重生成 v3 AudioWorklet 单文件 -> public/v3-worklet.js（predev/predev:electron/prebuild 已自动执行）
 npm run build            # vite build -> dist/（三入口：index.html / desktop-player.html / desktop-lyrics.html）
 npm run build:electron   # 发布：build:electron:dir + 安装器美术 + electron-builder NSIS -> release/HyperPlayer-<version>-Setup.exe
@@ -27,7 +28,7 @@ npm run preview:setup    # 预览自定义安装器（scripts/setup-preview/prev
 npm run benchmark:mv     # B站 MV 相关基准脚本
 npm run version:patch|minor|major|pre  # 版本号更迭 (scripts/bump-version.mjs, 自动 commit/tag/push)
 npm run version:dry      # 预览版本更迭 (不落地)
-npm run vmp:sign:release / vmp:verify:release / vmp:status:release  # castLabs EVS Widevine VMP 签名 / 校验 / 状态（另有 *:dev 版本作用于 node_modules/electron/dist）
+npm run vmp:sign:release / vmp:verify:release / vmp:status:release  # castLabs EVS Widevine VMP 签名 / 校验 / 状态（其中 vmp:sign:dev / vmp:verify:dev 作用于 node_modules/electron/dist；status 只有 release 版，无 vmp:status:dev）
 npm run start            # electron .（直接起已构建产物）
 ```
 
@@ -40,10 +41,11 @@ npm run start            # electron .（直接起已构建产物）
 Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./DEBUG_PAGES.md). It registers developer-only visual tools, their launch command, local URL, data/network constraints, and production-build status.
 
 - **Weather Lab**: run the existing `npm run dev`, then open `http://127.0.0.1:3000/weather-debug.html`. Use it to compare all Apple weather scenes and desktop `full`/`simple` cards with local mock data. Do not add `weather-debug.html` to production Vite inputs（`vite.config.ts` 的 `rollupOptions.input` 已显式白名单为三个入口）。
+- **MV Decode Probe**: run the existing `npm run dev`, then open `http://127.0.0.1:3000/mv-decode-test.html`（可带 `?url=<音频直链>&rate=22050` 复现 app 检测采样率）。用于核对 B 站 MV / 音频的**音乐起点检测**：`decodeAudioData` → 单声道降采样 → `frameRms`/`onset` 包络 → `window.__decodeResult`，与 `autoMixAnalysisService.ts` / `mvAlignment.ts` 的包络互相对照。注意该页在 `public/` 下，Vite 会原样拷入 `dist/`（即随打包产物分发）。
 
 **打包规则（electron-builder）**：`build.files` 白名单 = `desktop/**/*`、`dist/**/*`、`server/**/*`、`shared/**/*`、`python-apple-bridge/**/*`、`local-server.mjs`、`package.json`、`logo.png`、`build/**/*`（清单里还列了 `THIRD_PARTY_NOTICES.md`，但该文件当前不存在于仓库根，属悬空条目）。`build.asarUnpack` 解包 `python-apple-bridge/**/*.py`（Python 脚本不能从 asar 内执行）。已无 Python 节拍服务与离线 wheels，无需任何排除规则。**`scripts/verify-asar.cjs` 已接入两条 dir 构建链**（electron-builder 之后、VMP 签名之前）：校验 asar 结构自洽（头部/条目越界/package.json 可解析）。**构建运行期间不要编辑任何会被打包的文件**——electron-builder 先按 stat 尺寸写头部、后拷贝内容，中途文件被改（哪怕只改注释）会静默产出 **Node 能读、Electron 拒载**的坏包（症状：启动停在 Electron 默认页/帮助文案），闸门就是拦这个的。
 
-**发布策略（releases）**：**GitHub Releases 只发 NSIS 安装版**（`npm run build:electron` → `release/HyperPlayer-<version>-Setup.exe`），**不发便携版**（`release/win-unpacked/` 是本地调试产物，不随 releases 分发）。发布时：打 `v<version>` tag → push tag → `gh release create v<version> release/HyperPlayer-<version>-Setup.exe`（附 changelog）。安装版为每用户安装（`nsis.perMachine: false`），**不携带任何用户数据/配置**——用户配置生成于各机 `%APPDATA%\HyperPlayer\`，安装后自动适配当前用户。CI 见 `.github/workflows/ci.yml`（类型/单测/构建 + tag 出包）与 `nightly.yml`（每日 nightly）；两者都要求 EVS secrets，正式构建需 production streaming VMP 剩余 ≥30 天。
+**发布策略（releases）**：**正式版（stable，打 `v*` tag）的 release 资产 = NSIS 安装包（`npm run build:electron` → `release/HyperPlayer-<version>-Setup.exe`）+ 热更新包 `hyperplayer-hot-<version>.zip`（app.asar + app.asar.unpacked，由 `node scripts/build-hot-update.mjs` 产出；非 npm script）；nightly 渠道额外发布便携版 `HyperPlayer-<version>-portable.zip`（解压即用）。`release/win-unpacked/` 本身仍不入库、不随 releases 分发**（仅本地调试产物）。发布时：打 `v<version>` tag → push tag → `gh release create v<version> release/HyperPlayer-<version>-Setup.exe release/hyperplayer-hot-<version>.zip`（附 changelog；CI 里是 `artifacts/*` 全量上传）。安装版为每用户安装（`nsis.perMachine: false`），**不携带任何用户数据/配置**——用户配置生成于各机 `%APPDATA%\HyperPlayer\`，安装后自动适配当前用户。CI 见 `.github/workflows/ci.yml`（类型/单测/构建 + tag 出包）与 `nightly.yml`（每日 nightly）；两者都要求 EVS secrets，正式构建需 production streaming VMP 剩余 ≥30 天。
 
 **发布形式一律为 Pre-release**：本仓库处于测试阶段，版本化发版（`pre-release.yml`，打 `v*` tag）与每日构建（`nightly.yml`）**全部以 GitHub Pre-release 形式发布**，不占用正式 latest。`nightly.yml` 每次构建生成唯一 tag `nightly-<YYYYMMDD>` 并创建**独立** Pre-release（历史全部保留；当天重复构建覆盖当天同名 tag/release）。
 
@@ -59,7 +61,7 @@ Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./D
 - `compareVersions` 遵循 semver **预发布规则**（`1.0.1-nightly.x < 1.0.1`，数字标识 < 字母标识）。**勿改回「按 `.` 切分取前 3 段」的旧实现**——那会把预发布后缀丢掉，导致 nightly 永远检测不到。
 - 渠道选择持久化于 `localStorage['hyperplayer:update-channel']`（默认 `stable`），在设置注册表 `general` 分组登记为 `choice` 条目（`updateChannel`），故简约/传统/探索/桌面四种模式的设置页都能切换并互相同步。
 
-**版本号更迭机制**：版本号唯一事实来源是 `package.json` 的 `version`（设置→关于页显示 `v{version} 预览版`，"检查新版本"功能对比 GitHub tag 与本地 version）。**版本号起点为 `1.0.0`**——本仓库自 1.0.0 起重新编号（减配 + 改名后的首个版本），此前的 0.x 记录已不再保留。使用 `scripts/bump-version.mjs` 自动更迭：
+**版本号更迭机制**：版本号唯一事实来源是 `package.json` 的 `version`（设置→关于页显示 `versionInfo.ts` `getVersionLabel()` 的结果，形如 `1.0.0「澜 おおなみ」 · 预览版`；"检查新版本"功能对比 GitHub tag 与本地 version）。**版本号起点为 `1.0.0`**——本仓库自 1.0.0 起重新编号（减配 + 改名后的首个版本），此前的 0.x 记录已不再保留。使用 `scripts/bump-version.mjs` 自动更迭：
 
 ```bash
 npm run version:patch   # 1.0.0 -> 1.0.1（修复）
@@ -102,7 +104,7 @@ HyperPlayer 共 **4 个界面模式**（简约 minimal / 传统 traditional / �
   - **开发者模式（内置场景微调）**：关于页开关（`hyperplayer:hse-dev-mode`）→ 音效场景页出现编辑入口，可实时试听修改内置 11 场景并保存为**参数覆盖层**（`ui/sceneStore.ts`，localStorage `hyperplayer:v3-scene-overrides`；入库快照剥离音量通道 + IR）；支持单场景还原出厂、场景库 JSON 导出/导入；桥接口对应 `updateBuiltinScene` / `resetBuiltinScene` / `exportSceneLibrary` / `importSceneLibrary`。**发布种子**：`src/services/HyperSoundEngine-v1/src/engine/builtinSceneSeed.ts`（随包分发的官方默认层）——场景页「写回发布种子」在开发模式经 IPC `hse-write-scene-seed`（preload `writeHseSceneSeed`，main.cjs 限 `!app.isPackaged`）直写该文件后 commit/push 即全员生效；revision 每次 +1，本机 rev 低于种子时个人旧微调自动让位官方新值。
   - Worklet 处理器经 `npm run build:v3-worklet`（`scripts/build-v3-worklet.mjs`，esbuild 单文件）打入 `public/v3-worklet.js`。改引擎算法前先跑 `npx vitest run src/services/HyperSoundEngine-v1`。
 - **引擎适配层**：`src/services/audioEngineVersion.ts`（localStorage `hyperplayer:audio-engine-version`，默认 **v3**）。统一适配层 `src/services/audio-engine/`（`types.ts` 接口 + `V3Adapter.tsx` + `engines/v3.ts` 清单 + `index.ts` 注册表 + 工厂 `getEngineAdapter`）：App.tsx 持有 `engineAdapterRef`，引擎操作收敛为 `engineAdapterRef.current.xxx()` 单一调用（attach/dispose/setSystemVolume/applyLoudnessNormalization/exportMp3/renderStudio），按 `adapter.capabilities` 判断能力而非写版本分支。**注册表目前只有 v3 一项，调音室的引擎切换 UI 已随 v1/v2 删除**（切换机制仍在，但单引擎下不显示按钮）。`V3Adapter` 为 `studioMode: 'custom'`（`renderStudio` 返回 HSE 调音室 `V3MixingStudio.tsx`）。**接入新引擎**：写 `XxxAdapter.ts` 实现 `IAudioEngineAdapter` + 加 `engines/xxx.ts` 清单 + 在 `index.ts` 注册表加一行，App.tsx 零改动（`types.ts` 中 generic 模式对应的 `GenericMixingStudio` 当前并不存在，属未来占位）。
-- **空间音频（HSE 第 15 级，纯 TS 引擎内联）**：`src/spatial/` 为纯模块（无浏览器/工作线程依赖），由 `EngineV3` 内联调用——**不是**独立 AudioWorklet 节点，也无 WASM/Rust 后端。后端为 `TsConvolverBackend`（复用 `dsp/Convolver.ts` 分区 FFT 卷积；另有时域直接卷积 `TimeConvolver.ts`，两种模式干湿对齐一致）。能力：合成解析 HRTF（`analyticHrtf.ts`）+ 双插值模式（最近邻网格 / 实球谐 L=3 最小二乘拟合，`hrtfInterp.ts`）；房间模拟（镜像声源法早期反射 + FDN 8 条质数延迟线晚期混响，7 种预设 studio/hall/stage/church/outdoor/bathroom/corridor）；Ambisonics 环境上混（`ambisonics.ts`）；多声道输入映射与输出模式（binaural / stereo / multichannel，`processMulti`）；多普勒 + 遮挡/衍射简化模型（增益衰减 + 高频低通）。UI 模式：一键空间化 / 头锁定环绕（5.1 / 5.1.4 / 7.1 / 7.1.4 / 自定义，环形编辑上限 16 只扬声器）/ 世界漫游 / 舞台影院（4 场景预设 + 座位）。空间参数是 `V3EngineParams.spatial` 的一部分，随 `hyperplayer:v3-params` 快照持久化。
+- **空间音频（HSE 第 15 级，纯 TS 引擎内联）**：`src/services/HyperSoundEngine-v1/src/spatial/` 为纯模块（无浏览器/工作线程依赖），由 `EngineV3` 以相对路径（`../spatial/...`）内联调用——**不是**独立 AudioWorklet 节点，也无 WASM/Rust 后端。后端为 `TsConvolverBackend`（复用 `dsp/Convolver.ts` 分区 FFT 卷积；另有时域直接卷积 `TimeConvolver.ts`，两种模式干湿对齐一致）。能力：合成解析 HRTF（`analyticHrtf.ts`）+ 双插值模式（最近邻网格 / 实球谐 L=3 最小二乘拟合，`hrtfInterp.ts`）；房间模拟（镜像声源法早期反射 + FDN 8 条质数延迟线晚期混响，7 种预设 studio/hall/stage/church/outdoor/bathroom/corridor）；Ambisonics 环境上混（`ambisonics.ts`）；多声道输入映射与输出模式（binaural / stereo / multichannel，`processMulti`）；多普勒 + 遮挡/衍射简化模型（增益衰减 + 高频低通）。UI 模式：一键空间化 / 头锁定环绕（5.1 / 5.1.4 / 7.1 / 7.1.4 / 自定义，环形编辑上限 16 只扬声器）/ 世界漫游 / 舞台影院（4 场景预设 + 座位）。空间参数是 `V3EngineParams.spatial` 的一部分，随 `hyperplayer:v3-params` 快照持久化。
 - `src/tv/` — **TV 形态已剥离**：只剩 `tvCore.ts`（桌面空壳，全部具名导出保留、函数体空实现，`isTvMode()` 恒 false）与 `perfMode.ts`（性能模式固定普通档）。勿再往这里加 TV 专属逻辑。
 - `desktop/` — Electron main process, **CommonJS**（`main.cjs`, `preload.cjs`, `splash-preload.cjs`, `desktop-lyrics-preload.cjs`, `desktop-player-preload.cjs`, `taskbar-widget-preload.cjs`, `config-manager.cjs`, `window-state.cjs`, `user-data-profile.cjs`, `trusted-ipc.cjs`, `update-manager.cjs`, `update-applier.cjs`, `vmp-status.cjs`, `audio-download.cjs`, `apple-url-policy.cjs`, `chroma-*.cjs`, `signalrgb-*.cjs`, `razer-device-discovery.cjs`, `taskbar-widget-polling.cjs`, `splash.html`, `splash-baked.webm`, `taskbar-widget.html`）。`splash.html` 与 `splash-baked.webm` 都是**生成物**（由 `scripts/build-splash.mjs` 产出，勿手改）。Not covered by `tsc --noEmit`。
 - **启动页（splash）流水线 —— 预渲染视频版**：`new-splash/splash-webm.webm`（设计侧录制的 VP9/WebM，1400×900、103 帧）→ `npm run build:splash`（`scripts/build-splash.mjs`）→ **帧时基归一**（`scripts/retime-splash-webm.mjs`）→ `desktop/splash.html` + `desktop/splash-baked.webm`。
@@ -113,6 +115,7 @@ HyperPlayer 共 **4 个界面模式**（简约 minimal / 传统 traditional / �
   - **代价（2026-09-13 实测，勿误当 bug）**：本地后端就绪约 **3.6～3.9s**（sweepBackendOrphans 的 PowerShell 端口探测 + utilityProcess 载入 11k 行模块），故**总启动时长变为约 7.4s**（原 ~4.0s）= 等后端 ~3.6s + 完整播完 3.43s。这是「等程序就绪再播 + 播完整段」两个选择的必然结果；嫌久就调 `SPLASH_START_MAX_WAIT_MS`，或改回「只等主窗口首帧」（约可省 3s）。
   - **帧节拍探针**：页面用 `requestVideoFrameCallback` + `getVideoPlaybackQuality()` 统计实际呈现帧数/最大帧间隔/解码掉帧，经 `splashBridge.mark()` → `splash:mark` 写入启动日志，形如 `[splash] 视频 3433ms / 呈现 103 帧 / 最大帧间隔 34ms / 解码掉帧 0/103 (ended) @页面内+Nms`。**判断"动画卡不卡"看这一行，别靠肉眼猜**。
   - **舞台几何**：视频按**自身比例（1400×900，非 16:9）以 cover 铺满窗口**——窗口比例与视频一致（默认 1400×900）时 1:1 原样呈现，其它比例只裁掉边缘抽象渐变，logo 组位于画面中部永不被裁。**勿把舞台写死 16:9**：写死会在非 16:9 窗口（用户窗口尺寸有记忆）上把视频放大 1.3 倍并四边裁切，构图明显失真（2026-09-13 用户实测发现）。
+  - **启动窗口位置（2026-09-13 起恒居中）**：启动页与主窗口共用 `resolveTargetBounds()` 的同一份 bounds（切换不跳动）；**位置恒为该显示器工作区几何中心**（`window-state.cjs` 的 `centerBoundsInWorkArea`），**不恢复记忆里的 x/y**——记忆位置可能来自最大化/全屏/kiosk 等瞬态（实测存出过贴顶的 y=7，用户观感「不在屏幕正中」）。尺寸、最大化状态、所在显示器仍按 `window-state.json` 记忆恢复；**勿改回「照搬记忆位置」**。
   - 初始阶段曾把设计稿（`new-splash/hyperplayer-splash/` 与 `new-splash/new-splash/`，二者均为 pen.dev 导出 + `build.py` 生成实时动画版 `index.html`）直接适配为实时动画页；现保留作**设计源与参考**（改速度/幅度改各自 `build.py`），但不再接入启动页。`new-splash/new-splash/build.py` 会把运动幅度按 1400/1920 等比缩放，改画布尺寸时勿忘同步。
 - `src/desktop-lyrics/` + `src/desktop-player/` — standalone renderer entries for `desktop-lyrics.html` / `desktop-player.html`。
 - `local-server.mjs` — single-file Express backend（~11k 行, port 3001）。Extra route modules in `server/` are registered here（`hazard-api` / `location-api` / `bilibili-api` / `apple-artwork-api` / `netease-native-explore`；工具模块 `byte-lru-cache` / `comment-api-utils` / `local-api-health` / `local-service-auth` / `qrc-decoder`）。QQ cookie state must flow through the single `qqMusicCookie` source of truth. **cookie 单事实源规则**：全局 `qqMusicCookie` 只在显式登录/设置接口（`/api/qq/cookie`、`/api/qq/user/setCookie`）更新；播放/读取路由一律用 `resolveRequestCookie(cookie)`（请求 cookie 仅本次使用，绝不回写全局），写操作按请求级 cookie 传递——并发播放/写操作不得互相冲掉登录态。
@@ -149,7 +152,7 @@ HyperPlayer 由 WaveForge 改名而来，**两者的配置、登录态、缓存�
   - **禁止**回退到 Electron 的公共默认目录 `%APPDATA%/Electron`——那是**所有 Electron 应用共享**的位置（本机实测含 WaveForge 等项目的键），共用会导致配置/凭据/DRM 数据交叉。
   - 历史上曾靠「文件标记探测」认领该公共目录；随功能减配（`remote-settings.json` 所属的远程遥控已删除、不再创建）该判定对新环境恒为 false，不可靠，**已整体移除**。`test/user-data-profile.test.cjs` 有回归测试防止重新引入。
 - **产品身份**：`package.json` 的 `build.appId` = `com.hyperplayer.desktop`（WaveForge 为 `com.waveforge.desktop`）；`app.setName('HyperPlayer')`；IndexedDB 库名 `HyperPlayerCache`；本地服务 token 环境变量 `HYPERPLAYER_LOCAL_TOKEN`。改名时这些标识**不要复用旧值**。
-- **localStorage 键**：HyperPlayer 自有键用 `hyperplayer:` 前缀；各平台登录态用其平台前缀（`apple*` / `netease*` / `qq*` / `spotify*`）。**不要新增 `waveforge:` 前缀键**。
+- **localStorage 键**：**新增**HyperPlayer 键一律用 `hyperplayer:` 前缀；各平台登录态用其平台前缀（`apple*` / `netease*` / `qq*` / `spotify*`）。**不要新增 `waveforge:` 前缀键**。播放页快捷设置保留少量**历史裸键**（`coverPulseEnabled` / `coverPulseMode`（背景律动，`App.tsx` 与 `QuickSettings.tsx` 同键同事件）、`playerTheme`、`backgroundEffect` 等），**勿盲目改名**——改名会丢用户已保存的设置。
 - **Chroma 残留清理**：`desktop/chroma-app-list-repair.cjs` 的 `STALE_APPS` **故意**列出 `WaveForge*` 旧注册名（用于清理旧版升级用户的残留），**不要把它当成共用配置而删掉**；但也要确保 `HyperPlayer` 不在该清单内（否则会误删自身注册）。
 - 磁盘上遗留的 `%APPDATA%/Electron` / `%APPDATA%/WaveForge 澜音工坊` 目录**不主动删除**（可能被其他应用使用），代码只做「不再读取」。
 
@@ -158,7 +161,7 @@ HyperPlayer 由 WaveForge 改名而来，**两者的配置、登录态、缓存�
 - `README.md` — feature map（音源 / 无缝衔接 / 歌词模式 / 音效 HSE / 空间音频 / 桌面模式）。
 - `HANDOVER.md` — 交接文档（⚠️ 内容早于减配，涉及已删功能/端口的段落已失效，以本文件与源码为准）。
 - `CONTEXT.md` — 音效域词汇表（效果/场景方案/自定义状态/频响补偿等术语定义；引擎相关词条已按 HSE 单引擎现状更新）。
-- `PRIVATE-LICENSE.md` — 私有模块许可（⚠️ 适用范围表仍列出已删模块，以实际存在文件为准）。
+- `PRIVATE-LICENSE.md` — 私有模块许可（适用范围表已按现状逐条核对，表中点名的文件全部存在；唯「AutoMix」是历史模块名——`autoMixAnalysisService.ts` / `transitionPlanner.ts` / `TransitionRenderer.ts` 仍在，用途已收敛为节拍分析 / 过渡编排）。
 - `DEBUG_PAGES.md` — 独立调试页注册表（新增独立调试页前必读）。
 - `docs/adr/` — 架构决策记录（历史决策，部分针对已移除的 v1/v2 引擎）。
 - `docs/plugin-development.md` — 插件开发文档（插件宿主与导入规范仍适用；文内 DG_LAB 示例对应的内置插件已移除）。

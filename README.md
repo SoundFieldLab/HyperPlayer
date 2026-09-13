@@ -54,7 +54,7 @@ HyperPlayer/
 │   ├── audio/                 # 播放引擎（队列/过渡计划/渲染器）
 │   ├── hooks/  api/  utils/  types/  vendor/pv/
 ├── desktop/                   # Electron 主进程 + preload（.cjs）+ splash/任务栏小窗
-├── server/                    # 后端附加路由（hazard/location/bilibili/apple-artwork）
+├── server/                    # 后端附加路由（hazard/location/bilibili/apple-artwork/netease-native-explore）
 ├── local-server.mjs           # Express 后端（约 11k 行，单文件，端口 3001）
 ├── python-apple-bridge/       # Apple Music 播放面 bridge（Python，端口 18790）
 ├── build/                     # 打包资源 + 自定义 NSIS 安装器 UI 资产
@@ -67,13 +67,14 @@ HyperPlayer/
 npm run dev:electron    # 完整开发（前端+后端+Electron）
 npm run dev             # 仅 Vite（3000）
 npm run lint            # TypeScript 类型检查（tsc --noEmit）
-npm run test            # vitest 单测（145 文件 = 144 过 + 1 跳过；1292 用例 = 1286 过 + 5 跳过 + 1 todo，含 HSE v3 引擎与空间音频）
+npm run test            # vitest 单测（2026-09-13 实测：140 文件 = 139 过 + 1 跳过；1269 用例 = 1264 过 + 5 跳过 + 0 todo，含 HSE v3 引擎与空间音频；跳过的 5 项为 HSE 的 LGPL 可选依赖未装自动跳过）
 npm run build           # 仅构建前端 -> dist/（三入口，不生成 EXE）
 npm run build:electron  # 发布：目录构建 → EVS production VMP → NSIS 安装包
 npm run build:electron:dir           # 发布目录包：构建 + EVS production VMP
 npm run build:electron:dir:unsigned  # 仅本地诊断，不能发布
 npm run build:v3-worklet   # 重生成 HSE 的 AudioWorklet 单文件（predev/prebuild 自动执行）
 npm run build:apple-weather # 重新生成 Apple 天气场景资源
+npm run build:splash    # 重新生成启动页（帧时基归一 -> desktop/splash.html + splash-baked.webm）
 npm run test:chroma     # Razer Chroma 插件自测
 npm run test:signalrgb  # SignalRGB 插件自测
 npm run test:desktop    # 桌面/安全相关 node --test 用例
@@ -86,12 +87,13 @@ npm run version:patch|minor|major|pre  # 版本号更迭（自动 commit/tag/pus
 
 ## 发布（GitHub Releases）
 
-**只发 NSIS 安装版**（`release/HyperPlayer-<version>-Setup.exe`），**不发便携版**（`release/win-unpacked/` 仅本地调试）。安装版为每用户安装、**不携带任何用户数据/配置**——首次运行在该机 `%APPDATA%\HyperPlayer\` 自动生成全新配置并适配当前用户。
+**正式版（打 `v*` tag）的 release 资产 = NSIS 安装包 `release/HyperPlayer-<version>-Setup.exe` + 热更新包 `hyperplayer-hot-<version>.zip`（app.asar + app.asar.unpacked）；nightly 渠道额外发布便携版 `HyperPlayer-<version>-portable.zip`（解压即用、免安装）**；`release/win-unpacked/` 本身仍不入库、不随 releases 分发（仅本地调试产物）。安装版为每用户安装、**不携带任何用户数据/配置**——首次运行在该机 `%APPDATA%\HyperPlayer\` 自动生成全新配置并适配当前用户。
 
 ```bash
 npm run build:electron          # 构建安装版（强制 EVS production VMP）
+node scripts/build-hot-update.mjs  # 生成热更新包 hyperplayer-hot-<version>.zip
 git tag v<version> && git push origin v<version>
-gh release create v<version> release/HyperPlayer-<version>-Setup.exe --title "v<version>" --notes "..."
+gh release create v<version> release/HyperPlayer-<version>-Setup.exe release/hyperplayer-hot-<version>.zip --title "v<version>" --notes "..."
 ```
 
 Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `castlabs-evs`。签名发生在构建机，正式构建要求 production streaming VMP 至少剩余 30 天，并将无敏感信息的有效期元数据写入安装包；低于门槛或签名无效会直接阻断发布。最终用户安装后**不需要 EVS、签名工具或任何手动签名步骤**；Apple Music 用户只需在应用内登录具有有效订阅的账号。CI：`.github/workflows/ci.yml`（类型/单测/构建 + tag 出包）、`nightly.yml`（每日 nightly 预发布）。
@@ -138,7 +140,7 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 
 ## 空间音频（Spatial Audio）
 
-空间音频是 **EngineV3 的第 15 级处理**（纯 TypeScript，内联调用 `src/spatial/*` 纯模块），不是独立 AudioWorklet 节点，也无 WASM/Rust 后端；`mode='off'` 时完全旁路、逐位不触碰 L/R。参数属于 `V3EngineParams.spatial`，随 `hyperplayer:v3-params` 快照持久化。四种模式：
+空间音频是 **EngineV3 的第 15 级处理**（纯 TypeScript，内联调用 `src/services/HyperSoundEngine-v1/src/spatial/*` 纯模块），不是独立 AudioWorklet 节点，也无 WASM/Rust 后端；`mode='off'` 时完全旁路、逐位不触碰 L/R。参数属于 `V3EngineParams.spatial`，随 `hyperplayer:v3-params` 快照持久化。四种模式：
 
 - **A 一键空间化**：立体声展开为 ±30°（20..120° 可调）虚拟扬声器，干湿混合强度 / 房间模拟预设 / 房间混响可调
 - **B 头锁定环绕**：5.1 / 5.1.4 / 7.1 / 7.1.4 / 自定义布局预设 + 环形拖拽编辑器（上限 16 只扬声器）+ 逐扬声器声源路由（L / R / both），声场固定于头部朝向（耳机听感）
@@ -183,7 +185,8 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 
 **上游授权**：本项目已获上游母项目 **WaveForge** 授权，被授权人 **IceFireIcer**。
 
-**私有模块**：无缝衔接（Gapless）、智能混音（AutoMix）、看歌 / MV 背景（Bilibili）、
-桌面模式、探索模式、Apple Music 接入等模块以 **私有模块许可**提供，适用范围与使用限制详见
+**私有模块**：无缝衔接（Gapless）、节拍分析与过渡编排（历史 AutoMix 模块：`autoMixAnalysisService.ts` /
+`audio/transitionPlanner.ts` / `audio/TransitionRenderer.ts`，现仅服务 MV 对齐 / PV 歌词 / Fixed Crossfade 过渡）、
+看歌 / MV 背景（Bilibili）、桌面模式、探索模式、Apple Music 接入等模块以 **私有模块许可**提供，适用范围与使用限制详见
 [PRIVATE-LICENSE.md](./PRIVATE-LICENSE.md)（受保护文件头部 / 目录 `LICENSE.private` 亦标注）。
 HSE 音效引擎模块另受 CC BY-NC-ND 4.0 约束，见 [src/services/HyperSoundEngine-v1/LICENSE](./src/services/HyperSoundEngine-v1/LICENSE)。

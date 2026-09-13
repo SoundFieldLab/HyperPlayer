@@ -14,7 +14,7 @@
 | 模块 | 文件 / 目录 |
 |---|---|
 | 无缝衔接（Smart Gapless） | `src/services/gapless/**` |
-| 智能混音（AutoMix，含节拍分析 / 过渡编排 / 渲染） | `src/services/autoMixAnalysisService.ts`、`src/audio/transitionPlanner.ts`、`src/audio/TransitionRenderer.ts` |
+| 节拍分析与过渡编排（历史 AutoMix 模块；现仅用于 MV 对齐 / PV 歌词 / Fixed Crossfade 过渡） | `src/services/autoMixAnalysisService.ts`、`src/audio/transitionPlanner.ts`、`src/audio/TransitionRenderer.ts` |
 | 看歌 / MV 背景（Bilibili） | `src/services/bilibiliApi.ts`、`src/services/mvAlignment.ts`、`src/components/BilibiliMvPlayer.tsx`、`src/components/BilibiliMvBackground.tsx`、`src/components/BilibiliVideoPlayerOverlay.tsx`、`src/components/BilibiliWatchSettingsModal.tsx`、`server/bilibili-api.mjs` |
 | 桌面模式（Desktop 小组件 / 壁纸 / 独立播放小窗） | `src/components/Desktop*.tsx`（DesktopView / WidgetZone / MiniPlayer / ExtraWidgets / CustomizationEditor / SettingsModal / ProductivityWidgets / TimeCenter / ExploreWidgets）、`src/desktop-player/**` |
 | 探索模式（Explore） | `src/components/ExploreView.tsx`、`src/components/ExploreSettingsPanel.tsx` |

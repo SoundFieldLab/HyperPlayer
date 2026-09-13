@@ -11,7 +11,7 @@
 - [3. 插件生命周期与运行时 API](#3-插件生命周期与运行时-api)
 - [4. 导入与安装规范](#4-导入与安装规范)
 - [5. 使用须知门控（可选）](#5-使用须知门控可选)
-- [6. 内置插件示例：DG_LAB（郊狼）](#6-内置插件示例dg_lab郊狼)
+- [6. 内置插件示例：Razer Chroma / SignalRGB](#6-内置插件示例razer-chroma--signalrgb)
 - [7. 安全边界与限制](#7-安全边界与限制)
 - [8. 完整示例](#8-完整示例)
 
@@ -26,7 +26,7 @@
 - **详情弹窗**：版本、开发者、更新日期、详细介绍、运行截图、卸载；
 - **开关记忆**：插件默认全部关闭，用户手动开启后状态持久化（localStorage，`wf_plugins`）。
 
-内置插件（如 DG_LAB）随应用发布、不可卸载；第三方插件通过「导入插件」安装，可卸载。
+内置插件（Razer Chroma / SignalRGB）随应用发布、不可卸载；第三方插件通过「导入插件」安装，可卸载。
 
 ## 2. 插件清单（manifest）格式
 
@@ -126,18 +126,56 @@ interface PluginContext {
 
 开启状态与各门控标记均持久化（`wf_plugins` / `wf_plugin_flags`）。
 
-## 6. 内置插件示例：DG_LAB（郊狼）
+## 6. 内置插件示例：Razer Chroma / SignalRGB
 
-内置插件 `dglab` 是完整参考实现（源码 `src/plugins/DGLabPlugin.ts`）：
+内置插件由**代码注册**（不走导入流程），随应用发布、**不可卸载**，也不需要 `code` 字段。当前仓库有两个，源码都在 `src/plugins/`，并在 `src/components/PluginOverlay.tsx` 顶部以副作用导入完成注册：
 
-- 功能：把音乐波形（低频鼓点 / 中频旋律 / 高频细节）实时转换为郊狼 A/B 双通道电流强度；
-- 链路：HyperPlayer 渲染端采样 → 本地中继（`server/dglab-relay.cjs`）→ WebSocket → 手机 DG-Lab App（BLE 持有设备）→ 郊狼 3.0(V3) / 4.0(V4)；
-- 中继：默认监听 `127.0.0.1:30082`，路径 `/dglab/v3`、`/dglab/v4`（App 扫码连入）、`/dglab/ctrl`（渲染端控制）；
-- 扫码：App 娱乐模式扫二维码（内容为官方 socket URL）；
-- 强度标尺：0-200，输出 `min(用户上限, App softLimit)`，断链/停止/静音自动 `clear` 归零；
-- 波形：内置 连续 / 呼吸 / 潮汐 / 节拍 + 支持导入 DG-Lab 波形文件（整合 txt 多波形、pulse 单波形，存本机）。
+| id | name | 源码 | 能力 |
+|---|---|---|---|
+| `chroma` | Razer Chroma | `src/plugins/ChromaPlugin.ts` | 把 24 段频谱映射到雷蛇键盘 / 鼠标 / 鼠标垫 / 耳机 / 小键盘 / Chroma Link，含真实硬件识别 |
+| `signalrgb` | SignalRGB | `src/plugins/SignalRgbPlugin.ts` | 安装 HyperPlayer Effect，由 SignalRGB 原生音频引擎驱动其布局内全品牌设备 |
 
-第三方插件不必涉足设备协议；如需类似能力，可通过 `ctx.audio` 订阅分析流自行实现。
+两者共用的注册形状（以下为 `ChromaPlugin.ts` 的实质代码，仅注释为便于说明所加）：
+
+```ts
+import type { PluginManifest, PluginRuntime } from './types'
+import { registerBuiltinPlugin } from './registry'
+import { closeChromaConsole } from '../services/pluginStore'
+import { chromaClient } from './clients/ChromaClient'
+
+const manifest: PluginManifest = {
+  id: 'chroma',
+  name: 'Razer Chroma',
+  version: '0.1.0',
+  developer: 'HyperPlayer 团队',
+  description: '把 24 段音乐频谱实时映射到雷蛇键盘与整套 Chroma 设备，提供 12 种可视化风格和真实硬件识别',
+  updated: '2026-08-31',
+  iconColor: '#44D62C',
+  detail: ['独立灯光工作台…', '键盘内置光谱循环…'],
+  source: 'builtin',   // 内置标记：UI 不提供卸载入口
+  needsAudio: true,    // 启用期间保持实时音频分析器运行
+}
+
+const runtime: PluginRuntime = {
+  onEnable: () => chromaClient.activate(),
+  onDisable: () => {
+    closeChromaConsole()          // 关闭该插件自己的控制台 UI
+    return chromaClient.deactivate()
+  },
+}
+
+registerBuiltinPlugin(manifest, runtime)   // 注册即生效，不写 localStorage
+export default manifest
+```
+
+- **`runtime` 可以是异步的**：`SignalRgbPlugin.ts` 的 `onEnable` / `onDisable` 均为 `async`；宿主在 `PluginOverlay.tsx` 的 `useRuntimeBridge()` 里按插件 id **串行排队**执行生命周期，启用/停用不会交错，卸载时还会兜底跑一次 `onDisable`。
+- **生命周期回调可以带 `ctx`**：`PluginRuntime` 的签名是 `onEnable?(ctx: PluginContext)` —— 内置插件通常不需要（自己的模块里有客户端单例），导入插件才是 `ctx` 的主要使用者。
+- **运行时不进 `wf_plugins`**：内置插件的 runtime 是编译进包的模块，localStorage 只存启用状态与**导入插件**的 manifest；`registry.ts` 的 `isBuiltinPlugin(id)` 供 UI 判断能否卸载。
+- **控制台 UI 自带**：Chroma 的灯光工作台由 `ChromaConsoleModal` 承载（`openChromaConsole()` 打开），SignalRGB 由 `SignalRgbConsoleModal` 承载（`activeConsolePluginId === 'signalrgb'` 门控）；导入插件没有专属控制台，只能用 `ctx.toast` / `ctx.log` 反馈。
+- **`needsAudio: true` 的语义**：App.tsx 用 `hasEnabledAudioPlugin(isPluginEnabled)` 判定——只要存在一个启用且声明 `needsAudio` 的插件，即使处于效能档、没有其它可视化消费者，也保持音频分析器运行。
+- **图标两种写法**：`iconColor` 渐变 + 名称首字（Chroma），或直接给 `icon`（SignalRGB 用内联 SVG data URI）。
+
+内置插件是完整的参考实现，但其内部实现（Electron IPC、REST / Canvas Event 传输、灯效引擎）**不属于插件 API**；协议细节见文末附录。第三方插件不必涉足设备协议，如需类似能力，可通过 `ctx.audio` 订阅分析流自行实现。
 
 ## 7. 安全边界与限制
 
@@ -170,12 +208,18 @@ interface PluginContext {
 ```
 
 把上述内容保存为 `beat-flash.json` → 插件中心 → 导入插件 → 选择该文件 → 确认安装。
-## 附录：DG-LAB 插件体感架构契约（开发者须知）
 
-- **分析点 = 最终听感点**：DG-LAB 的音频特征采集固定在「效果链之后、masterGain 混合输出」处（含左/右声道 splitter）。无论无缝衔接 / AutoMix / 增强版未来如何优化转场算法，只要最终进耳的信号经过该点，体感自动跟随听感，插件无需随引擎改动。
-- **体感风格引擎**（`server/dglab-relay.cjs` STYLES）：7 套风格（立体声/心跳/呼吸/潮汐/敲击/流动/重拳），每套 = 特征→AB 强度映射 + 自研脉冲包络（不依赖原厂波形）+ 通道角色；切换走安全链（强度差/上限/恢复淡入/死区/Duty）。
-- 强度差三档体质（强30/中12/弱5/自定义）与恢复适应时间三档（快1s/中2.5s/慢5s）为最轻度的安全默认；音乐升降速度由乐速因子（节拍间隔+flux 速率）动态适配。
-- 播放暂停立即归零、续播按恢复档缓升；波形输出可一键启禁（仅停输出、不断连）。
+## 附录：音频插件架构契约（开发者须知）
+
+内置的 Chroma / SignalRGB 都遵循同一套契约，第三方音频插件（声明 `needsAudio: true` 或自行订阅分析流）建议照此对齐：
+
+- **分析点 = 最终听感点**：插件消费的频谱取自播放链末端的分析器节点（效果链之后、masterGain 混合输出）。无论无缝衔接 / Fixed Crossfade / HSE 效果链如何演进，只要最终进耳的信号经过该点，灯效与体感自动跟随听感，插件无需随引擎改动。宿主在 App.tsx 注入共享分析器 store（`setChromaAudioAnalyzerStore` / `setSignalRgbAudioAnalyzerStore`），而不是让插件各自接音频图。
+- **数据形状固定**：`AudioAnalyzerData` = `bass` / `mid` / `high` / `overall` / `beat` / `accent` / `flux` + 24 段对数频谱（20Hz~12kHz），30fps 推送。插件内部再做风格化映射（Chroma 的灯效引擎集中在 `src/plugins/clients/chroma/chromaStyles.ts`，真机输出与控制台预览共用同一份）。
+- **后台租约**：分析器仅在「有订阅者 且（窗口可见 或 有后台消费者）」时运行（`shouldRunAudioAnalyzer`）。需要在后台/失焦时继续输出的插件必须显式 `retainBackground()` 取租约（Chroma 要求「输出开启 + 后台联动」，SignalRGB 还要求事件增强开启），并在停用时释放。
+- **启用/停用对称**：`onEnable` 建立连接与订阅，`onDisable` 必须释放订阅、后台租约与会话（两家的 `deactivate()` 即为此）。宿主在插件停用或卸载时会兜底强制释放 `ctx.audio.subscribe` 建立的订阅。
+- **播放状态独立同步**：播放/暂停作为单独状态下发（`setChromaPlaybackActive` / `setSignalRgbPlaybackActive`），暂停时插件应进入空闲或安全输出（停帧、静态主题），不要仅凭音频数据猜播放状态——暂停后分析流可能仍在跑。
+- **失败隔离**：设备或外部服务失败只能影响该插件自身（如 Chroma 的设备失败隔离、断线重连与心跳），不得阻断播放或其它插件；未检测到设备/服务时，控制台预览与设置项仍应可用。
+- **不伪造外部能力**：外部平台不公开的信息（物理型号、LED 拓扑、电量等）不得由插件凭空生成——真机型号一律来自独立的设备探测。
 
 ## 附录：Razer Chroma 插件架构契约
 

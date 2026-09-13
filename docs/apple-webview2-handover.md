@@ -10,7 +10,7 @@ Apple 歌曲
   ↓
 ① Electron / castLabs ECS Browser CDM (L3)
    webPlayback → CENC HLS → hls.js EME → Apple license → 本地 Web Audio 音频图
-   └─ 原生支持：进度/歌词/MV/频谱/音效/Automix/输出设备
+   └─ 原生支持：进度/歌词/MV/频谱/音效/输出设备（Automix 已随减配移除）
   ↓ 仅失败时
 ② WebView2 播放面（兼容兜底，独立 MusicKit/WebView2）
   ↓ 仍失败

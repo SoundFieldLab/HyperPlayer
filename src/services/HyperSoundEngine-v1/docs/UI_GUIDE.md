@@ -11,8 +11,9 @@ v3 调音室 UI 为 **HSE（HyperSoundEngine）风格**（替换旧的 liquid-gl
 - **深色琥珀金主题**：`ui/hse-theme.ts` 的 `useHSETheme()` —— 深黑底 `#0d0d0f` + 琥珀金强调色
   （默认 `#c9a84c`，可随 localStorage `accentColor` 联动，监听 `accentColorChanged` 事件）；
   玻璃拟态卡片 + 内发光边框（`cardBg` 渐变 / `cardGlow` 阴影 / `panelBorder` 1px 白 8% 描边）；
-- **左侧导航 8 页**：主页 / 音效场景 / 均衡器 / 空间音效 / 动态调音 / 分析 / 调音器 / 关于
+- **左侧导航 9 页**：主页 / 音效场景 / 均衡器 / 空间音效 / **空间音频** / 动态调音 / 分析 / 调音器 / 关于
   （`NAV_ITEMS` 数组 + `PageKey` 联合类型，新增页面 = 数组加一项 + 渲染分支加一行）；
+  「空间音效」是混响/3D 环绕/低音增强等弹窗入口，「空间音频」是第 15 级的四模式面板（两页并列，勿混）
 - **品牌标志**：顶栏白色圆角衬底上的 Hi-Res / DTS:X / Dolby Atmos 徽章（`components/Badges.tsx`）；
 - **动画**：framer-motion（面板锚点滑入 spring、导航项 hover 位移、页面切换淡入上移）；
 - **交互基元**：`components/Primitives.tsx`（Toggle/Slider/GlassCard/Modal/Segmented/Chip/ActionButton/InfoLine），
@@ -25,13 +26,15 @@ v3 调音室 UI 为 **HSE（HyperSoundEngine）风格**（替换旧的 liquid-gl
 
 ```
 HyperSoundEngine-v1/ui/
-├── V3MixingStudio.tsx      # 主面板：左侧导航 8 页 + 右侧内容区 + 底部状态栏 + 弹窗调度
+├── V3MixingStudio.tsx      # 主面板：左侧导航 9 页 + 右侧内容区 + 底部状态栏 + 弹窗调度
 ├── hse-theme.ts            # HSE 主题（useHSETheme / toLegacyTheme）
 ├── bridge.ts               # V3UiBridge 接口 + createV3UiBridge(engine, sampleRate)
 ├── hooks.ts                # useV3Params（快照 patch/replace）+ DeepPartial + deepMerge
-├── pages/                  # 8 个页面组件（HomePage/ScenesPage/EqPage/SpatialPage/
+├── pages/                  # 9 个页面组件（HomePage/ScenesPage/EqPage/SpatialPage/SpatialAudioPage/
 │                           #   DynamicsPage/AnalysisPage/TunerPage/AboutPage）
 ├── components/             # Primitives（Toggle/Slider/GlassCard/Modal/...）+ Badges（认证徽章）
+│                           #   + 空间页组件（SpatialRingEditor/SpatialSphereEditor/SpatialWorldView/
+│                           #     WorldPanel/StagePanel/SpatialSettingsModal/SpatialStudioLayout/SpatialModeVisual）
 ├── effectsPanel.tsx        # 效果卡清单（场景页引用）
 ├── modalsSpatial.tsx       # 混响（双路由+IR 导入）/ 3D 环绕 / 低音增强（谐波 + 低音下潜 lowBoostDb）
 ├── modalsDynamics.tsx      # 压缩 / 齿音 / 夜间 / 限幅 / IEQ / 变速变调 / 立体声宽度
@@ -41,7 +44,8 @@ HyperSoundEngine-v1/ui/
 └── index.ts                # 公共出口
 ```
 
-**依赖**：`react`（peer）+ `lucide-react` + `framer-motion`（HyperPlayer 已有）。本地验证 `npm run typecheck:ui`（tsconfig.ui.json，jsx react-jsx）。
+**依赖**：`react`（peer）+ `lucide-react` + `framer-motion`（HyperPlayer 已有）。类型检查走仓库根
+`npm run lint`（`tsc --noEmit`，`tsconfig.json` 的 include 为 `src`，已覆盖本模块 `ui/`）。
 
 ## 2. 搬入 HyperPlayer（两步）
 
@@ -70,13 +74,15 @@ const bridge = createV3UiBridge(host.engine, ctx.sampleRate) // host = EngineV3H
   onClose={() => setShowMixingStudio(false)}
   playerTheme={playerTheme}
   anchorRect={anchorRect}
-  engineVersion={audioEngineVersion}          // 'v1' | 'v2' | 'v3'
+  engineVersion={audioEngineVersion}          // 当前引擎版本（注册表现只有 v3，切换 UI 不显示）
   onSwitchEngine={switchAudioEngine}
   exportMp3={exportV3Mp3}                      // 可选：离线导出
+  playbackTimeStore={playbackTimeStore}        // 可选：空间音效「随曲目播放」用播放时钟
 />
 ```
 
-- `onSwitchEngine`：复用现有 `switchAudioEngine`（热切换语义：暂停 → dispose 旧链 → attach 新链 → 恢复播放），版本枚举扩展为 'v3'；
+- `onSwitchEngine`：复用现有 `switchAudioEngine`（热切换语义：暂停 → dispose 旧链 → attach 新链 → 恢复播放）；
+  引擎注册表目前只有 v3 一项，故切换按钮不显示（机制保留）；
 - `bridge` 需要稳定引用（useMemo/useRef），切换引擎后重建。
 
 ## 4. 三处宿主接线（必须）
@@ -89,7 +95,7 @@ const bridge = createV3UiBridge(host.engine, ctx.sampleRate) // host = EngineV3H
 
 > 听力测试的"播放"不在 ui/ 内实现（纯 UI 不触碰 Web Audio），事件化解耦；未接线时流程 UI 仍可走完（不发声）。
 
-## 5. 页面与功能对照（HSE 8 页导航）
+## 5. 页面与功能对照（HSE 9 页导航）
 
 | 页面 | 内容 | v3 特有 |
 |---|---|---|
@@ -97,10 +103,11 @@ const bridge = createV3UiBridge(host.engine, ctx.sampleRate) // host = EngineV3H
 | 音效场景 | 11 场景 chips + 我的场景（上限 8）+ 效果卡（可叠加）+ 音量自适应补偿/响度归一化独立卡 | 齿音/IEQ/限幅/变速/宽度卡片；混响双路由 |
 | 均衡器 | simple 5 段 / pro 10-20 段 + **曲线编辑器拖拽** + 级联 Q 补偿 + 锁定 + 预设 + EQ JSON 导入导出 | 20 段、Q 补偿、锁定 |
 | 空间音效 | 混响 / 3D 环绕 / 低音增强 弹窗入口 | 低音增强含**低音下潜 lowBoostDb**（-6..+12dB，真实低频提升） |
+| 空间音频 | **第 15 级空间音频**：一键空间化 / 头锁定环绕（5.1、5.1.4、7.1、7.1.4、自定义，环形编辑上限 16 只）/ 世界漫游 / 舞台影院；标准视图（卡片流）与专业视图（`SpatialStudioLayout`，窄窗 <900px 自动回退）；输出与卷积模式设置弹窗 | 四模式面板 + 环形/球面编辑器 + 3D 世界视图 + 播放头同步 |
 | 动态调音 | 压缩 / 齿音 / 夜间 / 限幅 / IEQ / 变速变调 / 立体声宽度 | 全部 |
 | 分析 | LUFS/LRA/峰值/真峰值 + 限幅 GR 条 + **32 条对数频谱**（20Hz-20kHz，dBFS 归一化，100ms 轮询 + EMA 平滑）+ 5 项特征 + 听力测试（7 频点 × 5 轮） | 全部 |
-| 调音器 | **v3 分享串**（完整参数，版本+校验+白名单）+ WAV 导出 + 引擎信息（采样率/延迟/LUFS/GR） | 分享串格式 |
-| 关于 | HyperSoundEngine 品牌三行信息（琥珀金渐变大标题 / HyperPlayer特供版 / 版权行） | — |
+| 调音器 | **v3 分享串**（完整参数，版本+校验+白名单）+ MP3 导出 + 引擎信息（采样率/延迟/LUFS/GR） | 分享串格式 |
+| 关于 | HyperSoundEngine 品牌三行信息（琥珀金渐变大标题 / HyperPlayer特供版 / 版权行）+ 开发者模式开关（内置场景微调） | — |
 
 ## 6. 设计说明（供审查）
 
@@ -112,5 +119,8 @@ const bridge = createV3UiBridge(host.engine, ctx.sampleRate) // host = EngineV3H
    （内置 11 场景 + 我的场景统一路径），场景快照不得覆盖用户音量——已列入 UI 冒烟断言。
 4. **动画**：framer-motion（面板入场 spring、页面切换淡入上移、导航 hover 位移）；主题随
    `accentColorChanged` 事件联动（localStorage `accentColor`）。
-5. **测试策略**：ui/ 为纯受控组件 + 桥接口，本地保证：`npm run typecheck:ui` 0 错误；
-   引擎回归（319）+ UI 冒烟（10）= **324 用例（+5 LGPL 跳过）全绿**。
+5. **测试策略**：ui/ 为纯受控组件 + 桥接口，本地保证：仓库根 `npm run lint`（`tsc --noEmit`）0 错误；
+   测试走仓库根 `npm run test`（全仓 vitest **140 文件 = 139 过 + 1 跳过 / 1269 用例 = 1264 过 + 5 跳过 + 0 todo**，
+   2026-09-13 实测；LGPL 可选依赖未安装时相关用例自动跳过）。ui/ 下 8 个测试文件
+   （uiSmoke / sceneStore / playheadSync / spatialModeVisual / spatialOutputDeviceSmoke /
+   spatialSoloRegression / sphereMath / worldControl）。

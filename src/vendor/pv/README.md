@@ -14,10 +14,10 @@
 - `core/` — 引擎核心：`engine.ts`（PixiJS 渲染循环/模板/后期滤镜/媒体层）、`types.ts`（数据结构）、
   `beatProvider.ts`（节拍强度）、`colorExtractor.ts`（封面取色）、`glitchFilter.ts`（毛刺滤镜）、
   `mediaOutline.ts`（媒体轮廓）、`motionDetector.ts`（运动检测，HyperPlayer 默认关闭）、
-  `ccl.ts`（裂字特效的字形连通域分析）、`lrc.ts`（LRC 解析，仅备用）、
+  `ccl.ts`（裂字特效的字形连通域分析）、`lrc.ts` / `srtParser.ts`（歌词解析）、`uiHelpers.ts`（UI 辅助）、
   `effectCatalog.ts` / `templateStore.ts`（特效目录/模板持久化）。
-- `effects/` — 54+ 个 PixiJS 特效（背景/几何/线条/文字/覆盖层五类），互不依赖，注册于 `index.ts`。
-- `templates/` — 30 个 PV 模板（TemplateConfig：调色板 + 特效组合 + 后期参数）。
+- `effects/` — **78 个** PixiJS 特效（背景/几何/线条/文字/覆盖层五类），互不依赖，注册于 `index.ts`（`grep -c "^register(" src/vendor/pv/effects/index.ts` = 78）。
+- `templates/` — **31 个** PV 模板（TemplateConfig：调色板 + 特效组合 + 后期参数）。
 
 ## HyperPlayer 扩展（相对原版增量，隔离于模块内部）
 
@@ -33,6 +33,7 @@
 
 ## 使用边界
 
-- 本目录只被 `src/components/pvLyrics/PvLyricsPage.tsx` 使用；其他歌词页（现代/沉浸式/墙纸/辉煌/
-  多维/摩登/看歌/Folia）与本目录完全隔离。
-- 修改引擎核心前请先运行 `npm run lint` 与 `npx vitest run src/components/pvLyrics` 回归。
+- 本目录只被 `src/components/pvLyrics/PvLyricsPage.tsx` 使用；其余现存歌词模式（**现代 modern /
+  沉浸 immersive / 看歌 video**，见 `src/App.tsx` 的 `ALL_LYRIC_MODES`）与本目录完全隔离。
+- 修改引擎核心前请先运行 `npm run lint`，并跑 `npx vitest run test/pvLyrics.test.ts` 回归
+  （PV 歌词的测试在 `test/pvLyrics.test.ts`，`src/components/pvLyrics/` 目录内没有测试文件）。

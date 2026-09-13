@@ -4,6 +4,8 @@
 > 面向"接下来要干活的人"，读完本文档 + `AGENTS.md` 即可上手。
 >
 > ⚠️ 本文档描述的是**减配版（slimdown 分支）**。历史上大量功能已移除，凡本文档未提及者即视为不存在——**不要**依据旧版本文档或 `git log` 里的旧提交去恢复功能。
+> 📌 已按 **2026-09-13** 代码校正主要失效点（测试计数、律动背景、引擎切换胶囊、未决清单、netease 初始化位置等），剩余历史决策段落保留。
+> 📌 文中出现的文件行号**随提交漂移**，定位代码时**优先按符号名 grep**（如 `grep -n "MediaPlayPause" desktop/main.cjs`），行号仅作粗略参考。
 
 ---
 
@@ -11,7 +13,7 @@
 
 - **阶段**：减配（slimdown）已完成，处于维护/优化阶段。核心功能（五音源搜索/播放/歌词/无缝衔接/桌面模式/音效 HSE/空间音频）均已实现。
 - **代码基线**：分支 `main`；`package.json` 版本 **1.0.0**（自 1.0.0 起重新编号，0.x 记录已废弃）。
-- **稳定性（2026-09-10 本机实测 `npm run test`）**：**145 文件 = 144 过 + 1 跳过；1292 用例 = 1286 过 + 5 跳过 + 1 todo**。跳过的 5 项是 HSE 模块 LGPL 可选依赖未装（属设计行为）。`test/chromaStyles.test.ts` 的 `keeps decay timing approximately frame-rate independent` 在满载并发时会 5s 超时，单独运行通过——属**已有偶发抖动**，不是减配引入的回归。
+- **稳定性（2026-09-13 本机实测 `npm run test`）**：**140 文件 = 139 过 + 1 跳过；1269 用例 = 1264 过 + 5 跳过 + 0 todo**。口径：`test/` 95（vitest 收集的 `.ts`/`.tsx`）+ HSE `test/` 29 + HSE `ui/` 8 + spatial `test/` 8 = 140；另有 11 个 `.cjs`/`.mjs` 归 `npm run test:desktop`（10 文件 / 37 用例全过）与 `test:installer`。跳过的 5 项是 HSE 模块 LGPL 可选依赖未装（属设计行为）。`test/chromaStyles.test.ts` 的 `keeps decay timing approximately frame-rate independent` 在满载并发时会 5s 超时，单独运行通过——属**已有偶发抖动**，不是减配引入的回归。2026-09-13 另删除 6 个无消费方测试：`DesktopSettingsModal` / `transitionRendererMemory` / `encodeWav` / `rgbColor` / `rgbFrameScheduler` / `audioResample`。
 - **代码规模**：`src/` 约 540 个 `.ts`/`.tsx`；后端 `local-server.mjs` 单文件 **约 11.3k 行**（端口 3001）。**已无任何 Python 节拍/响度/补偿代码**。
 
 ## 2. 减配说明（2026-09-10）
@@ -25,10 +27,10 @@
 | 其它音源 | 汽水音乐（Qishui/Soda）、酷狗（Kugou）。**当前 5 个音源**：网易云 / QQ / Apple Music / Spotify + B站看歌。 |
 | Android TV | `android/`、`android-server.mjs`、`tv-extensions.mjs`、`dev-tv-server.mjs`、`vite.android.config.ts`、`scripts/build-android-assets.mjs`、`scripts/fetch-nodejs-mobile.mjs`、`scripts/publish-release.mjs`、旧 release workflow。`src/tv/` 仅剩 `tvCore.ts`（空壳，`isTvMode()` 恒 false）与 `perfMode.ts`（固定普通档）。 |
 | DG_LAB 插件 | `DGLabPlugin.ts` / `DGLabClient.ts` / `DGLab*` 组件 / `server/dglab-relay.cjs` / `useSystemAudioCapture.ts`。插件宿主 + Chroma / SignalRGB 保留。 |
-| 歌词模式 | Folia、多维 Diorama、摩登、光荣、壁纸歌词、律动背景。**从 9 种收敛为 4 种**：modern（现代）/ immersive（沉浸式）/ video（B站看歌）/ pv（PV）。 |
+| 歌词模式 | Folia、多维 Diorama、摩登、光荣、壁纸歌词。**从 9 种收敛为 4 种**：modern（现代）/ immersive（沉浸式）/ video（B站看歌）/ pv（PV）。（**律动背景**即播放页封面模糊铺底 + 背景律动，已于 2026-09-13 恢复并在用，见 `CrossfadeBackground.tsx` + App.tsx 的 `PulsingCrossfadeBackground`——它是播放页常驻兜底背景，勿当作减配残留删除） |
 | 其它 | AirPlay、分轨 Stem、远程遥控（`desktop/remote-server.cjs`）、设备授权（`device-license.cjs`）、代理管理（`proxy-manager.cjs`）、爱发电赞助同步（`scripts/sync-afdian-sponsors.mjs` 保留为孤立脚本但已无任何调用方/说明文档）、Wallpaper Engine 联动（`wallpaperEngineRotation.ts`）、专注计时 UI（`desktopFocusTimer.ts` / `useDesktopFocusTimer.ts` 已无消费方）、OOBE 引导、多语言 i18n（**法律弹窗改中文单语后保留**）、Smart AutoMix / Beat Crossfade（**只保留 Fixed Crossfade + gapless + 专辑无缝**）、cuefield 死代码。 |
 
-**保留范围**：5 个音源；播放引擎（双 deck + Web Audio）；Fixed Crossfade + gapless + 专辑无缝；HSE(v3)（14 级主链 + 第 15 级空间音频、11 场景、EQ、WAV/MP3 导出、CC BY-NC-ND）；4 种歌词模式 + 桌面歌词独立窗；频谱可视化 + Apple 动态封面；桌面模式与小组件、自定义壁纸、天气系统、桌面播放器小窗、任务栏播控条；插件宿主 + Chroma/SignalRGB；B站看歌、Apple Music、MV、社交/评论/歌单；法律协议弹窗（中文单语）。
+**保留范围**：5 个音源；播放引擎（双 deck + Web Audio）；Fixed Crossfade + gapless + 专辑无缝；HSE(v3)（14 级主链 + 第 15 级空间音频、11 场景、EQ、WAV/MP3 导出、CC BY-NC-ND）；4 种歌词模式 + 桌面歌词独立窗；播放页封面模糊铺底 + 背景律动（`CrossfadeBackground.tsx` + `PulsingCrossfadeBackground`）；频谱可视化 + Apple 动态封面；桌面模式与小组件、自定义壁纸、天气系统、桌面播放器小窗、任务栏播控条；插件宿主 + Chroma/SignalRGB；B站看歌、Apple Music、MV、社交/评论/歌单；法律协议弹窗（中文单语）。
 
 功能清单见 `docs/功能清单3.0.md`（12 个域 A–L，与源码冲突时以源码为准）；各模块边界与命令见 `AGENTS.md`。
 
@@ -57,14 +59,14 @@
 
 ## 5. 已知问题 / 踩坑记录
 
-1. **网易云 xeapi 公钥**：`/api/netease/song/url` 报 `xeapi public key is missing` 时，说明 `os.tmpdir()/xeapi_public_key` 被系统清理了 —— 重启后端即可（`initNeteaseAPI()` 启动时自动 `generateConfig()` 重新拉取，见 `local-server.mjs` 约 1664 行）。
+1. **网易云 xeapi 公钥**：`/api/netease/song/url` 报 `xeapi public key is missing` 时，说明 `os.tmpdir()/xeapi_public_key` 被系统清理了 —— 重启后端即可（`initNeteaseAPI()` 启动时自动 `generateConfig()` 重新拉取，见 `local-server.mjs` 约 1670-1690 行：`generateConfig()` 调用约 1673 行、`initNeteaseAPI()` 顶层调用约 1689 行）。
 2. **SSRF 守卫与内部代理链**：`proxy-image → cover`（`localhost:3001`）是本应用合法内部代理链，SSRF 守卫必须放行本服务自身端口 3001，否则评论区/歌单封面裂。**不要在守卫中一刀切封 localhost**。见 `local-server.mjs` 中 `isBlockedFetchUrl`（约 1372 行）内的放行分支。
 3. **wallpaper-engine 路径穿越防护**：`/api/wallpaper-engine/preview|media` 用 `resolve + startsWith(base+sep)` 校验（`local-server.mjs` 约 8976 / 9024 行），改动时保持。
 4. **Electron will-navigate 守卫**：主窗口 / 桌面播放器 / 歌词窗 / 任务栏小窗均已挂 `guardAgainstExternalNavigation()`（dev: localhost:3000/127.0.0.1:3000；prod: file:// 入口）。**QQ 音乐 QMK API Key 领取窗口是唯一被允许打开 `y.qq.com` 的窗口**（`QMK_SESSION_PARTITION = 'hyperplayer-qq-skill-key'`，独立 session 且每次打开前清空避免复用登录态）——不要为其他窗口放宽守卫。
 5. **热路径日志**：播放/动画热路径必须用 `debugLog()`（`src/utils/debugLog.ts`），裸 console.log 会造成内存增长。开关：`localStorage['hyperplayer:verbose-log']='1'`（gapless 方案提示 `GaplessModeToast` 与过渡调试面板共用此开关）。
 6. **Apple bridge 依赖系统 Python**：`apple_bridge.py` 需系统 Python + `pywebview`（Windows 上依赖 WebView2）。未安装时 Apple 原生播放面不可用，但应用其余部分正常（自动回退网易云/QQ 播放）。`main.cjs` 会遍历常见安装路径找可用解释器并缓存探测结果。
 7. **过渡策略只有 Fixed Crossfade**：`src/audio/transitionPlanner.ts` 的 `planTransition` / `planTransitionV2` 只产出 `fixed-crossfade`（`smart-rendered` / `smart-rendered-v2` / `beat-crossfade` 生成分支已整体移除）。节拍/结构分析能力（`autoMixAnalysisService.ts`）**保留**，但只服务 MV 对齐、PV 歌词等消费者，不再用于智能混音。别再从 `git log` 里恢复 Smart AutoMix。
-8. **单一音效引擎**：`src/services/audio-engine/` 注册表只有 `v3Manifest` 一项（HSE）。`V3MixingStudio.tsx` 的引擎切换胶囊仍会渲染，但只有 HSE 一个按钮，等同无切换。接入新引擎只需新增 `engines/xxx.ts` + 注册表加一行。
+8. **单一音效引擎**：`src/services/audio-engine/` 注册表只有 `v3Manifest` 一项（HSE）。`V3MixingStudio.tsx` 的引擎切换胶囊**仅在注册表注册了多个引擎时渲染**（渲染条件 `onSwitchEngine && availableEngines && availableEngines.length > 1`）；当前只有 HSE 一个，故界面不显示。接入新引擎只需新增 `engines/xxx.ts` + 注册表加一行。
 9. **回滚注意**：本仓库有 git 历史，可用 `git log` / `git blame`；但**减配提交之后的 `git reset` 到旧提交会连带恢复已删功能**，不要为"修一个问题"而回退整个分支。
 10. **回归修复记录（2026-08-16 审计，commit `d1b5e5f`）**——仍有效的三条：
     - 无限推荐队列裁剪：`setCurrentIndex` 原在 `setTimeout(0)` 里、与 `setPlaylist` 不同步 → 中间帧 `currentIndex` 越界导致播放页闪回首页 → 已改为同批次同步提交。
@@ -87,9 +89,9 @@
 ## 7. 未决事项（可选做）
 
 - [ ] **`scripts/sync-afdian-sponsors.mjs` 为孤立脚本**：无 `package.json` script、无 `prebuild` 钩子、无任何代码引用，配套文档 `AFDIAN_SPONSORS.md` 也不存在。可删（但删除前确认无人手动调用）。
-- [ ] **专注计时残留**：`src/services/desktopFocusTimer.ts` + `src/hooks/useDesktopFocusTimer.ts` 无任何消费方（UI 已移除）。可清理；`desktopCustomization.ts` 里仍保留 `focusTimer → datetime` 的历史迁移映射（需一并判断）。
-- [ ] **cuefield 后端残留**：前端死代码已清理，但 `local-server.mjs` 内 `/api/cuefield/transition` 相关路由是否仍有定义需自查（前端已无调用方）。
-- [ ] **HSE 单引擎下的引擎切换 UI**：`V3MixingStudio.tsx` 仍渲染引擎切换胶囊（只含 HSE 一个按钮）。要么给注册表加引擎，要么隐藏该胶囊。
+- [ ] **专注计时残留**：`src/services/desktopFocusTimer.ts` + `src/hooks/useDesktopFocusTimer.ts` 无任何消费方（UI 已移除）。可清理；`desktopCustomization.ts` 里仍保留 `focusTimer → datetime` 的历史迁移映射（需一并判断）。**交叉引用**：`docs/功能清单3.0.md` 域 J 仍把它列为现役（该表 `src/services/desktopFocusTimer.ts:1-105` 一行），应加注「组件层已无消费方」。
+- [x] ~~cuefield 后端残留~~：已确认清理完毕——`grep -c cuefield local-server.mjs` = 0，前后端均无 `/api/cuefield/*` 路由与调用方。
+- [x] ~~HSE 单引擎下的引擎切换 UI~~：已由代码自动解决——`V3MixingStudio.tsx` 的切换胶囊仅在注册多个引擎时渲染，单引擎下自动隐藏（见 §5.8）。
 - [x] ~~TransitionRenderer 缓存 key~~：已修复——`plan.id` 加入实际策略/起止时长/`RENDERER_VERSION`。
 - [x] ~~CHUNK 体积警告~~：已优化（见 §6.5）。
 
@@ -124,7 +126,7 @@ npm run dev                   # 仅 Vite dev (3000)；天气调试页 http://127
 
 # 验证
 npm run lint                  # 类型检查 tsc --noEmit（仅覆盖 src/，仓库无 ESLint）
-npm run test                  # vitest 单测（145 文件 / 1292 用例：1286 过 + 5 跳过 + 1 todo）
+npm run test                  # vitest 单测（140 文件 / 1269 用例：1264 过 + 5 跳过 + 0 todo，2026-09-13 实测）
 npm run test:desktop          # node --test 桌面/安全用例（apple-url-policy / trusted-ipc / update-manager / vmp-status 等）
 npm run test:chroma           # Razer Chroma 插件自测
 npm run test:signalrgb        # SignalRGB 插件自测
