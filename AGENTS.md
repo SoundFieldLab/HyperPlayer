@@ -33,6 +33,8 @@ npm run start            # electron .（直接起已构建产物）
 
 注意：`prebuild` / `predev` / `predev:electron` 钩子只做一件事——运行 `build:v3-worklet` 重打包 HSE 的 AudioWorklet 单文件到 `public/v3-worklet.js`。
 
+> 📦 **本地构建约定（2026-09-14 用户明确要求）**：**本地只构建「便携版」，而便携版就是解压即用的目录 `release/win-unpacked/`（双击其中的 `HyperPlayer.exe` 直接运行）**——所以本地默认跑 **`npm run build:electron:dir`**，**不打包 zip、也不构建 NSIS 安装版**。**只有用户明确说要安装包时**才跑 `npm run build:electron`（产出 `release/HyperPlayer-<version>-Setup.exe`）。CI 侧同理：三个 workflow 一律只发 NSIS 安装包，不发便携版 zip。⚠️ electron-builder 被中途打断会把 `release/win-unpacked/` 留成空目录（它先清空再拷贝），中断后需重跑 `build:electron:dir`。
+
 **端口**：只有 **3210**（Vite dev/preview）与 **3211**（Express 后端，仅 127.0.0.1）。旧文档里的 18790（Apple Music 播放面 Python bridge，随音源移除）与 3002/3003/3004（Python 节拍/响度/补偿）已全部停用。
 
 > ⚠️ **不要改回 3000/3001/3002**（2026-09-14 迁移）：本机 WaveForge（3000 / 3001 / 3002 / 30082…）与 ReWaveForge（3001 / 3101）常驻占用该段，撞上的症状是「后端日志报端口已被占用、前端连到别的服务拿到空数据」，排查成本极高。端口分散在 `vite.config.ts` / `package.json` dev 脚本 / `local-server.mjs`（默认端口 + CORS 白名单 + SSRF 放行自身端口）/ `desktop/main.cjs`（`BACKEND_PORTS` + 健康检查 + 放行的渲染 origin）/ `scripts/dev-electron*.mjs` / `src/services/apiConfig.ts`，**`node scripts/check-ports.mjs` 是这道约定的闸门**（已接入 `.github/workflows/ci.yml` 的 checks 作业），改端口后必须让它通过。
