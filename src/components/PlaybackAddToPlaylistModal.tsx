@@ -24,7 +24,6 @@ function getOwners(): PlaylistOwnershipContext {
   return {
     neteaseUserId: localStorage.getItem('netease_user_id') || undefined,
     qqUserId: localStorage.getItem('qq_user_id') || undefined,
-    spotifyUserId: localStorage.getItem('spotify_user_id') || undefined,
   }
 }
 

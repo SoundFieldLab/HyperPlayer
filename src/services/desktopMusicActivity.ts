@@ -28,11 +28,9 @@ export const DESKTOP_MUSIC_ACTIVITY_EVENT = 'desktopMusicActivityChanged'
 const emptyActivity = (): DesktopMusicActivity => ({ history: [], days: {}, lastSongKey: '', lastStartedAt: 0 })
 const songPlatform = (song: Song): MusicPlatform | null => song.platform || null
 
-// Apple library IDs identify the user-owned item; catalog IDs are the fallback.
 const songKey = (song: Song) => {
   const platform = songPlatform(song)
-  if (!platform) return `unknown:${song.mid || song.appleLibraryId || song.appleId || song.id || ''}`
-  if (platform === 'apple') return `apple:${song.appleLibraryId || song.appleId || (song.id ? String(song.id) : '')}`
+  if (!platform) return `unknown:${song.mid || song.id || ''}`
   return `${platform}:${song.mid || song.id}`
 }
 const dayKey = (date = new Date()) => {

@@ -21,10 +21,8 @@ import DesktopWidgetZone from './DesktopWidgetZone'
 import { Song, LyricLine, isSameSong } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
 import { getPlatformCapabilities, getVisiblePlatforms, getPlatformVisualMetadata, PLATFORM_ORDER_EVENT, PLATFORM_VISIBILITY_EVENT } from '../services/platforms'
-import { getAppleLibraryPlaylists, getAppleLibrarySongs, getAppleFavoriteSongs, getAppleRecentPlayed, appleLibraryTrackToSong, getApplePlaylistTracks, getAppleCatalogPlaylistTracks, appleSongToSong, updateApplePlaylist, deleteApplePlaylist, removeAppleTracksFromPlaylist, getLastAppleMutationResult, APPLE_FAVORITES_ID, APPLE_LIBRARY_ID } from '../services/appleCatalog'
-import { mergeAppleRecentPlayback } from '../services/appleRecentPlayback'
 import { desktopWallpaperManager, DesktopLiveWallpaperSource, toWallpaperUrl } from '../services/desktopWallpaperManager'
-import { deletePlaylist, getPlaylistDetail, getUserPlaylists, removeSongFromPlaylist, streamNeteasePlaylistTracks, subscribePlaylist, updatePlaylist } from '../services/playlistService'
+import { deletePlaylist, getUserPlaylists, removeSongFromPlaylist, streamNeteasePlaylistTracks, subscribePlaylist, updatePlaylist } from '../services/playlistService'
 import { useColorThief } from '../hooks/useColorThief'
 import {
   DESKTOP_CUSTOMIZATION_EVENT,
@@ -76,14 +74,6 @@ interface DesktopViewProps {
   qqLoggedIn: boolean
   qqUserId: string
   qqUsername?: string
-  appleLoggedIn?: boolean
-  appleUsername?: string
-  onAppleLoginClick?: () => void
-  onAppleLogout?: () => void
-  // 新三平台登录态
-  spotifyLoggedIn?: boolean
-  spotifyUserId?: string
-  spotifyUsername?: string
   
   // VIP状态
   neteaseVip: boolean
@@ -92,7 +82,6 @@ interface DesktopViewProps {
   // 登录回调
   onNeteaseLogin: (cookie: string) => void
   onQQLogin: (cookie: string) => void
-  onSpotifyLogin?: (cookie: string, username?: string) => void
 
   onPlayNext?: (song: Song) => void
   onAddToFavorites?: (song: Song) => void
@@ -175,17 +164,10 @@ function DesktopView({
   qqLoggedIn,
   qqUserId,
   qqUsername,
-  appleLoggedIn = false,
-  appleUsername = '',
-  onAppleLoginClick,
-  spotifyLoggedIn = false,
-  spotifyUserId = '',
-  spotifyUsername = '',
   neteaseVip,
   qqVip,
   onNeteaseLogin,
   onQQLogin,
-  onSpotifyLogin,
   onPlayNext,
   onAddToFavorites,
   onRemoveFromFavorites,
@@ -517,14 +499,10 @@ function DesktopView({
   useEffect(() => {
     const requestId = ++playlistListRequestRef.current
     const isCurrentRequest = () => playlistListRequestRef.current === requestId
-    const activeUserId = currentPlatform === 'netease' ? neteaseUserId : currentPlatform === 'qq' ? qqUserId : currentPlatform === 'spotify' ? (spotifyUserId || '') : ''
+    const activeUserId = currentPlatform === 'netease' ? neteaseUserId : qqUserId
     const isPlatformLoggedIn = currentPlatform === 'netease'
       ? Boolean(neteaseLoggedIn && neteaseUserId)
-      : currentPlatform === 'qq'
-        ? Boolean(qqLoggedIn && qqUserId)
-        : currentPlatform === 'apple'
-          ? Boolean(appleLoggedIn)
-          : Boolean(spotifyLoggedIn)
+      : Boolean(qqLoggedIn && qqUserId)
     const loadSignature = `${currentPlatform}:${isPlatformLoggedIn ? activeUserId : 'logged-out'}:${authRevision}:${playlistContentRevision}`
     playlistLoadSignatureRef.current = loadSignature
 
@@ -541,81 +519,7 @@ function DesktopView({
       setPlaylists([])
 
       try {
-        if (currentPlatform === 'apple') {
-          const [playlistResult, libraryResult, favoriteResult] = await Promise.allSettled([
-            getAppleLibraryPlaylists(100),
-            getAppleLibrarySongs(500),
-            getAppleFavoriteSongs(5000),
-          ])
-          if (!isCurrentRequest()) return
-
-          const data = playlistResult.status === 'fulfilled' ? playlistResult.value : []
-          const libraryTracks = libraryResult.status === 'fulfilled' ? libraryResult.value : []
-          const favoriteTracks = favoriteResult.status === 'fulfilled' ? favoriteResult.value : []
-          if (playlistResult.status === 'rejected') console.warn('[Desktop] Apple 歌单加载失败:', playlistResult.reason)
-          if (libraryResult.status === 'rejected') console.warn('[Desktop] Apple 资料库加载失败:', libraryResult.reason)
-          if (favoriteResult.status === 'rejected') console.warn('[Desktop] Apple 喜爱歌曲加载失败:', favoriteResult.reason)
-
-          const playlistData = data.map(p => ({
-            id: p.id,
-            name: p.name,
-            coverImgUrl: p.artworkUrl || '',
-            trackCount: p.trackCount || 0,
-            playCount: 0,
-            description: p.description || '',
-            platform: 'apple' as const,
-            isLike: false,
-            ownedByMe: true,
-          }))
-          // Apple 资料库列表有时没有 artwork；仅为这些歌单取一首曲目作为封面，
-          // 分批限制请求数量，避免刷新桌面时同时打满 AMP 接口。
-          const missingArtwork = playlistData.filter(playlist => !playlist.coverImgUrl)
-          for (let offset = 0; offset < missingArtwork.length; offset += 4) {
-            const batch = missingArtwork.slice(offset, offset + 4)
-            const artworkResults = await Promise.allSettled(
-              batch.map(playlist => getApplePlaylistTracks(String(playlist.id), 1)),
-            )
-            artworkResults.forEach((result, index) => {
-              if (result.status !== 'fulfilled') return
-              const firstTrack = result.value[0]
-              const artwork = firstTrack?.artworkUrl
-              if (artwork) batch[index].coverImgUrl = artwork
-            })
-            if (!isCurrentRequest()) return
-          }
-
-          const librarySongs = libraryTracks.map(appleLibraryTrackToSong)
-          const favoriteSongs = favoriteTracks.map(track => appleSongToSong(track))
-          setPlaylists([
-            ...(favoriteResult.status === 'fulfilled' && favoriteSongs.length > 0 ? [{
-              id: APPLE_FAVORITES_ID,
-              name: '喜爱歌曲',
-              coverImgUrl: favoriteSongs[0]?.album.picUrl || '',
-              trackCount: favoriteSongs.length,
-              playCount: 0,
-              platform: 'apple' as const,
-              isLike: true,
-            }] : []),
-            ...(libraryResult.status === 'fulfilled' ? [{
-              id: APPLE_LIBRARY_ID,
-              name: '我的音乐库',
-              coverImgUrl: librarySongs[0]?.album.picUrl || '',
-              trackCount: librarySongs.length,
-              playCount: 0,
-              platform: 'apple' as const,
-            }] : []),
-            ...playlistData,
-          ])
-          return
-        }
-
-        const username = currentPlatform === 'netease'
-          ? neteaseUsername
-          : currentPlatform === 'qq'
-            ? qqUsername
-            : currentPlatform === 'spotify'
-              ? spotifyUsername
-              : undefined
+        const username = currentPlatform === 'netease' ? neteaseUsername : qqUsername
         const data = await getUserPlaylists(currentPlatform, activeUserId, username)
         if (!isCurrentRequest()) return
         setPlaylists(data.map((p: any) => ({
@@ -643,16 +547,12 @@ function DesktopView({
     return () => {
       if (playlistListRequestRef.current === requestId) playlistListRequestRef.current += 1
     }
-  }, [currentPlatform, neteaseLoggedIn, qqLoggedIn, appleLoggedIn, spotifyLoggedIn, neteaseUserId, qqUserId, spotifyUserId, neteaseUsername, qqUsername, spotifyUsername, authRevision, playlistContentRevision])
+  }, [currentPlatform, neteaseLoggedIn, qqLoggedIn, neteaseUserId, qqUserId, neteaseUsername, qqUsername, authRevision, playlistContentRevision])
   // 加载最近播放歌曲（桌面模式仅显示歌曲，与简约模式同源）
   useEffect(() => {
     const isPlatformLoggedIn = currentPlatform === 'netease'
       ? Boolean(neteaseLoggedIn && neteaseUserId)
-      : currentPlatform === 'qq'
-        ? Boolean(qqLoggedIn && qqUserId)
-        : currentPlatform === 'apple'
-          ? Boolean(appleLoggedIn)
-          : Boolean(spotifyLoggedIn)
+      : Boolean(qqLoggedIn && qqUserId)
     const loadSignature = `${currentPlatform}:${isPlatformLoggedIn ? 'in' : 'out'}:${authRevision}`
     if (recentLoadSignatureRef.current === loadSignature) return
     recentLoadSignatureRef.current = loadSignature
@@ -679,34 +579,6 @@ function DesktopView({
 
     const loadRecent = async () => {
       try {
-        if (currentPlatform === 'apple') {
-          let remoteSongs: Song[] = []
-          try {
-            const tracks = await getAppleRecentPlayed(100)
-            remoteSongs = tracks.map(track => appleSongToSong(track))
-          } catch (error) {
-            console.warn('[DesktopView] Apple 云端最近播放暂时不可用，使用本地记录:', error)
-          }
-          const songs = mergeAppleRecentPlayback(remoteSongs)
-          if (controller.signal.aborted) return
-          setRecentSongs(songs)
-          setRecentCovers(songs.map(song => song.album.picUrl || '').filter(Boolean))
-          recentSongsRef.current = songs
-          recentCoversRef.current = songs.map(song => song.album.picUrl || '').filter(Boolean)
-          return
-        }
-        if (currentPlatform === 'spotify') {
-          const { fetchSpotifyRecentlyPlayed, spotifyTrackToSong } = await import('../services/spotifyService')
-          const tracks = await fetchSpotifyRecentlyPlayed(50)
-          const songs = tracks.map(spotifyTrackToSong)
-          if (controller.signal.aborted) return
-          const covers = songs.map(song => song.album.picUrl || '').filter(Boolean).slice(0, 4)
-          setRecentSongs(songs)
-          setRecentCovers(covers)
-          recentSongsRef.current = songs
-          recentCoversRef.current = covers
-          return
-        }
         const cookie = currentPlatform === 'qq'
           ? localStorage.getItem('qq_cookie') || localStorage.getItem('qqCookie') || ''
           : localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
@@ -817,7 +689,7 @@ function DesktopView({
       controller.abort()
       window.removeEventListener('hyperplayer-recent-playback-reported', handleReported)
     }
-  }, [currentPlatform, neteaseLoggedIn, qqLoggedIn, appleLoggedIn, spotifyLoggedIn, neteaseUserId, qqUserId, spotifyUserId, authRevision])
+  }, [currentPlatform, neteaseLoggedIn, qqLoggedIn, neteaseUserId, qqUserId, authRevision])
 
   // 监听卡片模糊度变化
   useEffect(() => {
@@ -1105,13 +977,8 @@ function DesktopView({
     if (!playlist || !getPlatformCapabilities(targetPlatform).updatePlaylist || playlist.isLike || playlist.isRecent) return
     setPlaylistMutationBusy(true)
     try {
-      if (targetPlatform === 'apple') {
-        const ok = await updateApplePlaylist(String(playlist.id), { name: data.name, description: data.desc || undefined })
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '更新 Apple 歌单失败')
-      } else {
-        const result = await updatePlaylist(String(playlist.id), targetPlatform, { name: data.name, desc: data.desc })
-        if (result?.error) throw new Error(result.error)
-      }
+      const result = await updatePlaylist(String(playlist.id), targetPlatform, { name: data.name, desc: data.desc })
+      if (result?.error) throw new Error(result.error)
       setShowEditPlaylist(false)
       setPlaylistContextMenu({ show: false, x: 0, y: 0, playlist: null })
       notifyPlaylistChange(targetPlatform, String(playlist.id))
@@ -1129,14 +996,9 @@ function DesktopView({
     if (!playlist || !getPlatformCapabilities(targetPlatform).deletePlaylist || playlist.isLike || playlist.isRecent) return
     setPlaylistMutationBusy(true)
     try {
-      if (targetPlatform === 'apple') {
-        const ok = await deleteApplePlaylist(String(playlist.id))
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '删除 Apple 歌单失败')
-      } else {
-        const deleteId = targetPlatform === 'qq' ? playlist.dirId || playlist.id : playlist.id
-        const result = await deletePlaylist(String(deleteId), targetPlatform)
-        if (result?.error) throw new Error(result.error)
-      }
+      const deleteId = targetPlatform === 'qq' ? playlist.dirId || playlist.id : playlist.id
+      const result = await deletePlaylist(String(deleteId), targetPlatform)
+      if (result?.error) throw new Error(result.error)
       setShowDeletePlaylist(false)
       setPlaylistContextMenu({ show: false, x: 0, y: 0, playlist: null })
       if (selectedPlaylist && String(selectedPlaylist.id) === String(playlist.id)) closePlaylistDetail()
@@ -1187,30 +1049,7 @@ function DesktopView({
     }
     
     try {
-      if (playlistPlatform === 'apple') {
-        const storefront = localStorage.getItem('appleStorefront') || 'cn'
-        const playlistId = String(playlist.id || '')
-        if (playlistId === APPLE_FAVORITES_ID) {
-          const songs = (await getAppleFavoriteSongs(5000, storefront)).map(track => appleSongToSong(track, storefront))
-          if (playlistLoadController.signal.aborted || playlistLoadControllerRef.current !== playlistLoadController) return
-          setPlaylistSongs(songs)
-          return
-        }
-        if (playlistId === APPLE_LIBRARY_ID) {
-          const songs = (await getAppleLibrarySongs(500)).map(appleLibraryTrackToSong)
-          if (playlistLoadController.signal.aborted || playlistLoadControllerRef.current !== playlistLoadController) return
-          setPlaylistSongs(songs)
-          return
-        }
-        const tracks = playlistId.startsWith('pl.')
-          ? await getAppleCatalogPlaylistTracks(playlistId, storefront)
-          : await getApplePlaylistTracks(playlistId)
-        if (playlistLoadController.signal.aborted || playlistLoadControllerRef.current !== playlistLoadController) return
-        const songs = playlistId.startsWith('pl.')
-          ? tracks.map(track => appleSongToSong(track as Parameters<typeof appleSongToSong>[0], storefront))
-          : tracks.map(track => appleLibraryTrackToSong(track as Parameters<typeof appleLibraryTrackToSong>[0]))
-        setPlaylistSongs(songs)
-      } else if (playlistPlatform === 'netease') {
+      if (playlistPlatform === 'netease') {
         await streamNeteasePlaylistTracks(playlist.id, {
           signal: playlistLoadController.signal,
           firstPageSize: 120,
@@ -1264,12 +1103,6 @@ function DesktopView({
         console.log(`✅ [DesktopView] 设置了 ${songs.length} 首歌曲到 playlistSongs`)
         setPlaylistSongs(songs)
         }
-      } else if (playlistPlatform === 'spotify') {
-        const data = await getPlaylistDetail(String(playlist.id || ''), playlistPlatform)
-        if (playlistLoadController.signal.aborted || playlistLoadControllerRef.current !== playlistLoadController) return
-        const detailed = { ...playlist, ...data?.playlist, platform: playlistPlatform, isCollected: playlist.isCollected }
-        setSelectedPlaylist(previous => previous ? { ...previous, ...detailed } : detailed)
-        setPlaylistSongs(Array.isArray(data?.tracks) ? data.tracks : [])
       }
     } catch (error) {
       if ((error as Error).name !== 'AbortError' && playlistLoadControllerRef.current === playlistLoadController) {
@@ -1308,25 +1141,7 @@ function DesktopView({
     }
 
     const playlistPlatform = selectedPlaylist.platform || currentPlatform
-    const userId = playlistPlatform === 'netease' ? neteaseUserId
-      : playlistPlatform === 'qq' ? qqUserId
-        : playlistPlatform === 'spotify' ? spotifyUserId : ''
-    // Apple：从资料库歌单移除曲目（amp-api）
-    if (playlistPlatform === 'apple') {
-      try {
-        const appleSongId = song.appleLibraryId || song.appleId || String(song.id)
-        const ok = await removeAppleTracksFromPlaylist(String(selectedPlaylist.dirId || selectedPlaylist.id || ''), [appleSongId])
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '从 Apple 歌单移除歌曲失败')
-        removeSongFromVisiblePlaylist(song)
-        window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: 'apple', type: 'remove', playlistId: String(selectedPlaylist.dirId || selectedPlaylist.id), songId: appleSongId } }))
-        showToastNotification('已从 Apple 歌单移除歌曲', 'success')
-      } catch (error) {
-        console.error('Desktop Apple playlist song removal failed:', error)
-        showToastNotification(error instanceof Error ? error.message : '从歌单移除歌曲失败，请重试', 'error')
-        throw error
-      }
-      return
-    }
+    const userId = playlistPlatform === 'netease' ? neteaseUserId : qqUserId
     const playlistOwnerId = selectedPlaylist.userId == null ? '' : String(selectedPlaylist.userId)
     if (selectedPlaylist.isCollected || (playlistOwnerId && playlistOwnerId !== String(userId || ''))) return
 
@@ -1353,24 +1168,16 @@ function DesktopView({
 
   const selectedPlaylistPlatform = selectedPlaylist?.platform || currentPlatform
   const selectedPlaylistCapabilities = getPlatformCapabilities(selectedPlaylistPlatform)
-  const selectedPlaylistUserId = selectedPlaylistPlatform === 'netease'
-    ? neteaseUserId
-    : selectedPlaylistPlatform === 'qq'
-      ? qqUserId
-      : selectedPlaylistPlatform === 'spotify'
-        ? spotifyUserId
-        : ''
+  const selectedPlaylistUserId = selectedPlaylistPlatform === 'netease' ? neteaseUserId : qqUserId
   const selectedPlaylistOwnerId = selectedPlaylist?.userId == null ? '' : String(selectedPlaylist.userId)
   const ownsSelectedPlaylist = Boolean(selectedPlaylist) && !selectedPlaylist?.isCollected && (
     selectedPlaylist?.ownedByMe === true
     || (selectedPlaylistOwnerId !== '' && selectedPlaylistOwnerId === String(selectedPlaylistUserId || ''))
-    || (selectedPlaylistPlatform === 'spotify' && Boolean(selectedPlaylist?.owner) && String(selectedPlaylist?.owner || '') === String(spotifyUserId || ''))
   )
   const canRemoveFromCurrentPlaylist = Boolean(
     selectedPlaylist
     && !selectedPlaylist.isRecent
     && !selectedPlaylist.isLike
-    && ![APPLE_LIBRARY_ID, APPLE_FAVORITES_ID].includes(String(selectedPlaylist.id))
     && selectedPlaylistCapabilities.removeTracksFromPlaylist
     && ownsSelectedPlaylist
   )
@@ -1378,14 +1185,11 @@ function DesktopView({
   const contextPlaylist = playlistContextMenu.playlist
   const contextPlaylistPlatform = contextPlaylist?.platform || currentPlatform
   const contextCapabilities = getPlatformCapabilities(contextPlaylistPlatform)
-  const contextUserId = contextPlaylistPlatform === 'netease' ? neteaseUserId
-    : contextPlaylistPlatform === 'qq' ? qqUserId
-      : contextPlaylistPlatform === 'spotify' ? spotifyUserId : ''
+  const contextUserId = contextPlaylistPlatform === 'netease' ? neteaseUserId : qqUserId
   const contextOwnerId = contextPlaylist?.userId == null ? '' : String(contextPlaylist.userId)
   const contextIsOwner = Boolean(contextPlaylist) && !contextPlaylist?.isCollected && (
     contextPlaylist?.ownedByMe === true
     || (contextOwnerId !== '' && contextOwnerId === String(contextUserId || ''))
-    || (contextPlaylistPlatform === 'spotify' && Boolean(contextPlaylist?.owner) && String(contextPlaylist?.owner || '') === String(spotifyUserId || ''))
   )
 
   // 播放歌曲 - 关闭歌单详情，显示迷你播放器，4秒后隐藏歌单栏
@@ -1435,11 +1239,7 @@ function DesktopView({
   // 最近播放入口卡片（放在用户喜欢歌单左侧；默认聚焦仍是用户喜欢歌单）
   const recentLoggedIn = currentPlatform === 'netease'
     ? Boolean(neteaseLoggedIn && neteaseUserId)
-    : currentPlatform === 'qq'
-      ? Boolean(qqLoggedIn && qqUserId)
-      : currentPlatform === 'apple'
-        ? Boolean(appleLoggedIn)
-        : Boolean(spotifyLoggedIn)
+    : Boolean(qqLoggedIn && qqUserId)
   const recentEntry: Playlist | null = recentLoggedIn && recentSongs.length > 0
     ? {
         id: '__recent__',
@@ -1918,33 +1718,7 @@ function DesktopView({
                     </motion.button>
                   </>
                 )}
-                {currentPlatform === 'apple' && !appleLoggedIn && (
-                  <>
-                    <p className="text-white/60 mb-2">请先登录 Apple Music</p>
-                    <motion.button
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => onAppleLoginClick?.()}
-                      className="px-6 py-2 rounded-full bg-pink-600/90 hover:bg-pink-600 text-white transition-all"
-                    >
-                      登录 Apple Music
-                    </motion.button>
-                  </>
-                )}
-                {currentPlatform === 'spotify' && !spotifyLoggedIn && (
-                  <>
-                    <p className="text-white/60 mb-2">请先登录 Spotify</p>
-                    <motion.button
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => { setLoginPlatform('spotify'); setShowLogin(true) }}
-                      className="px-6 py-2 rounded-full bg-[#1DB954]/90 hover:bg-[#1DB954] text-white transition-all"
-                    >
-                      登录 Spotify
-                    </motion.button>
-                  </>
-                )}
-                {((currentPlatform === 'netease' && neteaseLoggedIn) || (currentPlatform === 'qq' && qqLoggedIn) || (currentPlatform === 'apple' && appleLoggedIn) || (currentPlatform === 'spotify' && spotifyLoggedIn)) && (
+                {((currentPlatform === 'netease' && neteaseLoggedIn) || (currentPlatform === 'qq' && qqLoggedIn)) && (
                   <p className="text-white/60">暂无歌单</p>
                 )}
               </div>
@@ -2156,8 +1930,6 @@ function DesktopView({
             qqVip={qqVip}
             neteaseLoggedIn={neteaseLoggedIn}
             qqLoggedIn={qqLoggedIn}
-            appleLoggedIn={appleLoggedIn}
-            spotifyLoggedIn={spotifyLoggedIn}
             currentSong={currentSong}
             onPlayNext={onPlayNext}
             onAddToFavorites={onAddToFavorites}
@@ -2217,7 +1989,7 @@ function DesktopView({
           <DesktopMiniPlayer
             currentSong={currentSong}
             isPlaying={isPlaying}
-            live={currentSong.appleRadio?.timeline === 'live'}
+            live={false}
             currentTime={currentTime}
             duration={duration}
             onPlayPause={onPlayPause}
@@ -2395,21 +2167,18 @@ function DesktopView({
         onShare={playlist => {
           const targetPlatform = (playlist?.platform || currentPlatform) as MusicPlatform
           const id = String(playlist?.id || playlist?.dirId || '')
-          const storefront = localStorage.getItem('appleStorefront') || 'cn'
           const url = targetPlatform === 'qq' ? `https://y.qq.com/n/ryqq/playlist/${id}`
-            : targetPlatform === 'spotify' ? `https://open.spotify.com/playlist/${id}`
-              : targetPlatform === 'apple' ? `https://music.apple.com/${encodeURIComponent(storefront)}/playlist/${encodeURIComponent(playlist?.name || 'playlist')}/${encodeURIComponent(id)}`
-                : `https://music.163.com/#/playlist?id=${id}`
+            : `https://music.163.com/#/playlist?id=${id}`
           void navigator.clipboard?.writeText(url)
           showToastNotification('歌单链接已复制', 'success')
         }}
         isOwner={contextIsOwner}
         isSubscribed={Boolean(contextPlaylist?.isCollected || contextPlaylist?.subscribed)}
-        isSpecialPlaylist={Boolean(contextPlaylist?.isLike || contextPlaylist?.isRecent || [APPLE_LIBRARY_ID, APPLE_FAVORITES_ID].includes(String(contextPlaylist?.id || '')))}
+        isSpecialPlaylist={Boolean(contextPlaylist?.isLike || contextPlaylist?.isRecent)}
         canEdit={contextCapabilities.updatePlaylist}
         canDelete={contextCapabilities.deletePlaylist}
         canSubscribe={contextCapabilities.subscribePlaylist}
-        canShare={contextCapabilities.sharePlaylist && (contextPlaylistPlatform !== 'apple' || String(contextPlaylist?.id || '').startsWith('pl.'))}
+        canShare={contextCapabilities.sharePlaylist}
       />
       <EditPlaylistModal
         show={showEditPlaylist}
@@ -2438,8 +2207,6 @@ function DesktopView({
                 onNeteaseLogin(cookie)
               } else if (loginPlatform === 'qq') {
                 onQQLogin(cookie)
-              } else if (loginPlatform === 'spotify') {
-                onSpotifyLogin?.(cookie, username)
               }
               setShowLogin(false)
             }}

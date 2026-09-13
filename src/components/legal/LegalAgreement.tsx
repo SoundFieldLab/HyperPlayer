@@ -11,7 +11,7 @@
 
 type LegalStringKey =
   | 's1h1' | 's1p1' | 's1p2' | 's1p3' | 's2h1' | 's2p1'
-  | 's2li1' | 's2li2' | 's2li3' | 's2li4' | 's2li5' | 's2p2'
+  | 's2li1' | 's2li5' | 's2p2'
   | 's2p3' | 's3h1' | 's3p1' | 's3p2' | 's3p3' | 's4h1'
   | 's4intro' | 's4li1' | 's4li2' | 's4li3' | 's4li4' | 's4li5'
   | 's4li6' | 's4li7' | 's4li8' | 's4p2' | 's5h1' | 's5p1'
@@ -19,7 +19,7 @@ type LegalStringKey =
   | 's6p2' | 's6p3' | 's6p4' | 's6p5' | 's6p6' | 's7h1'
   | 's7p1' | 's8h1' | 's8p1' | 's8p3' | 's8intro'
   | 's8li1' | 's8li2' | 's8li3' | 's8li4' | 's8li5' | 's8li6'
-  | 's8li7' | 's8li8' | 's8li9' | 's8li10' | 's8li11'
+  | 's8li7' | 's8li8' | 's8li9' | 's8li11'
   | 's9h1' | 's9p1' | 's9p2' | 's10h1' | 's10p1'
   | 's11h1' | 's11p1' | 's13h1' | 's13p1' | 's14h1' | 's14p1'
   | 's15h1' | 's15p1' | 's16h1' | 's16p1' | 's17h1' | 's17p1'
@@ -28,15 +28,12 @@ type LegalStringKey =
 /** 法律条款简体中文全文（唯一内容来源）。 */
 const LEGAL_ZH: Record<LegalStringKey, string> = {
   s1h1: "一、总则与条款接受",
-  s1p1: "欢迎使用 HyperPlayer（以下简称\"本软件\"）。本软件是一款免费开源、基于 Electron 构建的音乐播放器，支持网易云音乐、QQ音乐、Apple Music、Spotify 与哔哩哔哩（\"看歌\"MV 播放）等平台的搜索、试听与歌单管理功能。",
+  s1p1: "欢迎使用 HyperPlayer（以下简称\"本软件\"）。本软件是一款免费开源、基于 Electron 构建的音乐播放器，支持网易云音乐、QQ音乐的搜索、试听与歌单管理功能，并提供哔哩哔哩（\"看歌\"MV 播放）功能。",
   s1p2: "本协议适用于本软件的全部版本与运行形态（包括 Windows、macOS、Linux、Android、iOS 等各平台衍生版本及网页预览版）。本软件目前处于预览阶段，部分功能与稳定性可能随时调整，最终功能以实际发布版本为准。",
   s1p3: "在使用本软件前，请仔细阅读并充分理解《法律声明与用户协议》（以下简称\"本协议\"）的全部内容。安装、启动或以任何方式使用本软件，即视为您已阅读、理解并同意接受本协议的约束；如您不同意本协议的任何条款，请立即停止使用并卸载本软件。",
   s2h1: "二、第三方平台服务与风险告知",
   s2p1: "本软件是独立开发的第三方播放器，与各音乐平台及其运营主体之间不存在任何合作、授权、代理、联营或从属关系，亦非各平台官方发布的客户端。各平台访问方式如下，请您特别留意：",
   s2li1: "网易云音乐、QQ音乐：本软件通过您主动提供的登录凭证（Cookie / Token）调用上述平台的非官方接口。此类登录与使用方式为各平台用户协议所禁止（例如网易云音乐《服务条款》第 8.5 条、QQ音乐《服务许可协议》第 5.1.1 条），可能导致平台风控、功能受限或账号封禁。",
-  s2li2: "Apple Music：本软件通过您的用户令牌（Media-User-Token）访问 Apple Music 官方接口，并会从 Apple 网页公开资源中提取可用的 MusicKit 开发者令牌（无需您提供开发者密钥）；部分跨域请求可能经第三方代理（如 api.allorigins.win）转发。Apple《媒体服务条款》要求只能通过 Apple 官方软件访问服务，使用第三方客户端访问存在违约风险。",
-  s2li3: "Spotify：本软件通过官方 OAuth 授权流程访问 Spotify Web API。Spotify《开发者条款》（Developer Terms）要求开发者以自有注册应用接入，并禁止共享、转让安全代码（Security Code / Client ID）。",
-  s2li4: "跨平台音源回退：部分平台（如 Apple Music）的歌曲在播放时可能匹配到其他平台的音源进行播放，具体以实际播放结果为准。该功能可能受平台权限、音质与地区限制。",
   s2li5: "哔哩哔哩（\"看歌\"MV）：本软件通过您主动提供的 B 站登录态（Cookie）调用哔哩哔哩的搜索、播放、字幕等非官方接口，用于匹配并播放歌曲 MV。哔哩哔哩《用户协议》禁止通过第三方软件登录或使用其服务，可能导致账号风控、功能受限或账号封禁。",
   s2p2: "您已知悉并确认：使用本软件登录上述平台、播放或管理内容所产生的一切账号风险（包括但不限于功能受限、账号封禁、内容失效），以及由此引发的任何纠纷，均由您自行与相关平台解决，本软件开发者不承担任何责任。",
   s2p3: "本协议不影响您与各平台之间已订立服务条款的效力；您与各平台之间的权利义务仍以各平台的协议为准。",
@@ -83,7 +80,6 @@ const LEGAL_ZH: Record<LegalStringKey, string> = {
   s8li7: "本软件内置的本地服务仅监听本机（127.0.0.1），不会对外提供服务或接收外部连接；",
   s8li8: "桌面壁纸联动功能仅读取您本机已安装的 Wallpaper Engine 等第三方配置，不会修改第三方软件；",
   s8li9: "桌面壁纸与背景图功能可能从第三方图片服务（如 Bing 壁纸、风景/动漫图片 API 等）获取图片素材；",
-  s8li10: "部分 Apple Music 跨域请求可能经第三方代理（api.allorigins.win）转发，代理方仅能获取与请求相关的数据；",
   s8li11: "您可随时通过软件内的\"清除缓存\"功能删除本地缓存数据。",
   s9h1: "九、开源与分发",
   s9p1: "1. 本软件以开源形式发布，源代码托管于 GitHub（github.com/SoundFieldLab/HyperPlayer）。请在使用、修改或再分发前查阅项目仓库中的许可证声明；如仓库未附许可证，请联系开发者确认后再行使用。",
@@ -136,9 +132,6 @@ export default function LegalAgreement({ theme = 'dark' }: LegalAgreementProps) 
         <p>{t('s2p1')}</p>
         <ul className={`mt-2 list-disc pl-5 space-y-1.5`}>
           <li>{t('s2li1')}</li>
-          <li>{t('s2li2')}</li>
-          <li>{t('s2li3')}</li>
-          <li>{t('s2li4')}</li>
           <li>{t('s2li5')}</li>
         </ul>
         <p className="mt-2">{t('s2p2')}</p>
@@ -207,7 +200,6 @@ export default function LegalAgreement({ theme = 'dark' }: LegalAgreementProps) 
           <li>{t('s8li7')}</li>
           <li>{t('s8li8')}</li>
           <li>{t('s8li9')}</li>
-          <li>{t('s8li10')}</li>
           <li>{t('s8li11')}</li>
         </ul>
       </section>

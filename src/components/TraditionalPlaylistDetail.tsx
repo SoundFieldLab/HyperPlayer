@@ -5,7 +5,6 @@ import { getProxiedImageUrl, isSameSong } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
 import { getPlatformCapabilities } from '../services/platforms'
 import { subscribePlaylist } from '../services/playlistService'
-import { APPLE_LIBRARY_ID, getLastAppleMutationResult, removeAppleTracksFromPlaylist } from '../services/appleCatalog'
 import SongContextMenu from './SongContextMenu'
 
 type Playlist = {
@@ -68,7 +67,7 @@ const formatDuration = (milliseconds = 0) => {
   const seconds = Math.max(0, Math.round(milliseconds / 1000))
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
-const songKey = (song: Song) => `${song.platform}:${song.appleId || song.mid || song.id || song.name}`
+const songKey = (song: Song) => `${song.platform}:${song.mid || song.id || song.name}`
 const coverOf = (song?: Song | null) => song?.album?.picUrl ? getProxiedImageUrl(song.album.picUrl) : ''
 const DetailCover = ({ src, alt, className }: { src?: string; alt: string; className: string }) => {
   const [failed, setFailed] = useState(false)
@@ -88,8 +87,7 @@ function TraditionalPlaylistDetail({
   const muted = dark ? 'text-white/50' : 'text-slate-500'
   const platform = playlist?.platform || 'netease'
   const playlistId = String(playlist?.id || playlist?.dirId || '')
-  const canRemoveAppleTracks = platform === 'apple' && !playlist?.isLike && playlistId !== APPLE_LIBRARY_ID && !playlistId.startsWith('pl.')
-  const canShare = getPlatformCapabilities(platform).sharePlaylist && (platform !== 'apple' || playlistId.startsWith('pl.'))
+  const canShare = getPlatformCapabilities(platform).sharePlaylist
   const canSubscribePlaylist = getPlatformCapabilities(platform).subscribePlaylist && !isOwner && !playlist?.isLike
   const totalDuration = useMemo(() => songs.reduce((sum, song) => sum + (song.duration || 0), 0), [songs])
   const coverUrl = playlist?.coverImgUrl || playlist?.coverUrl || coverOf(songs[0])
@@ -150,29 +148,10 @@ function TraditionalPlaylistDetail({
     } finally { setCollecting(false) }
   }
 
-  const removeAppleTrack = async (song: Song) => {
-    const ok = await removeAppleTracksFromPlaylist(playlistId, [{
-      catalogId: song.appleId && !String(song.appleId).startsWith('i.') ? song.appleId : undefined,
-      libraryId: song.appleLibraryId || (String(song.appleId || '').startsWith('i.') ? song.appleId : undefined),
-    }])
-    if (!ok) {
-      window.dispatchEvent(new CustomEvent('showToast', { detail: { message: getLastAppleMutationResult().error || '从 Apple 歌单移除失败，请重试', type: 'error' } }))
-      return
-    }
-    window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: 'apple', type: 'playlist-tracks', playlistId } }))
-    window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '已从歌单移除', type: 'success' } }))
-    onRetry?.()
-  }
-
   const share = () => {
-    const storefront = localStorage.getItem('appleExploreCountry') || localStorage.getItem('appleStorefront') || 'cn'
-    const url = platform === 'apple'
-      ? `https://music.apple.com/${encodeURIComponent(storefront)}/playlist/${encodeURIComponent(playlist?.name || 'playlist')}/${encodeURIComponent(playlistId)}`
-      : platform === 'qq'
-        ? `https://y.qq.com/n/ryqq/playlist/${playlistId}`
-        : platform === 'spotify'
-          ? `https://open.spotify.com/playlist/${playlistId}`
-          : `https://music.163.com/#/playlist?id=${playlistId}`
+    const url = platform === 'qq'
+      ? `https://y.qq.com/n/ryqq/playlist/${playlistId}`
+      : `https://music.163.com/#/playlist?id=${playlistId}`
     void navigator.clipboard?.writeText(url)
     window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '歌单链接已复制', type: 'success' } }))
   }
@@ -249,7 +228,7 @@ function TraditionalPlaylistDetail({
                           </span>
                           {(() => {
                             const artist = song.artists?.[0]
-                            const artistId = artist?.appleId || artist?.mid || artist?.id
+                            const artistId = artist?.mid || artist?.id
                             return artistId && onOpenArtist ? (
                               <button type="button" onClick={event => { event.stopPropagation(); onOpenArtist(String(artistId), song.platform || platform) }} className={`block max-w-full truncate text-xs hover:underline ${muted}`}>{song.artists?.map(item => item.name).join(' / ')}</button>
                             ) : <span className={`block truncate text-xs ${muted}`}>{song.artists?.map(item => item.name).join(' / ')}</span>
@@ -257,7 +236,7 @@ function TraditionalPlaylistDetail({
                         </span>
                       </span>
                       <button type="button" onClick={event => { event.stopPropagation(); onAddToFavorites?.(song) }} aria-label="收藏歌曲" className={`flex justify-center transition hover:scale-110 ${muted}`}><Heart className="h-4 w-4" /></button>
-                      <button type="button" onClick={event => { event.stopPropagation(); const albumId = song.album?.appleId || song.album?.mid || song.album?.id; if (albumId) onOpenAlbum?.(String(albumId), song.platform || platform) }} className={`hidden truncate text-left text-xs sm:block ${muted}`}>{song.album?.name || '未知专辑'}</button>
+                      <button type="button" onClick={event => { event.stopPropagation(); const albumId = song.album?.mid || song.album?.id; if (albumId) onOpenAlbum?.(String(albumId), song.platform || platform) }} className={`hidden truncate text-left text-xs sm:block ${muted}`}>{song.album?.name || '未知专辑'}</button>
                       <span className={`text-right text-xs tabular-nums ${muted}`}>{formatDuration(song.duration)}</span>
                     </div>
                   )
@@ -268,7 +247,7 @@ function TraditionalPlaylistDetail({
         </>
       )}
     </main>
-    <SongContextMenu show={menu.show} x={menu.x} y={menu.y} song={menu.song} onClose={() => setMenu({ show: false, x: 0, y: 0, song: null })} onPlayNow={song => onSongSelect(song, songs)} onPlayNext={onPlayNext} onAddToFavorites={onAddToFavorites} onRemoveFromFavorites={onRemoveFromFavorites} onAddToPlaylist={onAddToPlaylist} onRemoveFromPlaylist={onRemoveFromPlaylist ? song => { void onRemoveFromPlaylist(song, playlistId) } : canRemoveAppleTracks ? song => { void removeAppleTrack(song) } : undefined} currentPlaylistId={playlistId} onViewComments={onViewComments} onViewAlbum={song => { const albumId = song.album?.appleId || song.album?.mid || song.album?.id; if (albumId) onOpenAlbum?.(String(albumId), song.platform || platform) }} onViewArtist={song => { const artist = song.artists?.[0]; const artistId = artist?.appleId || artist?.mid || artist?.id; if (artistId) onOpenArtist?.(String(artistId), song.platform || platform) }} onCopyInfo={onCopyInfo} userPlaylists={userPlaylists} platform={platform} playerTheme={playerTheme} />
+    <SongContextMenu show={menu.show} x={menu.x} y={menu.y} song={menu.song} onClose={() => setMenu({ show: false, x: 0, y: 0, song: null })} onPlayNow={song => onSongSelect(song, songs)} onPlayNext={onPlayNext} onAddToFavorites={onAddToFavorites} onRemoveFromFavorites={onRemoveFromFavorites} onAddToPlaylist={onAddToPlaylist} onRemoveFromPlaylist={onRemoveFromPlaylist ? song => { void onRemoveFromPlaylist(song, playlistId) } : undefined} currentPlaylistId={playlistId} onViewComments={onViewComments} onViewAlbum={song => { const albumId = song.album?.mid || song.album?.id; if (albumId) onOpenAlbum?.(String(albumId), song.platform || platform) }} onViewArtist={song => { const artist = song.artists?.[0]; const artistId = artist?.mid || artist?.id; if (artistId) onOpenArtist?.(String(artistId), song.platform || platform) }} onCopyInfo={onCopyInfo} userPlaylists={userPlaylists} platform={platform} playerTheme={playerTheme} />
   </div>
 }
 

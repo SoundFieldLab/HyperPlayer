@@ -1,14 +1,12 @@
 /**
  * 平台登录有效期管理
  *
- * 背景：三个平台的登录态都只存 localStorage（无过期时间戳），token/cookie 静默失效后
+ * 背景：各平台的登录态都只存 localStorage（无过期时间戳），token/cookie 静默失效后
  * 软件仍显示"已登录"但请求失败，用户要手动重登才能恢复。
  *
  * 本模块在登录时记录预估有效期，个人中心显示剩余天数，到期提示重新登录：
  * - 网易云 cookie：官方有效期约 30 天
  * - QQ 音乐 cookie：官方有效期约 30 天
- * - Apple media-user-token：登录会话较长，预估 180 天
- * - Apple developer-token：JWT 有真实 exp，用真实值（约 70 天）
  */
 
 import type { MusicPlatform } from './platforms'
@@ -26,14 +24,11 @@ const KEY_PREFIX = 'wf_login_expiry_'
 const DEFAULT_DURATIONS: Record<MusicPlatform, number> = {
   netease: 30 * 24 * 60 * 60 * 1000,
   qq: 30 * 24 * 60 * 60 * 1000,
-  apple: 180 * 24 * 60 * 60 * 1000,
-  spotify: 60 * 24 * 60 * 60 * 1000, // OAuth refresh token 长期有效，access token 约 1 小时（自动刷新）
 }
 
 const STOREFRONT_MAP: Record<string, MusicPlatform> = {
   netease: 'netease',
   qq: 'qq',
-  apple: 'apple',
 }
 
 /** 登录时记录有效期 */

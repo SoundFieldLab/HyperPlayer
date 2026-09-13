@@ -14,12 +14,6 @@ export type HomeModuleType =
   | 'qq_daily_30'
   | 'qq_playlists'
   | 'qq_ai_playlists'
-  | 'apple_hot_songs'
-  | 'apple_new_songs'
-  | 'apple_playlists'
-  | 'spotify_hot_songs'
-  | 'spotify_new_songs'
-  | 'spotify_playlists'
 
 export interface HomeModuleDefinition {
   id: HomeModuleType
@@ -48,12 +42,6 @@ export const HOME_MODULES: HomeModuleDefinition[] = [
   { id: 'qq_new_songs', name: '最新音乐', description: 'QQ 音乐近期上新的歌曲', platform: 'qq', type: 'song-list' },
   { id: 'qq_hot_songs', name: '热歌榜', description: 'QQ 音乐热歌排行', platform: 'qq', type: 'song-list' },
   { id: 'qq_rising_songs', name: '飙升榜', description: 'QQ 音乐飙升排行', platform: 'qq', type: 'song-list' },
-  { id: 'apple_hot_songs', name: '热歌榜', description: 'Apple Music 各地区热门歌曲', platform: 'apple', type: 'song-list' },
-  { id: 'apple_new_songs', name: '最新音乐', description: 'Apple Music 热门新歌', platform: 'apple', type: 'song-list' },
-  { id: 'apple_playlists', name: '推荐歌单', description: 'Apple 编辑精选与热门歌单', platform: 'apple', type: 'playlist-grid' },
-  { id: 'spotify_hot_songs', name: 'Spotify 热歌', description: 'Spotify 当前热门歌曲', platform: 'spotify', type: 'song-list', loginRequired: true },
-  { id: 'spotify_new_songs', name: 'Spotify 新发行', description: 'Spotify 最新发行', platform: 'spotify', type: 'song-list', loginRequired: true },
-  { id: 'spotify_playlists', name: 'Spotify 歌单', description: 'Spotify 编辑精选歌单', platform: 'spotify', type: 'playlist-grid', loginRequired: true },
 ]
 
 export const HOME_MODULE_BY_ID = Object.fromEntries(
@@ -84,15 +72,6 @@ export const getDefaultHomeModules = (platform: MusicPlatform, loggedIn: boolean
     return loggedIn
       ? ['netease_daily_recommend', 'netease_private_fm', 'netease_playlists']
       : ['netease_new_songs', 'netease_hot_songs', 'netease_rising_songs']
-  }
-  if (platform === 'apple') {
-    return ['apple_hot_songs', 'apple_new_songs', 'apple_playlists']
-  }
-  // 未登录也能看到平台公开热门内容（Spotify 需登录，显示登录引导）
-  if (platform === 'spotify') {
-    return loggedIn
-      ? ['spotify_new_songs', 'spotify_hot_songs', 'spotify_playlists']
-      : ['spotify_hot_songs', 'spotify_new_songs']
   }
   return loggedIn
     ? ['qq_guess_you_like', 'qq_daily_30', 'qq_playlists']

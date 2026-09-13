@@ -1,5 +1,5 @@
 /**
- * 音乐平台抽象层（第三平台：Apple Music）
+ * 音乐平台抽象层
  *
  * HyperPlayer 的"平台"曾长期是散落在 40+ 文件里的 'netease' | 'qq' 字面量。
  * 本模块集中定义：
@@ -7,17 +7,17 @@
  * 2. PlatformCapabilities / PLATFORM_CAPABILITIES —— 平台能力注册表。
  *    UI 全部共享，按能力增减功能：对比某平台与网易云/QQ 的能力差，UI 自然增删。
  * 3. 平台级工具函数（标签 / cookie / 播放载体判定）
+ *
+ * Apple Music 与 Spotify 音源已于 2026-09-13 移除（含其登录、目录、播放与 DRM 适配）。
  */
 
-export type MusicPlatform = 'netease' | 'qq' | 'apple' | 'spotify'
+export type MusicPlatform = 'netease' | 'qq'
 
-export const MUSIC_PLATFORMS: readonly MusicPlatform[] = ['netease', 'qq', 'apple', 'spotify']
+export const MUSIC_PLATFORMS: readonly MusicPlatform[] = ['netease', 'qq']
 
 export const PLATFORM_LABELS: Record<MusicPlatform, string> = {
   netease: '网易云音乐',
   qq: 'QQ音乐',
-  apple: 'Apple Music',
-  spotify: 'Spotify',
 }
 
 export interface PlatformVisualMetadata {
@@ -31,8 +31,6 @@ export interface PlatformVisualMetadata {
 export const PLATFORM_VISUAL_METADATA: Record<MusicPlatform, PlatformVisualMetadata> = {
   netease: { label: '网易云音乐', shortLabel: '网', color: '#fff', background: '#d81e2b' },
   qq: { label: 'QQ音乐', shortLabel: 'QQ', color: '#102a1d', background: '#31c27c' },
-  apple: { label: 'Apple Music', shortLabel: 'AM', color: '#fff', background: '#fa2d48' },
-  spotify: { label: 'Spotify', shortLabel: 'S', color: '#082515', background: '#1db954' },
 }
 
 export function getPlatformVisualMetadata(platform: MusicPlatform): PlatformVisualMetadata {
@@ -101,7 +99,7 @@ export interface PlatformCapabilities {
   similarSongs: boolean
   /** 连续电台（FM / 猜你喜欢） */
   radio: boolean
-  /** 是否可直接作为音频播放载体（apple 需跨平台匹配到 netease/qq 播放） */
+  /** 是否可直接作为音频播放载体 */
   playAsCarrier: boolean
   audioQuality: boolean
 }
@@ -155,92 +153,9 @@ const QQ_CAPABILITIES: PlatformCapabilities = {
   cloudDisk: false,
 }
 
-const APPLE_CAPABILITIES: PlatformCapabilities = {
-  login: true,
-  profile: true,
-  userPlaylists: true,
-  createPlaylist: true,
-  updatePlaylist: true,
-  deletePlaylist: true,
-  searchPlaylists: true,
-  sharePlaylist: true,
-  removeTracksFromPlaylist: true,
-  addTracksToPlaylist: true,
-  // Apple Music 无"收藏他人歌单"概念（资料库歌单即我的歌单）
-  subscribePlaylist: false,
-  likedSongs: true,
-  likeSong: true,
-  explore: true,
-  // 探索页区块：无旅程 / 无声音频道（Apple 无公开的 FM/分类频道接口）
-  exploreSections: ['discover', 'playlists', 'charts', 'newSongs', 'albums'],
-  search: true,
-  searchSuggest: false,
-  lyrics: true,
-  comments: false,
-  dailyRecommend: false,
-  charts: true,
-  channels: false,
-  newSongs: true,
-  albums: true,
-  mv: false,
-  signin: false,
-  social: false,
-  rank: false,
-  cloudDisk: false,
-  recentPlayed: true,
-  artistDetail: true,
-  albumDetail: true,
-  similarSongs: false,
-  radio: false,
-  playAsCarrier: false,
-  audioQuality: true,
-}
-
-const SPOTIFY_CAPABILITIES: PlatformCapabilities = {
-  login: true,
-  profile: true,
-  userPlaylists: true,
-  createPlaylist: true,
-  updatePlaylist: true,
-  deletePlaylist: false, // Spotify Web API 无删除歌单接口
-  searchPlaylists: true,
-  sharePlaylist: true,
-  removeTracksFromPlaylist: true,
-  addTracksToPlaylist: true,
-  subscribePlaylist: true, // follow/unfollow
-  likedSongs: true,
-  likeSong: true,
-  explore: true,
-  // Spotify 官方 API：new releases / featured playlists / categories / 榜单
-  exploreSections: ['discover', 'playlists', 'charts', 'newSongs', 'albums'],
-  search: true,
-  searchSuggest: false,
-  lyrics: true, // 官方无歌词，走 Lrclib/AMLL 兜底
-  comments: false,
-  dailyRecommend: true,
-  charts: true,
-  channels: false,
-  newSongs: true,
-  albums: true,
-  mv: false,
-  signin: false,
-  social: false,
-  rank: false,
-  cloudDisk: false,
-  recentPlayed: true,
-  artistDetail: true,
-  albumDetail: true,
-  similarSongs: false,
-  radio: false,
-  playAsCarrier: false, // 官方流受 DRM 保护，始终由网易云/QQ 匹配播放
-  audioQuality: false,
-}
-
 export const PLATFORM_CAPABILITIES: Record<MusicPlatform, PlatformCapabilities> = {
   netease: NETEASE_CAPABILITIES,
   qq: QQ_CAPABILITIES,
-  apple: APPLE_CAPABILITIES,
-  spotify: SPOTIFY_CAPABILITIES,
 }
 
 export function getPlatformCapabilities(platform: MusicPlatform): PlatformCapabilities {
@@ -256,8 +171,6 @@ export interface PlatformFavoriteLabels {
 const PLATFORM_FAVORITE_LABELS: Record<MusicPlatform, PlatformFavoriteLabels> = {
   netease: { add: '我喜欢', remove: '从喜欢歌单中移除', collection: '我喜欢的音乐' },
   qq: { add: '我喜欢', remove: '从喜欢歌单中移除', collection: '我喜欢的歌曲' },
-  apple: { add: '喜爱歌曲', remove: '从喜爱歌曲中移除', collection: '喜爱歌曲' },
-  spotify: { add: '保存到音乐库', remove: '从音乐库中移除', collection: '音乐库歌曲' },
 }
 
 /** 收藏/资料库在各平台的用户可见名称，避免菜单各自硬编码。 */
@@ -345,12 +258,10 @@ export function setPlatformHidden(platform: MusicPlatform, hidden: boolean): voi
   window.dispatchEvent(new CustomEvent(PLATFORM_VISIBILITY_EVENT, { detail: { hidden: nextHidden } }))
 }
 
-/** 平台 cookie/token（spotify 走 OAuth token，apple 走 Developer Token + Media-User-Token） */
+/** 平台 cookie/token（QQ 走 cookie，网易云走 cookie） */
 export function getPlatformCookie(platform: MusicPlatform): string {
   if (platform === 'qq') {
     return localStorage.getItem('qq_cookie') || localStorage.getItem('qqCookie') || ''
   }
-  if (platform === 'apple') return ''
-  if (platform === 'spotify') return localStorage.getItem('spotify_access_token') || ''
   return localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
 }

@@ -18,7 +18,7 @@
 | 看歌 / MV 背景（Bilibili） | `src/services/bilibiliApi.ts`、`src/services/mvAlignment.ts`、`src/components/BilibiliMvPlayer.tsx`、`src/components/BilibiliMvBackground.tsx`、`src/components/BilibiliVideoPlayerOverlay.tsx`、`src/components/BilibiliWatchSettingsModal.tsx`、`server/bilibili-api.mjs` |
 | 桌面模式（Desktop 小组件 / 壁纸 / 独立播放小窗） | `src/components/Desktop*.tsx`（DesktopView / WidgetZone / MiniPlayer / ExtraWidgets / CustomizationEditor / SettingsModal / ProductivityWidgets / TimeCenter / ExploreWidgets）、`src/desktop-player/**` |
 | 探索模式（Explore） | `src/components/ExploreView.tsx`、`src/components/ExploreSettingsPanel.tsx` |
-| Apple Music 平台接入（认证 / 目录 / 歌词 TTML / 动态封面 / 原生 HLS 播放 / 探索 / 登录窗） | `src/services/apple*.ts`、`src/hooks/useAppleDynamicCover.ts`、`src/utils/ttmlParser.ts`、`src/components/Apple*.tsx`、`server/apple-artwork-api.mjs` |
+| Apple 风格歌词（TTML 解析 / 逐字 / 对唱着色 / 多语言合并；音源移除后保留的歌词侧能力） | `src/services/appleLyricsStyle.ts`、`src/utils/ttmlParser.ts` |
 
 ## 允许（无需额外授权）
 
@@ -44,6 +44,8 @@
 - **Apple Music 接入**为自有逆向成果（依据本项目 LyricsBlossom 逆向资材与对 Apple
   web/MusicKit 端点的黑盒分析），不包含第三方开源实现的逐行复制；若未来引入外部实现
   片段，按片段来源许可处理。
+  （⚠️ 历史条目：Apple Music 音源已于 2026-09-13 整体移除，本条仅作成果来源留痕，
+  不再对应仓库中现存的模块；保留的 Apple 风格歌词特性见 `src/services/appleLyricsStyle.ts`。）
 - **音效引擎（HSE）**不在本许可范围内，另受 CC BY-NC-ND 4.0 约束，
   见 `src/services/HyperSoundEngine-v1/LICENSE`。
 

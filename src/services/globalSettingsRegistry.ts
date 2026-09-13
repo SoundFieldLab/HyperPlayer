@@ -523,7 +523,6 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
           kind: 'choice',
           options: [
             { value: 'AMLL', label: 'AMLL TTML DB' },
-            { value: 'Apple Music', label: 'Apple Music' },
             { value: 'NetEase', label: '网易云音乐' },
             { value: 'QQMusic', label: 'QQ音乐' },
             { value: 'Platform', label: '当前平台' },
@@ -536,28 +535,6 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
           notifyGlobalSettingChanged()
         },
         visibleIf: () => readBool('thirdPartyLyricsEnabled', true) && readBool('adaptiveLyrics', true),
-      },
-      {
-        id: 'appleMusicLyrics',
-        label: '启用 Apple Music 歌词',
-        description: '需先登录 Apple Music 账号后才可启用',
-        control: { kind: 'toggle' },
-        read: () => readBool('appleMusicEnabled', false),
-        write: (value) => {
-          writeBool('appleMusicEnabled', Boolean(value))
-          notifyGlobalSettingChanged()
-        },
-      },
-      {
-        id: 'appleNativeStream',
-        label: 'Apple 原生音源',
-        description: 'Cider 式直连 Apple 播放（默认开启）',
-        control: { kind: 'toggle' },
-        read: () => readStr('appleNativeStream', '') !== 'false',
-        write: (value) => {
-          localStorage.setItem('appleNativeStream', value ? 'true' : 'false')
-          notifyGlobalSettingChanged()
-        },
       },
     ],
   },

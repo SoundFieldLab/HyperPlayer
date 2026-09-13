@@ -1,13 +1,10 @@
-import React, { useState, useEffect, useRef, Suspense, lazy } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Music, RefreshCw, Copy, Check, ExternalLink } from 'lucide-react'
 import type { MusicPlatform } from '../services/platforms'
 import { isTvModeActive } from '../platform'
 import { isPerfModeEnhanced } from '../tv/perfMode'
 import GlobalToast from './GlobalToast'
-
-// 新平台登录面板（组件外声明，避免条件内 lazy 造成重挂载）
-const SpotifyLoginPanel = lazy(() => import('./SpotifyLoginPanel').then(m => ({ default: m.default })))
 
 interface LoginViewProps {
   platform: MusicPlatform
@@ -278,15 +275,6 @@ export default function LoginView({ platform, onCancel, onLoginSuccess }: LoginV
       case 'expired':
         return 'text-red-400'
     }
-  }
-
-  // Spotify：复用其登录面板（简化登录）
-  if (platform === 'spotify') {
-    return (
-      <Suspense fallback={null}>
-        <SpotifyLoginPanel onClose={onCancel} onLoginSuccess={(username?: string) => onLoginSuccess('spotify-logged', username)} />
-      </Suspense>
-    )
   }
 
   return (

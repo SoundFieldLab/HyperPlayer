@@ -25,10 +25,16 @@ describe('platform pagination and cache contracts', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('offset=40')
   })
 
-  it('invalidates token-driven Spotify caches without a numeric user id', async () => {
-    localStorage.setItem('spotify_access_token', 'token')
-    invalidateUserPlaylistsCache('spotify', '')
+  it('invalidates the platform-scoped playlist cache for a known user id', () => {
+    localStorage.setItem('netease_cookie', 'MUSIC_U=token')
+    invalidateUserPlaylistsCache('netease', '12345')
     expect(invalidatePlaylist).toHaveBeenCalledTimes(1)
-    expect(String(invalidatePlaylist.mock.calls[0][0])).toContain('spotify-session')
+    expect(String(invalidatePlaylist.mock.calls[0][0])).toContain('netease:12345')
+    expect(invalidatePlaylist.mock.calls[0][1]).toBe('netease')
+  })
+
+  it('skips cache invalidation when the user id is empty', () => {
+    invalidateUserPlaylistsCache('qq', '')
+    expect(invalidatePlaylist).not.toHaveBeenCalled()
   })
 })

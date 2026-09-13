@@ -4,7 +4,7 @@
  * 监听 hyperplayer-auth-changed（音乐平台登录成功）与 bilibili-auth-changed（看歌登录成功），
  * 在用户首次登录任意平台后弹出一次，提示第三方客户端登录可能违反平台用户协议；
  * 点击"我已了解"后写入本地标记，之后不再弹出。
- * 音乐平台共 4 个（网易云 / QQ / Apple Music / Spotify），哔哩哔哩为独立"看歌"功能。
+ * 音乐平台共 2 个（网易云 / QQ），哔哩哔哩为独立"看歌"功能。
  */
 import { useEffect, useState } from 'react'
 import { ShieldAlert, X } from 'lucide-react'

@@ -4,7 +4,6 @@ import { Check, ChevronRight, Crown, Headphones, Music2, X } from 'lucide-react'
 import {
   loadAudioQualitySettings,
   saveAudioQualitySettings,
-  type AppleAudioQualityPreference,
   type AudioQualityPreference,
   type AudioQualitySettings,
 } from '../services/audioQualitySettings'
@@ -18,11 +17,9 @@ interface AudioQualitySettingsModalProps {
   qqVip: boolean
   neteaseLoggedIn: boolean
   qqLoggedIn: boolean
-  spotifyLoggedIn?: boolean
-  appleLoggedIn?: boolean
 }
 
-type QualityValue = AudioQualityPreference | AppleAudioQualityPreference
+type QualityValue = AudioQualityPreference
 
 type QualityOption = {
   value: QualityValue
@@ -45,22 +42,6 @@ const QQ_OPTIONS: QualityOption[] = [
   { value: 'standard', label: '标准音质', description: '优先使用 128 kbps MP3 / AAC 备用音源' },
   { value: 'high', label: '高品质', description: '优先使用 320 kbps MP3' },
   { value: 'lossless', label: '无损音质', description: '优先使用 FLAC 无损音质', requiresVip: true },
-]
-
-/** 新平台音质选项（自身直源受限时走网易云/QQ 载体音质） */
-const GENERIC_OPTIONS: QualityOption[] = [
-  { value: 'auto', label: '自动最高音质', description: '按账号权限和歌曲可用性自动选择最高音质' },
-  { value: 'standard', label: '标准音质', description: '优先使用标准码率音源' },
-  { value: 'high', label: '高品质', description: '优先使用高码率音源' },
-  { value: 'lossless', label: '无损音质', description: '优先请求无损音质', requiresVip: true },
-]
-
-const APPLE_OPTIONS: QualityOption[] = [
-  { value: 'auto', label: '自动', description: '优先使用当前设备和账号实际可播放的最佳 Apple Music 音频' },
-  { value: 'aac', label: '高品质 AAC', description: '使用 Apple 网页播放当前稳定支持的 AAC HLS 音频' },
-  { value: 'lossless', label: '无损音频', description: '当前网页 Widevine 播放链路尚未检测到可用的 Apple Lossless 资产', disabled: true },
-  { value: 'hi-res-lossless', label: '高解析度无损', description: '需要 Apple 提供兼容资产和当前设备具备对应解码能力', disabled: true },
-  { value: 'atmos', label: '杜比全景声与空间音频', description: '曲目标签不等于可播放流；检测到兼容 Atmos 资产后才会开放', disabled: true },
 ]
 
 function QualityOptionButton({
@@ -111,8 +92,6 @@ export default function AudioQualitySettingsModal({
   qqVip,
   neteaseLoggedIn,
   qqLoggedIn,
-  spotifyLoggedIn = false,
-  appleLoggedIn = false,
 }: AudioQualitySettingsModalProps) {
   // TV 遥控器 BACK：关闭音质设置弹窗
   useTvBack(() => {
@@ -218,9 +197,7 @@ export default function AudioQualitySettingsModal({
               </div>
               {renderPlatform('qq', 'QQ音乐', <span className="font-bold text-sm">QQ</span>, QQ_OPTIONS, qqVip, qqLoggedIn)}
               {renderPlatform('netease', '网易云音乐', <Music2 className="w-5 h-5" />, NETEASE_OPTIONS, neteaseVip, neteaseLoggedIn)}
-              {renderPlatform('apple', 'Apple Music', <span className="font-bold text-sm">AM</span>, APPLE_OPTIONS, appleLoggedIn, appleLoggedIn)}
-              {renderPlatform('spotify', 'Spotify', <span className="font-bold text-sm">S</span>, GENERIC_OPTIONS, false, spotifyLoggedIn)}
-              <p className={`${textTertiary} text-xs leading-relaxed`}>设置会立即保存，并作用于播放、下一首预加载及新的播放链接缓存。Apple Music 的无损与空间音频只会在实际播放资产和当前设备均支持时开放；曲目支持标签不会被当作本次播放音质。Spotify 自身直源受限时，播放自动降级到网易云/QQ 载体。</p>
+              <p className={`${textTertiary} text-xs leading-relaxed`}>设置会立即保存，并作用于播放、下一首预加载及新的播放链接缓存。</p>
             </div>
           </motion.div>
         </>

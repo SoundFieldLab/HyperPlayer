@@ -20,7 +20,6 @@ import { getCommentMutationMessage, isCommentMutationSuccessful } from './server
 import { registerHazardRoutes } from './server/hazard-api.mjs'
 import { registerLocationRoutes } from './server/location-api.mjs'
 import { registerBilibiliRoutes } from './server/bilibili-api.mjs'
-import { registerAppleArtworkRoutes } from './server/apple-artwork-api.mjs'
 import { ByteLruCache, readResponseWithLimit } from './server/byte-lru-cache.mjs'
 import { isAuthorizedLocalRequest } from './server/local-service-auth.mjs'
 import { LOCAL_API_PROTOCOL_VERSION, LOCAL_API_SERVICE } from './server/local-api-health.mjs'
@@ -1058,8 +1057,7 @@ app.use((req, res, next) => {
     res.header('Vary', 'Origin')
   }
   // QQ Music Skills 的用户密钥只通过本机请求头传递，避免出现在 URL、历史记录和日志中。
-  // Apple license 代理：兼容规范 Media-User-Token 与历史 X-Apple-Music-User-Token。
-  res.header('Access-Control-Allow-Headers', 'Content-Type, X-HyperPlayer-Local-Token, X-QQMusic-Skill-Key, Authorization, Media-User-Token, X-Apple-Music-User-Token, X-Apple-Renewal')
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-HyperPlayer-Local-Token, X-QQMusic-Skill-Key, Authorization')
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
   if (req.method === 'OPTIONS') return res.sendStatus(204)
   if (!tokenAuthorized) {
@@ -1073,7 +1071,6 @@ app.use(express.urlencoded({ extended: true, limit: '12mb' }))
 registerHazardRoutes(app)
 registerLocationRoutes(app)
 registerBilibiliRoutes(app)
-registerAppleArtworkRoutes(app)
 
 const fetchLocationProvider = async (url, normalize) => {
   const controller = new AbortController()
@@ -11121,129 +11118,6 @@ app.get('/api/netease/record/rank/:type', async (req, res) => {
   } catch (error) {
     console.error('[网易云听歌排行] 获取失败:', error)
     res.status(502).json({ error: error.message || '获取听歌排行失败' })
-  }
-})
-
-// ── Apple Music 目录代理（营销工具 RSS 无 CORS 头，浏览器直连会被拦截）──
-app.get('/api/apple/rss', async (req, res) => {
-  const rawPath = String(req.query.path || '')
-  const country = String(req.query.country || 'cn').toLowerCase()
-  const safePath = rawPath.replace(/[^a-zA-Z0-9/._-]/g, '')
-  if (!safePath) return res.status(400).json({ error: '缺少 path 参数' })
-  const url = `https://rss.marketingtools.apple.com/api/v2/${encodeURIComponent(country)}/${safePath}`
-  try {
-    const response = await axios.get(url, {
-      timeout: 15000,
-      headers: { 'User-Agent': 'HyperPlayer/0.1 (compatible)', Accept: 'application/json' },
-      responseType: 'json',
-    })
-    res.json(response.data)
-  } catch (error) {
-    console.error('[Apple RSS] 代理失败:', error.message || error)
-    res.status(502).json({ error: error.message || 'Apple RSS 获取失败' })
-  }
-})
-
-// ── Apple Music amp-api 通用代理（渲染进程直连 amp-api 被 CORS 拦截时的兜底通道）──
-// 与 Electron 主进程 apple-api IPC 同语义：透传 Authorization / Media-User-Token，
-// 支持 GET/POST/PATCH/DELETE，原样回传状态码与 JSON。仅监听 127.0.0.1，token 不出本机。
-const APPLE_AMP_API_BASE = 'https://amp-api.music.apple.com'
-async function proxyAppleAmpApi(req, res) {
-  const rawPath = String(req.query.path || '')
-  if (!rawPath.startsWith('/v1/')) {
-    return res.status(400).json({ error: 'path 必须以 /v1/ 开头' })
-  }
-  const url = `${APPLE_AMP_API_BASE}${rawPath}`
-  const headers = {
-    Accept: 'application/json',
-    Origin: 'https://music.apple.com',
-    Referer: 'https://music.apple.com/',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-  }
-  const auth = req.headers['authorization']
-  if (auth) headers.Authorization = auth
-  const mut = req.headers['media-user-token']
-  if (mut) headers['Media-User-Token'] = mut
-  const method = (req.method || 'GET').toUpperCase()
-  if (req.body !== undefined && req.body !== null && Object.keys(req.body).length > 0) {
-    headers['Content-Type'] = 'application/json'
-  }
-  try {
-    const response = await axios({
-      method,
-      url,
-      timeout: 20000,
-      headers,
-      data: method === 'GET' ? undefined : (req.body || undefined),
-      responseType: 'text',
-      validateStatus: () => true,
-    })
-    res.status(response.status)
-    const text = String(response.data || '')
-    let data = null
-    try { data = text ? JSON.parse(text) : null } catch { data = text }
-    res.json(data ?? { ok: true })
-  } catch (error) {
-    console.error('[Apple AMP 代理] 失败:', error.message || error)
-    res.status(502).json({ error: error.message || 'Apple AMP API 请求失败' })
-  }
-}
-app.get('/api/apple/amp', proxyAppleAmpApi)
-app.post('/api/apple/amp', proxyAppleAmpApi)
-app.patch('/api/apple/amp', proxyAppleAmpApi)
-app.delete('/api/apple/amp', proxyAppleAmpApi)
-
-// ── Apple Music Widevine license 代理（acquireWebPlaybackLicense）───────────
-// 渲染进程直连时 Origin 是本机页面（127.0.0.1:3000），Apple license 服务会做来源
-// 校验并返回 200 + 错误 JSON（无 license 字段）。统一走本地代理，请求头与
-// webPlayback 同款（Origin/Referer = music.apple.com）。
-const APPLE_LICENSE_URL = 'https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/acquireWebPlaybackLicense'
-// Apple 网页会话 Cookie（登录时由 main 进程落盘）：license 接口校验网页会话，
-// 仅凭 media-user-token 会被拒（-1002 session ended）
-function readAppleWebCookieHeader() {
-  try {
-    const base = process.env.HYPERPLAYER_USERDATA
-      || join(process.env.APPDATA || join(os.homedir(), 'AppData', 'Roaming'), 'Electron')
-    const data = JSON.parse(readFileSync(join(base, 'apple-web-cookies.json'), 'utf8'))
-    return typeof data?.cookie === 'string' && data.cookie ? data.cookie : ''
-  } catch {
-    return ''
-  }
-}
-app.post('/api/apple/license', async (req, res) => {
-  const headers = {
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-    Origin: 'https://music.apple.com',
-    Referer: 'https://music.apple.com/',
-    'X-Apple-Renewal': 'true',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-  }
-  const auth = req.headers['authorization']
-  if (auth) headers.Authorization = auth
-  // 兼容渲染端历史头名，并统一转发 Apple 私有 license 接口需要的 Media-User-Token。
-  // 此前只读 media-user-token，导致 X-Apple-Music-User-Token 在代理边界丢失。
-  const mut = req.headers['media-user-token'] || req.headers['x-apple-music-user-token']
-  if (mut) headers['Media-User-Token'] = String(mut)
-  const cookieHeader = readAppleWebCookieHeader()
-  if (cookieHeader) headers.Cookie = cookieHeader
-  try {
-    const response = await axios({
-      method: 'POST',
-      url: APPLE_LICENSE_URL,
-      timeout: 20000,
-      headers,
-      data: req.body || undefined,
-      responseType: 'text',
-      validateStatus: () => true,
-    })
-    const text = String(response.data || '')
-    console.log(`[Apple License 代理] HTTP ${response.status} len=${text.length}${text.length < 200 ? ' body=' + text : ''}${cookieHeader ? ' cookie=yes' : ' cookie=NO'}`)
-    res.status(response.status)
-    res.type('application/json').send(text)
-  } catch (error) {
-    console.error('[Apple License 代理] 失败:', error.message || error)
-    res.status(502).json({ error: error.message || 'Apple license 请求失败' })
   }
 })
 

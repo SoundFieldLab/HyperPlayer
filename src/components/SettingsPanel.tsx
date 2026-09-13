@@ -22,7 +22,6 @@ import React, { memo, useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence, Reorder } from 'framer-motion'
 import { X, Settings as SettingsIcon, User, Palette, Sparkles, Info, ExternalLink, Github, ChevronRight, ChevronLeft, Trash2, Heart, Code2, Users, Headphones, Eye, EyeOff, Music, FolderHeart, Trash, ListMusic } from 'lucide-react'
 import LoginButton from './LoginButton'
-import type { AppleUserInfo } from '../services/appleAuth'
 import {
   MUSIC_PLATFORMS,
   PLATFORM_LABELS,
@@ -66,15 +65,8 @@ import {
   type AudioQualityPreference,
 } from '../services/audioQualitySettings'
 import { getPlaybackRadialActions } from '../services/playbackRadialMenuSettings'
-import {
-  getAppleMusicSettings,
-  type AppleMusicSettings,
-} from '../services/appleMusic'
-import { isAppleDynamicCoverEnabled, setAppleDynamicCoverEnabled } from '../services/appleDynamicCover'
-import { checkBridgeRunning, ensureBridgeRunning, bridgeShowWindow, bridgeHideWindow, getState as getAppleBridgeState } from '../services/appleWebViewBridge'
 import BilibiliLoginPanel from './BilibiliLoginPanel'
 import BilibiliProfileModal from './BilibiliProfileModal'
-import VmpStatusCard from './VmpStatusCard'
 import LegalAgreement from './legal/LegalAgreement'
 import {
   isBilibiliLoggedIn,
@@ -137,15 +129,6 @@ interface SettingsPanelProps {
   qqVip: boolean
   onQQLogin: (cookie: string) => void
   onQQLogout: () => void
-  appleLoggedIn: boolean
-  appleUsername: string
-  onAppleLogin: (user: AppleUserInfo | null) => void
-  onAppleLogout: () => void
-  // 新三平台登录态
-  spotifyLoggedIn: boolean
-  spotifyUsername: string
-  onSpotifyLogin: (cookie: string, username?: string) => void
-  onSpotifyLogout: () => void
   playerTheme?: 'light' | 'dark'
 }
 
@@ -163,14 +146,6 @@ function SettingsPanel({
   qqVip,
   onQQLogin,
   onQQLogout,
-  appleLoggedIn,
-  appleUsername,
-  onAppleLogin,
-  onAppleLogout,
-  spotifyLoggedIn,
-  spotifyUsername,
-  onSpotifyLogin,
-  onSpotifyLogout,
   playerTheme = 'dark',
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<'account' | 'advanced' | 'personalization' | 'about'>('account')
@@ -272,45 +247,6 @@ function SettingsPanel({
     return saved || 'AMLL'
   })
 
-  // ── Apple Music 设置 ──
-  const [appleMusic, setAppleMusic] = useState<AppleMusicSettings>(() => getAppleMusicSettings())
-  // Apple 原生音源开关（Cider 式直连；默认开，localStorage 独立存储）
-  const [appleNativeStreamEnabled, setAppleNativeStreamEnabled] = useState(() => localStorage.getItem('appleNativeStream') !== 'false')
-  const [appleDynamicCoverEnabled, setAppleDynamicCoverEnabledState] = useState(isAppleDynamicCoverEnabled)
-
-  // Apple Music 播放面（WebView2 bridge）状态与窗口开关
-  const [appleBridgeWindowVisible, setAppleBridgeWindowVisible] = useState(false)
-  const [appleBridgeBusy, setAppleBridgeBusy] = useState(false)
-  const [appleBridgeReady, setAppleBridgeReady] = useState(false)
-  const [appleBridgeAuthorized, setAppleBridgeAuthorized] = useState(false)
-  useEffect(() => {
-    let disposed = false
-    checkBridgeRunning().then((ok) => {
-      if (disposed) return
-      setAppleBridgeReady(ok)
-      if (ok) setAppleBridgeAuthorized(getAppleBridgeState().authorized)
-    })
-    return () => { disposed = true }
-  }, [])
-  const toggleAppleBridgeWindow = async () => {
-    if (appleBridgeWindowVisible) {
-      await bridgeHideWindow()
-      setAppleBridgeWindowVisible(false)
-      return
-    }
-    setAppleBridgeBusy(true)
-    try {
-      // 未运行时先拉起（可能等待 WebView2 冷启动），再显示窗口供登录
-      const ok = await ensureBridgeRunning()
-      if (ok) await bridgeShowWindow()
-      setAppleBridgeReady(ok)
-      setAppleBridgeAuthorized(ok && getAppleBridgeState().authorized)
-      setAppleBridgeWindowVisible(ok)
-    } finally {
-      setAppleBridgeBusy(false)
-    }
-  }
-
   // ── 哔哩哔哩「看歌」账号 ──
   const [biliLoggedIn, setBiliLoggedIn] = useState(() => isBilibiliLoggedIn())
   const [biliUser, setBiliUser] = useState(() => getStoredBilibiliUser())
@@ -338,29 +274,6 @@ function SettingsPanel({
     return () => window.removeEventListener('bilibili-auth-changed', onBiliAuthChanged as EventListener)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  const updateAppleMusic = (patch: Partial<AppleMusicSettings>) => {
-    const next = { ...appleMusic, ...patch }
-    setAppleMusic(next)
-    localStorage.setItem('appleMusicEnabled', JSON.stringify(next.enabled))
-    localStorage.setItem('appleDeveloperToken', next.developerToken)
-    localStorage.setItem('appleMediaUserToken', next.mediaUserToken)
-    localStorage.setItem('appleStorefront', next.storefront)
-    localStorage.setItem('appleLyricLang', next.lyricLang)
-    localStorage.setItem('applePreferCover', JSON.stringify(next.preferAppleCover))
-    localStorage.setItem('appleDuetColors', JSON.stringify(next.duetColors))
-    if (next.enabled !== appleMusic.enabled || next.lyricLang !== appleMusic.lyricLang || next.storefront !== appleMusic.storefront) {
-      window.dispatchEvent(new Event('hyperplayer:lyrics-policy-changed'))
-    }
-  }
-
-  // 登录 Apple Music 后自动开启 Apple Music 歌词
-  useEffect(() => {
-    if (appleLoggedIn && !appleMusic.enabled) {
-      updateAppleMusic({ enabled: true })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appleLoggedIn])
 
   const [crossPlatformFallbackEnabled, setCrossPlatformFallbackEnabled] = useState(() => {
     const saved = localStorage.getItem('crossPlatformFallbackEnabled')
@@ -1341,17 +1254,15 @@ function SettingsPanel({
                       {platformOrder.map(p => {
                         const hidden = hiddenPlatforms.includes(p)
                         const isNetease = p === 'netease'
-                        const isQQ = p === 'qq'
-                        const isApple = p === 'apple'
                         const label = PLATFORM_LABELS[p]
-                        const sub = isNetease ? '使用手机扫码登录' : isQQ ? '使用网页扫码登录' : isApple ? '使用网页登录' : '使用 OAuth 授权登录'
-                        const iconBg = isNetease ? 'bg-red-600' : isQQ ? 'bg-green-600' : isApple ? 'bg-pink-600' : 'bg-[#1DB954]'
-                        const iconSrc = isNetease ? 'https://s1.music.126.net/style/favicon.ico' : isQQ ? 'https://y.qq.com/favicon.ico' : isApple ? 'https://www.apple.com/favicon.ico' : ''
-                        const iconFallback = isNetease ? '%E7%BD%91' : isQQ ? 'QQ' : isApple ? '%E8%8B%B9' : ''
-                        const loggedIn = isNetease ? neteaseLoggedIn : isQQ ? qqLoggedIn : isApple ? appleLoggedIn : spotifyLoggedIn
-                        const username = isNetease ? neteaseUsername : isQQ ? qqUsername : isApple ? appleUsername : spotifyUsername
-                        const onLogin = isNetease ? onNeteaseLogin : isQQ ? onQQLogin : isApple ? (() => undefined) : onSpotifyLogin
-                        const onLogout = isNetease ? onNeteaseLogout : isQQ ? onQQLogout : isApple ? onAppleLogout : onSpotifyLogout
+                        const sub = isNetease ? '使用手机扫码登录' : '使用网页扫码登录'
+                        const iconBg = isNetease ? 'bg-red-600' : 'bg-green-600'
+                        const iconSrc = isNetease ? 'https://s1.music.126.net/style/favicon.ico' : 'https://y.qq.com/favicon.ico'
+                        const iconFallback = isNetease ? '%E7%BD%91' : 'QQ'
+                        const loggedIn = isNetease ? neteaseLoggedIn : qqLoggedIn
+                        const username = isNetease ? neteaseUsername : qqUsername
+                        const onLogin = isNetease ? onNeteaseLogin : onQQLogin
+                        const onLogout = isNetease ? onNeteaseLogout : onQQLogout
                         return (
                           <Reorder.Item key={p} value={p} className="relative">
                             <motion.div
@@ -1401,7 +1312,6 @@ function SettingsPanel({
                                   username={username}
                                   onLogin={onLogin}
                                   onLogout={onLogout}
-                                  onAppleLogin={isApple ? onAppleLogin : undefined}
                                   playerTheme={playerTheme}
                                 />
                               </div>
@@ -1558,7 +1468,7 @@ function SettingsPanel({
                         <div className="text-left min-w-0">
                         <div className={`${textPrimary} font-medium`}>各平台播放音质</div>
                         <div className={`${textSecondary} text-sm truncate`}>
-                          Apple Music：{audioQualityLabel(audioQualitySettings.apple)} · 网易云：{audioQualityLabel(audioQualitySettings.netease)} · QQ音乐：{audioQualityLabel(audioQualitySettings.qq)} · Spotify：{audioQualityLabel(audioQualitySettings.spotify)}
+                          网易云：{audioQualityLabel(audioQualitySettings.netease)} · QQ音乐：{audioQualityLabel(audioQualitySettings.qq)}
                         </div>
                         </div>
                       </div>
@@ -2603,100 +2513,6 @@ function SettingsPanel({
                       </div>
                     </div>
 
-                    {/* 启用 Apple Music 歌词（已登录 AM 才可开启；登录后自动开启） */}
-                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className={`${textPrimary} font-medium mb-1`}>启用 Apple Music 歌词</div>
-                          <div className={`${textSecondary} text-sm`}>
-                            {appleLoggedIn
-                              ? 'Apple 逐音节歌词与翻译（登录 Apple Music 后自动启用）'
-                              : '需先登录 Apple Music 账号后才可启用'}
-                          </div>
-                        </div>
-                        <label className={`relative inline-flex items-center ${appleLoggedIn ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
-                          <input
-                            type="checkbox"
-                            checked={appleMusic.enabled}
-                            disabled={!appleLoggedIn}
-                            onChange={(e) => updateAppleMusic({ enabled: e.target.checked })}
-                            className="sr-only peer"
-                          />
-                          <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: appleMusic.enabled ? accentColor : '' }}></div>
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Apple Music 动态封面 */}
-                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`}>
-                      <div className="flex items-center justify-between gap-4">
-                        <div>
-                          <div className={`${textPrimary} font-medium mb-1`}>Apple Music 动态封面</div>
-                          <div className={`${textSecondary} text-sm`}>播放页优先显示 Apple editorialVideo；不可用时自动回退静态封面</div>
-                        </div>
-                        <label className="relative inline-flex shrink-0 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={appleDynamicCoverEnabled}
-                            onChange={(event) => {
-                              setAppleDynamicCoverEnabledState(event.target.checked)
-                              setAppleDynamicCoverEnabled(event.target.checked)
-                            }}
-                            className="sr-only peer"
-                          />
-                          <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: appleDynamicCoverEnabled ? accentColor : '' }} />
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Apple 原生音源（Cider 式直连 AM，需 Widevine；失败自动回退网易云/QQ） */}
-                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className={`${textPrimary} font-medium mb-1`}>Apple 原生音源</div>
-                          <div className={`${textSecondary} text-sm`}>
-                            直连 Apple 播放 AM 原版曲目（消除换源偏差），需浏览器/系统 Widevine 支持，失败自动回退网易云/QQ
-                          </div>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={appleNativeStreamEnabled}
-                            onChange={(e) => {
-                              const enabled = e.target.checked
-                              setAppleNativeStreamEnabled(enabled)
-                              localStorage.setItem('appleNativeStream', JSON.stringify(enabled))
-                            }}
-                            className="sr-only peer"
-                          />
-                          <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: appleNativeStreamEnabled ? accentColor : '' }}></div>
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Apple Music 播放面（WebView2）：仅在原生 CENC 播放失败时作为兼容兜底；
-                        兼容窗口保留独立登录会话，未授权时继续走网易云/QQ 载体兜底 */}
-                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`}>
-                      <div className="flex items-center justify-between gap-4">
-                        <div>
-                          <div className={`${textPrimary} font-medium mb-1`}>Apple Music 播放面</div>
-                          <div className={`${textSecondary} text-sm`}>
-                            Electron 原生 CENC 无法播放时才启用此兼容窗口；首次使用需在窗口内单独登录 Apple Music。
-                            {appleBridgeReady
-                              ? (appleBridgeAuthorized ? '播放面已授权 ✓' : '播放面未授权：点「打开窗口」登录后即可作为兼容兜底')
-                              : '正常播放无需启动；原生 CENC 失败时会自动拉起，也可手动打开登录'}
-                          </div>
-                        </div>
-                        <button
-                          onClick={toggleAppleBridgeWindow}
-                          disabled={appleBridgeBusy}
-                          className={`px-4 py-2 rounded-lg text-sm font-medium border ${borderColor} ${textPrimary} hover:opacity-80 disabled:opacity-50 whitespace-nowrap`}
-                        >
-                          {appleBridgeBusy ? '启动中…' : appleBridgeWindowVisible ? '隐藏窗口' : '打开窗口'}
-                        </button>
-                      </div>
-                    </div>
-
                     {/* 自适应最佳歌词 */}
                     {thirdPartyLyricsEnabled && (
                       <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`}>
@@ -2736,7 +2552,6 @@ function SettingsPanel({
                         <div className="space-y-2">
                           {[
                             { key: 'AMLL', name: 'AMLL TTML DB', desc: '社区逐字歌词库（可含翻译与罗马音，以收录为准）' },
-                            { key: 'Apple Music', name: 'Apple Music', desc: 'Apple Music 逐字歌词（对唱按演唱者着色）' },
                             { key: 'NetEase', name: '网易云音乐', desc: '仅网易云歌曲使用，其他平台自动回退' },
                             { key: 'QQMusic', name: 'QQ音乐', desc: '仅QQ歌曲使用，其他平台自动回退' },
                             { key: 'Platform', name: '当前平台', desc: '使用正在播放的平台' }
@@ -3033,13 +2848,6 @@ function SettingsPanel({
                       {/* 调试面板子开关（开发者模式开启后显示） */}
                       {developerMode && (
                         <>
-                          <div className="mt-3">
-                            <VmpStatusCard
-                              dark={playerTheme === 'dark'}
-                              accent={accentColor}
-                              borderColor={playerTheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}
-                            />
-                          </div>
                           {/* 过渡调试：显示过渡用的引擎/策略/效果清单弹窗 */}
                           <label className="flex items-center justify-between py-1.5 cursor-pointer">
                             <span className={`text-xs ${textSecondary}`}>过渡调试（右上角显示过渡详情）</span>
@@ -3366,8 +3174,6 @@ function SettingsPanel({
         qqVip={qqVip}
         neteaseLoggedIn={neteaseLoggedIn}
         qqLoggedIn={qqLoggedIn}
-        spotifyLoggedIn={spotifyLoggedIn}
-        appleLoggedIn={appleLoggedIn}
       />
 
       {/* 远程遥控器设置弹窗已随减配移除 */}

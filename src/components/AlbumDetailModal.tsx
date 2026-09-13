@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { X, Play, Music, Info, Loader, Heart } from 'lucide-react'
 import { getAlbumDetail, getAlbumSongs, Album, Song, getProxiedImageUrl, subscribeAlbum, isAlbumSubscribed, isSameSong } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
-import { getAppleAlbumDetail, appleSongToSong, getAppleLibraryPlaylists } from '../services/appleCatalog'
 import CachedImage from './CachedImage'
 import ScrollToTop from './ScrollToTop'
 import ScrollToCurrentSong from './ScrollToCurrentSong'
@@ -98,7 +97,7 @@ function AlbumDetailModal({
 
   // 打开专辑详情时按当前账号是否已收藏初始化按钮状态（QQ 传 mid，网易云传数字 id）
   useEffect(() => {
-    if (!album || platform === 'apple') return
+    if (!album) return
     let cancelled = false
     const id = platform === 'qq' ? String(album.mid || album.id) : String(album.id)
     setSubscribed(false)
@@ -118,7 +117,7 @@ function AlbumDetailModal({
   const textTertiary = 'text-white/40'
   const bgCard = 'bg-white/5'
   const borderColor = 'border-white/10'
-  const isVip = platform === 'netease' ? neteaseVip : platform === 'qq' ? qqVip : false
+  const isVip = platform === 'netease' ? neteaseVip : qqVip
   const readableAccentColor = getReadableAccentColor(accentColor, '#dbeafe')
 
   // 判断是否是当前播放的歌曲
@@ -132,13 +131,6 @@ function AlbumDetailModal({
   }, [albumId, platform, explicitStorefront])
 
   useEffect(() => {
-    // Apple：右键菜单歌单用资料库歌单（amp-api）
-    if (platform === 'apple') {
-      void getAppleLibraryPlaylists(100)
-        .then(setUserPlaylists)
-        .catch(() => setUserPlaylists([]))
-      return
-    }
     const userId = platform === 'qq'
       ? localStorage.getItem('qq_user_id') || ''
       : localStorage.getItem('netease_user_id') || ''
@@ -158,36 +150,6 @@ function AlbumDetailModal({
     setLoading(true)
     setError(null)
     try {
-      // Apple：iTunes Lookup 一次返回专辑信息与曲目（免 token）
-      if (platform === 'apple') {
-        const storefront = explicitStorefront || localStorage.getItem('appleStorefront') || 'cn'
-        const detail = await getAppleAlbumDetail(String(albumId), storefront)
-        if (detail?.incomplete) {
-          setAlbum({
-            id: Number(detail.album.id) || 0,
-            name: detail.album.name,
-            picUrl: detail.album.artworkUrl || '',
-            artist: { name: detail.album.artistName },
-            publishTime: detail.album.releaseDate ? Date.parse(detail.album.releaseDate) : undefined,
-            platform: 'apple',
-          })
-          setSongs([])
-          setError('Apple Music 未返回该专辑的曲目，请重试或检查地区设置')
-        } else if (detail) {
-          setAlbum({
-            id: Number(detail.album.id) || 0,
-            name: detail.album.name,
-            picUrl: detail.album.artworkUrl || '',
-            artist: { name: detail.album.artistName },
-            publishTime: detail.album.releaseDate ? Date.parse(detail.album.releaseDate) : undefined,
-            platform: 'apple',
-          })
-          setSongs(detail.tracks.map(track => appleSongToSong(track, storefront)))
-        } else {
-          setError('未找到该 Apple 专辑')
-        }
-        return
-      }
       const [albumData, songsData] = await Promise.all([
         getAlbumDetail(albumId, platform),
         getAlbumSongs(albumId, platform)
@@ -366,7 +328,6 @@ function AlbumDetailModal({
                       <Play className="w-4 h-4" fill="currentColor" />
                       播放专辑
                     </button>
-                    {platform !== 'apple' && (
                     <button
                       onClick={handleSubscribe}
                       disabled={subscribing}
@@ -382,7 +343,6 @@ function AlbumDetailModal({
                       <Heart className={`w-4 h-4 ${subscribed ? 'fill-current' : ''}`} />
                       {subscribed ? '已收藏' : '收藏专辑'}
                     </button>
-                    )}
                   </div>
                 </div>
 
@@ -691,8 +651,7 @@ function AlbumDetailModal({
         onViewComments={onViewComments}
         onViewArtist={onOpenArtist ? (song) => {
           const artist = song.artists?.[0]
-          const targetId = platform === 'apple' ? (artist?.appleId || artist?.id)
-            : platform === 'qq' ? (artist?.mid || artist?.id) : artist?.id
+          const targetId = platform === 'qq' ? (artist?.mid || artist?.id) : artist?.id
           if (targetId) onOpenArtist(String(targetId), platform)
         } : undefined}
         onCopyInfo={onCopyInfo}

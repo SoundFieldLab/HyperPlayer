@@ -3,8 +3,9 @@ import {
   createPlatformEntitlements,
   detectQQMusicVip,
   entitlementSatisfies,
-  entitlementTierFromSpotifyProduct,
+  entitlementTierFromVip,
   getSongRequiredTier,
+  normalizeEntitlementTier,
   shouldShowEntitlementBadge,
 } from '../src/utils/musicEntitlements.ts'
 
@@ -64,10 +65,12 @@ describe('cross-platform entitlement tiers', () => {
     expect(createPlatformEntitlements({ qq: 'vip' })).toMatchObject({ qq: 'vip', netease: 'unknown' })
   })
 
-  it('maps Spotify product evidence', () => {
-    expect(entitlementTierFromSpotifyProduct('premium')).toBe('vip')
-    expect(entitlementTierFromSpotifyProduct('free')).toBe('free')
-    expect(entitlementTierFromSpotifyProduct(undefined)).toBe('unknown')
+  it('normalizes tier evidence from either platform', () => {
+    expect(normalizeEntitlementTier(' SVIP ')).toBe('svip')
+    expect(normalizeEntitlementTier('vip')).toBe('vip')
+    expect(normalizeEntitlementTier(undefined)).toBe('unknown')
+    expect(entitlementTierFromVip(true)).toBe('vip')
+    expect(entitlementTierFromVip(false)).toBe('free')
   })
 
   it('honors explicit requiredTier and treats legacy song.vip as vip', () => {

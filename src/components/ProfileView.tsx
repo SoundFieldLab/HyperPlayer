@@ -20,11 +20,8 @@ import {
   updatePlaylistCover
 } from '../services/playlistService'
 import type { MusicPlatform } from '../services/platforms'
-import { getPlatformCapabilities, getPlatformCookie, platformLabel } from '../services/platforms'
-import { getAppleAuthState } from '../services/appleAuth'
+import { getPlatformCapabilities, platformLabel } from '../services/platforms'
 import { getPlatformRemainingDays } from '../services/loginExpiry'
-import { getAppleLibraryPlaylists, getAppleFavoriteSongs, getAppleRecentPlayed, appleLibraryTrackToSong, createApplePlaylist, deleteApplePlaylist, updateApplePlaylist, getApplePlaylistTracks, getAppleCatalogPlaylistTracks, getAppleLibrarySongs, appleSongToSong, getLastAppleMutationResult, removeAppleTracksFromPlaylist, APPLE_FAVORITES_ID, APPLE_LIBRARY_ID, enrichApplePlaylistTrackCounts } from '../services/appleCatalog'
-import { fetchSpotifyMyPlaylists, fetchSpotifyLiked, fetchSpotifyPlaylist, spotifyTrackToSong } from '../services/spotifyService'
 import { detectQQMusicVip } from '../utils/musicEntitlements'
 
 interface Playlist {
@@ -63,22 +60,6 @@ interface UserDetail {
   follows?: number    // 关注数（网易云）
   playlistCount?: number
   level?: number
-  // Apple 特有字段
-  email?: string       // Apple ID 邮箱
-  realName?: string    // 账单真实姓名
-  billingAddress?: string // 账单寄送地址
-  country?: string     // 国家或地区
-  paymentType?: string // 付款类型
-  accountBalance?: string // Apple 账户余额
-  birthdayStr?: string // 出生日期（account.apple.com，字符串形式）
-  language?: string    // 语言
-  twoFactor?: string   // 双重认证
-  trustedDevices?: string // 受信任设备数
-  passwordUpdated?: string // 密码上次更新
-  notificationEmail?: string // 通知电子邮件
-  signInWithApple?: string // 通过 Apple 登录的 App 数
-  devices?: Array<{ name: string; model: string; icon?: string }> // 关联设备
-  icons?: Record<string, string> // 账户页信息图标（登录时抓取存本地）
   // 网易云特有字段
   eventCount?: number      // 动态数
   newFollows?: number      // 新关注数
@@ -100,12 +81,10 @@ type ProfileTab = 'created' | 'subscribed' | 'detail' | 'recent' | 'social' | 'r
 type RecentPlaybackType = 'song' | 'playlist' | 'album' | 'dj' | 'voice'
 
 // 平台切换轮转顺序（与 App.tsx 的已登录平台轮换一致；仅用于按钮文案/配色）
-const PLATFORM_SWITCH_ORDER: MusicPlatform[] = ['netease', 'qq', 'apple', 'spotify']
+const PLATFORM_SWITCH_ORDER: MusicPlatform[] = ['netease', 'qq']
 const SWITCH_PLATFORM_COLORS: Record<MusicPlatform, string> = {
   netease: 'bg-green-600 hover:bg-green-700 text-white',
   qq: 'bg-red-600 hover:bg-red-700 text-white',
-  apple: 'bg-pink-600 hover:bg-pink-700 text-white',
-  spotify: 'bg-[#1DB954] hover:bg-[#1ED760] text-white',
 }
 
 const formatCount = (value?: number) => {
@@ -218,7 +197,7 @@ const PlaylistGridCard = memo(function PlaylistGridCard({
             <Music className="w-8 h-8 text-white/20" />
           </div>
         )}
-        {(platform === 'qq' || platform === 'apple') && playlist.isLike && (
+        {platform === 'qq' && playlist.isLike && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden="true">
             <Heart
               className="h-[42%] w-[42%] fill-white/75 text-white/75"
@@ -464,8 +443,8 @@ interface ProfileViewProps {
   initialPlatform: MusicPlatform  // 初始显示的平台
   initialTab?: ProfileTab
   canSwitchPlatform: boolean  // 是否可以切换平台
-  userId: string  // 当前平台的用户ID（Apple 无此概念，传空串）
-  cookie: string  // 当前平台的Cookie（Apple 走 token，传空串）
+  userId: string  // 当前平台的用户ID
+  cookie: string  // 当前平台的Cookie
   accentColor?: string  // 主题色
   onClose: () => void
   onSongSelect: (song: Song, playlist?: Song[]) => void
@@ -639,44 +618,6 @@ function ProfileView({
   }
 
   const refreshPlaylistLists = async (showFeedback = false) => {
-    if (platform === 'apple') {
-      setLoading(true)
-      try {
-        const [raw, favoriteTracks] = await Promise.all([
-          getAppleLibraryPlaylists(200),
-          getAppleFavoriteSongs(5000),
-        ])
-        const enriched = await enrichApplePlaylistTrackCounts(raw)
-        const mapped = enriched.map(playlist => ({
-          id: String(playlist.id),
-          name: playlist.name || '未命名歌单',
-          trackCount: Number(playlist.trackCount || 0),
-          coverImgUrl: playlist.artworkUrl || '',
-          description: playlist.description || '',
-          platform: 'apple' as const,
-          isLike: false,
-        }))
-        const favoriteSongs = favoriteTracks.map(track => appleSongToSong(track))
-        setAppleFavoriteSongs(favoriteSongs)
-        setCreatedPlaylists(previous => {
-          const library = previous.find(item => item.id === APPLE_LIBRARY_ID)
-          const favorites = favoriteSongs.length > 0 ? {
-            id: APPLE_FAVORITES_ID,
-            name: `${getAppleAuthState().name || 'Apple Music 用户'} 的喜爱歌曲`,
-            coverImgUrl: favoriteSongs[0]?.album.picUrl || '',
-            trackCount: favoriteSongs.length,
-            platform: 'apple' as const,
-            isLike: true,
-          } : null
-          return [...(favorites ? [favorites] : []), ...(library ? [library] : []), ...mapped]
-        })
-        setSubscribedPlaylists([])
-        if (showFeedback) showPlaylistToast('歌单列表已刷新', 'success')
-      } finally {
-        setLoading(false)
-      }
-      return
-    }
     if (!userId) return
     setLoading(true)
     try {
@@ -715,16 +656,6 @@ function ProfileView({
   const handleCreatePlaylist = async (name: string, privacy: 'public' | 'private', description?: string, coverDataUrl?: string) => {
     setOperationLoading(true)
     try {
-      // Apple：amp-api 创建资料库歌单（描述/封面不受公开接口支持）
-      if (platform === 'apple') {
-        const ok = await createApplePlaylist(name, description)
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '创建 Apple 歌单失败')
-        await refreshPlaylistLists()
-        window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: 'apple', type: 'playlist-list' } }))
-        setShowCreatePlaylist(false)
-        showPlaylistToast('Apple 歌单创建成功', 'success')
-        return
-      }
       const result = await createPlaylist(name, platform, {
         privacy: privacy === 'private' ? '10' : '0',
         type: 'NORMAL',
@@ -766,18 +697,6 @@ function ProfileView({
     if (!managementPlaylist) return
     setOperationLoading(true)
     try {
-      if (platform === 'apple') {
-        const ok = await updateApplePlaylist(String(managementPlaylist.id || ''), {
-          name: data.name,
-          description: data.desc || undefined,
-        })
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '更新 Apple 歌单失败')
-        setShowEditPlaylist(false)
-        await refreshPlaylistLists()
-        window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: 'apple', type: 'playlist-list', playlistId: String(managementPlaylist.id || '') } }))
-        showPlaylistToast('Apple 歌单信息已更新', 'success')
-        return
-      }
       if (platform !== 'netease') return
       const tags = Array.isArray((managementPlaylist as any).tags)
         ? (managementPlaylist as any).tags.join(';')
@@ -812,18 +731,6 @@ function ProfileView({
     if (!managementPlaylist) return
     setOperationLoading(true)
     try {
-      // Apple：删除资料库歌单（amp-api）
-      if (platform === 'apple') {
-        const ok = await deleteApplePlaylist(String(managementPlaylist.id || ''))
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '删除 Apple 歌单失败')
-        setShowDeletePlaylist(false)
-        setManagementPlaylist(null)
-        setShowPlaylistDetail(false)
-        await refreshPlaylistLists()
-        window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: 'apple', type: 'playlist-list' } }))
-        showPlaylistToast('Apple 歌单已删除', 'success')
-        return
-      }
       const deleteId = platform === 'qq' ? managementPlaylist.dirId || managementPlaylist.id : managementPlaylist.id
       const result = await deletePlaylist(deleteId.toString(), platform, { cookie })
       if (!isPlaylistActionSuccessful(result)) {
@@ -892,40 +799,6 @@ function ProfileView({
   const handlePlayPlaylist = async (playlist: Playlist, event: React.MouseEvent) => {
     event.stopPropagation()
     try {
-      // Apple：合成集合直接使用已加载歌曲；真实目录/资料库歌单走对应 API。
-      if (platform === 'apple') {
-        if (playlist.id === APPLE_FAVORITES_ID) {
-          if (appleFavoriteSongs.length > 0) handleSongSelection(appleFavoriteSongs[0], appleFavoriteSongs)
-          else showPlaylistToast('喜爱歌曲中暂无可播放歌曲', 'info')
-          return
-        }
-        if (playlist.id === APPLE_LIBRARY_ID) {
-          if (appleLibrarySongs.length > 0) handleSongSelection(appleLibrarySongs[0], appleLibrarySongs)
-          else showPlaylistToast('音乐库中暂无可播放歌曲', 'info')
-          return
-        }
-        const storefront = localStorage.getItem('appleStorefront') || 'cn'
-        const playlistId = String(playlist.id || '')
-        const tracks = playlistId.startsWith('pl.')
-          ? await getAppleCatalogPlaylistTracks(playlistId, storefront)
-          : await getApplePlaylistTracks(playlistId)
-        const songs = playlistId.startsWith('pl.')
-          ? tracks.map(track => appleSongToSong(track as Parameters<typeof appleSongToSong>[0], storefront))
-          : tracks.map(track => appleLibraryTrackToSong(track as Parameters<typeof appleLibraryTrackToSong>[0]))
-        if (songs.length > 0) handleSongSelection(songs[0], songs)
-        else showPlaylistToast('歌单中暂无可播放歌曲', 'info')
-        return
-      }
-      // Spotify：我的歌单 / 我喜欢的歌曲（曲目经 App 层自动匹配载体）
-      if (platform === 'spotify') {
-        const tracks = playlist.id === 'spotify-liked'
-          ? await fetchSpotifyLiked(50)
-          : await fetchSpotifyPlaylist(String(playlist.id || ''), 50)
-        const songs = tracks.map(track => spotifyTrackToSong(track))
-        if (songs.length > 0) handleSongSelection(songs[0], songs)
-        else showPlaylistToast('歌单中暂无可播放歌曲', 'info')
-        return
-      }
       const response = await fetch(
         platform === 'qq'
           ? `http://localhost:3001/api/qq/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`
@@ -966,25 +839,19 @@ function ProfileView({
   }
 
   const handleRemoveFromPlaylist = async (song: Song, playlistId: string) => {
-    if (!managementPlaylist || managementPlaylist.isLike || managementPlaylist.id === APPLE_LIBRARY_ID) return
-    if (platform !== 'apple' && (
+    if (!managementPlaylist || managementPlaylist.isLike) return
+    if (
       managementPlaylist.isCollected ||
       managementPlaylist.userId?.toString() !== userId.toString()
-    )) return
+    ) return
     setOperationLoading(true)
     try {
-      if (platform === 'apple') {
-        const trackId = song.appleLibraryId || song.appleId || String(song.id)
-        const ok = await removeAppleTracksFromPlaylist(playlistId, [trackId])
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '从 Apple 歌单移除歌曲失败')
-      } else {
-        const result = await removeSongFromPlaylist(playlistId, song.id.toString(), userId, platform, {
-          songMid: song.mid,
-          songType: song.songType,
-        })
-        if (!isPlaylistActionSuccessful(result)) {
-          throw new Error(result?.error || result?.message || '从歌单移除歌曲失败')
-        }
+      const result = await removeSongFromPlaylist(playlistId, song.id.toString(), userId, platform, {
+        songMid: song.mid,
+        songType: song.songType,
+      })
+      if (!isPlaylistActionSuccessful(result)) {
+        throw new Error(result?.error || result?.message || '从歌单移除歌曲失败')
       }
       setPlaylistSongs(previous => previous.filter(item => !(
         isSameSong(item, song)
@@ -1026,9 +893,6 @@ function ProfileView({
   const [selectedPlaylist, setSelectedPlaylist] = useState<any>(null)
   const [playlistSongs, setPlaylistSongs] = useState<Song[]>([])
   const [loadingPlaylistSongs, setLoadingPlaylistSongs] = useState(false)
-  // Apple 合成集合分别维护。
-  const [appleFavoriteSongs, setAppleFavoriteSongs] = useState<Song[]>([])
-  const [appleLibrarySongs, setAppleLibrarySongs] = useState<Song[]>([])
 
   const handleSongSelection = (song: Song, songs?: Song[]) => {
     setShowPlaylistDetail(false)
@@ -1048,46 +912,6 @@ function ProfileView({
     try {
       let response, data
       
-      // Apple：合成集合直接使用已加载歌曲；真实目录/资料库歌单走对应 API。
-      if (platform === 'apple') {
-        if (playlist.id === APPLE_FAVORITES_ID) {
-          setSelectedPlaylist({ ...playlist, platform: 'apple' })
-          setManagementPlaylist({ ...playlist, platform: 'apple' })
-          setPlaylistSongs(appleFavoriteSongs)
-          return
-        }
-        if (playlist.id === APPLE_LIBRARY_ID) {
-          setSelectedPlaylist({ ...playlist, platform: 'apple' })
-          setManagementPlaylist({ ...playlist, platform: 'apple' })
-          setPlaylistSongs(appleLibrarySongs)
-          return
-        }
-        const storefront = localStorage.getItem('appleStorefront') || 'cn'
-        const playlistId = String(playlist.id || '')
-        const tracks = playlistId.startsWith('pl.')
-          ? await getAppleCatalogPlaylistTracks(playlistId, storefront)
-          : await getApplePlaylistTracks(playlistId)
-        const songs = playlistId.startsWith('pl.')
-          ? tracks.map(track => appleSongToSong(track as Parameters<typeof appleSongToSong>[0], storefront))
-          : tracks.map(track => appleLibraryTrackToSong(track as Parameters<typeof appleLibraryTrackToSong>[0]))
-        setSelectedPlaylist({ ...playlist, platform: 'apple' })
-        setManagementPlaylist({ ...playlist, platform: 'apple' })
-        setPlaylistSongs(songs)
-        return
-      }
-      
-      // Spotify：我的歌单 / 我喜欢的歌曲（官方 Web API，曲目经 App 层自动匹配载体）
-      if (platform === 'spotify') {
-        const isLiked = playlist.id === 'spotify-liked'
-        const tracks = isLiked
-          ? await fetchSpotifyLiked(50)
-          : await fetchSpotifyPlaylist(String(playlist.id || ''), 50)
-        setSelectedPlaylist({ ...playlist, platform: 'spotify' })
-        setManagementPlaylist({ ...playlist, platform: 'spotify' })
-        setPlaylistSongs(tracks.map(track => spotifyTrackToSong(track)))
-        return
-      }
-
       if (platform === 'netease') {
         response = await fetch(`http://localhost:3001/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`)
         data = await response.json()
@@ -1270,36 +1094,6 @@ function ProfileView({
     setRecentError('')
     setRecentItems([])
     try {
-      // Apple：最近播放走 amp-api（需登录 token）
-      if (currentPlatform === 'apple') {
-        const tracks = await getAppleRecentPlayed(100)
-        if (recentRequestRef.current.revision !== revision) return
-        setRecentItems(tracks.map((track, index) => ({
-          id: String(track.id || index),
-          type: 'song' as const,
-          name: track.name || '未知歌曲',
-          subtitle: track.artistName || '',
-          coverUrl: track.artworkUrl || '',
-          playTime: 0,
-          song: appleSongToSong(track),
-        })))
-        return
-      }
-      // Spotify：无最近播放官方接口，尽力而为（展示音乐库喜欢的歌曲）
-      if (currentPlatform === 'spotify') {
-        const liked = await fetchSpotifyLiked(50)
-        if (recentRequestRef.current.revision !== revision) return
-        setRecentItems(liked.map((track, index) => ({
-          id: track.id || String(index),
-          type: 'song' as const,
-          name: track.name || '未知歌曲',
-          subtitle: track.artists.map(a => a.name).join(' / '),
-          coverUrl: track.album?.images?.[0]?.url || '',
-          playTime: 0,
-          song: spotifyTrackToSong(track),
-        })))
-        return
-      }
       const requestType = requestPlatform === 'qq' ? 'song' : type
       const endpoint = requestPlatform === 'qq'
         ? 'http://localhost:3001/api/qq/record/recent/song'
@@ -1590,10 +1384,6 @@ function ProfileView({
         trackCountDelta?: number
       }>).detail
       if (!detail || detail.platform !== currentPlatform) return
-      if (currentPlatform === 'apple' && detail.type !== 'like') {
-        void refreshPlaylistLists()
-        return
-      }
       if (detail.type !== 'like') return
 
       setCreatedPlaylists(previous => previous.map(playlist => playlist.isLike
@@ -1626,94 +1416,6 @@ function ProfileView({
     setLoading(true)
     const platform = targetPlatform || (viewTarget?.platform || currentPlatform)
     const uid = activeUserId
-
-    if (platform === 'apple') {
-      // Apple：账号资料 + 资料库歌单 + 音乐库歌曲（amp-api，走 token 登录）
-      const state = getAppleAuthState()
-      setUserDetail({
-        nickname: state.name || 'Apple Music 用户',
-        avatarUrl: state.avatarUrl || '',
-        userId: '', // Apple 无数字 ID，用户 ID 由 Apple ID 邮箱承担（见下方 email 卡片）
-        vipType: 0,
-        // Apple ID 邮箱/账单/账户资料（仅资料展示，不当显示名）
-        email: state.email,
-        realName: state.realName,
-        billingAddress: state.billingAddress,
-        country: state.country,
-        paymentType: state.paymentType,
-        accountBalance: state.accountBalance,
-        birthdayStr: state.birthday,
-        language: state.language,
-        twoFactor: state.twoFactor,
-        trustedDevices: state.trustedDevices,
-        passwordUpdated: state.passwordUpdated,
-        notificationEmail: state.notificationEmail,
-        signInWithApple: state.signInWithApple,
-        devices: state.devices,
-        icons: state.icons,
-      })
-      if (!state.loggedIn) {
-        setCreatedPlaylists([])
-        setSubscribedPlaylists([])
-        setLoading(false)
-        return
-      }
-      const [playlistsRes, libraryRes, favoritesRes] = await Promise.allSettled([
-        getAppleLibraryPlaylists(200),
-        getAppleLibrarySongs(500),
-        getAppleFavoriteSongs(5000),
-      ])
-      if (playlistsRes.status === 'fulfilled') {
-        // 列表接口对喜爱歌曲/收藏类歌单不返回 trackCount → 补拉曲目数（否则卡片显示空）
-        const enriched = await enrichApplePlaylistTrackCounts(playlistsRes.value)
-        const mappedPlaylists = enriched.map(playlist => ({
-          id: String(playlist.id),
-          name: playlist.name || '未命名歌单',
-          trackCount: Number(playlist.trackCount || 0),
-          coverImgUrl: playlist.artworkUrl || '',
-          description: playlist.description || '',
-          platform: 'apple' as const,
-          isLike: false,
-        }))
-        setCreatedPlaylists(mappedPlaylists)
-      }
-      if (favoritesRes.status === 'fulfilled') {
-        const favoriteSongs = favoritesRes.value.map(track => appleSongToSong(track))
-        setAppleFavoriteSongs(favoriteSongs)
-        if (favoriteSongs.length > 0) {
-          setCreatedPlaylists(previous => [{
-            id: APPLE_FAVORITES_ID,
-            name: `${getAppleAuthState().name || 'Apple Music 用户'} 的喜爱歌曲`,
-            coverImgUrl: favoriteSongs[0]?.album.picUrl || '',
-            trackCount: favoriteSongs.length,
-            description: 'Apple Music 中标记为喜爱的歌曲',
-            platform: 'apple',
-            isLike: true,
-          }, ...previous.filter(item => item.id !== APPLE_FAVORITES_ID)])
-        }
-      }
-      if (libraryRes.status === 'fulfilled') {
-        const librarySongs = libraryRes.value.map(track => appleLibraryTrackToSong(track))
-        setAppleLibrarySongs(librarySongs)
-        // 「我的音乐库」= 全部收藏歌曲，以伪歌单置于歌单列表顶部（非喜爱，不打爱心）
-        if (librarySongs.length > 0) {
-          setCreatedPlaylists(previous => [
-            {
-              id: APPLE_LIBRARY_ID,
-              name: '我的音乐库',
-              coverImgUrl: librarySongs[0]?.album.picUrl || '',
-              trackCount: librarySongs.length,
-              description: 'Apple 音乐库中收藏的全部歌曲',
-              platform: 'apple',
-            },
-            ...previous,
-          ])
-        }
-      }
-      setSubscribedPlaylists([])
-      setLoading(false)
-      return
-    }
 
     if (platform === 'netease') {
       try {
@@ -1829,55 +1531,6 @@ function ProfileView({
           userId: userId
         })
       }
-    } else if (platform === 'spotify') {
-      // Spotify：账号资料 + 我的歌单 + 我喜欢的歌曲（官方 Web API）
-      const username = localStorage.getItem('spotify_username') || ''
-      const avatar = localStorage.getItem('spotify_avatar') || ''
-      const spotifyUid = localStorage.getItem('spotify_user_id') || ''
-      setUserDetail({
-        nickname: username || 'Spotify 用户',
-        avatarUrl: avatar || '',
-        userId: spotifyUid,
-      })
-      if (!getPlatformCookie('spotify')) {
-        setCreatedPlaylists([])
-        setSubscribedPlaylists([])
-        setLoading(false)
-        return
-      }
-      const playlists: Playlist[] = []
-      try {
-        const [playlistsRes, likedRes] = await Promise.allSettled([
-          fetchSpotifyMyPlaylists(50),
-          fetchSpotifyLiked(50),
-        ])
-        if (playlistsRes.status === 'fulfilled') {
-          for (const item of playlistsRes.value) {
-            playlists.push({
-              id: item.id,
-              name: item.name || '未命名歌单',
-              coverImgUrl: item.coverUrl || '',
-              trackCount: 0,
-              platform: 'spotify',
-            })
-          }
-        }
-        if (likedRes.status === 'fulfilled' && likedRes.value.length > 0) {
-          playlists.unshift({
-            id: 'spotify-liked',
-            name: `${username || '我'} 喜欢的歌曲`,
-            coverImgUrl: likedRes.value[0]?.album?.images?.[0]?.url || '',
-            trackCount: likedRes.value.length,
-            description: 'Spotify 音乐库中喜欢的歌曲',
-            platform: 'spotify',
-            isLike: true,
-          })
-        }
-      } catch (error) {
-        console.error('获取 Spotify 用户数据失败:', error)
-      }
-      setCreatedPlaylists(playlists)
-      setSubscribedPlaylists([])
     }
 
     setLoading(false)
@@ -2728,166 +2381,14 @@ function ProfileView({
                       <div className="grid grid-cols-2 gap-4">
                         <div className="bg-white/5 rounded-lg p-4">
                           <div className="text-white/50 text-sm mb-1">用户ID</div>
-                          {/* Apple 无数字 ID：用户 ID 即 Apple ID 邮箱 */}
-                          <div className="text-white font-medium break-all">{platform === 'apple' ? userDetail.email || userDetail.userId : userDetail.userId}</div>
+                          <div className="text-white font-medium break-all">{userDetail.userId}</div>
                         </div>
-
-                        {/* Apple：Apple ID 邮箱 */}
-                        {userDetail.email && platform === 'apple' && (
-                          <div className="bg-white/5 rounded-lg p-4">
-                            <div className="text-white/50 text-sm mb-1">Apple ID</div>
-                            <div className="text-white font-medium break-all">{userDetail.email}</div>
-                          </div>
-                        )}
-
-                        {/* Apple：真实姓名（账单名，仅资料展示） */}
-                        {userDetail.realName && platform === 'apple' && (
-                          <div className="bg-white/5 rounded-lg p-4">
-                            <div className="text-white/50 text-sm mb-1">真实姓名</div>
-                            <div className="text-white font-medium">{userDetail.realName}</div>
-                          </div>
-                        )}
-
-                        {/* Apple：出生日期 */}
-                        {userDetail.birthdayStr && platform === 'apple' && (
-                          <div className="bg-white/5 rounded-lg p-4 relative overflow-hidden">
-                            {userDetail.icons?.birthday && (
-                              <span
-                                className="absolute top-3 right-3 h-9 w-9 opacity-25"
-                                style={{ backgroundColor: accentColor, WebkitMaskImage: `url(${userDetail.icons.birthday})`, maskImage: `url(${userDetail.icons.birthday})`, WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center', WebkitMaskSize: 'contain', maskSize: 'contain' }}
-                              />
-                            )}
-                            <div className="text-white/50 text-sm mb-1">出生日期</div>
-                            <div className="text-white font-medium">{userDetail.birthdayStr}</div>
-                          </div>
-                        )}
-
-                        {/* Apple：国家或地区 */}
-                        {userDetail.country && platform === 'apple' && (
-                          <div className="bg-white/5 rounded-lg p-4 relative overflow-hidden">
-                            {userDetail.icons?.country && (
-                              <span
-                                className="absolute top-3 right-3 h-9 w-9 opacity-25"
-                                style={{ backgroundColor: accentColor, WebkitMaskImage: `url(${userDetail.icons.country})`, maskImage: `url(${userDetail.icons.country})`, WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center', WebkitMaskSize: 'contain', maskSize: 'contain' }}
-                              />
-                            )}
-                            <div className="text-white/50 text-sm mb-1">国家或地区</div>
-                            <div className="text-white font-medium">{userDetail.country}</div>
-                          </div>
-                        )}
-
-                        {/* Apple：语言 */}
-                        {userDetail.language && platform === 'apple' && (
-                          <div className="bg-white/5 rounded-lg p-4 relative overflow-hidden">
-                            {userDetail.icons?.language && (
-                              <span
-                                className="absolute top-3 right-3 h-9 w-9 opacity-25"
-                                style={{ backgroundColor: accentColor, WebkitMaskImage: `url(${userDetail.icons.language})`, maskImage: `url(${userDetail.icons.language})`, WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center', WebkitMaskSize: 'contain', maskSize: 'contain' }}
-                              />
-                            )}
-                            <div className="text-white/50 text-sm mb-1">语言</div>
-                            <div className="text-white font-medium">{userDetail.language}</div>
-                          </div>
-                        )}
-
-                        {/* Apple：账单寄送地址（仅资料展示） */}
-                        {userDetail.billingAddress && platform === 'apple' && (
-                          <div className="bg-white/5 rounded-lg p-4 col-span-2">
-                            <div className="text-white/50 text-sm mb-1">账单寄送地址</div>
-                            <div className="text-white font-medium break-all">{userDetail.billingAddress}</div>
-                          </div>
-                        )}
-
-                        {/* Apple：付款类型 */}
-                        {userDetail.paymentType && platform === 'apple' && (
-                          <div className="bg-white/5 rounded-lg p-4">
-                            <div className="text-white/50 text-sm mb-1">付款类型</div>
-                            <div className="text-white font-medium break-all">{userDetail.paymentType}</div>
-                          </div>
-                        )}
-
-                        {/* Apple：账户余额 */}
-                        {userDetail.accountBalance && platform === 'apple' && (
-                          <div className="bg-white/5 rounded-lg p-4">
-                            <div className="text-white/50 text-sm mb-1">Apple 账户余额</div>
-                            <div className="text-white font-medium">{userDetail.accountBalance}</div>
-                          </div>
-                        )}
 
                         {userDetail.level !== undefined && (
                           <div className="bg-white/5 rounded-lg p-4">
                             <div className="text-white/50 text-sm mb-1">等级</div>
                             <div className="text-white font-medium">Lv.{userDetail.level}</div>
                           </div>
-                        )}
-
-                        {/* Apple：账户安全（登录与安全性页） */}
-                        {(userDetail.twoFactor || userDetail.trustedDevices || userDetail.passwordUpdated || userDetail.notificationEmail || userDetail.signInWithApple) && platform === 'apple' && (
-                          <>
-                            {/* 第一行：双重认证（左） + 通过 Apple 登录（右） */}
-                            {userDetail.twoFactor && (
-                              <div className="bg-white/5 rounded-lg p-4 relative overflow-hidden">
-                                {/* 主题色图标（右上角，融入卡片） */}
-                                {userDetail.icons?.security && (
-                                  <span
-                                    className="absolute top-3 right-3 h-9 w-9 object-contain opacity-25"
-                                    style={{ backgroundColor: accentColor, WebkitMaskImage: `url(${userDetail.icons.security})`, maskImage: `url(${userDetail.icons.security})`, WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center', WebkitMaskSize: 'contain', maskSize: 'contain' }}
-                                  />
-                                )}
-                                <div className="text-white/50 text-sm mb-1">双重认证</div>
-                                <div className="text-white font-medium">{userDetail.twoFactor}</div>
-                              </div>
-                            )}
-                            {userDetail.signInWithApple && (
-                              <div className="bg-white/5 rounded-lg p-4 relative overflow-hidden">
-                                {userDetail.icons?.apple && (
-                                  <span
-                                    className="absolute top-3 right-3 h-9 w-9 object-contain opacity-25"
-                                    style={{ backgroundColor: accentColor, WebkitMaskImage: `url(${userDetail.icons.apple})`, maskImage: `url(${userDetail.icons.apple})`, WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center', WebkitMaskSize: 'contain', maskSize: 'contain' }}
-                                  />
-                                )}
-                                <div className="text-white/50 text-sm mb-1">通过 Apple 登录</div>
-                                <div className="text-white font-medium break-all">{userDetail.signInWithApple}</div>
-                              </div>
-                            )}
-                            {/* 第二行：受信任设备（仅当无 signInWithApple 时，否则单独成行） */}
-                            {userDetail.trustedDevices && !userDetail.signInWithApple && (
-                              <div className="bg-white/5 rounded-lg p-4 relative overflow-hidden">
-                                {userDetail.icons?.security && (
-                                  <span
-                                    className="absolute top-3 right-3 h-9 w-9 object-contain opacity-25"
-                                    style={{ backgroundColor: accentColor, WebkitMaskImage: `url(${userDetail.icons.security})`, maskImage: `url(${userDetail.icons.security})`, WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center', WebkitMaskSize: 'contain', maskSize: 'contain' }}
-                                  />
-                                )}
-                                <div className="text-white/50 text-sm mb-1">受信任设备</div>
-                                <div className="text-white font-medium">{userDetail.trustedDevices} 台</div>
-                              </div>
-                            )}
-                            {userDetail.passwordUpdated && (
-                              <div className="bg-white/5 rounded-lg p-4 col-span-2 relative overflow-hidden">
-                                {userDetail.icons?.password && (
-                                  <span
-                                    className="absolute top-3 right-3 h-9 w-9 object-contain opacity-25"
-                                    style={{ backgroundColor: accentColor, WebkitMaskImage: `url(${userDetail.icons.password})`, maskImage: `url(${userDetail.icons.password})`, WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center', WebkitMaskSize: 'contain', maskSize: 'contain' }}
-                                  />
-                                )}
-                                <div className="text-white/50 text-sm mb-1">密码上次更新</div>
-                                <div className="text-white font-medium">{userDetail.passwordUpdated}</div>
-                              </div>
-                            )}
-                            {userDetail.notificationEmail && (
-                              <div className="bg-white/5 rounded-lg p-4 col-span-2 relative overflow-hidden">
-                                {userDetail.icons?.notification && (
-                                  <span
-                                    className="absolute top-3 right-3 h-9 w-9 object-contain opacity-25"
-                                    style={{ backgroundColor: accentColor, WebkitMaskImage: `url(${userDetail.icons.notification})`, maskImage: `url(${userDetail.icons.notification})`, WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center', WebkitMaskSize: 'contain', maskSize: 'contain' }}
-                                  />
-                                )}
-                                <div className="text-white/50 text-sm mb-1">通知电子邮件</div>
-                                <div className="text-white font-medium break-all">{userDetail.notificationEmail}</div>
-                              </div>
-                            )}
-                          </>
                         )}
 
                         {/* QQ音乐：听歌等级 */}
@@ -3083,11 +2584,9 @@ function ProfileView({
         onCopyInfo={onCopyInfo}
         onRemoveFromPlaylist={
           (
-            platform === 'apple'
-              ? Boolean(managementPlaylist) && !managementPlaylist?.isLike && managementPlaylist?.id !== APPLE_LIBRARY_ID
-              : managementPlaylist?.userId?.toString() === userId.toString() &&
-                !managementPlaylist?.isLike &&
-                !managementPlaylist?.isCollected
+            managementPlaylist?.userId?.toString() === userId.toString() &&
+            !managementPlaylist?.isLike &&
+            !managementPlaylist?.isCollected
           )
             ? handleRemoveFromPlaylist
             : undefined
@@ -3110,13 +2609,11 @@ function ProfileView({
         }}
         onSubscribe={handleSubscribePlaylist}
         onShare={handleSharePlaylist}
-        isOwner={platform === 'apple'
-          ? Boolean(playlistContextMenu.playlist) && !playlistContextMenu.playlist?.isLike && playlistContextMenu.playlist?.id !== APPLE_LIBRARY_ID
-          : playlistContextMenu.playlist?.userId?.toString() === userId.toString()}
+        isOwner={playlistContextMenu.playlist?.userId?.toString() === userId.toString()}
         isSubscribed={Boolean(playlistContextMenu.playlist?.isCollected || playlistContextMenu.playlist?.subscribed)}
-        isSpecialPlaylist={Boolean(playlistContextMenu.playlist?.isLike || playlistContextMenu.playlist?.id === APPLE_LIBRARY_ID)}
-        canEdit={platform === 'netease' || platform === 'apple'}
-        canShare={platform !== 'apple' || String(playlistContextMenu.playlist?.id || '').startsWith('pl.')}
+        isSpecialPlaylist={Boolean(playlistContextMenu.playlist?.isLike)}
+        canEdit={platform === 'netease'}
+        canShare
       />
 
       {recentSongContextMenu.song && (
@@ -3145,8 +2642,7 @@ function ProfileView({
           onViewArtist={onOpenArtist ? (song) => {
             const songPlatform = song.platform || platform
             const artist = song.artists?.[0]
-            const artistId = songPlatform === 'qq' ? (artist?.mid || artist?.id)
-              : songPlatform === 'apple' ? (artist?.appleId || artist?.id) : artist?.id
+            const artistId = songPlatform === 'qq' ? (artist?.mid || artist?.id) : artist?.id
             if (artistId) onOpenArtist(String(artistId), songPlatform)
           } : undefined}
           onCopyInfo={onCopyInfo}

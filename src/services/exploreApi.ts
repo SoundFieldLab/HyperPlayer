@@ -3,11 +3,6 @@ import { getPlatformCookie } from './platforms'
 import { getApiBase } from './apiConfig'
 import type { Song } from './musicApi'
 import { getQQMusicSkillHeaders } from './qqMusicSkills'
-import { fetchAppleExplorePayload } from './appleExploreService'
-import {
-  appleSongToSong,
-  getAppleCatalogPlaylistTracks,
-} from './appleCatalog'
 
 const API_BASES = [getApiBase()]
 const EXPLORE_MEMORY_CACHE_TTL = 9 * 60 * 1000
@@ -30,12 +25,7 @@ function fingerprintExploreValue(value: string): string {
   return (hash >>> 0).toString(36)
 }
 
-function getExploreHomeCacheKey(platform: ExplorePlatform, appleCountry?: string): string {
-  // Apple 无 cookie，按商店区分缓存
-  if (platform === 'apple') {
-    const storefront = appleCountry || localStorage.getItem('appleStorefront') || 'cn'
-    return `apple:${storefront}`
-  }
+function getExploreHomeCacheKey(platform: ExplorePlatform): string {
   const userIdKey = platform === 'qq' ? 'qq_user_id' : platform === 'netease' ? 'netease_user_id' : `${platform}_user_id`
   const userId = localStorage.getItem(userIdKey) || ''
   const cookie = getExploreCookie(platform)
@@ -61,17 +51,15 @@ export interface ExplorePlaylist {
   playCount?: number
   trackCount?: number
   creator?: string
-  /** 歌单仅来自网易云/QQ（Apple 探索不产出歌单） */
+  /** 歌单仅来自网易云/QQ */
   platform: MusicPlatform
   source?: 'personalized' | 'community' | 'qqmusic-skills' | string
 }
 
 export interface ExploreChartSong {
   id?: number
-  /** 平台歌曲标识（QQ mid / Apple 目录 id 等），用于直接播放 */
+  /** 平台歌曲标识（QQ mid 等），用于直接播放 */
   mid?: string
-  /** Apple 目录曲目 id（原生取流 salableAdamId）；缺失时只能回退载体匹配 */
-  appleId?: string
   name: string
   artist: string
   coverUrl?: string
@@ -319,9 +307,9 @@ async function syncQQExploreCookie(cookie: string, signal?: AbortSignal): Promis
 export async function fetchExploreHome(
   platform: ExplorePlatform,
   signal?: AbortSignal,
-  options: { forceRefresh?: boolean; enhanced?: boolean; appleCountry?: string } = {}
+  options: { forceRefresh?: boolean; enhanced?: boolean } = {}
 ): Promise<ExplorePayload> {
-  const cacheKey = getExploreHomeCacheKey(platform, options.appleCountry)
+  const cacheKey = getExploreHomeCacheKey(platform)
   if (!options.forceRefresh) {
     const cached = exploreHomeMemoryCache.get(cacheKey)
     if (cached && cached.expiresAt > Date.now()) return cached.payload
@@ -330,88 +318,6 @@ export async function fetchExploreHome(
   }
 
   const request = (async () => {
-  // Apple：客户端组装（RSS + amp-api），不走服务端 /explore/apple
-  if (platform === 'apple') {
-    const storefront = options.appleCountry || localStorage.getItem('appleStorefront') || 'cn'
-    const payload = await fetchAppleExplorePayload(storefront)
-    exploreHomeMemoryCache.set(cacheKey, {
-      payload,
-      expiresAt: Date.now() + EXPLORE_MEMORY_CACHE_TTL
-    })
-    return payload
-  }
-  // Spotify：官方 Web API（需登录 token；未登录返回空 payload，区块自动隐藏）
-  if (platform === 'spotify') {
-    const { fetchSpotifyNewReleases, fetchSpotifyFeaturedPlaylists, fetchSpotifyCharts, spotifyTrackToSong } = await import('./spotifyService')
-    const [releasesRes, playlistsRes, chartsRes] = await Promise.allSettled([
-      fetchSpotifyNewReleases(30),
-      fetchSpotifyFeaturedPlaylists(24),
-      fetchSpotifyCharts(),
-    ])
-    const releases = releasesRes.status === 'fulfilled' ? releasesRes.value : []
-    const albums: ExploreAlbum[] = releases.map(item => ({
-      id: Number(parseInt(item.id.slice(0, 12), 36)) || 0,
-      mid: item.id,
-      name: item.name,
-      artist: item.artists.map(artist => artist.name).join(' / '),
-      coverUrl: item.coverUrl || '',
-      platform: 'spotify',
-    }))
-    // 新发行接口返回专辑：以"专辑首唱"形式呈现新鲜内容
-    const newSongs: Song[] = releases.map(item => ({
-      id: Number(parseInt(item.id.slice(0, 12), 36)) || 0,
-      mid: item.id,
-      name: item.name,
-      artists: item.artists.map(artist => ({ name: artist.name })),
-      album: { name: item.name, picUrl: item.coverUrl || '' },
-      duration: 0,
-      platform: 'spotify',
-      fee: 0,
-      songType: 1,
-      fusedSources: [],
-    }))
-    // 榜单：官方 Top 榜歌单（Global Top 50 / Viral 50）
-    const charts: ExploreChart[] = (chartsRes.status === 'fulfilled' ? chartsRes.value : []).map(chart => ({
-      id: `sp-${chart.id}`,
-      name: chart.name,
-      group: 'Spotify',
-      description: `${chart.name} · Spotify 官方榜单`,
-      coverUrl: chart.coverUrl || '',
-      updateText: '每周更新',
-      platform: 'spotify' as const,
-      source: 'spotify-chart',
-      songs: chart.songs.slice(0, 30).map((track, index) => ({
-        mid: track.id,
-        name: track.name,
-        artist: track.artists.map(a => a.name).join(' / '),
-        coverUrl: track.album?.images?.[0]?.url,
-        rank: index + 1,
-      })),
-    })).filter(chart => chart.songs.length > 0)
-    const payload: ExplorePayload = {
-      code: 0,
-      platform: 'spotify',
-      officialEnhanced: false,
-      personalized: Boolean(localStorage.getItem('spotify_access_token')),
-      dailySongs: [],
-      radioSongs: [],
-      newSongs,
-      playlists: (playlistsRes.status === 'fulfilled' ? playlistsRes.value : []).map(item => ({
-        id: item.id,
-        name: item.name,
-        coverUrl: item.coverUrl || '',
-        platform: 'spotify',
-        source: 'spotify-featured',
-        creator: 'Spotify 编辑精选',
-      })),
-      charts,
-      albums,
-      channels: [],
-      meta: { source: 'spotify-web-api', updatedAt: Date.now() },
-    }
-    exploreHomeMemoryCache.set(cacheKey, { payload, expiresAt: Date.now() + EXPLORE_MEMORY_CACHE_TTL })
-    return payload
-  }
   // enhanced=false：关闭平台增强（不传 cookie，后端只返回公开榜单/热门，不请求个性化推荐）
   const cookie = options.enhanced === false ? '' : getExploreCookie(platform)
   if (platform === 'qq') {
@@ -515,8 +421,6 @@ export async function fetchExploreRecommendationBatch(
   excludeSongKeys: string[] = [],
   signal?: AbortSignal
 ): Promise<Song[]> {
-  // Apple/Spotify 无连续电台接口
-  if (platform === 'apple' || platform === 'spotify') return []
   const cookie = getExploreCookie(platform)
   if (platform === 'qq') {
     return fetchQQGuessYouLikeBatch(batch, excludeSongKeys, signal)
@@ -535,44 +439,6 @@ export async function fetchExploreRecommendationBatch(
 }
 
 export async function fetchExplorePlaylist(playlist: ExplorePlaylist, signal?: AbortSignal): Promise<ExploreDetail> {
-  // Apple 编辑/热门歌单：amp-api catalog 曲目（需 dev token；无 token 返回空歌单）
-  if (playlist.platform === 'apple') {
-    const storefront = localStorage.getItem('appleStorefront') || 'cn'
-    const tracks = await getAppleCatalogPlaylistTracks(playlist.id, storefront)
-    const songs = tracks.map(track => appleSongToSong(track, storefront))
-    return {
-      playlist: {
-        ...playlist,
-        creator: typeof playlist.creator === 'string' ? { nickname: playlist.creator } : playlist.creator,
-        id: playlist.id,
-        name: playlist.name,
-        coverImgUrl: playlist.coverUrl,
-        trackCount: songs.length || playlist.trackCount || 0,
-        description: playlist.description || '',
-        platform: 'apple',
-      },
-      songs,
-    }
-  }
-  // Spotify 歌单：官方 Web API 曲目
-  if (playlist.platform === 'spotify') {
-    const { fetchSpotifyPlaylist, spotifyTrackToSong } = await import('./spotifyService')
-    const tracks = await fetchSpotifyPlaylist(playlist.id)
-    const songs = tracks.map(spotifyTrackToSong)
-    return {
-      playlist: {
-        ...playlist,
-        creator: typeof playlist.creator === 'string' ? { nickname: playlist.creator } : playlist.creator,
-        id: playlist.id,
-        name: playlist.name,
-        coverImgUrl: playlist.coverUrl,
-        trackCount: songs.length || playlist.trackCount || 0,
-        description: playlist.description || '',
-        platform: 'spotify',
-      },
-      songs,
-    }
-  }
   const cookie = getExploreCookie(playlist.platform)
   const data = await fetchExploreJson(`/${playlist.platform}/playlist/detail`, {
     id: playlist.id,
@@ -609,53 +475,6 @@ export async function fetchExplorePlaylist(playlist: ExplorePlaylist, signal?: A
 }
 
 export async function fetchExploreChart(chart: ExploreChart, signal?: AbortSignal): Promise<ExploreDetail> {
-  // Apple：榜单数据客户端已带（charts 携带歌曲列表），无需服务端
-  if (chart.platform === 'apple') {
-    const songs: Song[] = chart.songs.map(song => ({
-      id: typeof song.id === 'number' ? song.id : Number(song.id) || 0,
-      // appleId 是原生取流的唯一依据：缺了就只能回退 QQ/网易云 载体匹配
-      appleId: song.appleId || undefined,
-      name: song.name,
-      artists: song.artist ? [{ name: song.artist }] : [],
-      album: { name: '', picUrl: song.coverUrl || '' },
-      duration: 0,
-      platform: 'apple',
-    }))
-    return {
-      playlist: {
-        id: chart.id,
-        name: chart.name,
-        coverImgUrl: chart.coverUrl,
-        trackCount: songs.length,
-        description: chart.description || '',
-        platform: 'apple',
-      },
-      songs,
-    }
-  }
-  // Spotify 榜单：客户端已带歌曲列表（官方 Top 榜歌单），无需服务端
-  if (chart.platform === 'spotify') {
-    const songs: Song[] = chart.songs.map(song => ({
-      id: typeof song.id === 'number' ? song.id : Number(song.id) || 0,
-      mid: song.mid || (typeof song.id === 'number' ? '' : String(song.id || '')),
-      name: song.name,
-      artists: song.artist ? [{ name: song.artist }] : [],
-      album: { name: '', picUrl: song.coverUrl || '' },
-      duration: 0,
-      platform: 'spotify',
-    }))
-    return {
-      playlist: {
-        id: chart.id,
-        name: chart.name,
-        coverImgUrl: chart.coverUrl,
-        trackCount: songs.length,
-        description: chart.description || '',
-        platform: 'spotify',
-      },
-      songs,
-    }
-  }
   const cookie = getExploreCookie(chart.platform)
   let lastResult: ExploreDetail | null = null
   let lastError: unknown

@@ -1,18 +1,6 @@
 ﻿import { debugLog } from '../utils/debugLog'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  onStateChange as onBridgeStateChange,
-  getState as getBridgeState,
-  bridgePause,
-  bridgeResume,
-  bridgeSeek,
-  bridgeVolume,
-  bridgeFade,
-  bridgeStopPlayback,
-} from '../services/appleWebViewBridge'
 import { autoMixAnalysisService } from '../services/autoMixAnalysisService'
-import { releaseAppleNativeStream, type AppleNativeStream } from '../services/applePlayback'
-import { isHlsUrl, attachAppleHls, detachAppleHls, getActiveAppleStream, getActiveHls } from '../services/appleHlsPlayer'
 import { planTransition } from '../audio/transitionPlanner'
 import { createPlaybackTimeStore } from '../audio/playbackTimeStore'
 import { GaplessIntegration } from '../services/gaplessIntegration'
@@ -90,13 +78,14 @@ function asPreloadTrack(input: string | PreloadTrack): PreloadTrack {
   return typeof input === 'string' ? { url: input } : input
 }
 
+/** 相邻边过渡策略：只由用户设置决定（两侧 deck 的处理方式一致；
+ *  保留 current/next 形参以表达"相邻边"语义，调用方无需改动）。 */
 export function resolvePairTransitionStrategy(
-  current: Pick<PreloadTrack, 'appleHls'> | null | undefined,
-  next: Pick<PreloadTrack, 'appleHls'> | null | undefined,
+  current: PreloadTrack | null | undefined,
+  next: PreloadTrack | null | undefined,
   settings: { autoMix: boolean; crossfade: boolean; gapless: boolean },
 ): TransitionStrategy | 'automix' {
-  const applePair = Boolean(current?.appleHls || next?.appleHls)
-  if (settings.autoMix) return applePair ? 'gapless' : 'automix'
+  if (settings.autoMix) return 'automix'
   if (settings.crossfade) return 'fixed-crossfade'
   if (settings.gapless) return 'gapless'
   return 'none'
@@ -267,7 +256,6 @@ export function useAudioPlayer(
   const retiredDeckCleanupTimerRef = useRef<number | null>(null)
   const preparationAbortRef = useRef<AbortController | null>(null)
   const autoMixPreparationKeyRef = useRef<string | null>(null)
-  const acceptanceAutoMixAnalysisStartsRef = useRef(0)
   // REPREPARE 状态：组合级"已就绪"集合 + 失败尝试记录 + 定时重试句柄
   const autoMixPreparedOkRef = useRef<Set<string>>(new Set())
   const autoMixPreparationAttemptsRef = useRef<Map<string, { attempts: number; lastAt: number }>>(new Map())
@@ -285,7 +273,7 @@ export function useAudioPlayer(
   const currentLoadRevisionRef = useRef(0)
   const currentMetadataRef = useRef<DeckMetadata | null>(null)
   const nextMetadataRef = useRef<DeckMetadata | null>(null)
-  /** 当前曲是否为直播流（Apple 电台）：时长按 Infinity 处理，UI 显示直播态 */
+  /** 当前曲是否为直播流：无直播音源时恒为 false（UI 直播态显示用） */
   const isLiveRef = useRef(false)
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodesRef = useRef<[GainNode | null, GainNode | null]>([null, null])
@@ -297,19 +285,6 @@ export function useAudioPlayer(
   const seamlessJoinControllerRef = useRef<SeamlessJoinController | null>(null)
   const playAtCallbackRef = useRef<((index: number, options: any) => Promise<boolean>) | null>(null)
   const [playbackTimeStore] = useState(createPlaybackTimeStore)
-
-  // ── 外部播放源模式（WebView2 播放面）──
-  // 音频在 WebView2 兼容播放窗口中解密播放，本地 deck 无 src；
-  // 状态经 bridge 轮询 → emit 管线分发，控制命令转发 bridge（见 togglePlay/seek/setVolume 分流）。
-  const externalActiveRef = useRef(false)
-  const externalUnsubscribeRef = useRef<(() => void) | null>(null)
-  const externalEndedFiredRef = useRef(false)
-  const externalDurationRef = useRef(0)
-  /** 基础交叉淡化：淡出斜坡在途标记（seek 出窗口/暂停时复位并恢复音量） */
-  const externalFadeActiveRef = useRef(false)
-  /** 上一首带淡出尾自然结束 → 下一首（Apple 或本地 deck）做淡入头（基础交叉的"入"半边） */
-  const externalEndedWithFadeRef = useRef(false)
-  useEffect(() => () => { try { externalUnsubscribeRef.current?.() } catch { /* 卸载清理 */ } }, [])
 
   useEffect(() => { onStateChangeRef.current = onStateChange }, [onStateChange])
   useEffect(() => { crossfadeRef.current = crossfadeSettings }, [crossfadeSettings])
@@ -328,7 +303,7 @@ export function useAudioPlayer(
     onStateChangeRef.current(state)
   }, [])
 
-  /** 直播流（HLS Infinity）等异常时长收敛为 0（UI 依赖有限值显示/拖动） */
+  /** 直播流（时长 Infinity）等异常时长收敛为 0（UI 依赖有限值显示/拖动） */
   const finiteDuration = useCallback((value: number | undefined): number => {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
   }, [])
@@ -465,14 +440,10 @@ export function useAudioPlayer(
     if (standby && !standby.paused) standby.pause()
     transitionPlanRef.current = null
     if (!preserveNext) {
-      const abandonedStream = nextMetadataRef.current?.appleHls
-      const attachedStream = getActiveAppleStream(standby)
       if (standby) {
-        detachAppleHls(standby)
         standby.removeAttribute('src')
         standby.load()
       }
-      if (abandonedStream && attachedStream !== abandonedStream) releaseAppleNativeStream(abandonedStream)
       nextMetadataRef.current = null
     }
     if (announceCancellation && transitionStateRef.current !== 'idle' && transitionStateRef.current !== 'playing') {
@@ -535,7 +506,6 @@ export function useAudioPlayer(
     if (strategy !== 'gapless') {
       source?.pause()
       if (source) {
-        detachAppleHls(source)
         source.currentTime = 0
         source.removeAttribute('src')
         source.load()
@@ -554,7 +524,6 @@ export function useAudioPlayer(
           const stillStandby = getStandbyAudio() === source
           const sourceUnchanged = (source.currentSrc || source.src) === retiredSource
           if (stillStandby && sourceUnchanged && source.paused) {
-            detachAppleHls(source)
             source.removeAttribute('src')
             source.load()
           }
@@ -858,7 +827,6 @@ export function useAudioPlayer(
       console.error('❌ [Transition] 过渡失败:', error)
       target.pause()
       if (nextMetadataRef.current?.trackKey === targetMetadata.trackKey) {
-        detachAppleHls(target)
         nextMetadataRef.current = null
       }
       setDeckGain(getStandbyGain(), target, 0)
@@ -885,26 +853,6 @@ export function useAudioPlayer(
     }
     const current = currentMetadataRef.current
     const next = nextMetadataRef.current
-    const pairStrategy = resolvePairTransitionStrategy(current, next, {
-      autoMix: autoMixRef.current.enabled,
-      crossfade: crossfadeRef.current.enabled,
-      gapless: gaplessRef.current.enabled,
-    })
-    if (pairStrategy === 'gapless' && (current?.appleHls || next?.appleHls)) {
-      preparationRevisionRef.current += 1
-      preparationAbortRef.current?.abort()
-      preparationAbortRef.current = null
-      autoMixPreparationKeyRef.current = null
-      transitionPlanRef.current = null
-      debugLog('🍎 [AutoMix] Apple CENC 相邻边降级为 Gapless，不执行离线分析或渲染')
-      setTransitionState('armed', {
-        transitioning: false,
-        transitionStrategy: 'gapless',
-        fallbackReason: 'Apple CENC pair uses gapless',
-        transitionStartTime: current?.duration || null,
-      })
-      return
-    }
     
     debugLog('🔍 [AutoMix] prepareAutoMix 被调用')
     debugLog('🔍 [AutoMix] autoMix 设置:', autoMixRef.current)
@@ -1024,7 +972,6 @@ export function useAudioPlayer(
       }
     }
     setTransitionState('preparing-next', { transitioning: false, fallbackReason: undefined, transitionStartTime: null })
-    acceptanceAutoMixAnalysisStartsRef.current += 1
     try {
       debugLog('🎵 [AutoMix] 开始分析歌曲节拍和 BPM...')
       const [sourceAnalysis, targetAnalysis] = await Promise.all([
@@ -1144,17 +1091,6 @@ export function useAudioPlayer(
   const prepareGaplessTransition = useCallback(async () => {
     const current = currentMetadataRef.current
     const next = nextMetadataRef.current
-    if (current?.appleHls || next?.appleHls) {
-      transitionPlanRef.current = null
-      debugLog('🍎 [Gapless] Apple CENC 相邻边使用 managed 双 deck 无缝衔接')
-      setTransitionState('armed', {
-        transitionStrategy: 'gapless',
-        fallbackReason: undefined,
-        transitioning: false,
-        transitionStartTime: current?.duration || null,
-      })
-      return
-    }
     
     debugLog('[Gapless] prepareGaplessTransition 被调用')
     debugLog('[Gapless] 当前歌曲:', current)
@@ -1329,7 +1265,6 @@ export function useAudioPlayer(
         crossfade: crossfadeRef.current.enabled,
         gapless: gaplessRef.current.enabled,
       })
-      const applePair = Boolean(currentMetadataRef.current?.appleHls || nextMetadataRef.current?.appleHls)
       if (standby?.src && transitionStateRef.current !== 'running-transition') {
         if (pairStrategy === 'automix' && !albumPlayback && plan && (transitionStateRef.current === 'armed' || transitionStateRef.current === 'playing')) {
           if (active.currentTime >= plan.sourceStartTime) {
@@ -1350,10 +1285,10 @@ export function useAudioPlayer(
           // 控制器内部自带 hasActiveTransition / boundaryScheduled 互斥检查。
           const controller = seamlessJoinControllerRef.current
           if (controller) {
-            if (remaining > 1 && remaining <= GAPLESS_SEAMLESS_WARMUP_SECONDS && albumPlayback && !applePair) {
+            if (remaining > 1 && remaining <= GAPLESS_SEAMLESS_WARMUP_SECONDS && albumPlayback) {
               controller.warmup()
             } else if (remaining > 0 && remaining <= 1) {
-              controller.scheduleBoundary({ active, remaining, albumPlayback: albumPlayback && !applePair })
+              controller.scheduleBoundary({ active, remaining, albumPlayback })
             }
           }
         }
@@ -1400,8 +1335,8 @@ export function useAudioPlayer(
       
       if (isLoadingRef.current || event.currentTarget !== getActiveAudio()) return
 
-      // 首选：已武装的 managed 双 deck（含 Apple CENC standby）在边界接管；
-      // 若 Apple standby 未就绪/失败，则落到末尾的 ended=true，由 App 走完整加载回退链。
+      // 首选：已武装的 managed 双 deck 在边界接管；
+      // 若 standby 未就绪/失败，则落到末尾的 ended=true，由 App 走完整加载回退链。
 
       // A timer normally performs the boundary handoff. If `ended` wins the race, cancel the
       // timer and execute immediately so a delayed callback cannot start the same deck twice.
@@ -1431,8 +1366,7 @@ export function useAudioPlayer(
         gapless: gaplessRef.current.enabled,
       }) === 'gapless') {
         debugLog('⏭️ [Event] 待机音频就绪且当前相邻边使用 Gapless')
-        const applePair = Boolean(currentMetadataRef.current?.appleHls || nextMetadataRef.current?.appleHls)
-        if (gaplessIntegrationRef.current && !applePair) {
+        if (gaplessIntegrationRef.current) {
           // 使用 Album Gapless 执行过渡
           const result = gaplessIntegrationRef.current.executeTransition()
           if (result.success) {
@@ -1469,9 +1403,6 @@ export function useAudioPlayer(
     return () => {
       preparationAbortRef.current?.abort()
       cancelScheduledTransition('audio player unmounted', false, false)
-      // 卸载时销毁可能挂载的 Apple HLS 实例，释放 MSE 与 EME 会话
-      detachAppleHls(primary)
-      detachAppleHls(secondary)
       if (transitionTimerRef.current !== null) window.clearTimeout(transitionTimerRef.current)
       if (visualSwitchTimerRef.current !== null) window.clearTimeout(visualSwitchTimerRef.current)
       preloadReadyCleanupRef.current?.()
@@ -1533,13 +1464,13 @@ export function useAudioPlayer(
       void prepareAutoMix()
       return
     }
-    if (strategy === 'gapless' && !(currentMetadataRef.current?.appleHls || nextMetadataRef.current?.appleHls)) {
+    if (strategy === 'gapless') {
       void prepareGaplessTransition()
       return
     }
     setTransitionState('armed', {
       transitioning: false,
-      fallbackReason: strategy === 'gapless' && autoMixSettings.enabled ? 'Apple CENC pair uses gapless' : undefined,
+      fallbackReason: undefined,
       transitionStrategy: strategy,
     })
   }, [
@@ -1567,14 +1498,6 @@ export function useAudioPlayer(
     const standby = getStandbyAudio()
     if (!standby || !track.url) {
       debugLog('❌ [Preload] 缺少待机音频元素或 URL')
-      releaseAppleNativeStream(track.appleHls)
-      return
-    }
-    const appleHls = track.appleHls
-    const hlsPreload = Boolean(appleHls) && isHlsUrl(track.url) && !appleHls?.live
-    if (isHlsUrl(track.url) && !hlsPreload) {
-      debugLog('🛑 [Preload] 非预载型 HLS 音源跳过待机预载')
-      releaseAppleNativeStream(appleHls)
       return
     }
     const existingNext = nextMetadataRef.current
@@ -1583,11 +1506,9 @@ export function useAudioPlayer(
       && existingNext.url === track.url
       && existingNext.trackKey === track.trackKey
       && existingNext.index === track.index
-      && (hlsPreload
-        ? getActiveAppleStream(standby) === appleHls
-        : Boolean((standby.currentSrc || standby.getAttribute('src'))
-          && standby.networkState !== HTMLMediaElement.NETWORK_EMPTY
-          && !standby.error))
+      && Boolean((standby.currentSrc || standby.getAttribute('src'))
+        && standby.networkState !== HTMLMediaElement.NETWORK_EMPTY
+        && !standby.error)
     )
     if (sameTrackAlreadyAttached) {
       // Queue-related effects can run more than once for the same next track. Keep the
@@ -1598,10 +1519,6 @@ export function useAudioPlayer(
     }
 
     cancelScheduledTransition('next track changed', true)
-    const previousStream = nextMetadataRef.current?.appleHls
-    const attachedPreviousStream = getActiveAppleStream(standby)
-    detachAppleHls(standby)
-    if (previousStream && previousStream !== attachedPreviousStream) releaseAppleNativeStream(previousStream)
     nextMetadataRef.current = { ...track }
     standby.pause()
     standby.currentTime = 0
@@ -1614,10 +1531,7 @@ export function useAudioPlayer(
       && nextMetadataRef.current?.trackKey === track.trackKey
       && nextMetadataRef.current?.index === track.index
     )
-    const isCurrentPreload = () => Boolean(
-      preloadMetadataMatches()
-      && (!hlsPreload || getActiveAppleStream(standby) === appleHls)
-    )
+    const isCurrentPreload = () => preloadMetadataMatches()
     let timeoutId = 0
     const cleanupReady = () => {
       standby.removeEventListener('canplay', ready)
@@ -1644,13 +1558,7 @@ export function useAudioPlayer(
           setTransitionState('armed', { transitionStrategy: 'gapless' })
         }
       } else if (pairStrategy === 'gapless') {
-        if (currentMetadataRef.current?.appleHls || nextMetadataRef.current?.appleHls) {
-          debugLog('🍎 [Preload] Apple 相邻边已武装 managed Gapless')
-          setTransitionState('armed', {
-            transitionStrategy: 'gapless',
-            fallbackReason: autoMixRef.current.enabled ? 'Apple CENC pair uses gapless' : undefined,
-          })
-        } else if (gaplessIntegrationRef.current) {
+        if (gaplessIntegrationRef.current) {
           debugLog('🎵 [Preload] 准备无缝衔接，调用 GaplessIntegration')
           void prepareGaplessTransition()
         }
@@ -1664,9 +1572,7 @@ export function useAudioPlayer(
       if (!preloadMetadataMatches()) return
       track.onPreloadSettled?.(false)
       console.warn('[Preload] Next track media failed to load or timed out; normal end-of-track loading will be used')
-      const failedStream = nextMetadataRef.current?.appleHls
-      cancelScheduledTransition('next Apple HLS failed', false, false)
-      releaseAppleNativeStream(failedStream)
+      cancelScheduledTransition('next track preload failed', false, false)
       const active = getActiveAudio()
       setDeckGain(getActiveGain(), active, 1)
       setTransitionState(active?.src ? 'playing' : 'idle', {
@@ -1677,19 +1583,12 @@ export function useAudioPlayer(
     }
     preloadReadyCleanupRef.current?.()
     preloadReadyCleanupRef.current = cleanupReady
-    if (hlsPreload) {
-      void attachAppleHls(standby, appleHls!, () => {
-        if (!preloadMetadataMatches()) return
-        failed()
-      }).then(ready, failed)
-    } else {
-      standby.src = track.appleHls ? track.url : getProxiedAudioUrl(track.url)
-      standby.preload = 'auto'
-      standby.addEventListener('canplay', ready, { once: true })
-      standby.addEventListener('error', failed, { once: true })
-      timeoutId = window.setTimeout(failed, PRELOAD_MEDIA_LOAD_TIMEOUT_MS)
-      standby.load()
-    }
+    standby.src = getProxiedAudioUrl(track.url)
+    standby.preload = 'auto'
+    standby.addEventListener('canplay', ready, { once: true })
+    standby.addEventListener('error', failed, { once: true })
+    timeoutId = window.setTimeout(failed, PRELOAD_MEDIA_LOAD_TIMEOUT_MS)
+    standby.load()
   }, [cancelScheduledTransition, getActiveAudio, getStandbyAudio, getStandbyGain, prepareAutoMix, prepareGaplessTransition, setDeckGain, setTransitionState])
 
   const loadAndPlay = useCallback(async (
@@ -1724,7 +1623,6 @@ export function useAudioPlayer(
       active.currentTime = 0
       // 先显式卸载旧资源。仅覆盖 src 会让 Chromium 的旧媒体管线等待 GC，
       // 快速切歌时会形成明显的阶梯式内存增长。
-      detachAppleHls(active) // 若上一首是 Apple HLS，先销毁其 MSE 管线
       active.removeAttribute('src')
       active.load()
       // 重置 GaplessIntegration，停止所有预加载的音频
@@ -1732,11 +1630,7 @@ export function useAudioPlayer(
         debugLog('🧹 [LoadAndPlay] 重置 GaplessIntegration')
         gaplessIntegrationRef.current.reset()
       }
-      const appleHls = (track as { appleHls?: import('../services/applePlayback').AppleNativeStream } | undefined)?.appleHls
-      const hlsMode = Boolean(appleHls) && isHlsUrl(url)
-      // 直播流（Apple 电台）：HLS 时长为 Infinity（liveDurationInfinity），
-      // 记录到 ref 供 timeupdate/metadata 输出 live 状态与 0 时长（UI 显示直播态）
-      isLiveRef.current = Boolean(appleHls?.live)
+      isLiveRef.current = false
       active.playbackRate = 1 // post-settle 残留防护：新歌一律原速
       currentMetadataRef.current = { url, ...track }
       setAudioElement(active)
@@ -1746,86 +1640,49 @@ export function useAudioPlayer(
       }
       setDeckGain(getActiveGain(), active, 1)
       setDeckGain(getStandbyGain(), standby, 0)
-      if (hlsMode) {
-        // Apple Music 原生 HLS（Widevine EME）：hls.js 接管 src 与缓冲，
-        // attachAppleHls 自行等待首个分片就绪（含 license 协商），随后照常 play()
-        debugLog('📡 [LoadAndPlay] Apple HLS 原生音源，由 hls.js 接管')
-        await attachAppleHls(active, appleHls!, error => {
-          if (getActiveAudio() !== active || currentMetadataRef.current?.appleHls !== appleHls) return
-          console.warn('[AppleHLS] Current stream failed after startup:', error)
-          cancelScheduledTransition('current Apple HLS failed', false, false)
-          setTransitionState('failed', {
-            isPlaying: false,
-            ended: true,
-            transitioning: false,
-            fallbackReason: error.message,
-          })
-        })
-      } else {
-        debugLog('⏳ [LoadAndPlay] 加载音频文件...')
-        active.src = url
-        active.preload = 'auto'
-        await new Promise<void>((resolve, reject) => {
-          let settled = false
-          let timeoutId = 0
-          const cleanup = () => {
-            active.removeEventListener('canplay', canPlay)
-            active.removeEventListener('error', failed)
-            if (timeoutId) window.clearTimeout(timeoutId)
-            if (currentLoadWaitCancelRef.current === cancelled) currentLoadWaitCancelRef.current = null
-          }
-          const settle = (callback: () => void) => {
-            if (settled) return
-            settled = true
-            cleanup()
-            callback()
-          }
-          const canPlay = () => settle(resolve)
-          const failed = () => settle(() => reject(active.error || new Error('media load failed')))
-          const cancelled = () => settle(resolve)
-          currentLoadWaitCancelRef.current = cancelled
-          active.addEventListener('canplay', canPlay, { once: true })
-          active.addEventListener('error', failed, { once: true })
-          timeoutId = window.setTimeout(
-            () => settle(() => reject(new Error('media load timed out'))),
-            CURRENT_MEDIA_LOAD_TIMEOUT_MS,
-          )
-          active.load()
-        })
-      }
+      debugLog('⏳ [LoadAndPlay] 加载音频文件...')
+      active.src = url
+      active.preload = 'auto'
+      await new Promise<void>((resolve, reject) => {
+        let settled = false
+        let timeoutId = 0
+        const cleanup = () => {
+          active.removeEventListener('canplay', canPlay)
+          active.removeEventListener('error', failed)
+          if (timeoutId) window.clearTimeout(timeoutId)
+          if (currentLoadWaitCancelRef.current === cancelled) currentLoadWaitCancelRef.current = null
+        }
+        const settle = (callback: () => void) => {
+          if (settled) return
+          settled = true
+          cleanup()
+          callback()
+        }
+        const canPlay = () => settle(resolve)
+        const failed = () => settle(() => reject(active.error || new Error('media load failed')))
+        const cancelled = () => settle(resolve)
+        currentLoadWaitCancelRef.current = cancelled
+        active.addEventListener('canplay', canPlay, { once: true })
+        active.addEventListener('error', failed, { once: true })
+        timeoutId = window.setTimeout(
+          () => settle(() => reject(new Error('media load timed out'))),
+          CURRENT_MEDIA_LOAD_TIMEOUT_MS,
+        )
+        active.load()
+      })
       if (loadRevision !== currentLoadRevisionRef.current) {
-        if (appleHls && getActiveAppleStream(active) === appleHls) detachAppleHls(active)
         return false
       }
       debugLog('▶️ [LoadAndPlay] 开始播放...')
       await active.play()
       if (loadRevision !== currentLoadRevisionRef.current) {
-        if (appleHls && getActiveAppleStream(active) === appleHls) detachAppleHls(active)
         return false
       }
       isLoadingRef.current = false
       debugLog('✅ [LoadAndPlay] 播放成功')
       setTransitionState('playing', { isPlaying: true, duration: finiteDuration(active.duration) || track?.duration || 0, ended: false, live: isLiveRef.current })
-      // 基础交叉"入"半边（Apple 淡出尾的自然衔接）：上一首 Apple 歌曲带淡出尾结束、
-      // 下一首走本地 deck 时，deck 增益从 0 线性渐起到目标音量（EME 下无重叠交叉，顺序淡入淡出）
-      if (externalEndedWithFadeRef.current) {
-        externalEndedWithFadeRef.current = false
-        const fadeDur = externalFadeDuration()
-        const context = audioContextRef.current
-        const gain = getActiveGain()
-        if (fadeDur > 0 && context && gain) {
-          const t0 = context.currentTime
-          try {
-            gain.gain.cancelScheduledValues(t0)
-            gain.gain.setValueAtTime(0.0001, t0)
-            gain.gain.linearRampToValueAtTime(Math.max(0.0001, volumeRef.current), t0 + fadeDur)
-            debugLog(`🎚️ [LoadAndPlay] 淡入头 ${fadeDur}s（衔接上一首 Apple 淡出尾）`)
-          } catch { /* 增益自动化失败则按原音量起播 */ }
-        }
-      }
       
-      // Prepare the next edge without changing the user's global mode. Apple CENC pairs
-      // downgrade AutoMix to managed gapless; non-Apple pairs keep the full analysis path.
+      // Prepare the next edge without changing the user's global mode.
       if (nextMetadataRef.current?.url) {
         const strategy = resolvePairTransitionStrategy(currentMetadataRef.current, nextMetadataRef.current, {
           autoMix: autoMixRef.current.enabled,
@@ -1835,11 +1692,6 @@ export function useAudioPlayer(
         if (strategy === 'automix' && !isAlbumPlayback()) {
           debugLog('🎵 [LoadAndPlay] 检测到下一首歌曲且 AutoMix 已启用，调用 prepareAutoMix()')
           void prepareAutoMix()
-        } else if (strategy === 'gapless' && (currentMetadataRef.current?.appleHls || nextMetadataRef.current?.appleHls)) {
-          setTransitionState('armed', {
-            transitionStrategy: 'gapless',
-            fallbackReason: autoMixRef.current.enabled ? 'Apple CENC pair uses gapless' : undefined,
-          })
         }
       } else {
         debugLog('⏭️ [LoadAndPlay] 下一首: 不存在')
@@ -1848,7 +1700,6 @@ export function useAudioPlayer(
     } catch (error) {
       if (loadRevision !== currentLoadRevisionRef.current) return false
       const err = error instanceof Error ? error : null
-      detachAppleHls(active)
       // 用户在加载/播放中暂停会中止在途的 play()（媒体元素以 AbortError 拒绝）——
       // 这是正常打断，只清 loading 标志，静默返回 false（暂停状态已由 togglePlay 发布）。
       // NotAllowedError 表示浏览器/用户手势策略阻止了播放，歌曲实际不会出声，是真实失败：
@@ -1864,106 +1715,7 @@ export function useAudioPlayer(
     }
   }, [cancelScheduledTransition, ensureAudioGraph, getActiveAudio, getActiveGain, getStandbyAudio, getStandbyGain, setDeckGain, setTransitionState, prepareAutoMix, finiteDuration])
 
-  // ── 外部播放源开关（由 App.loadAndPlaySong 在 WebView2 播放成功/切歌时调用）──
-  /** 基础交叉淡化时长（外部源专用）：固定淡入淡出/无缝衔接/AutoMix 任一启用即生效，
-   *  统一走 MusicKit 音量斜坡（EME 限制下无法采样级拼接，音量交叉是唯一可行路径）；
-   *  三模式全关 → 0（按设置硬切）。固定淡入淡出档用其时长，其余用 6s 缺省。 */
-  const externalFadeDuration = useCallback(() => {
-    if (!crossfadeRef.current.enabled && !gaplessRef.current.enabled && !autoMixRef.current.enabled) return 0
-    const d = crossfadeRef.current.enabled ? Number(crossfadeRef.current.duration) || 0 : 6
-    return Math.min(12, Math.max(2, d))
-  }, [])
-
-  const enableExternalPlayback = useCallback(({ duration }: { duration?: number } = {}) => {
-    externalDurationRef.current = duration && duration > 0 ? duration : 0
-    externalEndedFiredRef.current = false
-    externalFadeActiveRef.current = false
-    if (externalActiveRef.current) return
-    externalActiveRef.current = true
-    // 本地 deck 若有声先停掉（外部源模式下 deck 无 src，这里只是保险）
-    try {
-      cancelScheduledTransition('switch to external playback source')
-      const active = getActiveAudio()
-      if (active && !active.paused) active.pause()
-    } catch { /* 忽略 */ }
-    // 淡入头：上一首 Apple 歌曲带淡出尾自然结束 → 本首从 0 渐起
-    const fadeIn = externalEndedWithFadeRef.current ? externalFadeDuration() : 0
-    externalEndedWithFadeRef.current = false
-    if (fadeIn > 0) {
-      void bridgeVolume(0)
-      void bridgeFade(volumeRef.current, fadeIn * 1000)
-    } else {
-      // 音量推给播放面（MusicKit 音量独立于本地增益链）
-      void bridgeVolume(volumeRef.current)
-    }
-    // 乐观首发，随后由 bridge 轮询回填（200ms 轮询 + 播放面 0.3s 采样）
-    emit({ currentTime: 0, duration: finiteDuration(externalDurationRef.current), isPlaying: true, live: false })
-    externalUnsubscribeRef.current = onBridgeStateChange((s) => {
-      if (!externalActiveRef.current || !s.ready) return
-      const duration = s.duration > 0 ? s.duration : externalDurationRef.current
-      emit({
-        currentTime: s.position,
-        duration: finiteDuration(duration),
-        // 缓冲/seek 等瞬态（loading=1 seeking=6 waiting=8）按「播放中」呈现，
-        // 避免 UI 播放按钮在起播/拖动后 1 秒闪回暂停态
-        isPlaying: s.playing || [1, 6, 8].includes(Number(s.status)),
-        live: false,
-      })
-      if (s.playing) externalEndedFiredRef.current = false
-      // 基础交叉"出"半边：进入结尾淡出窗口 → MusicKit 音量线性降到 0
-      const fadeDur = externalFadeDuration()
-      const inTail = fadeDur > 0 && s.duration > fadeDur + 1 && s.position >= s.duration - fadeDur
-      if (inTail && !externalFadeActiveRef.current) {
-        externalFadeActiveRef.current = true
-        const remaining = Math.max(0.5, s.duration - s.position)
-        void bridgeFade(0, remaining * 1000)
-      } else if (!inTail && externalFadeActiveRef.current) {
-        // seek 回退离开淡出窗口：恢复音量（重新进窗口会再次触发）
-        externalFadeActiveRef.current = false
-        void bridgeVolume(volumeRef.current)
-      }
-      // 歌曲结束：与 Apple HLS ended 语义一致（置 idle 交上层切歌/单曲循环）
-      if (!externalEndedFiredRef.current && s.duration > 0 && (s.ended || s.position >= s.duration - 0.5)) {
-        externalEndedFiredRef.current = true
-        // 带淡出尾自然结束 → 记录标记，下一首（Apple 播放面或本地 deck）做淡入头
-        externalEndedWithFadeRef.current = externalFadeActiveRef.current
-        setTransitionState('idle', { isPlaying: false, ended: true, transitioning: false, seamlessTransition: false })
-      }
-    })
-  }, [cancelScheduledTransition, emit, externalFadeDuration, finiteDuration, getActiveAudio, setTransitionState])
-
-  const disableExternalPlayback = useCallback(() => {
-    if (!externalActiveRef.current) return
-    externalActiveRef.current = false
-    try { externalUnsubscribeRef.current?.() } catch { /* 忽略 */ }
-    externalUnsubscribeRef.current = null
-    externalEndedFiredRef.current = false
-    externalFadeActiveRef.current = false
-    emit({ live: false })
-    // 注意：externalEndedWithFadeRef 不清——供 loadAndPlay/enable 做淡入头
-    // 停掉播放面声音（best-effort；切到非 Apple 歌时避免 WebView2 继续出声）
-    void bridgeStopPlayback()
-  }, [])
-
   const togglePlay = useCallback(async () => {
-    // 外部播放源（WebView2 播放面）：控制转发 bridge，本地无媒体
-    if (externalActiveRef.current) {
-      if (getBridgeState().playing) {
-        emit({ isPlaying: false })
-        // 暂停时若在淡出尾：取消斜坡并恢复音量，恢复播放后按剩余时间重新淡出
-        if (externalFadeActiveRef.current) {
-          externalFadeActiveRef.current = false
-          void bridgeVolume(volumeRef.current)
-        }
-        await bridgePause()
-      } else {
-        emit({ isPlaying: true })
-        externalEndedFiredRef.current = false
-        externalFadeActiveRef.current = false // 恢复播放后由轮询按剩余时间重新触发淡出
-        await bridgeResume()
-      }
-      return
-    }
     const active = getActiveAudio()
     if (!active?.src) return
     try {
@@ -1985,11 +1737,11 @@ export function useAudioPlayer(
             gapless: gaplessRef.current.enabled,
           })
           if (strategy === 'automix') void prepareAutoMix()
-          else if (strategy === 'gapless' && !(currentMetadataRef.current?.appleHls || nextMetadataRef.current?.appleHls)) void prepareGaplessTransition()
+          else if (strategy === 'gapless') void prepareGaplessTransition()
           else setTransitionState('armed', {
             isPlaying: true,
             transitionStrategy: strategy,
-            fallbackReason: strategy === 'gapless' && autoMixRef.current.enabled ? 'Apple CENC pair uses gapless' : undefined,
+            fallbackReason: undefined,
           })
         }
       } else {
@@ -2025,20 +1777,6 @@ export function useAudioPlayer(
   }, [cancelScheduledTransition, emit, ensureAudioGraph, getActiveAudio, getActiveGain, prepareAutoMix, prepareGaplessTransition, setDeckGain, setTransitionState])
 
   const seek = useCallback((time: number) => {
-    // 外部播放源：转发 bridge，本地无媒体可定位
-    if (externalActiveRef.current) {
-      const bridgeDuration = getBridgeState().duration || externalDurationRef.current
-      const pos = bridgeDuration > 0 ? Math.max(0, Math.min(time, bridgeDuration)) : Math.max(0, time)
-      externalEndedFiredRef.current = false
-      // seek 撞销在途淡出斜坡并恢复音量（seek 进尾部由轮询按剩余时间重新淡出）
-      if (externalFadeActiveRef.current) {
-        externalFadeActiveRef.current = false
-        void bridgeVolume(volumeRef.current)
-      }
-      emit({ currentTime: pos, duration: finiteDuration(bridgeDuration) })
-      void bridgeSeek(pos)
-      return
-    }
     const active = getActiveAudio()
     if (!active) return
     const wasPlaying = !active.paused
@@ -2060,10 +1798,10 @@ export function useAudioPlayer(
         gapless: gaplessRef.current.enabled,
       })
       if (strategy === 'automix') void prepareAutoMix()
-      else if (strategy === 'gapless' && !(currentMetadataRef.current?.appleHls || nextMetadataRef.current?.appleHls)) void prepareGaplessTransition()
+      else if (strategy === 'gapless') void prepareGaplessTransition()
       else setTransitionState('armed', {
         transitionStrategy: strategy,
-        fallbackReason: strategy === 'gapless' && autoMixRef.current.enabled ? 'Apple CENC pair uses gapless' : undefined,
+        fallbackReason: undefined,
       })
     } else if (wasPlaying && active.paused) {
       void active.play().catch(() => undefined)
@@ -2073,22 +1811,6 @@ export function useAudioPlayer(
   const setVolume = useCallback((volume: number) => {
     const clamped = Math.max(0, Math.min(1, volume))
     volumeRef.current = clamped
-    // 外部播放源：音量作用于 WebView2 播放面
-    if (externalActiveRef.current) {
-      void bridgeVolume(clamped)
-      emit({ volume: clamped })
-      // 淡出尾中拖音量会撞销在途斜坡：按剩余时间以新音量为起点重新淡出
-      if (externalFadeActiveRef.current) {
-        const s = getBridgeState()
-        const fadeDur = externalFadeDuration()
-        if (fadeDur > 0 && s.duration > fadeDur + 1 && s.position >= s.duration - fadeDur) {
-          void bridgeFade(0, Math.max(0.5, s.duration - s.position) * 1000)
-        } else {
-          externalFadeActiveRef.current = false
-        }
-      }
-      return
-    }
     const context = audioContextRef.current
     const master = masterGainRef.current
     if (context && master) {
@@ -2264,10 +1986,6 @@ export function useAudioPlayer(
     togglePlay,
     seek,
     setVolume,
-    /** WebView2 播放面外部播放源：enable/disable 由 App.loadAndPlaySong 调用 */
-    enableExternalPlayback,
-    disableExternalPlayback,
-    isExternalPlaybackActive: () => externalActiveRef.current,
     preloadNext,
     cancelTransition: cancelScheduledTransition,
     /** 看歌挂起开关：true=引擎进入"看歌时间线"——取消在途过渡且期间禁止 prepare/启动
@@ -2285,55 +2003,5 @@ export function useAudioPlayer(
     setPlayAtCallback,
     resetGaplessIntegration,
     adoptExternalAudio,
-    getAcceptanceState: () => {
-      const active = getActiveAudio()
-      const standby = getStandbyAudio()
-      return {
-        transitionState: transitionStateRef.current,
-        activeAppleHls: Boolean(getActiveAppleStream(active)),
-        standbyAppleHls: Boolean(getActiveAppleStream(standby)),
-        activePaused: active?.paused ?? true,
-        standbyPaused: standby?.paused ?? true,
-        activeReadyState: active?.readyState ?? 0,
-        standbyReadyState: standby?.readyState ?? 0,
-        hasCurrentMetadata: Boolean(currentMetadataRef.current),
-        hasNextMetadata: Boolean(nextMetadataRef.current),
-        autoMixEnabled: autoMixRef.current.enabled,
-        resolvedPairStrategy: resolvePairTransitionStrategy(currentMetadataRef.current, nextMetadataRef.current, {
-          autoMix: autoMixRef.current.enabled,
-          crossfade: crossfadeRef.current.enabled,
-          gapless: gaplessRef.current.enabled,
-        }),
-        autoMixAnalysisStarts: acceptanceAutoMixAnalysisStartsRef.current,
-      }
-    },
-    resetAcceptanceState: () => {
-      acceptanceAutoMixAnalysisStartsRef.current = 0
-    },
-    runAcceptanceTransition: async () => {
-      const strategy = resolvePairTransitionStrategy(currentMetadataRef.current, nextMetadataRef.current, {
-        autoMix: autoMixRef.current.enabled,
-        crossfade: crossfadeRef.current.enabled,
-        gapless: gaplessRef.current.enabled,
-      })
-      if (strategy === 'none' || strategy === 'automix') {
-        throw new Error(`Acceptance transition is not armed: ${strategy}`)
-      }
-      await startTransition(strategy)
-      return strategy
-    },
-    releaseAcceptanceDecks: () => {
-      cancelScheduledTransition('acceptance cleanup', false)
-      const decks = [getActiveAudio(), getStandbyAudio()]
-      for (const audio of decks) {
-        if (!audio) continue
-        audio.pause()
-        detachAppleHls(audio)
-        audio.removeAttribute('src')
-        audio.load()
-      }
-      currentMetadataRef.current = null
-      nextMetadataRef.current = null
-    },
   }
 }

@@ -12,7 +12,7 @@ interface PlayerControlsProps {
   isPlaying: boolean
   currentTime: number
   duration: number
-  /** 直播流（Apple 电台等）：显示 LIVE 指示、禁拖动进度 */
+  /** 直播流（无固定时长的源）：显示 LIVE 指示、禁拖动进度 */
   live?: boolean
   volume?: number
   onPlayPause: () => void
@@ -485,7 +485,7 @@ export default function PlayerControls({
   // 过渡期间合成 currentTime 可能超过源曲时长（AI 长混音从源曲深处起步）：
   // 显示时长自适应为 max(原时长, 当前时间)，进度条/总时长跟随，不再顶着曲尾不动。
   const effectiveDuration = Math.max(duration, displayTime)
-  // 直播流（Apple 电台）：时长恒为 0，进度条不走、总时长显示 LIVE 徽标
+  // 直播流（无固定时长）：时长恒为 0，进度条不走、总时长显示 LIVE 徽标
   const isLiveStream = Boolean(live)
   const progressPercent = isLiveStream ? 0 : (displayTime / effectiveDuration) * 100
   const iconColor = getContrastColor(accentColor)

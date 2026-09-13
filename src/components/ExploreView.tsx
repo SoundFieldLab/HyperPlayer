@@ -50,10 +50,7 @@ import {
 import type { PlaybackTimeStore } from '../audio/playbackTimeStore'
 import MiniPlayer from './MiniPlayer'
 import PlaylistDetailPanel from './PlaylistDetailPanel'
-import { AppleExplorePanel } from './AppleExplorePanel'
-import { getAppleLibraryPlaylists, APPLE_EXPLORE_COUNTRIES } from '../services/appleCatalog'
-import { fetchApplePlaylistTracksForPlay, fetchLibraryPlaylistTracksForPlay } from '../services/appleWebService'
-import { getPlatformCapabilities, getVisiblePlatforms, PLATFORM_VISIBILITY_EVENT, PLATFORM_ORDER_EVENT } from '../services/platforms'
+import { getPlatformCapabilities, getVisiblePlatforms, MUSIC_PLATFORMS, PLATFORM_VISIBILITY_EVENT, PLATFORM_ORDER_EVENT } from '../services/platforms'
 import ExploreSettingsPanel, {
   EXPLORE_SECTION_LABELS,
   createDefaultExplorePreferences,
@@ -81,9 +78,6 @@ const LazyCacheClearModal = lazy(() => import('./CacheClearModal'))
 
 type ViewMode = 'explore' | 'minimal' | 'traditional' | 'desktop'
 const appLogoUrl = new URL('../../logo.png', import.meta.url).href
-// v2：探索数据修复（封面/真新歌榜/多榜单）后升级版本，强制旧缓存失效
-// v3：榜单歌曲携带 appleId（目录曲目 id，原生取流必需）。v2 缓存里的 Apple 榜单
-// 是无 appleId 的旧结构（id=榜单排名），按天缓存会让坏数据在当天内一直生效。
 const EXPLORE_CACHE_KEY = 'exploreHomeCache-v3'
 const EXPLORE_SESSION_REFRESH_PREFIX = 'exploreHomeRefreshed:'
 
@@ -91,8 +85,6 @@ const EXPLORE_SESSION_REFRESH_PREFIX = 'exploreHomeRefreshed:'
 const EXPLORE_PLATFORM_META: Record<ExplorePlatform, { name: string; short: string; accent: string; accentRgb: string }> = {
   netease: { name: '网易云音乐', short: '网易云', accent: '#ff5a70', accentRgb: '255, 90, 112' },
   qq: { name: 'QQ 音乐', short: 'QQ 音乐', accent: '#31e68b', accentRgb: '49, 230, 139' },
-  apple: { name: 'Apple Music', short: 'Apple Music', accent: '#fa2d48', accentRgb: '250, 45, 72' },
-  spotify: { name: 'Spotify', short: 'Spotify', accent: '#1DB954', accentRgb: '29, 185, 84' },
 }
 
 interface ExploreCacheEntry {
@@ -125,13 +117,6 @@ interface ExploreViewProps {
   qqAvatar?: string
   qqUserId?: string
   qqVip?: boolean
-  appleLoggedIn: boolean
-  appleUsername: string
-  appleAvatar?: string
-  appleStorefront?: string
-  spotifyLoggedIn: boolean
-  spotifyUsername: string
-  spotifyAvatar?: string
   onLoginClick: (platform: ExplorePlatform) => void
   onProfileClick: (platform: ExplorePlatform) => void
   onSearchClick: () => void
@@ -435,9 +420,7 @@ const fingerprintExploreCredential = (value: string) => {
 }
 
 const getExploreAccountKey = (platform: ExplorePlatform) => {
-  // Apple 无 cookie/用户，按商店区分缓存
-  if (platform === 'apple') return `apple:${localStorage.getItem('appleStorefront') || 'cn'}`
-  const userIdKey = platform === 'qq' ? 'qq_user_id' : platform === 'netease' ? 'netease_user_id' : `${platform}_user_id`
+  const userIdKey = platform === 'qq' ? 'qq_user_id' : 'netease_user_id'
   const userId = localStorage.getItem(userIdKey) || ''
   const cookie = getExploreCookie(platform)
   if (userId) return `user:${userId}`
@@ -458,7 +441,7 @@ const readExploreCache = (): Partial<Record<ExplorePlatform, ExplorePayload>> =>
   const entries = readExploreCacheEntries()
   const today = getExploreDateKey()
   const result: Partial<Record<ExplorePlatform, ExplorePayload>> = {}
-  ;(['netease', 'qq', 'apple', 'spotify'] as ExplorePlatform[]).forEach(platform => {
+  MUSIC_PLATFORMS.forEach(platform => {
     const entry = entries[platform]
     if (
       entry?.payload &&
@@ -519,13 +502,6 @@ function ExploreView({
   qqAvatar,
   qqUserId,
   qqVip,
-  appleLoggedIn,
-  appleUsername,
-  appleAvatar,
-  appleStorefront,
-  spotifyLoggedIn,
-  spotifyUsername,
-  spotifyAvatar,
   onLoginClick,
   onProfileClick,
   onSearchClick,
@@ -590,15 +566,6 @@ function ExploreView({
   const detailRetryRef = useRef<(() => void) | null>(null)
   const detailCleanupTimerRef = useRef<number | null>(null)
   const [userPlaylists, setUserPlaylists] = useState<any[]>([])
-  // Apple 探索国家/地区切换（缺省取账号 storefront）
-  const [appleCountry, setAppleCountry] = useState(() => (
-    localStorage.getItem('appleExploreCountry') || (appleStorefront && APPLE_EXPLORE_COUNTRIES.some(item => item.code === appleStorefront) ? appleStorefront : 'cn')
-  ))
-  const changeAppleCountry = (country: string) => {
-    localStorage.setItem('appleExploreCountry', country)
-    setAppleCountry(country)
-    void loadExplore(undefined, true)
-  }
   const [songContextMenu, setSongContextMenu] = useState<{
     show: boolean
     x: number
@@ -610,8 +577,6 @@ function ExploreView({
   const [playlistContextMenu, setPlaylistContextMenu] = useState<{ show: boolean; x: number; y: number; playlist: ExplorePlaylist | null }>({ show: false, x: 0, y: 0, playlist: null })
   const [feedPlaylistSubscriptions, setFeedPlaylistSubscriptions] = useState<Map<string, boolean>>(new Map())
   const [shuffleOffset, setShuffleOffset] = useState(0)
-  // Apple Music 刷新信号（AM 无「换一批」，顶栏按钮改为刷新，信号传给 AppleExplorePanel 强制重载）
-  const [appleRefreshSignal, setAppleRefreshSignal] = useState(0)
   const [showModePanel, setShowModePanel] = useState(false)
   const [showMVExplore, setShowMVExplore] = useState(false)
   const [neteaseFeedMvId, setNeteaseFeedMvId] = useState<string | null>(null)
@@ -780,18 +745,9 @@ function ExploreView({
   }, [])
 
   const payload = dataByPlatform[platform]
-  const loggedIn = platform === 'qq' ? qqLoggedIn
-    : platform === 'apple' ? appleLoggedIn
-    : platform === 'spotify' ? spotifyLoggedIn
-    : neteaseLoggedIn
-  const username = platform === 'qq' ? qqUsername
-    : platform === 'apple' ? appleUsername
-    : platform === 'spotify' ? spotifyUsername
-    : neteaseUsername
-  const avatar = platform === 'qq' ? qqAvatar
-    : platform === 'apple' ? appleAvatar
-    : platform === 'spotify' ? spotifyAvatar
-    : neteaseAvatar
+  const loggedIn = platform === 'qq' ? qqLoggedIn : neteaseLoggedIn
+  const username = platform === 'qq' ? qqUsername : neteaseUsername
+  const avatar = platform === 'qq' ? qqAvatar : neteaseAvatar
   const vip = platformEntitlements[platform] === 'vip' || platformEntitlements[platform] === 'svip'
   const activeEntitlement = platformEntitlements[platform]
   const platformMeta = EXPLORE_PLATFORM_META[platform]
@@ -806,8 +762,8 @@ function ExploreView({
   } as CSSProperties
 
   const loadExplore = useCallback(async (signal?: AbortSignal, forceRefresh = false, allowNeteaseLegacyFallback = false) => {
-    // Apple 和网易云原生页自行加载数据，避免在后台重复请求旧聚合首页。
-    if (platform === 'apple' || (platform === 'netease' && !allowNeteaseLegacyFallback)) {
+    // 网易云原生页自行加载数据，避免在后台重复请求旧聚合首页。
+    if (platform === 'netease' && !allowNeteaseLegacyFallback) {
       setLoading(false)
       setError('')
       return
@@ -825,7 +781,7 @@ function ExploreView({
     } finally {
       if (!signal?.aborted) setLoading(false)
     }
-  }, [platform, qqLoggedIn, neteaseLoggedIn, authRevision, platformPreferences.enhancedApi, appleCountry])
+  }, [platform, qqLoggedIn, neteaseLoggedIn, authRevision, platformPreferences.enhancedApi])
 
   useEffect(() => {
     syncPlatformAcrossViews(platform)
@@ -860,41 +816,6 @@ function ExploreView({
   }, [preferences])
 
   useEffect(() => {
-    if (platform === 'apple') {
-      if (!appleLoggedIn) {
-        setUserPlaylists([])
-        return
-      }
-      let active = true
-      const shouldForceRefresh = authRevision !== playlistAuthRevisionRef.current
-      playlistAuthRevisionRef.current = authRevision
-      void getAppleLibraryPlaylists(100)
-        .then(playlists => {
-          if (active) setUserPlaylists(playlists)
-        })
-        .catch(() => {
-          if (active) setUserPlaylists([])
-        })
-      return () => { active = false }
-    }
-    // Spotify：官方 API 我的歌单（token 驱动）
-    if (platform === 'spotify') {
-      if (!spotifyLoggedIn) {
-        setUserPlaylists([])
-        return
-      }
-      let active = true
-      const shouldForceRefresh = authRevision !== playlistAuthRevisionRef.current
-      playlistAuthRevisionRef.current = authRevision
-      void getUserPlaylists(platform, '', spotifyUsername, { forceRefresh: shouldForceRefresh })
-        .then(playlists => {
-          if (active) setUserPlaylists(playlists || [])
-        })
-        .catch(() => {
-          if (active) setUserPlaylists([])
-        })
-      return () => { active = false }
-    }
     const isLoggedIn = platform === 'qq' ? qqLoggedIn : neteaseLoggedIn
     const userId = platform === 'qq' ? qqUserId || '' : neteaseUserId || ''
     const accountName = platform === 'qq' ? qqUsername : neteaseUsername
@@ -1092,41 +1013,6 @@ function ExploreView({
     description: playlist.description,
     platform: playlist.platform,
   }, signal => fetchExplorePlaylist(playlist, signal), autoplay)
-
-  const handleApplePlaylist = useCallback((playlist: {
-    id: string
-    name: string
-    coverUrl?: string
-    creator?: string
-    trackCount?: number
-    description?: string
-    platform: 'apple'
-    isLibrary?: boolean
-  }, autoplay = false) => openDetail({
-    id: playlist.id,
-    name: playlist.name,
-    coverImgUrl: playlist.coverUrl || '',
-    trackCount: playlist.trackCount || 0,
-    description: playlist.description,
-    creator: playlist.creator ? { nickname: playlist.creator } : undefined,
-    platform: 'apple',
-  }, async () => {
-    const songs = playlist.isLibrary
-      ? await fetchLibraryPlaylistTracksForPlay(playlist.id)
-      : await fetchApplePlaylistTracksForPlay(playlist.id, appleStorefront)
-    return {
-      playlist: {
-        id: playlist.id,
-        name: playlist.name,
-        coverImgUrl: playlist.coverUrl || '',
-        trackCount: songs.length || playlist.trackCount || 0,
-        description: playlist.description,
-        creator: playlist.creator ? { nickname: playlist.creator } : undefined,
-        platform: 'apple',
-      },
-      songs,
-    }
-  }, autoplay), [appleStorefront, openDetail])
 
   const handleChart = (chart: ExploreChart, autoplay = false) => openDetail({
     id: chart.id,
@@ -1507,9 +1393,7 @@ function ExploreView({
               <button
                 type="button"
                 onClick={() => {
-                  // Apple 登录/资料都进入 Apple 登录面板（内含账号信息与退出登录）
-                  if (platform === 'apple') onLoginClick('apple')
-                  else if (loggedIn) onProfileClick(platform)
+                  if (loggedIn) onProfileClick(platform)
                   else onLoginClick(platform)
                 }}
                 className="flex h-10 items-center gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.045] px-2 text-sm text-white/70 transition hover:bg-white/[0.1] hover:text-white"
@@ -1558,28 +1442,15 @@ function ExploreView({
                   登录解锁个性化
                 </button>
               )}
-              {platform === 'apple' ? (
-                /* Apple Music 无「换一批」（内容非分页随机），此位置改为刷新（重载当前页签） */
-                <button
-                  type="button"
-                  onClick={() => setAppleRefreshSignal(v => v + 1)}
-                  disabled={loading}
-                  className="flex h-10 items-center gap-2 rounded-full border border-white/[0.1] bg-white/[0.055] px-4 text-sm text-white/60 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-wait disabled:opacity-50"
-                >
-                  <RefreshCw key={appleRefreshSignal} className={`h-4 w-4 ${appleRefreshSignal > 0 ? 'animate-[spin_0.45s_ease-out_1]' : ''}`} />
-                  刷新
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleShuffle}
-                  disabled={loading}
-                  className="flex h-10 items-center gap-2 rounded-full border border-white/[0.1] bg-white/[0.055] px-4 text-sm text-white/60 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-wait disabled:opacity-50"
-                >
-                  <RefreshCw key={shuffleOffset} className="h-4 w-4 animate-[spin_0.45s_ease-out_1]" />
-                  换一批
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleShuffle}
+                disabled={loading}
+                className="flex h-10 items-center gap-2 rounded-full border border-white/[0.1] bg-white/[0.055] px-4 text-sm text-white/60 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-wait disabled:opacity-50"
+              >
+                <RefreshCw key={shuffleOffset} className="h-4 w-4 animate-[spin_0.45s_ease-out_1]" />
+                换一批
+              </button>
             </div>
           </div>
           )}
@@ -1659,25 +1530,6 @@ function ExploreView({
               onPlaylistContextMenu={openPlaylistContextMenu}
               onAddToFavorites={onAddToFavorites}
               onRemoveFromFavorites={onRemoveFromFavorites}
-            />
-          ) : platform === 'apple' ? (
-            <AppleExplorePanel
-              appleLoggedIn={appleLoggedIn}
-              appleUsername={appleUsername}
-              appleAvatar={appleAvatar}
-              defaultStorefront={appleStorefront}
-              accentColor={accent}
-              accentRgb={accentRgb}
-              playerTheme={playerTheme}
-              onSongSelect={onSongSelect}
-              onLoginClick={() => onLoginClick('apple')}
-              onVideoPlaybackStart={() => { if (isPlaying) onPlayPause() }}
-              onOpenAlbum={onOpenAlbum}
-              onOpenPlaylistPanel={handleApplePlaylist}
-              onOpenArtistPanel={onOpenArtist}
-              onSongContextMenu={(event, song, songs) => openSongContextMenu(event, song, songs)}
-              restorePlaybackOrigin={restorePlaybackOrigin}
-              refreshSignal={appleRefreshSignal}
             />
           ) : (
           <>
@@ -1904,9 +1756,6 @@ function ExploreView({
                         <div className="absolute inset-0 bg-black/0 transition group-hover:bg-black/20" />
                         {playlist.source === 'qqmusic-skills' && (
                           <span className="absolute left-3 top-3 rounded-full bg-black/45 px-2.5 py-1 text-[10px] text-white/75 backdrop-blur-md">AI 推荐</span>
-                        )}
-                        {playlist.source === 'apple-personalized' && (
-                          <span className="absolute left-3 top-3 rounded-full bg-black/45 px-2.5 py-1 text-[10px] text-white/75 backdrop-blur-md">为你推荐</span>
                         )}
                         {formatCount(playlist.playCount) && (
                           <span className="absolute right-3 top-3 flex items-center gap-1 rounded-full bg-black/45 px-2.5 py-1 text-[10px] text-white/75 backdrop-blur-md">
@@ -2309,19 +2158,6 @@ function ExploreView({
           onViewComments={onViewComments}
           onViewAlbum={song => {
             const menuPlatform = song.platform || platform
-            // Apple 歌曲的 Song 不携带专辑 id（appleSongToSong 只带名字/封面）：
-            // 先拉歌曲详情拿专辑 id 再打开（否则静默无动作）
-            if (menuPlatform === 'apple') {
-              const appleId = String(song.appleId || song.id || '')
-              if (!appleId || appleId === '0') return
-              void import('../services/appleWebService')
-                .then(m => m.fetchAppleSongDetail(appleId))
-                .then(detail => {
-                  if (detail?.album?.id) onOpenAlbum?.(detail.album.id, 'apple')
-                })
-                .catch(() => undefined)
-              return
-            }
             const identifier = song.platform === 'qq'
               ? song.album?.mid || song.album?.pmid || song.album?.id
               : song.album?.id
@@ -2329,18 +2165,6 @@ function ExploreView({
           }}
           onViewArtist={song => {
             const menuPlatform = song.platform || platform
-            if (menuPlatform === 'apple') {
-              const appleId = String(song.appleId || song.id || '')
-              if (!appleId || appleId === '0') return
-              void import('../services/appleWebService')
-                .then(m => m.fetchAppleSongDetail(appleId))
-                .then(detail => {
-                  const artistId = detail?.artists?.[0]?.playId || detail?.artists?.[0]?.id
-                  if (artistId) onOpenArtist?.(artistId, 'apple')
-                })
-                .catch(() => undefined)
-              return
-            }
             const artist = song.artists[0]
             const identifier = song.platform === 'qq' ? artist?.mid || artist?.id : artist?.id
             if (identifier) onOpenArtist?.(String(identifier), menuPlatform)
@@ -2355,7 +2179,7 @@ function ExploreView({
       <AnimatePresence>
         {showMVExplore && (
           <MVExploreModal
-            initialPlatform={(platform === 'apple' || platform === 'spotify') ? 'netease' : platform}
+            initialPlatform={platform}
             initialMvId={neteaseFeedMvId || undefined}
             playerTheme={playerTheme}
             onClose={() => {

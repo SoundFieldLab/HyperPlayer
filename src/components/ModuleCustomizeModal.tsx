@@ -52,12 +52,6 @@ export default function ModuleCustomizeModal({ show, onClose, playerTheme = 'dar
     return saved ? sanitizeHomeModules(saved, 'qq') : getDefaultHomeModules('qq', loggedIn)
   })
 
-  const [appleModules, setAppleModules] = useState<HomeModuleType[]>(() => {
-    const saved = localStorage.getItem('homeModules_apple')
-    const loggedIn = Boolean(localStorage.getItem('appleAccountName'))
-    return saved ? sanitizeHomeModules(saved, 'apple') : getDefaultHomeModules('apple', loggedIn)
-  })
-  
   // 监听模块变化，自动保存
   useEffect(() => {
     localStorage.setItem('homeModules_netease', JSON.stringify(neteaseModules))
@@ -68,11 +62,6 @@ export default function ModuleCustomizeModal({ show, onClose, playerTheme = 'dar
     localStorage.setItem('homeModules_qq', JSON.stringify(qqModules))
     window.dispatchEvent(new Event('homeModulesChanged'))
   }, [qqModules])
-
-  useEffect(() => {
-    localStorage.setItem('homeModules_apple', JSON.stringify(appleModules))
-    window.dispatchEvent(new Event('homeModulesChanged'))
-  }, [appleModules])
   
   const [draggedModule, setDraggedModule] = useState<{ moduleId: HomeModuleType, platform: MusicPlatform, fromSelected: boolean } | null>(null)
   const [isDraggingOverAvailable, setIsDraggingOverAvailable] = useState(false)
@@ -89,10 +78,10 @@ export default function ModuleCustomizeModal({ show, onClose, playerTheme = 'dar
   }, [])
   
   const getModules = (platform: MusicPlatform): HomeModuleType[] => (
-    platform === 'netease' ? neteaseModules : platform === 'qq' ? qqModules : appleModules
+    platform === 'netease' ? neteaseModules : qqModules
   )
   const getSetModules = (platform: MusicPlatform) => (
-    platform === 'netease' ? setNeteaseModules : platform === 'qq' ? setQQModules : setAppleModules
+    platform === 'netease' ? setNeteaseModules : setQQModules
   )
 
   const handleDragStart = (moduleId: HomeModuleType, platform: MusicPlatform, fromSelected: boolean) => {
@@ -162,7 +151,6 @@ export default function ModuleCustomizeModal({ show, onClose, playerTheme = 'dar
   // 可选模块（排除已选的）
   const neteaseAvailableModules = HOME_MODULES.filter(m => m.platform === 'netease')
   const qqAvailableModules = HOME_MODULES.filter(m => m.platform === 'qq')
-  const appleAvailableModules = HOME_MODULES.filter(m => m.platform === 'apple')
   
   // 按照是否已选排序（已选的排在后面，灰色显示）
   const getSortedAvailableModules = (modules: HomeModuleDefinition[], selectedIds: HomeModuleType[]) => {
@@ -177,7 +165,6 @@ export default function ModuleCustomizeModal({ show, onClose, playerTheme = 'dar
   
   const sortedNeteaseAvailable = getSortedAvailableModules(neteaseAvailableModules, neteaseModules)
   const sortedQQAvailable = getSortedAvailableModules(qqAvailableModules, qqModules)
-  const sortedAppleAvailable = getSortedAvailableModules(appleAvailableModules, appleModules)
   
   return (
     <AnimatePresence>
@@ -222,7 +209,7 @@ export default function ModuleCustomizeModal({ show, onClose, playerTheme = 'dar
             {/* 内容区 */}
             <div className="flex-1 overflow-y-auto p-6" style={{ scrollbarWidth: 'thin' }}>
               <p className={`${textSecondary} text-sm mb-6`}>
-                分别为网易云音乐、QQ 音乐和 Apple Music 选择最多 {MAX_HOME_MODULES} 个模块，支持拖拽排序
+                分别为网易云音乐与 QQ 音乐选择最多 {MAX_HOME_MODULES} 个模块，支持拖拽排序
               </p>
               
               {/* 网易云音乐部分 */}
@@ -575,179 +562,6 @@ export default function ModuleCustomizeModal({ show, onClose, playerTheme = 'dar
                 </div>
               </div>
 
-              {/* Apple Music 部分 */}
-              <div className="mb-8">
-                <div className={`flex items-center gap-3 mb-4 p-4 rounded-xl ${bgCard} border ${borderColor}`}>
-                  <div 
-                    className="w-10 h-10 rounded-lg flex items-center justify-center"
-                    style={{ backgroundColor: '#fa2d48' }}
-                  >
-                    <span className="text-white font-bold text-sm">苹</span>
-                  </div>
-                  <h3 className={`text-lg font-bold ${textPrimary} flex-1`}>Apple Music</h3>
-                  <span className={`text-xs px-3 py-1 rounded-full ${bgCard}`} style={{ color: accentColor }}>
-                    {appleModules.length}/{MAX_HOME_MODULES} 已选
-                  </span>
-                </div>
-                
-                {/* 已选择的模块 */}
-                <div 
-                  className="mb-4"
-                  onDragOver={(e) => handleDragOverSelected(e, null, 'apple')}
-                >
-                  <div className={`${textSecondary} text-xs mb-3 font-medium`}>已选择（拖拽排序）</div>
-                  {appleModules.length > 0 ? (
-                    <Reorder.Group
-                      axis="y"
-                      values={appleModules}
-                      onReorder={setAppleModules}
-                      layoutScroll
-                      style={{ listStyle: 'none' }}
-                    >
-                      <AnimatePresence initial={false}>
-                        {appleModules.map(moduleId => {
-                          const module = HOME_MODULES.find(m => m.id === moduleId)
-                          if (!module) return null
-                          
-                          return (
-                            <Reorder.Item
-                              key={moduleId}
-                              value={moduleId}
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                              whileHover={{ scale: 1.02 }}
-                              whileDrag={{ scale: 1.05, zIndex: 10 }}
-                              dragListener={false}
-                              className="mb-2 cursor-move"
-                            >
-                              <div
-                                className={`flex items-center gap-3 p-4 rounded-xl border ${borderColor}`}
-                                style={{
-                                  background: playerTheme === 'dark'
-                                    ? `linear-gradient(135deg, rgba(250, 45, 72, 0.1) 0%, rgba(250, 45, 72, 0.05) 100%)`
-                                    : `linear-gradient(135deg, rgba(250, 45, 72, 0.15) 0%, rgba(250, 45, 72, 0.08) 100%)`,
-                                }}
-                                onDragStart={() => handleDragStart(moduleId, 'apple', true)}
-                                onDragEnd={handleDragEnd}
-                                draggable
-                              >
-                                <GripVertical className="w-5 h-5 cursor-grab active:cursor-grabbing" style={{ color: accentColor }} />
-                                <div className="flex-1">
-                                  <span className={`${textPrimary} text-sm font-medium`}>{module.name}</span>
-                                  {module.type === 'playlist-grid' && (
-                                    <span className={`${textSecondary} text-xs ml-2`}>(歌单)</span>
-                                  )}
-                                  <p className={`${textTertiary} mt-1 text-xs leading-4`}>{module.description}</p>
-                                </div>
-                                <button
-                                  onClick={() => handleRemoveModule(moduleId, 'apple')}
-                                  className="p-1 hover:bg-white/10 rounded transition-colors"
-                                >
-                                  <X className="w-4 h-4" style={{ color: accentColor }} />
-                                </button>
-                              </div>
-                            </Reorder.Item>
-                          )
-                        })}
-                      </AnimatePresence>
-                    </Reorder.Group>
-                  ) : (
-                    <div className={`${bgCard} rounded-xl p-8 text-center border ${borderColor}`}>
-                      <p className={`${textTertiary} text-sm`}>从下方拖拽或点击添加模块</p>
-                    </div>
-                  )}
-                </div>
-                
-                {/* 可选模块 */}
-                <div 
-                  className={`transition-all ${isDraggingOverAvailable && draggedModule?.platform === 'apple' ? 'ring-2' : ''}`}
-                  style={{ 
-                    '--tw-ring-color': isDraggingOverAvailable && draggedModule?.platform === 'apple' ? accentColor : 'transparent' 
-                  } as CSSProperties}
-                  onDragOver={(e) => handleDragOverAvailable(e, 'apple')}
-                  onDrop={() => handleDropOnAvailable('apple')}
-                  onDragLeave={() => setIsDraggingOverAvailable(false)}
-                >
-                  <div className={`${textSecondary} text-xs mb-3 font-medium`}>
-                    可选模块 {isDraggingOverAvailable && draggedModule?.platform === 'apple' && '（松开删除）'}
-                  </div>
-                  <div className="space-y-2">
-                    <AnimatePresence mode="popLayout">
-                      {sortedAppleAvailable.map(module => {
-                        const isSelected = appleModules.includes(module.id)
-                        const isDisabled = !isSelected && appleModules.length >= MAX_HOME_MODULES
-                        
-                        return (
-                          <motion.div
-                            key={module.id}
-                            layout
-                            initial={{ opacity: 0, x: -20 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: 20 }}
-                            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                            draggable={!isSelected && !isDisabled}
-                            onDragStart={() => !isSelected && !isDisabled && handleDragStart(module.id, 'apple', false)}
-                            onDragEnd={handleDragEnd}
-                            onClick={() => !isSelected && !isDisabled && handleAddModule(module.id, 'apple')}
-                            className={`flex items-center gap-3 p-4 rounded-xl transition-all border ${borderColor} ${
-                              isSelected 
-                                ? 'opacity-40' 
-                                : isDisabled 
-                                  ? 'opacity-30 cursor-not-allowed'
-                                  : 'cursor-pointer hover:brightness-110 active:scale-95'
-                            } ${draggedModule?.moduleId === module.id && !draggedModule.fromSelected ? 'opacity-50' : ''}`}
-                            style={{
-                              backgroundColor: playerTheme === 'dark' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
-                            }}
-                          >
-                            {!isSelected && !isDisabled ? (
-                              <motion.div
-                                whileHover={{ rotate: 90 }}
-                                transition={{ type: 'spring', stiffness: 300 }}
-                              >
-                                <Plus className="w-5 h-5" style={{ color: accentColor }} />
-                              </motion.div>
-                            ) : (
-                              <GripVertical 
-                                className="w-5 h-5" 
-                                style={{ color: isSelected || isDisabled ? tertiaryColor : accentColor }} 
-                              />
-                            )}
-                            <div className="flex-1">
-                              <span className={`${isSelected || isDisabled ? textTertiary : textPrimary} text-sm font-medium`}>
-                                {module.name}
-                              </span>
-                              {module.type === 'playlist-grid' && (
-                                <span className={`${textTertiary} text-xs ml-2`}>(歌单)</span>
-                              )}
-                              <p className={`${isSelected || isDisabled ? textTertiary : textSecondary} mt-1 text-xs leading-4`}>
-                                {module.description}
-                                {module.loginRequired ? ' · 需登录' : ''}
-                              </p>
-                            </div>
-                            {isSelected && (
-                              <motion.span 
-                                initial={{ scale: 0 }}
-                                animate={{ scale: 1 }}
-                                className={`text-xs flex items-center gap-1`}
-                                style={{ color: accentColor }}
-                              >
-                                <Check className="w-3 h-3" />
-                                已添加
-                              </motion.span>
-                            )}
-                            {isDisabled && (
-                              <span className={`text-xs ${textTertiary}`}>已满</span>
-                            )}
-                          </motion.div>
-                        )
-                      })}
-                    </AnimatePresence>
-                  </div>
-                </div>
-              </div>
             </div>
           </motion.div>
         </>

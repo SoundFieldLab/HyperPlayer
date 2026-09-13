@@ -148,7 +148,7 @@ function TraditionalArtistDetail({
                   {tab === 'albums' ? (
                     <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                       {albums.map((album, index) => (
-                        <button key={`${album.appleId || album.mid || album.id}:${index}`} type="button" onClick={() => { const albumId = album.appleId || album.mid || album.id; if (albumId) onOpenAlbum?.(String(albumId), album.platform || platform) }} className={`overflow-hidden rounded-2xl border p-2 text-left transition hover:-translate-y-1 ${isDark ? 'border-white/10 bg-white/[.04]' : 'border-slate-200 bg-white'}`}>
+                        <button key={`${album.mid || album.id}:${index}`} type="button" onClick={() => { const albumId = album.mid || album.id; if (albumId) onOpenAlbum?.(String(albumId), album.platform || platform) }} className={`overflow-hidden rounded-2xl border p-2 text-left transition hover:-translate-y-1 ${isDark ? 'border-white/10 bg-white/[.04]' : 'border-slate-200 bg-white'}`}>
                           {album.picUrl ? (
                             <img src={getProxiedImageUrl(album.picUrl)} alt="" className="aspect-square w-full rounded-xl object-cover" />
                           ) : (
@@ -201,7 +201,7 @@ function TraditionalArtistDetail({
                 </>
               )}
             </main>
-      <SongContextMenu show={menu.show} x={menu.x} y={menu.y} song={menu.song} onClose={() => setMenu({ show: false, x: 0, y: 0, song: null })} onPlayNow={song => onSongSelect(song, activeSongs, { mode: 'traditional', surface: 'traditional-artist', platform: song.platform || platform, artistId })} onPlayNext={onPlayNext} onAddToFavorites={onAddToFavorites} onRemoveFromFavorites={onRemoveFromFavorites} onAddToPlaylist={onAddToPlaylist} onViewComments={onViewComments} onViewAlbum={song => { const albumId = song.album?.appleId || song.album?.mid || song.album?.id; if (albumId) onOpenAlbum?.(String(albumId), song.platform || platform) }} onViewArtist={() => undefined} onCopyInfo={onCopyInfo} userPlaylists={userPlaylists} platform={menu.song?.platform || platform} playerTheme={isDark ? 'dark' : 'light'} />
+      <SongContextMenu show={menu.show} x={menu.x} y={menu.y} song={menu.song} onClose={() => setMenu({ show: false, x: 0, y: 0, song: null })} onPlayNow={song => onSongSelect(song, activeSongs, { mode: 'traditional', surface: 'traditional-artist', platform: song.platform || platform, artistId })} onPlayNext={onPlayNext} onAddToFavorites={onAddToFavorites} onRemoveFromFavorites={onRemoveFromFavorites} onAddToPlaylist={onAddToPlaylist} onViewComments={onViewComments} onViewAlbum={song => { const albumId = song.album?.mid || song.album?.id; if (albumId) onOpenAlbum?.(String(albumId), song.platform || platform) }} onViewArtist={() => undefined} onCopyInfo={onCopyInfo} userPlaylists={userPlaylists} platform={menu.song?.platform || platform} playerTheme={isDark ? 'dark' : 'light'} />
     </div>
   )
 }

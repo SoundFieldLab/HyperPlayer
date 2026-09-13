@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it } from 'vitest'
 import { parseTTML } from '../src/utils/ttmlParser'
-import { collectAppleTtml, convertAppleTTMLToLyrics, getAgentTintColor, mergeAppleTtmlBundle } from '../src/services/appleMusic'
+import { collectAppleTtml, convertAppleTTMLToLyrics, getAgentTintColor, mergeAppleTtmlBundle } from '../src/services/appleLyricsStyle'
 
 const FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
 <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xml:lang="en">

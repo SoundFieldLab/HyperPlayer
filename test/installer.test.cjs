@@ -101,7 +101,8 @@ test('license is a summary of the complete in-app agreement with mandatory expli
 test('installer legal summary is traceable to legal.ts and OOBE source clauses', () => {
   const mappings = [
     ['Cookie / Token', /Cookie \/ Token/],
-    ['api.allorigins.win', /api\.allorigins\.win/],
+    // api.allorigins.win 代理仅曾用于 Apple Music 跨域请求；该音源移除后法务条款不再提及此代理，
+    // 故这里不再做映射校验（安装器摘要里的同名文案属待清理的残留，见 generate-installer-ui.mjs）。
     ['Lrclib', /Lrclib/],
     ['AMLL', /AMLL/],
     ['Open-Meteo', /Open-Meteo/],

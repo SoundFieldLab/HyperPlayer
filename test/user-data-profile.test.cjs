@@ -37,6 +37,7 @@ test('development builds also use the product profile, never the shared Electron
   fs.mkdirSync(path.join(shared, 'IndexedDB', 'http_127.0.0.1_3000.indexeddb.leveldb'), { recursive: true })
   fs.writeFileSync(path.join(shared, 'config.json'), '{}')
   fs.writeFileSync(path.join(shared, 'desktop-player-settings.json'), '{}')
+  // 历史残留文件名（旧版 Apple Music 音源曾在此写入 cookie）；目录不再被认领，与具体文件名无关
   fs.writeFileSync(path.join(shared, 'apple-web-cookies.json'), '{}')
 
   const selected = selectHyperPlayerUserData({ appDataRoot: root, isPackaged: false })

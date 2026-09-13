@@ -12,7 +12,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { Reorder } from 'framer-motion'
 import { Check, ChevronRight, Eye, EyeOff, GripVertical, Loader2, Music, RefreshCw } from 'lucide-react'
 import FontPicker, { DEFAULT_FONT_LABEL, BUNDLED_FONTS, RECOMMENDED_FONTS } from './FontPicker'
-import VmpStatusCard from './VmpStatusCard'
 import {
   GLOBAL_SETTINGS_GROUPS,
   getAboutVersion,
@@ -428,19 +427,6 @@ export function MirroredGlobalSettings({ skin, variant, groupId, onOpenModal, cl
                     <span className="text-xs tabular-nums" style={{ color: skin.sub }}>{getAboutVersion()}</span>
                   </div>
                 )}
-                {group.id === 'advanced' && getValue('developerMode') === true && (
-                  <div className="mb-2 px-2.5">
-                    <VmpStatusCard
-                      dark={skin.dark}
-                      accent={skin.accent}
-                      background={skin.controlBg}
-                      borderColor={skin.cardBorder}
-                      textColor={skin.text}
-                      mutedColor={skin.muted}
-                      compact
-                    />
-                  </div>
-                )}
                 <div className="grid gap-x-4 gap-y-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                   {entries.map(entry => (
                     <Row
@@ -479,19 +465,6 @@ export function MirroredGlobalSettings({ skin, variant, groupId, onOpenModal, cl
                 <span className="text-xs tabular-nums" style={{ color: skin.sub }}>{getAboutVersion()}</span>
               </div>
             )}
-            {group.id === 'advanced' && getValue('developerMode') === true && (
-              <div className="px-3 py-2">
-                <VmpStatusCard
-                  dark={skin.dark}
-                  accent={skin.accent}
-                  background={skin.controlBg}
-                  borderColor={skin.cardBorder}
-                  textColor={skin.text}
-                  mutedColor={skin.muted}
-                  compact
-                />
-              </div>
-            )}
             {entries.map(entry => (
               <Row
                 key={entry.id}
@@ -520,8 +493,6 @@ export function MirroredGlobalSettings({ skin, variant, groupId, onOpenModal, cl
 const PLATFORM_ICONS: Partial<Record<MusicPlatform, { src: string; fallback: string; bg: string }>> = {
   netease: { src: 'https://s1.music.126.net/style/favicon.ico', fallback: '网', bg: '#dd001b' },
   qq: { src: 'https://y.qq.com/favicon.ico', fallback: 'QQ', bg: '#31c27c' },
-  apple: { src: 'https://www.apple.com/favicon.ico', fallback: '苹', bg: '#fa2d48' },
-  spotify: { src: '', fallback: 'S', bg: '#1DB954' },
 }
 
 export function PlatformOrderEditor({ skin, className }: { skin: MirrorSkin; className?: string }) {

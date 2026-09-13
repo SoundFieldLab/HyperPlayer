@@ -30,7 +30,7 @@ HyperPlayer 为 WaveForge（澜音工坊）的下游项目。上游母项目 Wav
 | 看歌 / MV 背景（Bilibili） | `src/services/bilibiliApi.ts`、`src/services/mvAlignment.ts`、`src/components/BilibiliMvPlayer.tsx`、`src/components/BilibiliMvBackground.tsx`、`src/components/BilibiliVideoPlayerOverlay.tsx`、`src/components/BilibiliWatchSettingsModal.tsx`、`server/bilibili-api.mjs` |
 | 桌面模式（Desktop 小组件 / 壁纸 / 独立播放小窗） | `src/components/Desktop*.tsx`（DesktopView / WidgetZone / MiniPlayer / ExtraWidgets / CustomizationEditor / SettingsModal / ProductivityWidgets / TimeCenter / ExploreWidgets）、`src/desktop-player/**` |
 | 探索模式（Explore） | `src/components/ExploreView.tsx`、`src/components/ExploreSettingsPanel.tsx` |
-| Apple Music 平台接入（认证 / 目录 / 歌词 TTML / 动态封面 / 原生 HLS 播放 / 探索 / 登录窗） | `src/services/apple*.ts`、`src/hooks/useAppleDynamicCover.ts`、`src/utils/ttmlParser.ts`、`src/components/Apple*.tsx`、`server/apple-artwork-api.mjs` |
+| Apple 风格歌词（TTML 解析 / 逐字 / 对唱着色 / 多语言合并） | `src/services/appleLyricsStyle.ts`、`src/utils/ttmlParser.ts` |
 
 ### 允许（无需额外授权）
 

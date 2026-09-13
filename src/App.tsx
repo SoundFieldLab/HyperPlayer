@@ -21,22 +21,12 @@ import ModeTransitionOverlay from './components/ModeTransitionOverlay'
 import { extractDominantColor, useColorThief } from './hooks/useColorThief'
 import { useAudioPlayer, type AudioGraphHandle } from './hooks/useAudioPlayer'
 import { useAudioAnalyzer } from './hooks/useAudioAnalyzer'
-import { useAppleDynamicCover } from './hooks/useAppleDynamicCover'
 import { useAudioPulseStore, type AudioPulseStore } from './hooks/useAudioPulse'
 import { useAutoHideCursor } from './hooks/useAutoHideCursor'
 import { Song, getSongUrl, invalidateSongUrl, getLyrics, getProxiedImageUrl, getProxiedAudioUrl, getLocalAlbumIdentifier, resolveSongAlbumIdentifier, LyricLine } from './services/musicApi'
-import { recordAppleRecentPlaybackFallback } from './services/appleRecentPlayback'
 import type { MusicPlatform } from './services/platforms'
 import { getPlatformCapabilities, isPlatformVisible, platformLabel } from './services/platforms'
-import { getAppleAuthState, clearAppleLogin, type AppleUserInfo } from './services/appleAuth'
 import { recordLogin, clearLoginExpiry, isLoginExpired } from './services/loginExpiry'
-import { resolvePlayableSong, setAppleSongLoved, getLastAppleMutationResult, addAppleTracksToPlaylist, getAppleLibraryPlaylists, getAppleLibrarySongs, getAppleHotSongs, appleLibraryTrackToSong, appleSongToSong, resolveAppleLibraryCatalogId, APPLE_LIBRARY_ID_PATTERN } from './services/appleCatalog'
-import { ensureBridgeRunning, checkBridgeRunning, bridgePlay, bridgeStop, getState as getBridgeState, isBridgeReady, fetchBridgeSpectrum } from './services/appleWebViewBridge'
-import { getAppleRadioFailReason, isAppleNativeStreamEnabled, isAppleEmeCapable, releaseAppleNativeStream, resolveAppleNativeStream, resolveAppleRadioStream, type AppleNativeStream } from './services/applePlayback'
-import { decideAppleRadioFailure, getAppleRadioReconnectKey } from './services/appleRadioReconnect'
-import { fetchAppleRadioPage, fetchAppleStationDetail, appleStationToSong } from './services/appleWebService'
-import { getAppleAcceptanceSnapshot, installAppleEmeAcceptanceInstrumentation, resetAppleAcceptanceSnapshot } from './services/appleAcceptanceDiagnostics'
-import AppleLoginPanel from './components/AppleLoginPanel'
 import { cacheManager } from './services/cacheManager'
 import { indexedDBCache } from './services/indexedDBCache'
 import { autoMixAnalysisService } from './services/autoMixAnalysisService'
@@ -95,8 +85,6 @@ const loadPlaybackRadialMenu = () => import('./components/PlaybackRadialMenu')
 const loadImmersiveControls = () => import('./components/ImmersiveControls')
 const loadTranslationDisplay = () => import('./components/TranslationDisplay')
 const loadPvLyricsPage = () => import('./components/pvLyrics/PvLyricsPage')
-const loadAppleRadioNowPlayingPage = () => import('./components/AppleRadioNowPlayingPage')
-const LazyAppleRadioNowPlayingPage = lazy(loadAppleRadioNowPlayingPage)
 const loadBilibiliMvPlayer = () => import('./components/BilibiliMvPlayer')
 const loadBilibiliMvBackground = () => import('./components/BilibiliMvBackground')
 const LazyModernAudioVisualizer = lazy(loadModernAudioVisualizer)
@@ -126,16 +114,11 @@ import { hasEnabledAudioPlugin } from './plugins/registry'
 import {
   createPlatformEntitlements,
   detectQQMusicVip,
-  entitlementTierFromSpotifyProduct,
   entitlementTierFromVip,
-  type EntitlementTier,
 } from './utils/musicEntitlements'
 import { getQQUserDisplayName } from './utils/qqUser'
-import { getAppleLovedSongIds } from './services/appleCatalog'
 import {
   applyFavoriteMutation,
-  getFavoriteSongIdentifiers,
-  getFavoriteUserId,
   loadFavoriteIdentifiers,
   peekSongFavoriteStatus,
 } from './services/favoriteStatusService'
@@ -420,9 +403,7 @@ const PulsingCrossfadeBackground = memo(function PulsingCrossfadeBackground({
 })
 
 function getSongKey(song: Song): string {
-  // Apple：id 可能为 0（库内曲目 l. 前缀非数字），必须用 appleId 保证每首歌唯一——
-  // 否则所有 AM 歌曲都是 apple-0，预载/URL 缓存/AutoMix 全部串歌（播放货不对板）
-  return `${song.platform || 'netease'}-${song.mid || song.appleId || song.id}`
+  return `${song.platform || 'netease'}-${song.mid || song.id}`
 }
 
 // 纯音乐判定（现代歌词模式：纯音乐时封面居中显示）。
@@ -440,7 +421,7 @@ function detectPureMusic(lyrics: LyricLine[] | undefined | null): boolean {
 
 function getSongIdentifiers(song: Song | null): string[] {
   if (!song) return []
-  return [song.appleId, song.appleLibraryId, song.id, song.mid]
+  return [song.id, song.mid]
     .filter(value => value !== undefined && value !== null && String(value).trim())
     .map(value => String(value))
 }
@@ -450,7 +431,6 @@ function getSongIdentifiers(song: Song | null): string[] {
 // 用于区分 gapless 首选「直接拼接」（仅专辑场景）与备选「60ms 淡入淡出」。
 function isSameAlbumPlayback(source: Song | undefined, target: Song | undefined): boolean {
   if (!source || !target) return false
-  // Apple 曲目 album 无平台专辑 id，直接拼接不适用（返回 false 走淡入淡出）
   const sourcePlatform = source.platform || 'netease'
   const targetPlatform = target.platform || 'netease'
   const sourceAlbumId = getLocalAlbumIdentifier(source, sourcePlatform)
@@ -603,9 +583,7 @@ function App() {
     setCurrentTime(value)
   }, [])
   const [duration, setDuration] = useState(0)
-  /** 当前曲目是否由 WebView2 播放面播放（外部播放源模式；驱动频谱/分析器走 bridge 数据源） */
-  const [externalPlaybackActive, setExternalPlaybackActive] = useState(false)
-  /** 当前曲目是否为直播流（Apple 电台等；直播时播放器显示 LIVE 指示、禁拖动） */
+  /** 当前曲目是否为直播流（无直播音源时恒为 false；直播时播放器显示 LIVE 指示、禁拖动） */
   const [isLive, setIsLive] = useState(false)
   const [volume, setVolume] = useState(1.0) // 默认音量100%
   const [showSearch, setShowSearch] = useState(false)
@@ -675,27 +653,6 @@ function App() {
   const [showPlaylist, setShowPlaylist] = useState(false)
   const [showLogin, setShowLogin] = useState(false)
   const [loginPlatform, setLoginPlatform] = useState<MusicPlatform>('netease')
-  // Apple Music 登录态（token 登录，见 AppleLoginPanel / appleAuth.ts）
-  const [showAppleLogin, setShowAppleLogin] = useState(false)
-  const [appleLoggedIn, setAppleLoggedIn] = useState(() => getAppleAuthState().loggedIn)
-  const [appleUsername, setAppleUsername] = useState(() => getAppleAuthState().name)
-  const [appleAvatar, setAppleAvatar] = useState<string | undefined>(() => getAppleAuthState().avatarUrl)
-  const [appleEmail, setAppleEmail] = useState(() => getAppleAuthState().email || '')
-  const [appleStorefront, setAppleStorefront] = useState(() => getAppleAuthState().storefront)
-  const refreshAppleAuth = (user: AppleUserInfo | null) => {
-    if (user) {
-      setAppleLoggedIn(true)
-      setAppleUsername(user.name)
-      setAppleAvatar(user.avatarUrl)
-      setAppleEmail(user.email || '')
-      setAppleStorefront(user.storefront)
-    } else {
-      setAppleLoggedIn(false)
-      setAppleUsername('')
-      setAppleAvatar(undefined)
-      setAppleEmail('')
-    }
-  }
   const [showProfile, setShowProfile] = useState(false)
   const [profileInitialPlatform, setProfileInitialPlatform] = useState<MusicPlatform>('netease')
   const [profileInitialTab, setProfileInitialTab] = useState<'created' | 'subscribed' | 'detail' | 'recent'>('created')
@@ -773,18 +730,9 @@ function App() {
     smartReorderAbortRef.current?.abort()
   }, [])
 
-  const appleNativePreloadKeyRef = useRef('')
-  const appleNativePreloadAttemptsRef = useRef<Map<string, number>>(new Map())
-  const appleNativePreloadRetryTimerRef = useRef<number | null>(null)
-
   const bumpQueueRevision = useCallback(() => {
     const nextRevision = queueRevisionRef.current + 1
     queueRevisionRef.current = nextRevision
-    appleNativePreloadAttemptsRef.current.clear()
-    if (appleNativePreloadRetryTimerRef.current !== null) {
-      window.clearTimeout(appleNativePreloadRetryTimerRef.current)
-      appleNativePreloadRetryTimerRef.current = null
-    }
     setQueueRevision(nextRevision)
     return nextRevision
   }, [])
@@ -810,12 +758,6 @@ function App() {
   useEffect(() => {
     const invalidatePreloadedAudioUrls = () => {
       audioUrlCacheGenerationRef.current += 1
-      appleNativePreloadKeyRef.current = ''
-      appleNativePreloadAttemptsRef.current.clear()
-      if (appleNativePreloadRetryTimerRef.current !== null) {
-        window.clearTimeout(appleNativePreloadRetryTimerRef.current)
-        appleNativePreloadRetryTimerRef.current = null
-      }
       audioPlayerCacheControlRef.current?.cancelTransition('audio source settings changed', false)
       for (const [key, cached] of preloadCacheRef.current) {
         if (!cached.url) continue
@@ -832,12 +774,6 @@ function App() {
     return () => {
       window.removeEventListener(AUDIO_QUALITY_SETTINGS_EVENT, invalidatePreloadedAudioUrls)
       window.removeEventListener('hyperplayer-auth-changed', invalidatePreloadedAudioUrls)
-    }
-  }, [])
-
-  useEffect(() => () => {
-    if (appleNativePreloadRetryTimerRef.current !== null) {
-      window.clearTimeout(appleNativePreloadRetryTimerRef.current)
     }
   }, [])
 
@@ -1093,60 +1029,9 @@ function App() {
   
   // 当前播放进度
   const currentSong = currentIndex >= 0 && currentIndex < playlist.length ? playlist[currentIndex] : null
-  const currentAppleRadio = currentSong?.appleRadio || null
-  const isAppleRadioPlayback = Boolean(currentAppleRadio)
-
-  const [appleRadioStatus, setAppleRadioStatus] = useState<'connecting' | 'playing' | 'reconnecting' | 'error'>('connecting')
-  const [appleRadioError, setAppleRadioError] = useState('')
-  const appleRadioAcceptanceRef = useRef({
-    currentSong,
-    status: appleRadioStatus,
-    error: appleRadioError,
-    isPlaying,
-    streamResolved: false,
-  })
-  appleRadioAcceptanceRef.current = {
-    ...appleRadioAcceptanceRef.current,
-    currentSong,
-    status: appleRadioStatus,
-    error: appleRadioError,
-    isPlaying,
-  }
-
-  // Apple 播放面仅在 Electron CENC 失败时按需启动；正常 Apple 歌曲走本地 L3音频图，
-  // 不因当前平台/队列是 Apple 就常驻拉起 WebView2。
-  const appleBridgeStopTimerRef = useRef<number | null>(null)
-  // 「播放面未授权」一次性会话提示标记（避免每次点歌都弹 toast）
-  const appleBridgeAuthHintShownRef = useRef(false)
-  useEffect(() => {
-    const platform = currentSong?.platform
-    if (platform !== 'apple' && platform) {
-      if (appleBridgeStopTimerRef.current) {
-        window.clearTimeout(appleBridgeStopTimerRef.current)
-        appleBridgeStopTimerRef.current = null
-      }
-      // 切到其他平台时立即释放兼容播放面；它不参与正常原生 CENC 播放
-      void bridgeStop().catch(() => undefined)
-      void window.electron?.stopAppleBridge?.()
-    }
-    return () => {
-      if (appleBridgeStopTimerRef.current !== null) {
-        window.clearTimeout(appleBridgeStopTimerRef.current)
-        appleBridgeStopTimerRef.current = null
-      }
-    }
-  }, [currentSong?.platform])
 
   // 当前背景是否为 MV 视频（供 QuickSettings 的模糊滑块切换两套值：MV 激活时调 MV 模糊，封面时调封面模糊）
   const mvBackgroundActive = Boolean(currentSong) && lyricDisplayMode !== 'video' && mvBackgroundEnabled && !mvBackgroundFallback
-  // Apple Music 动态封面（图层叠加式）：未开启/无动态封面/查询失败时为 null，封面永远回退平台静态图
-  const appleDynamicCover = useAppleDynamicCover({
-    title: isAppleRadioPlayback ? '' : currentSong?.name || '',
-    artist: isAppleRadioPlayback ? '' : (currentSong?.artists || []).map((artist: { name: string }) => artist.name).join(', '),
-    album: isAppleRadioPlayback ? '' : currentSong?.album?.name || '',
-    duration: isAppleRadioPlayback ? undefined : currentSong?.duration,
-    trackKey: isAppleRadioPlayback ? '' : currentSong?.id || currentSong?.mid || '',
-  })
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('mvBackgroundActiveChanged', { detail: mvBackgroundActive }))
   }, [mvBackgroundActive])
@@ -1311,36 +1196,23 @@ function App() {
   // URL 与歌词分开预载，并共享同一个进行中的歌词请求。无缝切歌时先使用
   // 已返回的基础歌词，随后原位升级为 TTML 逐字、翻译和罗马音组合结果。
   const ensureSongLyrics = useCallback((song: Song, cacheKey = getSongKey(song)): Promise<LyricLine[]> => {
-    if (song.appleRadio) return Promise.resolve([])
     const cached = preloadCacheRef.current.get(cacheKey)
     const cachedUrlTimestamp = cached?.urlTimestamp ?? (cached?.url ? cached.timestamp : undefined)
 
     const platform = song.platform || 'netease'
-    // Apple 必须优先使用 catalog appleId；QQ 用 mid。
-    const rawSongId = platform === 'apple'
-      ? (song.appleId || song.id)
-      : platform === 'qq'
-        ? (song.mid || song.id)
-        : song.id
-    const resolveLyricsSongId = async (): Promise<string | number> => {
-      const value = String(rawSongId || '')
-      if (platform === 'apple' && APPLE_LIBRARY_ID_PATTERN.test(value)) {
-        return await resolveAppleLibraryCatalogId(value).catch(() => null) || ''
-      }
-      return rawSongId
-    }
+    // QQ 用 mid，网易云用 id。
+    const rawSongId = platform === 'qq'
+      ? (song.mid || song.id)
+      : song.id
     const lyricsCacheGeneration = lyricsCacheGenerationRef.current
     let lyricsLoadedFromPersistentCache = false
     // 歌词缓存版本：评分/数据源/解析逻辑变更时递增，使旧缓存（旧解析选中的劣质/残缺源）失效。
     // v3→v4：修复 QQ 歌词请求的 songID 形态后，**递增版本强制清除今天缓存下来的残缺结果**
     //（上午 parseInt('004Iwx…')=4 的守卫 bug 让 musicu 返回空 qrc/trans/roma → 结果被
     // IndexedDB 永久缓存，后端修好后缓存仍喂旧坏数据 → 重启也无效）
-    // v5：保留 Apple TTML 独立翻译/罗马音、对唱 agent 和背景和声字段。
+    // v5：保留 TTML 独立翻译/罗马音、对唱 agent 和背景和声字段。
     // 来源策略进入 key：切语言、登录态、第三方/自适应/主源后不会继续读取旧结果。
     const lyricsPolicyKey = [
-      platform === 'apple' ? (localStorage.getItem('appleMusicEnabled') || 'default') : 'non-apple',
-      platform === 'apple' ? (localStorage.getItem('appleLyricLang') || 'zh-hans-cn') : '-',
-      platform === 'apple' ? (getAppleAuthState().loggedIn ? 'logged-in' : 'logged-out') : '-',
       localStorage.getItem('thirdPartyLyricsEnabled') || 'default',
       localStorage.getItem('adaptiveLyrics') || 'default',
       localStorage.getItem('primaryLyricsSource') || 'AMLL',
@@ -1358,7 +1230,7 @@ function App() {
           lyricsLoadedFromPersistentCache = true
           return persistedLyrics
         }
-        const lyricsSongId = await resolveLyricsSongId()
+        const lyricsSongId = rawSongId
         return getLyrics(
           lyricsSongId,
       platform,
@@ -1517,31 +1389,20 @@ function App() {
   const [_qqCookie, setQQCookie] = useState(() => (
     localStorage.getItem('qq_cookie') || localStorage.getItem('qqCookie') || ''
   ))
-  // Spotify：OAuth token 登录
-  const [spotifyLoggedIn, setSpotifyLoggedIn] = useState(() => Boolean(localStorage.getItem('spotify_access_token')))
-  const [spotifyUsername, setSpotifyUsername] = useState(() => localStorage.getItem('spotify_username') || '')
-  const [spotifyAvatar, setSpotifyAvatar] = useState(() => localStorage.getItem('spotify_avatar') || '')
-  const [spotifyUserId, setSpotifyUserId] = useState(() => localStorage.getItem('spotify_user_id') || '')
-  const [spotifyEntitlement, setSpotifyEntitlement] = useState<EntitlementTier>(() => (
-    entitlementTierFromSpotifyProduct(localStorage.getItem('spotify_product'))
-  ))
   const platformEntitlements = useMemo(() => createPlatformEntitlements({
     netease: entitlementTierFromVip(neteaseVip),
     qq: entitlementTierFromVip(qqVip),
-    apple: 'unknown',
-    spotify: spotifyLoggedIn ? spotifyEntitlement : 'unknown',
-  }), [neteaseVip, qqVip, spotifyEntitlement, spotifyLoggedIn])
+  }), [neteaseVip, qqVip])
   const [loginRestoreComplete, setLoginRestoreComplete] = useState(false)
   // 登录态发生变化后通知首页、个人中心等依赖平台账号的视图刷新。
   const [authRevision, setAuthRevision] = useState(0)
 
-  // 各平台账号用户 id（Spotify 不应回退到 QQ 账号，避免喜欢/加歌串台）
+  // 各平台账号用户 id（各平台互相独立，避免喜欢/加歌串台）
   const getPlatformUserId = useCallback((target: MusicPlatform) => {
     if (target === 'netease') return neteaseUserId
     if (target === 'qq') return qqUserId
-    if (target === 'spotify') return spotifyUserId
     return ''
-  }, [neteaseUserId, qqUserId, spotifyUserId])
+  }, [neteaseUserId, qqUserId])
 
   useEffect(() => {
     if (!currentSong) {
@@ -1588,11 +1449,6 @@ function App() {
     }
 
     if (!isPlaying || currentTime < reportThreshold || session.reported || session.inFlight) return
-    if (platform === 'apple') {
-      recordAppleRecentPlaybackFallback(currentSong)
-      session.reported = true
-      return
-    }
     if (platform !== 'netease' && platform !== 'qq') return
     if (session.attempts >= 2 || Date.now() < session.nextRetryAt) return
 
@@ -1660,10 +1516,7 @@ function App() {
     }
 
     const platform = (currentSong.platform || 'netease') as MusicPlatform
-    // Apple：喜欢状态以音乐库为准（favoriteStatusService 已支持 apple）
-    const userId = platform === 'apple'
-      ? getFavoriteUserId('apple')
-      : getPlatformUserId(platform)
+    const userId = getPlatformUserId(platform)
     if (!userId) {
       setCurrentSongLiked(false)
       return
@@ -1676,15 +1529,6 @@ function App() {
     }
 
     let cancelled = false
-    if (platform === 'apple') {
-      const identifiers = getFavoriteSongIdentifiers(currentSong)
-      void getAppleLovedSongIds(identifiers)
-        .then(ids => {
-          if (!cancelled) setCurrentSongLiked(ids.some(id => identifiers.includes(id)))
-        })
-        .catch(() => undefined)
-      return () => { cancelled = true }
-    }
     void loadFavoriteIdentifiers(platform, userId)
       .then(() => {
         if (cancelled) return
@@ -1695,7 +1539,7 @@ function App() {
       })
 
     return () => { cancelled = true }
-  }, [currentSong, neteaseUserId, qqUserId, appleLoggedIn])
+  }, [currentSong, neteaseUserId, qqUserId])
 
   useEffect(() => {
     const handleFavoriteChange = (event: Event) => {
@@ -1724,7 +1568,6 @@ function App() {
   // handleNext 与 dominantColor 的声明位置在 useAudioPlayer 之后，无法放入其回调的依赖数组，
   // 因此用 ref 保存最新引用，供回调在运行时读取，避免陈旧闭包。
   const handleNextRef = useRef<() => void>(() => undefined)
-  const appleAcceptanceActiveRef = useRef(false)
   const dominantColorRef = useRef<string>(PLAYBACK_NEUTRAL_COLOR)
   
   // 调音室音效引擎：通过统一适配层（IAudioEngineAdapter）接入 v1/v2/v3，App 不再直接持有引擎实例。
@@ -1799,13 +1642,6 @@ function App() {
     return () => window.removeEventListener('normalizationEnabledChanged', handleNormalizationChange)
   }, [audioEngineVersion])
   
-  const appleRadioReconnectKeyRef = useRef('')
-  const appleRadioReconnectTimerRef = useRef<number | null>(null)
-  const retryAppleRadioRef = useRef<(song: Song, index: number) => void>(() => undefined)
-  useEffect(() => () => {
-    if (appleRadioReconnectTimerRef.current !== null) window.clearTimeout(appleRadioReconnectTimerRef.current)
-  }, [])
-
   // 播放器状态监听器
   const audioPlayer = useAudioPlayer(
     useCallback((state) => {
@@ -2025,45 +1861,7 @@ function App() {
       triggerGaplessModeToast('已用「albumGapless 交叉淡化」切换')
     }
 
-    if (state.transitionState === 'failed') {
-      const activeRadioSong = playlist[currentIndex]
-      const activeRadio = activeRadioSong?.appleRadio
-      if (activeRadio) {
-        const reconnectKey = getAppleRadioReconnectKey(activeRadio.storefront, activeRadio.stationId)
-        const decision = decideAppleRadioFailure(
-          appleRadioReconnectKeyRef.current,
-          reconnectKey,
-          state.fallbackReason,
-        )
-        if (decision.type === 'reconnect') {
-          appleRadioReconnectKeyRef.current = decision.reconnectKey
-          setAppleRadioStatus('reconnecting')
-          setAppleRadioError('')
-          if (appleRadioReconnectTimerRef.current !== null) window.clearTimeout(appleRadioReconnectTimerRef.current)
-          appleRadioReconnectTimerRef.current = window.setTimeout(() => {
-            appleRadioReconnectTimerRef.current = null
-            const latestRadio = playlistRef.current[currentIndexRef.current]?.appleRadio
-            const latestKey = latestRadio
-              ? getAppleRadioReconnectKey(latestRadio.storefront, latestRadio.stationId)
-              : ''
-            if (latestKey !== decision.reconnectKey) return
-            retryAppleRadioRef.current(activeRadioSong, currentIndex)
-          }, decision.delayMs)
-          return
-        }
-        setAppleRadioStatus('error')
-        setAppleRadioError(decision.message)
-        return
-      }
-    }
-
     if (state.ended && playlist.length > 0 && state.transitionState !== 'committed') {
-      const activeSong = playlist[currentIndex]
-      if (activeSong?.appleRadio) {
-        setAppleRadioStatus('error')
-        setAppleRadioError('Apple Music 电台连接已结束，请重新连接')
-        return
-      }
       if (playMode === 'repeat') {
         // 尝试播放失败，可能需要重新登录
         audioPlayer.seek(0)
@@ -2195,77 +1993,11 @@ function App() {
   const pulseActive = coverPulseEnabled && isPlaying
   const traditionalSpectrumActive = viewMode === 'traditional' && showHome && Boolean(currentSong) && traditionalSpectrumVisible && traditionalRightColumnVisible
   const analyzerEnabledNow = audioAnalyzerEnabled && (pulseActive || pluginAudioActive || traditionalSpectrumActive) && !isPerfModeEfficiency()
-  // WebView2 播放面频谱：外部源模式下轮询 bridge /spectrum（WASAPI loopback），
-  // 供桌面频谱 tick 与主可视化分析器共同消费
-  const externalSpectrumRef = useRef<number[]>(Array(64).fill(0))
-  const clearExternalSpectrum = useCallback(() => {
-    externalSpectrumRef.current.fill(0)
-  }, [])
-  useEffect(() => {
-    if (!externalPlaybackActive || !analyzerEnabledNow) {
-      clearExternalSpectrum()
-      return
-    }
-    let disposed = false
-    let timer: number | null = null
-    const loop = async () => {
-      if (disposed) return
-      const spectrum = await fetchBridgeSpectrum()
-      if (!disposed) {
-        if (spectrum && spectrum.bins.length > 0) externalSpectrumRef.current = spectrum.bins
-        else clearExternalSpectrum()
-      }
-      if (!disposed) timer = window.setTimeout(loop, 50)
-    }
-    void loop()
-    return () => {
-      disposed = true
-      clearExternalSpectrum()
-      if (timer !== null) window.clearTimeout(timer)
-    }
-  }, [externalPlaybackActive, analyzerEnabledNow, clearExternalSpectrum])
-  const externalAnalyzerSource = useMemo(() => ({
-    active: externalPlaybackActive && analyzerEnabledNow,
-    getBins: () => (externalPlaybackActive ? Uint8Array.from(externalSpectrumRef.current) : null),
-  }), [externalPlaybackActive, analyzerEnabledNow])
-  // WebView2 播放面：B 站 MV 背景读 audio.currentTime 对齐画面（约 7 处同步循环），
-  // 外部源模式下本地元素无媒体——用代理视图把 currentTime/duration/paused 重定向到 bridge，
-  // 其余属性读转发到底层元素（视频本身静音，无双重出声）
-  const externalAudioViewRef = useRef<HTMLAudioElement | null>(null)
-  const externalAudioProxyRef = useRef<any>(null)
-  if (!externalAudioProxyRef.current) {
-    // 原生方法（addEventListener 等）必须绑定底层元素再返回——否则 this 丢失会抛
-    // "Illegal invocation" 直接崩掉渲染树；按「属性+元素」缓存绑定，元素切换时重绑
-    const boundCache = new Map<string | symbol, { el: any; bound: any }>()
-    externalAudioProxyRef.current = new Proxy({} as HTMLAudioElement, {
-      get(_target, prop) {
-        if (prop === 'currentTime') return getBridgeState().position || 0
-        if (prop === 'duration') return getBridgeState().duration || 0
-        if (prop === 'paused') return !getBridgeState().playing
-        const el = externalAudioViewRef.current
-        const value = el ? (el as any)[prop] : undefined
-        if (typeof value === 'function') {
-          const cached = boundCache.get(prop)
-          if (cached && cached.el === el) return cached.bound
-          const bound = value.bind(el)
-          boundCache.set(prop, { el, bound })
-          return bound
-        }
-        return value
-      },
-      set(_target, prop, value) {
-        const el = externalAudioViewRef.current
-        if (el) { (el as any)[prop] = value }
-        return true
-      },
-    })
-  }
   const audioAnalyzer = useAudioAnalyzer(
     audioPlayer.analyserNode,
     analyzerEnabledNow, // 效能档关闭音频可视化省资源；音频插件启用时保持分析流
     null, // 左右声道分析已随消费者移除，保留占位参数
     null,
-    externalAnalyzerSource,
   )
   const audioPulseStore = useAudioPulseStore(audioAnalyzer, pulseActive, coverPulseMode)
 
@@ -3113,15 +2845,7 @@ function App() {
     navigationStack.current = []
     // Keep the source view painted while the first-use playback chunks are prepared. Without
     // this, the app-level Suspense boundary can reveal the fixed black base on the first song.
-    const isRadioSelection = Boolean(song.appleRadio)
-    if (appleRadioReconnectTimerRef.current !== null) {
-      window.clearTimeout(appleRadioReconnectTimerRef.current)
-      appleRadioReconnectTimerRef.current = null
-    }
-    if (!isRadioSelection) appleRadioReconnectKeyRef.current = ''
-    const playbackSurfaceReady = isRadioSelection
-      ? loadAppleRadioNowPlayingPage()
-      : Promise.allSettled([
+    const playbackSurfaceReady = Promise.allSettled([
       loadPlaybackRadialMenu(),
       loadImmersiveControls(),
       loadTranslationDisplay(),
@@ -3153,10 +2877,8 @@ function App() {
     playbackOriginRef.current = inferredOrigin
     setRestorePlaybackOrigin(null)
     const normalizedSong = normalizeSongCover(normalizeRawSongShape(song))
-    const normalizedPlaylist = isRadioSelection ? [normalizedSong] : playlistFromSource?.map(normalizeSongCover)
-    const nextPlaylist = isRadioSelection
-      ? [normalizedSong]
-      : normalizedPlaylist && normalizedPlaylist.length > 0
+    const normalizedPlaylist = playlistFromSource?.map(normalizeSongCover)
+    const nextPlaylist = normalizedPlaylist && normalizedPlaylist.length > 0
       ? normalizedPlaylist
       : playlist.some(item => getSongKey(item) === getSongKey(normalizedSong))
         ? playlist
@@ -3170,9 +2892,9 @@ function App() {
     setCurrentIndex(selectedIndex)
 
     const originMode = inferredOrigin.mode || viewMode
-    const playsInPlace = !isRadioSelection && (originMode === 'traditional' || originMode === 'explore')
+    const playsInPlace = originMode === 'traditional' || originMode === 'explore'
     setEnteredFromMode(originMode)
-    if (viewMode !== 'minimal' && (!playsInPlace || isRadioSelection)) {
+    if (viewMode !== 'minimal' && !playsInPlace) {
       setViewMode('minimal')
       localStorage.setItem('viewMode', 'minimal')
     }
@@ -3181,20 +2903,13 @@ function App() {
     setShowArtistDetail(false)
     setShowAlbumDetail(false)
     setShowSharedPlayer(false)
-    if (isRadioSelection) {
-      void playbackSurfaceReady
-      setShowHome(false)
-      setShowSharedPlayer(false)
-    } else if (originMode === 'explore') {
+    if (originMode === 'explore') {
       setShowHome(true)
     } else if (!playsInPlace) {
       await playbackSurfaceReady
       setShowHome(false)
     }
     await loadAndPlaySong(nextPlaylist[selectedIndex] || normalizedSong, selectedIndex, nextPlaylist)
-  }
-  retryAppleRadioRef.current = (song, index) => {
-    void loadAndPlaySong(song, index, [song])
   }
 
   // 打开艺人详情
@@ -3318,27 +3033,6 @@ function App() {
   const handleAddToFavorites = async (song: Song): Promise<boolean> => {
     try {
       const platform = (song.platform || 'netease') as MusicPlatform
-      // Apple：“喜爱”是评分状态，与“加入资料库”是两个独立操作。
-      if (platform === 'apple') {
-        if (!appleLoggedIn) {
-          addToast('请先登录 Apple Music', 'error')
-          return false
-        }
-        const appleSongId = song.appleId || String(song.id)
-        const ok = await setAppleSongLoved(appleSongId, true)
-        if (ok) {
-          addToast('已标记为喜爱歌曲', 'success')
-          applyFavoriteMutation({ platform: 'apple', type: 'like', songId: appleSongId })
-          window.dispatchEvent(new CustomEvent('playlist-content-changed', {
-            detail: { platform: 'apple', type: 'like', songId: appleSongId }
-          }))
-          return true
-        } else {
-          const failure = getLastAppleMutationResult()
-          addToast(failure.error || '标记喜爱歌曲失败', 'error')
-          return false
-        }
-      }
       const userId = getPlatformUserId(platform)
       
       if (!userId) {
@@ -3400,31 +3094,6 @@ function App() {
   const handleAddToPlaylist = async (song: Song, playlistId: string) => {
     try {
       const platform = (song.platform || 'netease') as MusicPlatform
-      // Apple：加入资料库歌单（amp-api）
-      if (platform === 'apple') {
-        if (!appleLoggedIn) {
-          addToast('请先登录 Apple Music', 'error')
-          return
-        }
-        const appleId = String(song.appleId || '')
-        const libraryId = String(song.appleLibraryId || '')
-        const appleTrack = {
-          catalogId: appleId && !APPLE_LIBRARY_ID_PATTERN.test(appleId) ? appleId : undefined,
-          libraryId: libraryId || (APPLE_LIBRARY_ID_PATTERN.test(appleId) ? appleId : undefined),
-        }
-        const ok = await addAppleTracksToPlaylist(playlistId, [appleTrack])
-        const appleSongId = appleTrack.catalogId || appleTrack.libraryId || ''
-        if (ok) {
-          addToast('已添加到 Apple 歌单', 'success')
-          window.dispatchEvent(new CustomEvent('playlist-content-changed', {
-            detail: { platform: 'apple', type: 'add', songId: appleSongId, playlistId }
-          }))
-        } else {
-          const failure = getLastAppleMutationResult()
-          addToast(failure.error || '添加到 Apple 歌单失败', 'error')
-        }
-        return
-      }
       const userId = getPlatformUserId(platform)
       
       if (!userId) {
@@ -3541,96 +3210,7 @@ function App() {
       // 歌词不再等待音频 URL，立即开始并复用进行中的请求。
       void ensureSongLyrics(song, cacheKey)
 
-      // Apple 原生播放只为第一首确定的 next 预取 CENC stream，限制为 active + standby 两个会话。
-      // WebView2 是外部播放源，不能进入本地双 deck；第二首只预取歌词，不提前申请 license。
-      if (platform === 'apple' && (isAppleNativeStreamEnabled() || isBridgeReady())) {
-        if (position !== 0 || song.appleRadio || !isAppleNativeStreamEnabled() || !(effectiveCrossfadeEnabled || effectiveGaplessEnabled)) {
-          debugLog(`🍎 [Preload] ${song.name}: 跳过 Apple 载体预载`)
-          return
-        }
-        const nativePreloadKey = `${requestRevision}:${idx}:${cacheKey}`
-        if ((appleNativePreloadAttemptsRef.current.get(nativePreloadKey) || 0) >= 2) {
-          debugLog(`🍎 [Preload] ${song.name}: 本轮 Apple CENC standby 重试已达上限`)
-          return
-        }
-        if (appleNativePreloadKeyRef.current === nativePreloadKey) {
-          debugLog(`🍎 [Preload] ${song.name}: 复用进行中的 Apple CENC standby 请求`)
-          return
-        }
-        appleNativePreloadKeyRef.current = nativePreloadKey
-        const settleNativePreload = (success: boolean) => {
-          if (success) {
-            appleNativePreloadAttemptsRef.current.delete(nativePreloadKey)
-            return
-          }
-          if (appleNativePreloadKeyRef.current === nativePreloadKey) appleNativePreloadKeyRef.current = ''
-          const attempts = (appleNativePreloadAttemptsRef.current.get(nativePreloadKey) || 0) + 1
-          appleNativePreloadAttemptsRef.current.set(nativePreloadKey, attempts)
-          if (attempts >= 2 || appleNativePreloadRetryTimerRef.current !== null) return
-          appleNativePreloadRetryTimerRef.current = window.setTimeout(() => {
-            appleNativePreloadRetryTimerRef.current = null
-            const nextIndex = getUpcomingIndices(
-              playlistRef.current.map(getSongKey),
-              currentIndexRef.current,
-              modeOverride,
-              requestRevision,
-              1,
-            )[0]
-            if (requestRevision !== queueRevisionRef.current
-              || audioUrlGeneration !== audioUrlCacheGenerationRef.current
-              || nextIndex !== idx
-              || getSongKey(playlistRef.current[idx]) !== cacheKey) return
-            preloadUpcomingSongs(currentIndexRef.current, requestRevision, modeOverride)
-          }, 1_000)
-        }
-        void (async () => {
-          let streamId = String(song.appleId || song.id || '')
-          if (streamId && APPLE_LIBRARY_ID_PATTERN.test(streamId)) {
-            streamId = await resolveAppleLibraryCatalogId(streamId).catch(() => null) || ''
-          }
-          const stream = streamId && streamId !== '0' && await isAppleEmeCapable()
-            ? await resolveAppleNativeStream(streamId)
-            : null
-          const currentUpcoming = getUpcomingIndices(
-            playlistRef.current.map(getSongKey),
-            currentIndexRef.current,
-            modeOverride,
-            requestRevision,
-            1,
-          )[0]
-          const requestIsCurrent = requestRevision === queueRevisionRef.current
-            && audioUrlGeneration === audioUrlCacheGenerationRef.current
-            && currentUpcoming === idx
-            && getSongKey(playlistRef.current[idx]) === cacheKey
-          if (!stream || !requestIsCurrent) {
-            if (stream) releaseAppleNativeStream(stream)
-            settleNativePreload(false)
-            return
-          }
-          debugLog(`🍎 [Preload] Apple CENC standby 就绪: ${song.name}`)
-          audioPlayer.preloadNext({
-            url: stream.url,
-            appleHls: stream,
-            trackKey: cacheKey,
-            index: idx,
-            duration: song.duration / 1000,
-            albumId: getLocalAlbumIdentifier(song, platform) || undefined,
-            albumCover: song.album?.picUrl || undefined,
-            onPreloadSettled: settleNativePreload,
-          })
-        })().catch(error => {
-          settleNativePreload(false)
-          console.warn(`[Preload] Apple CENC standby 失败: ${song.name}`, error)
-        })
-        return
-      }
-
-      // Apple 原生播放被明确关闭且 bridge 未运行时，预载备用载体 URL。
-      const audioSource = platform === 'apple'
-        ? resolvePlayableSong(song).then(resolved => resolved
-            ? { songId: resolved.platform === 'qq' ? resolved.mid || resolved.id : resolved.id, platform: resolved.platform || 'netease' }
-            : null)
-        : Promise.resolve({ songId: platform === 'qq' ? (song.mid || song.id) : song.id, platform })
+      const audioSource = Promise.resolve({ songId: platform === 'qq' ? (song.mid || song.id) : song.id, platform })
       
       // 检查缓存是否已存在且未过期（5分钟内有效）
       const cached = preloadCacheRef.current.get(cacheKey)
@@ -3802,10 +3382,8 @@ function App() {
     }
 
     const analyzeSongForSequencing = async (song: Song) => {
-      const platform = song.platform || 'netease'
       const trackKey = getSongKey(song)
-      // Apple：队列条目需先解析载体歌曲取真实音频 URL，避免用 Apple ID 打网易云接口
-      const playable = platform === 'apple' ? await resolvePlayableSong(song) : song
+      const playable = song
       if (!playable) return null
       const resolvedPlatform = playable.platform || 'netease'
       const cached = preloadCacheRef.current.get(trackKey)
@@ -3974,7 +3552,6 @@ function App() {
     void ensureSongLyrics(normalizedSong, cacheKey)
 
     window.setTimeout(() => {
-      if (appleAcceptanceActiveRef.current) return
       preloadUpcomingSongs(targetIndex, nextRevision)
     }, 0)
   }, [bumpQueueRevision, playlist, preloadUpcomingSongs, ensureSongLyrics])
@@ -4003,123 +3580,8 @@ function App() {
         currentAudio.currentTime = 0
       }
       setIsPlaying(false)
-      if (song.appleRadio) {
-        commitCurrentTime(0)
-        setDuration(0)
-      }
-      // 上一首若是 WebView2 播放面播放，先退出外部源模式（内部会停掉播放面声音）
-      audioPlayer.disableExternalPlayback()
-      setExternalPlaybackActive(false)
 
       let normalizedSong = normalizeSongCover(song)
-      // Apple Music 播放路由（官方支持方向）：
-      // ① ECS Browser CDM (L3) + CENC/HLS 原生播放；② WebView2 兼容兜底；③ 网易云/QQ 载体。
-      // castLabs 已确认 Windows MF CDM 是已废弃实验路径，默认 Browser CDM L3 才是生产方向。
-      let useWebView2 = false
-      const tryWebView2Fallback = async (): Promise<boolean> => {
-        if (normalizedSong.platform !== 'apple' || !normalizedSong.appleId) return false
-        if (!isLatestLoad() || !(await ensureBridgeRunning()) || !isLatestLoad()) {
-          ;(window as any).electron?.log?.('[PlaySong] WebView2 fallback: bridge 不可用或请求已过期')
-          return false
-        }
-        let authorized = getBridgeState().authorized
-        for (let i = 0; i < 40 && !authorized && isLatestLoad(); i++) {
-          await new Promise(r => setTimeout(r, 300))
-          if (!isLatestLoad()) return false
-          await checkBridgeRunning()
-          authorized = getBridgeState().authorized
-        }
-        if (!isLatestLoad()) return false
-        if (!authorized) {
-          ;(window as any).electron?.log?.('[PlaySong] WebView2 fallback: 播放面未授权（等待超时）')
-          if (!appleBridgeAuthHintShownRef.current) {
-            appleBridgeAuthHintShownRef.current = true
-            addToast('Apple 兼容播放需一次授权：设置 → Apple Music 播放面 → 打开窗口登录', 'info')
-          }
-          return false
-        }
-        const ok = await bridgePlay(String(normalizedSong.appleId))
-        ;(window as any).electron?.log?.(`[PlaySong] WebView2 fallback bridgePlay(${normalizedSong.appleId}) → ${ok}`)
-        return ok
-      }
-
-      // Apple Music 原生音源：webPlayback + CENC HLS + ECS Browser CDM (L3)。
-      let appleHlsStream: AppleNativeStream | null = null
-      const radioDescriptor = normalizedSong.appleRadio
-      if (radioDescriptor) {
-        setAppleRadioStatus('connecting')
-        setAppleRadioError('')
-        let radioPlayParams = radioDescriptor.playParams
-        if (!radioPlayParams || Object.keys(radioPlayParams).length === 0) {
-          const stationDetail = await fetchAppleStationDetail(
-            radioDescriptor.stationId,
-            radioDescriptor.storefront || normalizedSong.appleStorefront,
-          ).catch(() => null)
-          if (!isLatestLoad()) return
-          if (stationDetail?.playParams) {
-            radioPlayParams = stationDetail.playParams
-            radioDescriptor.playParams = stationDetail.playParams
-          }
-          ;(window as any).electron?.log?.(`[AppleRadio] station detail resolved: hasPlayParams=${Boolean(radioPlayParams)}`)
-        }
-        appleHlsStream = await resolveAppleRadioStream(radioDescriptor.stationId, radioPlayParams).catch(error => {
-          setAppleRadioError(error instanceof Error ? error.message : 'Apple Music 电台取流失败')
-          return null
-        })
-        if (!isLatestLoad()) return
-        if (!appleHlsStream) {
-          setAppleRadioError(getAppleRadioFailReason())
-          setAppleRadioStatus('error')
-          setCurrentTrack(createTrackFromSong(normalizedSong))
-          return
-        }
-        radioDescriptor.timeline = appleHlsStream.live === true ? 'live' : appleHlsStream.live === false ? 'vod' : radioDescriptor.timeline
-        appleRadioAcceptanceRef.current.streamResolved = true
-        debugLog(`📻 [PlaySong] Apple 电台流就绪 timeline=${radioDescriptor.timeline}`)
-      } else if (normalizedSong.platform === 'apple' && isAppleNativeStreamEnabled()) {
-        let streamId = String(normalizedSong.appleId || normalizedSong.id || '')
-        if (streamId && APPLE_LIBRARY_ID_PATTERN.test(streamId)) {
-          const catalogId = await resolveAppleLibraryCatalogId(streamId).catch(() => null)
-          if (catalogId) streamId = catalogId
-        }
-        const emeCapable = await isAppleEmeCapable()
-        if (streamId && streamId !== '0' && emeCapable) {
-          appleHlsStream = await resolveAppleNativeStream(streamId)
-          if (!isLatestLoad()) {
-            releaseAppleNativeStream(appleHlsStream)
-            return
-          }
-          if (!appleHlsStream) useWebView2 = await tryWebView2Fallback()
-        } else if (!emeCapable) {
-          debugLog('🍎 [PlaySong] ECS Browser CDM 不可用，尝试 WebView2 兼容播放')
-          useWebView2 = await tryWebView2Fallback()
-        } else if (!streamId || streamId === '0') {
-          console.warn(`🍎 [PlaySong] Apple 歌曲缺少有效曲目 id：《${normalizedSong.name}》`)
-          useWebView2 = await tryWebView2Fallback()
-        }
-      }
-      if (appleHlsStream && !useWebView2) {
-        // 已命中 Electron 原生 CENC；兼容 bridge 不再参与本曲播放，立即释放其进程与轮询。
-        void bridgeStop().catch(() => undefined)
-        void window.electron?.stopAppleBridge?.()
-      }
-      // 需要跨平台载体转换的平台：apple（原生取流失败时）/spotify（无自源音源，始终）。
-      const needsCarrier = !appleHlsStream && !useWebView2 && (normalizedSong.platform === 'apple'
-        || normalizedSong.platform === 'spotify')
-      let audioSong: Song = normalizedSong
-      if (needsCarrier) {
-        const resolved = await resolvePlayableSong(normalizedSong)
-        if (!resolved) {
-          window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: '该歌曲在网易云/QQ 未找到可播放版本', type: 'error' } }))
-          const failedLoadRevision = loadRevision
-          setTimeout(() => {
-            if (failedLoadRevision !== songLoadRevisionRef.current) return
-            handleNext()
-          }, 2000)
-          return
-        }
-        audioSong = resolved
-      }
       if ((normalizedSong.platform || 'netease') === 'qq' && !normalizedSong.album?.picUrl) {
         normalizedSong = await loadQQSongDetail(normalizedSong)
         if (!isLatestLoad()) return
@@ -4128,13 +3590,11 @@ function App() {
       // 清空当前翻译（切歌时）
       setCurrentTranslation('')
       
-      const platform = audioSong.platform || 'netease'
-      const songId = platform === 'qq' ? (audioSong.mid || audioSong.id) : audioSong.id
-      const hasValidSongId = radioDescriptor || appleHlsStream
-        ? true
-        : platform === 'netease'
-          ? Number.isFinite(Number(songId)) && Number(songId) > 0
-          : Boolean(String(songId || '').trim())
+      const platform = normalizedSong.platform || 'netease'
+      const songId = platform === 'qq' ? (normalizedSong.mid || normalizedSong.id) : normalizedSong.id
+      const hasValidSongId = platform === 'netease'
+        ? Number.isFinite(Number(songId)) && Number(songId) > 0
+        : Boolean(String(songId || '').trim())
       if (!hasValidSongId) {
         addToast('歌曲信息不完整，暂时无法播放，请重新加载该列表', 'error')
         console.warn(`[PlaySong] ${platform} song is missing a playable identifier`)
@@ -4152,23 +3612,15 @@ function App() {
       // 如果有艺人ID，获取艺人详情
       const cacheKey = getSongKey(normalizedSong)
       activeTrackKeyRef.current = cacheKey
-      const cached = radioDescriptor ? undefined : preloadCacheRef.current.get(cacheKey)
+      const cached = preloadCacheRef.current.get(cacheKey)
       const now = Date.now()
-      const lyricsPromise = radioDescriptor ? Promise.resolve([] as LyricLine[]) : ensureSongLyrics(normalizedSong, cacheKey)
+      const lyricsPromise = ensureSongLyrics(normalizedSong, cacheKey)
       
       let url: string | null = null
       let songLyrics: LyricLine[] = cached?.lyrics || []
 
       // 音频 URL 与歌词分别判断时效，歌词请求不再等播放器完成加载后才开始。
-      if (useWebView2) {
-        // WebView2 播放面模式：音源在 WebView2 内解密播放，无需本地 URL；
-        // 预载缓存里的载体 URL 不可用（会造成播放面 + 本地 deck 双重出声）
-      } else if (appleHlsStream) {
-        // Apple 原生 HLS：清单签名有时效且不走 getSongUrl，不写 URL 缓存，
-        // 切歌/重播时重新取流（webPlayback 本身很快）
-        url = appleHlsStream.url
-        debugLog('🍎 [PlaySong] Apple 原生 HLS 音源就绪: ' + url.slice(0, 96))
-      } else if (cached?.url && (now - (cached.urlTimestamp ?? cached.timestamp)) < 5 * 60 * 1000) {
+      if (cached?.url && (now - (cached.urlTimestamp ?? cached.timestamp)) < 5 * 60 * 1000) {
         url = cached.url
         debugLog('🎵 歌词: 缓存命中 (' + songLyrics.length + '行)')
       } else {
@@ -4190,7 +3642,7 @@ function App() {
       
       
       // 检测歌曲下架
-      if (!useWebView2 && url === 'SONG_UNAVAILABLE') {
+      if (url === 'SONG_UNAVAILABLE') {
         console.error('获取歌曲URL失败，重试3次')
         addToast('获取歌曲信息失败，请稍后重试', 'error')
         // 捕获本次加载的 revision：3 秒后重试前校验用户是否已手动切歌，避免迟到跳歌
@@ -4202,7 +3654,7 @@ function App() {
         return
       }
 
-      if (!url && !useWebView2) {
+      if (!url) {
         console.error('获取歌曲URL返回空')
         console.error('  可能原因:')
         console.error('  1. VIP歌曲且未登录VIP账号')
@@ -4226,25 +3678,14 @@ function App() {
       setIsPureMusic(detectPureMusic(songLyrics))
       
       let started = false
-      if (useWebView2) {
-        // === WebView2 播放面模式 ===
-        // 音频在 WebView2 兼容播放窗口中解密播放，本地 deck 保持空载；
-        // 播放器进入外部源模式：bridge 状态经 emit 管线驱动全部 UI（进度/歌词/播控），
-        // 播完经 ended 语义走上层切歌/单曲循环，播控命令在 hook 内分流到 bridge。
-        started = true
-        // Song.duration 单位为毫秒（与 loadAndPlay 的 duration 传参一致，需 /1000 转秒）
-        audioPlayer.enableExternalPlayback({ duration: Number(normalizedSong.duration) / 1000 || 0 })
-        setExternalPlaybackActive(true)
-      } else {
-        try {
-        // 此分支 !useWebView2：上方 url 为空分支已 return，url 必为有效载体/HLS 地址
-        started = await audioPlayer.loadAndPlay(appleHlsStream ? url! : getProxiedAudioUrl(url!), volume, {
+      try {
+        // 上方 url 为空分支已 return，url 必为有效地址
+        started = await audioPlayer.loadAndPlay(getProxiedAudioUrl(url!), volume, {
           trackKey: cacheKey,
           index: songIndex,
           duration: normalizedSong.duration / 1000,
           albumId: getLocalAlbumIdentifier(normalizedSong, platform) || undefined,
           albumCover: normalizedSong.album?.picUrl || undefined,
-          appleHls: appleHlsStream || undefined,
         })
         // 看歌模式下引擎静默：视频接管音频，加载后立即暂停避免双重奏
         if (started && lyricDisplayModeRef.current === 'video') {
@@ -4254,60 +3695,6 @@ function App() {
         }
       } catch (firstPlaybackError) {
         if (!isLatestLoad()) return
-        // Apple 原生 HLS 播放失败（license/清单/网络等）：不跑 getSongUrl 重试
-        // （apple id 不是网易云/QQ id，重试必然空转），也不触发外层 alert，
-        // 给可感知提示即可，用户可重试或切下一首（切歌会重新走完整取流流程）
-        if (appleHlsStream) {
-          console.warn('[PlaySong] Apple 原生 HLS 播放失败:', firstPlaybackError)
-          // 电台直播：给出可感知提示（无同款歌曲可回退）
-          if ((normalizedSong as { appleRadio?: unknown }).appleRadio) {
-            const message = firstPlaybackError instanceof Error ? firstPlaybackError.message : '网络或授权问题'
-            setAppleRadioError(message)
-            setAppleRadioStatus('error')
-            addToast('电台直播播放失败（网络或授权问题），请重试', 'error')
-            return
-          }
-          // 静默处理：不外弹提示（用户偏好），仅转发主进程控制台便于排查
-          try {
-            ;(window as any).electron?.log?.(`[ApplePlayback] HLS 播放失败: ${firstPlaybackError instanceof Error ? firstPlaybackError.message : String(firstPlaybackError)}`)
-          } catch { /* 忽略 */ }
-          // Electron L3/CENC 失败后优先切到 WebView2 兼容播放；只有 bridge 也失败才加载体。
-          useWebView2 = await tryWebView2Fallback()
-          if (useWebView2 && isLatestLoad()) {
-            appleHlsStream = null
-            started = true
-            audioPlayer.enableExternalPlayback({ duration: Number(normalizedSong.duration) / 1000 || 0 })
-            setExternalPlaybackActive(true)
-            setCurrentTrack(createTrackFromSong(normalizedSong))
-            return
-          }
-
-          // WebView2 也不可用时回退网易云/QQ 载体（避免把用户晾在 0:00）。
-          const resolved = await resolvePlayableSong(normalizedSong)
-          if (resolved && isLatestLoad()) {
-            const carrierId = resolved.platform === 'qq' ? (resolved.mid || resolved.id) : resolved.id
-            const carrierUrl = await getSongUrl(carrierId, resolved.platform || 'netease')
-            if (carrierUrl && carrierUrl !== 'SONG_UNAVAILABLE' && isLatestLoad()) {
-              normalizedSong = resolved
-              url = carrierUrl
-              setCurrentTrack(createTrackFromSong(normalizedSong, url))
-              songLyrics = preloadCacheRef.current.get(cacheKey)?.lyrics || songLyrics
-              started = await audioPlayer.loadAndPlay(getProxiedAudioUrl(url), volume, {
-                trackKey: cacheKey,
-                index: songIndex,
-                duration: normalizedSong.duration / 1000,
-                albumId: getLocalAlbumIdentifier(normalizedSong, resolved.platform || 'netease') || undefined,
-                albumCover: normalizedSong.album?.picUrl || undefined,
-              })
-              if (started && lyricDisplayModeRef.current === 'video') {
-                const engineEl = audioPlayerRef.current?.getAudioElement?.()
-                if (engineEl) { engineEl.volume = 0; engineEl.pause() }
-                watchPausedEngineRef.current = true
-              }
-            }
-          }
-          return
-        }
         // Signed playback URLs can expire or be rejected by the CDN before the
         // five-minute memory entry expires. Evict only this song and retry once.
         invalidateSongUrl(songId, platform)
@@ -4342,7 +3729,6 @@ function App() {
           duration: normalizedSong.duration / 1000,
           albumId: getLocalAlbumIdentifier(normalizedSong, platform) || undefined,
           albumCover: normalizedSong.album?.picUrl || undefined,
-          appleHls: appleHlsStream || undefined,
         })
         if (started && lyricDisplayModeRef.current === 'video') {
           const engineEl = audioPlayerRef.current?.getAudioElement?.()
@@ -4350,30 +3736,16 @@ function App() {
           watchPausedEngineRef.current = true
         }
       } // ← closes catch
-      } // ← closes else
-      if (!started || !isLatestLoad()) {
-        if (radioDescriptor && isLatestLoad()) {
-          releaseAppleNativeStream(appleHlsStream)
-          setAppleRadioStatus('error')
-          setAppleRadioError('Apple Music 电台未能启动播放，请重新连接')
-        }
-        return
-      }
+      if (!started || !isLatestLoad()) return
       
       // 响度归一化：按曲目测量 LUFS 并施加增益（adapter 内部按 capabilities 判断，v1/v3 no-op）
-      // WebView2 播放面模式无本地音频链路，跳过
-      if (!radioDescriptor && !useWebView2) engineAdapterRef.current.applyLoudnessNormalization(cacheKey, url!)
+      engineAdapterRef.current.applyLoudnessNormalization(cacheKey, url!)
       
       // 请求可能已经由下一首预载启动；这里仅保持引用，避免重复调用。
       void lyricsPromise
       
-      if (radioDescriptor) {
-        appleRadioReconnectKeyRef.current = ''
-        setAppleRadioStatus('playing')
-      }
-
       // 用于控制逐字歌词的显示，预留2秒缓冲
-      if (!radioDescriptor && actualPlaylist.length > 1) {
+      if (actualPlaylist.length > 1) {
         const indexToUse = songIndex !== undefined ? songIndex : currentIndex
         debugLog('📋 [PlaySong] 准备预加载下一首歌曲')
         debugLog('   使用索引:', indexToUse)
@@ -4392,7 +3764,7 @@ function App() {
 
   // 上一曲
   const handlePrevious = () => {
-    if (playlist.length === 0 || currentSong?.appleRadio) return
+    if (playlist.length === 0) return
     audioPlayer.cancelTransition('manual previous', false)
     audioPlayer.resetGaplessIntegration() // 清理预加载的音频
     bumpQueueRevision()
@@ -4421,7 +3793,7 @@ function App() {
 
   // 下一曲
   const handleNext = () => {
-    if (playlist.length === 0 || currentSong?.appleRadio) return
+    if (playlist.length === 0) return
     if (
       playbackOriginRef.current.continuation === 'explore-infinite' &&
       playMode === 'sequential' &&
@@ -4463,152 +3835,6 @@ function App() {
   const handleSongSelectRef = useRef(handleSongSelect)
   handleSongSelectRef.current = handleSongSelect
 
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('appleAcceptance') !== '1') return
-
-    const waitFor = async (predicate: () => boolean, timeoutMs: number, label: string) => {
-      const deadline = Date.now() + timeoutMs
-      while (Date.now() < deadline) {
-        if (predicate()) return
-        await new Promise(resolve => window.setTimeout(resolve, 100))
-      }
-      throw new Error(`Timed out waiting for ${label}`)
-    }
-    const settingsKeys = [
-      'crossfadeEnabled',
-      'crossfadeDuration',
-      'gaplessEnabled',
-      'playMode',
-      'appleNativeStream',
-    ] as const
-    const backup = Object.fromEntries(settingsKeys.map(key => [key, localStorage.getItem(key)]))
-    let restoreEme: () => void = () => undefined
-
-    const configure = async (mode: 'crossfade' | 'gapless' | 'radio') => {
-      appleAcceptanceActiveRef.current = true
-      localStorage.setItem('appleNativeStream', 'true')
-      localStorage.setItem('crossfadeEnabled', String(mode === 'crossfade'))
-      localStorage.setItem('crossfadeDuration', '1')
-      localStorage.setItem('gaplessEnabled', String(mode === 'gapless'))
-      setCrossfadeEnabled(mode === 'crossfade')
-      setCrossfadeDuration(1)
-      setGaplessEnabled(mode === 'gapless')
-      setPlayMode('sequential')
-      window.dispatchEvent(new Event('crossfadeSettingsChanged'))
-      window.dispatchEvent(new Event('gaplessSettingsChanged'))
-      resetAppleAcceptanceSnapshot()
-      audioPlayerRef.current.resetAcceptanceState()
-      restoreEme = installAppleEmeAcceptanceInstrumentation()
-      await new Promise(resolve => window.setTimeout(resolve, 250))
-      return { mode, configured: true }
-    }
-
-    const loadPair = async () => {
-      const auth = getAppleAuthState()
-      if (!auth.loggedIn) throw new Error('Apple account is not logged in')
-      const library = await getAppleLibrarySongs(50)
-      let songs = library.filter(track => Boolean(track.catalogId)).slice(0, 2).map(appleLibraryTrackToSong)
-      let source: 'library' | 'catalog' = 'library'
-      if (songs.length < 2) {
-        const hot = await getAppleHotSongs(auth.storefront, 10)
-        songs = hot.slice(0, 2).map(song => appleSongToSong(song, auth.storefront))
-        source = 'catalog'
-      }
-      if (songs.length < 2) throw new Error('Unable to select two Apple catalog tracks')
-      await handleSongSelectRef.current(songs[0], songs, { mode: 'minimal', surface: 'search', platform: 'apple' })
-      await waitFor(() => {
-        const player = audioPlayerRef.current
-        const state = player.getAcceptanceState()
-        const diagnostics = getAppleAcceptanceSnapshot()
-        return state.activeAppleHls && state.standbyAppleHls
-          && diagnostics.hlsReady >= 2
-          && diagnostics.licenseSuccesses >= 2
-      }, 60_000, 'two ready Apple CENC decks')
-      return { loggedIn: true, source, selectedTracks: 2 }
-    }
-
-    const loadRadio = async () => {
-      const auth = getAppleAuthState()
-      if (!auth.loggedIn) throw new Error('Apple account is not logged in')
-      setAppleRadioStatus('connecting')
-      setAppleRadioError('')
-      appleRadioAcceptanceRef.current.streamResolved = false
-      const page = await fetchAppleRadioPage(auth.storefront)
-      const station = page.sections.flatMap(section => section.items).find(item => item.type === 'stations' && Boolean(item.playId || item.id))
-      if (!station) throw new Error('Unable to select an Apple radio station')
-      await handleSongSelectRef.current(
-        appleStationToSong(station, undefined, auth.storefront),
-        undefined,
-        { mode: 'minimal', surface: 'explore-apple', platform: 'apple', detail: { tab: 'radio' } },
-      )
-      await waitFor(() => {
-        const state = appleRadioAcceptanceRef.current
-        return state.status === 'error' || (state.status === 'playing' && state.isPlaying)
-      }, 60_000, 'Apple radio playback terminal state')
-      const state = appleRadioAcceptanceRef.current
-      return {
-        loggedIn: true,
-        stationSelected: true,
-        dedicatedPage: Boolean(state.currentSong?.appleRadio),
-        status: state.status,
-        playing: state.isPlaying,
-        streamResolved: state.streamResolved,
-        timeline: state.currentSong?.appleRadio?.timeline || 'unknown',
-        errorCategory: state.error
-          ? state.error.includes('404') ? 'not-found'
-            : state.error.includes('401') || state.error.includes('403') ? 'authorization'
-              : state.error.includes('license') || state.error.includes('CENC') ? 'drm'
-                : 'playback'
-          : '',
-      }
-    }
-
-    const snapshot = () => ({
-      auth: { loggedIn: getAppleAuthState().loggedIn },
-      player: audioPlayerRef.current.getAcceptanceState(),
-      diagnostics: getAppleAcceptanceSnapshot(),
-      heap: typeof performance !== 'undefined' && 'memory' in performance
-        ? { usedJSHeapSize: Number((performance as Performance & { memory?: { usedJSHeapSize?: number } }).memory?.usedJSHeapSize || 0) }
-        : null,
-    })
-
-    const transition = async () => {
-      const player = audioPlayerRef.current
-      const strategy = await player.runAcceptanceTransition()
-      await waitFor(() => {
-        const state = audioPlayerRef.current.getAcceptanceState()
-        return state.transitionState === 'playing' && state.activeAppleHls && !state.standbyAppleHls
-      }, 10_000, 'Apple transition commit and retired deck cleanup')
-      return { strategy, snapshot: snapshot() }
-    }
-
-    const cleanup = async (restoreSettings = true) => {
-      audioPlayerRef.current.releaseAcceptanceDecks()
-      await waitFor(() => {
-        const diagnostics = getAppleAcceptanceSnapshot()
-        return diagnostics.activeHls === 0 && diagnostics.activeEmeSessions === 0
-      }, 10_000, 'Apple HLS and EME session release').catch(() => undefined)
-      if (restoreSettings) {
-        appleAcceptanceActiveRef.current = false
-        restoreEme()
-        for (const key of settingsKeys) {
-          const value = backup[key]
-          if (value === null) localStorage.removeItem(key)
-          else localStorage.setItem(key, value)
-        }
-        window.dispatchEvent(new Event('crossfadeSettingsChanged'))
-        window.dispatchEvent(new Event('gaplessSettingsChanged'))
-      }
-      return snapshot()
-    }
-
-    ;(window as any).__hyperplayerAppleAcceptance = { configure, loadPair, loadRadio, snapshot, transition, cleanup }
-    return () => {
-      restoreEme()
-      delete (window as any).__hyperplayerAppleAcceptance
-    }
-  }, [])
-  
   // 获取下一首歌曲（不播放，仅用于显示）
   const nextSongToShow = useMemo((): Song | undefined => {
     if (deterministicNextIndex === undefined) return undefined
@@ -4794,10 +4020,7 @@ function App() {
         return
       }
       const audio = audioPlayer.getAudioElement()
-      // WebView2 播放面：本地元素恒为暂停态，"正在播"以 bridge 状态为准
-      const currentlyPlaying = audioPlayer.isExternalPlaybackActive?.()
-        ? getBridgeState().playing
-        : isPlayingRef.current && !(audio?.paused ?? true)
+      const currentlyPlaying = isPlayingRef.current && !(audio?.paused ?? true)
       if (action === 'play' && !currentlyPlaying) audioPlayer.togglePlay()
       else if (action === 'pause' && currentlyPlaying) audioPlayer.togglePlay()
       else if (action === 'toggle') audioPlayer.togglePlay()
@@ -4870,8 +4093,7 @@ function App() {
         handleViewComments(current)
       } else if (action === 'show-artist') {
         const artist = Array.isArray(current.artists) ? current.artists[0] : null
-        const artistId = platform === 'qq' ? (artist?.mid || artist?.id)
-          : platform === 'apple' ? (artist?.appleId || artist?.id) : artist?.id
+        const artistId = platform === 'qq' ? (artist?.mid || artist?.id) : artist?.id
         if (!artistId) {
           addToast('当前歌曲缺少歌手信息', 'error')
           return
@@ -4902,22 +4124,14 @@ function App() {
     } else if (action === 'stop') {
       // 停止：暂停并回到开头（主流遥控器停止键）
       audioPlayerRef.current.seek(0)
-      if (audioPlayer.isExternalPlaybackActive?.()) {
-        if (getBridgeState().playing) audioPlayer.togglePlay()
-      } else {
-        const audio = audioPlayer.getAudioElement()
-        if (isPlayingRef.current && !(audio?.paused ?? true)) audioPlayer.togglePlay()
-      }
+      const audio = audioPlayer.getAudioElement()
+      if (isPlayingRef.current && !(audio?.paused ?? true)) audioPlayer.togglePlay()
     } else if (action === 'rewind') {
-      // WebView2 播放面：时间源来自 bridge（本地元素无媒体）
-      const t = audioPlayer.isExternalPlaybackActive?.()
-        ? (getBridgeState().position || 0)
-        : (audioPlayer.getAudioElement()?.currentTime || 0)
+      const t = audioPlayer.getAudioElement()?.currentTime || 0
       audioPlayerRef.current.seek(Math.max(0, t - 10))
     } else if (action === 'fast-forward') {
-      const external = audioPlayer.isExternalPlaybackActive?.()
-      const t = external ? (getBridgeState().position || 0) : (audioPlayer.getAudioElement()?.currentTime || 0)
-      const d = external ? (getBridgeState().duration || 0) : (audioPlayer.getAudioElement()?.duration || 0)
+      const t = audioPlayer.getAudioElement()?.currentTime || 0
+      const d = audioPlayer.getAudioElement()?.duration || 0
       audioPlayerRef.current.seek(Math.min(d || t + 10, t + 10))
     } else if (action === 'open-search') {
       setShowSearch(true)
@@ -5091,12 +4305,12 @@ function App() {
           }
         : null,
       // 时长（秒）：主进程据此把任务栏进度条换算为 0-1
-      duration: currentSong && !isAppleRadioPlayback && Number.isFinite(Number(currentSong.duration))
+      duration: currentSong && Number.isFinite(Number(currentSong.duration))
         ? Math.max(0, Number(currentSong.duration) / 1000)
         : 0,
-      live: isLive || currentAppleRadio?.timeline === 'live',
+      live: isLive,
     })
-  }, [currentSong, currentAppleRadio?.timeline, isAppleRadioPlayback, isLive])
+  }, [currentSong, isLive])
 
   useEffect(() => {
     window.electron?.desktopPlayer?.pushState({
@@ -5222,26 +4436,17 @@ function App() {
 
       const audio = audioPlayer.getAudioElement()
       const analyser = desktopAnalyserRef.current
-      // WebView2 播放面：WASAPI loopback 频谱来自 bridge（64 对数 bin），本地 analyser 无音频流
-      const externalPlaying = Boolean(audioPlayer.isExternalPlaybackActive?.() && getBridgeState().playing)
-      const audioActive = Boolean(externalPlaying || (analyser && isPlayingRef.current && !(audio?.paused ?? true)))
+      const audioActive = Boolean(analyser && isPlayingRef.current && !(audio?.paused ?? true))
       if (!audioActive && desktopSpectrumIdleRef.current && !overlayActive) return
 
       let spectrum: number[]
-      if (audioActive && (analyser || externalPlaying)) {
-        const bins = externalPlaying
-          ? externalSpectrumRef.current.length
-          : (analyser?.frequencyBinCount ?? 64)
+      if (audioActive && analyser) {
+        const bins = analyser.frequencyBinCount
         if (!desktopSpectrumBufferRef.current || desktopSpectrumBufferRef.current.length !== bins) {
           desktopSpectrumBufferRef.current = new Uint8Array(bins)
         }
         const data = desktopSpectrumBufferRef.current
-        if (externalPlaying) {
-          const extBins = externalSpectrumRef.current
-          for (let index = 0; index < bins; index += 1) data[index] = extBins[index] ?? 0
-        } else {
-          analyser!.getByteFrequencyData(data)
-        }
+        analyser.getByteFrequencyData(data)
         const bandCount = 48
         let bands = spectrumBandsRef.current
         if (!bands || bands.bins !== bins) {
@@ -5288,9 +4493,7 @@ function App() {
         // 变化去重：进度 ≥0.5s 或频谱明显变化才推送（10Hz tick 只在有变化时扇出 IPC/遥控 TCP）
         const progressNow = watchTimelineActiveRef.current
           ? (watchVideoStateRef.current?.time || 0)
-          : (audioPlayer.isExternalPlaybackActive?.()
-              ? (getBridgeState().position || 0)
-              : (Number(audio?.currentTime) || 0)) + lyricOffsetRef.current - 0.2
+          : (Number(audio?.currentTime) || 0) + lyricOffsetRef.current - 0.2
         const progressChanged = Math.abs(progressNow - desktopSpectrumLastPushProgressRef.current) >= 0.5
         const spectrumChanged = compactSpectrum.some((value, index) => Math.abs(value - desktopSpectrumLastPushSpectrumRef.current[index]) > 0.03)
         if (progressChanged || spectrumChanged) {
@@ -5308,9 +4511,7 @@ function App() {
             window.electron?.desktopPlayer?.pushState({
               spectrum: compactSpectrum,
               progress: progressNow,
-              duration: audioPlayer.isExternalPlaybackActive?.()
-                ? (getBridgeState().duration || 0)
-                : (Number(audio?.duration) || 0),
+              duration: Number(audio?.duration) || 0,
             })
           }
         }
@@ -5354,16 +4555,6 @@ function App() {
         // 看歌模式：任务栏进度按视频
         const v = watchVideoStateRef.current
         if (v.duration > 0) window.electron?.desktopPlayer?.pushState({ progress: v.time, duration: v.duration })
-        return
-      }
-      // WebView2 播放面：时间源来自 bridge（本地 audio 元素无媒体）
-      if (audioPlayer.isExternalPlaybackActive?.()) {
-        const s = getBridgeState()
-        if (!s.playing) return
-        window.electron?.desktopPlayer?.pushState({
-          progress: (s.position || 0) + lyricOffsetRef.current - 0.2,
-          duration: s.duration || 0,
-        })
         return
       }
       const audio = audioPlayer.getAudioElement()
@@ -5583,138 +4774,9 @@ function App() {
     void fetch('http://localhost:3001/api/qq/cookie', { method: 'DELETE' }).catch(() => undefined)
   }
 
-  // Apple Music 登录态：token 保存在 localStorage（AppleLoginPanel 写入），
-  // 这里只同步 React 状态并广播 auth 事件，让首页/个人中心等模块感知变化。
-  const handleAppleLogin = (user: AppleUserInfo | null) => {
-    refreshAppleAuth(user)
-    setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', {
-      detail: { platform: 'apple', userId: '' }
-    }))
-    if (user) addToast('Apple Music 登录成功', 'success')
-  }
-
-  const handleAppleLogout = () => {
-    void window.electron?.appleLogout?.().catch(() => undefined)
-    clearAppleLogin()
-    refreshAppleAuth(null)
-    setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'apple' } }))
-    addToast('Apple Music 已退出登录', 'info')
-  }
-
-  // Spotify OAuth 授权结果（主进程回调）：持久化 token + 同步登录态
-  useEffect(() => {
-    const bridge = (window as any).electron
-    if (!bridge?.onSpotifyAuthResult) return
-    const unsub = bridge.onSpotifyAuthResult((result: any) => {
-      if (!result?.success || !result.accessToken) return
-      localStorage.setItem('spotify_access_token', result.accessToken)
-      if (result.refreshToken) localStorage.setItem('spotify_refresh_token', result.refreshToken)
-      if (result.username) localStorage.setItem('spotify_username', result.username)
-      if (result.avatar) localStorage.setItem('spotify_avatar', result.avatar)
-      if (result.product) {
-        const tier = entitlementTierFromSpotifyProduct(result.product)
-        localStorage.setItem('spotify_product', String(result.product))
-        setSpotifyEntitlement(tier)
-      }
-      if (result.userId) {
-        localStorage.setItem('spotify_user_id', result.userId)
-        setSpotifyUserId(String(result.userId))
-      }
-      setSpotifyLoggedIn(true)
-      if (result.username) setSpotifyUsername(result.username)
-      if (result.avatar) setSpotifyAvatar(result.avatar)
-      void import('./services/spotifyService').then(({ fetchSpotifyMe }) => fetchSpotifyMe().then(profile => {
-        if (!profile) return
-        const tier = entitlementTierFromSpotifyProduct(profile.product)
-        setSpotifyEntitlement(tier)
-        if (profile.product) localStorage.setItem('spotify_product', profile.product)
-      }))
-      setAuthRevision(previous => previous + 1)
-      window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'spotify', userId: result.userId || '' } }))
-      addToast('Spotify 授权成功', 'success')
-    })
-    return () => { try { unsub?.() } catch { /* 忽略 */ } }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    const handleSpotifySessionExpired = () => {
-      setSpotifyLoggedIn(false)
-      setSpotifyUserId('')
-      setSpotifyUsername('')
-      setSpotifyAvatar('')
-      setSpotifyEntitlement('unknown')
-      localStorage.removeItem('spotify_product')
-      setAuthRevision(previous => previous + 1)
-      addToast('Spotify 登录已过期，请重新登录', 'info')
-    }
-    window.addEventListener('spotify-session-expired', handleSpotifySessionExpired)
-    return () => window.removeEventListener('spotify-session-expired', handleSpotifySessionExpired)
-  }, [])
-
-  // ── 新三平台登录态处理（登录面板写入 localStorage，这里同步 React 状态 + 广播）──
-  const handleSpotifyLogin = (cookie: string, username?: string) => {
-    // Spotify 由主进程 OAuth 写入 token；仅当存在真实 access_token 才算登录（cookie 参数仅作占位）
-    const loggedIn = Boolean(localStorage.getItem('spotify_access_token'))
-    setSpotifyLoggedIn(loggedIn)
-    if (loggedIn) setSpotifyUserId(localStorage.getItem('spotify_user_id') || '')
-    if (loggedIn) {
-      void import('./services/spotifyService').then(({ fetchSpotifyMe }) => fetchSpotifyMe().then(profile => {
-        if (!profile) return
-        const tier = entitlementTierFromSpotifyProduct(profile.product)
-        setSpotifyEntitlement(tier)
-        if (profile.product) localStorage.setItem('spotify_product', profile.product)
-      }))
-    }
-    if (username && loggedIn) {
-      setSpotifyUsername(username)
-      localStorage.setItem('spotify_username', username)
-    }
-    setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'spotify' } }))
-    if (loggedIn) addToast('Spotify 登录成功', 'success')
-  }
-  const handleSpotifyLogout = () => {
-    localStorage.removeItem('spotify_access_token')
-    localStorage.removeItem('spotify_refresh_token')
-    localStorage.removeItem('spotify_username')
-    localStorage.removeItem('spotify_avatar')
-    localStorage.removeItem('spotify_user_id')
-    localStorage.removeItem('spotify_product')
-    setSpotifyLoggedIn(false)
-    setSpotifyUsername('')
-    setSpotifyAvatar('')
-    setSpotifyUserId('')
-    setSpotifyEntitlement('unknown')
-    setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'spotify' } }))
-    addToast('Spotify 已退出登录', 'info')
-  }
   const handleRemoveFromFavorites = async (song: Song): Promise<boolean> => {
     try {
       const platform = (song.platform || 'netease') as MusicPlatform
-      // Apple：取消“喜爱”评分，不从音乐资料库删除。
-      if (platform === 'apple') {
-        if (!appleLoggedIn) {
-          addToast('请先登录 Apple Music', 'error')
-          return false
-        }
-        const appleSongId = song.appleId || String(song.id)
-        const ok = await setAppleSongLoved(appleSongId, false)
-        if (ok) {
-          addToast('已取消喜爱', 'success')
-          applyFavoriteMutation({ platform: 'apple', type: 'unlike', songId: appleSongId })
-          window.dispatchEvent(new CustomEvent('playlist-content-changed', {
-            detail: { platform: 'apple', type: 'unlike', songId: appleSongId }
-          }))
-          return true
-        }
-        const failure = getLastAppleMutationResult()
-        addToast(failure.error || '取消喜爱失败', 'error')
-        return false
-      }
       const userId = getPlatformUserId(platform)
 
       if (!userId) {
@@ -5764,17 +4826,9 @@ function App() {
     setPlaybackContextPlaylists([])
     setPlaybackContextPlaylistsLoading(true)
     const platform = (currentSong.platform || 'netease') as MusicPlatform
-    if (platform === 'apple') {
-      void getAppleLibraryPlaylists(100)
-        .then(setPlaybackContextPlaylists)
-        .catch(() => setPlaybackContextPlaylists([]))
-        .finally(() => setPlaybackContextPlaylistsLoading(false))
-      return
-    }
     const userId = getPlatformUserId(platform) || ''
     const username = platform === 'netease' ? neteaseUsername : qqUsername
-    const tokenDriven = platform === 'spotify'
-    if (!userId && !tokenDriven) {
+    if (!userId) {
       setPlaybackContextPlaylistsLoading(false)
       return
     }
@@ -5795,8 +4849,7 @@ function App() {
   const handlePlaybackViewArtist = (song: Song) => {
     const platform = (song.platform || 'netease') as MusicPlatform
     const artist = song.artists?.[0]
-    const artistId = platform === 'apple' ? (artist?.appleId || artist?.id)
-      : platform === 'qq' ? (artist?.mid || artist?.id) : artist?.id
+    const artistId = platform === 'qq' ? (artist?.mid || artist?.id) : artist?.id
     if (!artistId) {
       addToast('当前歌曲缺少歌手信息', 'error')
       return
@@ -5844,7 +4897,6 @@ function App() {
     const expiredPlatforms: string[] = []
     if (neteaseLoggedIn && isLoginExpired('netease')) expiredPlatforms.push('网易云音乐')
     if (qqLoggedIn && isLoginExpired('qq')) expiredPlatforms.push('QQ 音乐')
-    if (appleLoggedIn && isLoginExpired('apple')) expiredPlatforms.push('Apple Music')
     if (expiredPlatforms.length) {
       addToast(`${expiredPlatforms.join('、')} 登录已过期，请重新登录`, 'info')
     }
@@ -5941,8 +4993,6 @@ function App() {
     onNeteaseLogout: typeof handleNeteaseLogout
     onQQLogin: typeof handleQQLogin
     onQQLogout: typeof handleQQLogout
-    onSpotifyLogin: typeof handleSpotifyLogin
-    onSpotifyLogout: typeof handleSpotifyLogout
     onRemoveQueueItem: typeof handleDesktopQueueRemove
     onMoveQueueItem: typeof handleDesktopQueueMove
     onLoginClick: (platform: 'netease' | 'qq') => void
@@ -5978,8 +5028,6 @@ function App() {
     onNeteaseLogout: handleNeteaseLogout,
     onQQLogin: handleQQLogin,
     onQQLogout: handleQQLogout,
-    onSpotifyLogin: handleSpotifyLogin,
-    onSpotifyLogout: handleSpotifyLogout,
     onRemoveQueueItem: handleDesktopQueueRemove,
     onMoveQueueItem: handleDesktopQueueMove,
     onLoginClick: (platform) => {
@@ -5998,12 +5046,6 @@ function App() {
     onOpenDeviceControl: () => setShowDeviceControl(true),
     onSettingsClick: () => setShowSettings(true),
     onProfileClick: (platform, initialTab = 'created') => {
-      // ProfileView 只支持网易云/QQ/Apple：Spotify 登录用户按钮可见但渲染条件
-      // 短路（点了没反应），改为明确提示
-      if (!['netease', 'qq', 'apple'].includes(platform)) {
-        addToast('该平台暂不支持查看个人主页', 'info')
-        return
-      }
       setProfileInitialPlatform(platform)
       setProfileInitialTab(initialTab)
       setShowProfile(true)
@@ -6054,8 +5096,6 @@ function App() {
       onNeteaseLogout: () => latest.current.onNeteaseLogout(),
       onQQLogin: (cookie, showToastMessage) => latest.current.onQQLogin(cookie, showToastMessage),
       onQQLogout: () => latest.current.onQQLogout(),
-      onSpotifyLogin: (cookie, username) => latest.current.onSpotifyLogin(cookie, username),
-      onSpotifyLogout: () => latest.current.onSpotifyLogout(),
       onRemoveQueueItem: (index) => latest.current.onRemoveQueueItem(index),
       onMoveQueueItem: (from, to) => latest.current.onMoveQueueItem(from, to),
       onLoginClick: (platform) => latest.current.onLoginClick(platform),
@@ -6075,25 +5115,19 @@ function App() {
 
   // 稳定回调：三视图的登录/资料入口（内联箭头函数会逐秒重建，击穿 memo(HomeView/ExploreView/
   // TraditionalView)，TV 弱 CPU 上整棵视图树（含首页歌单列表）每秒全量重渲染）
-  const openAppleLogin = useCallback(() => setShowAppleLogin(true), [])
   const handleMinimalLogin = useCallback((platform: MusicPlatform) => {
-    if (platform === 'apple') { setShowAppleLogin(true); return }
     setLoginPlatform(platform)
     setShowLogin(true)
   }, [])
   const handleTraditionalLogin = useCallback((platform: MusicPlatform) => {
-    if (platform === 'apple') { setShowAppleLogin(true); return }
     setLoginPlatform(platform)
     setShowLogin(true)
   }, [])
   const handleViewProfileClick = useCallback((platform: MusicPlatform) => {
-    if (platform === 'apple') { setShowAppleLogin(true); return }
     setProfileInitialPlatform(platform)
     setProfileInitialTab('created')
     setShowProfile(true)
-  }, [])
-
-  // 设置面板常驻挂载，关闭回调需稳定引用以配合 memo 跳过播放中的重渲染
+  }, [])  // 设置面板常驻挂载，关闭回调需稳定引用以配合 memo 跳过播放中的重渲染
   const closeSettings = useCallback(() => setShowSettings(false), [])
 
   // 歌曲详情 / 相似歌曲弹窗关闭回调需稳定引用以配合 memo 跳过播放中的重渲染
@@ -6126,13 +5160,11 @@ function App() {
   closeAlbumDetailRef.current = () => closeAlbumDetail()
   closePlaylistRef.current = () => setShowPlaylist(false)
   profileSwitchPlatformRef.current = () => {
-    // 已登录平台间轮换（Apple 登录态由 token 判定；被隐藏的平台不参与轮换）
-    const order: MusicPlatform[] = ['netease', 'qq', 'apple', 'spotify']
+    // 已登录平台间轮换（被隐藏的平台不参与轮换）
+    const order: MusicPlatform[] = ['netease', 'qq']
     const loggedIn = {
       netease: neteaseLoggedIn,
       qq: qqLoggedIn,
-      apple: appleLoggedIn,
-      spotify: spotifyLoggedIn,
     } as Record<MusicPlatform, boolean>
     const candidates = order.filter(platform => loggedIn[platform] && isPlatformVisible(platform))
     if (candidates.length <= 1) return
@@ -6142,8 +5174,6 @@ function App() {
   profileLogoutRef.current = (platform) => {
     if (platform === 'netease') handleNeteaseLogout()
     else if (platform === 'qq') handleQQLogout()
-    else if (platform === 'apple') handleAppleLogout()
-    else if (platform === 'spotify') handleSpotifyLogout()
   }
   smartReorderRef.current = () => { void handleSmartReorder() }
   playlistSongSelectRef.current = (index) => {
@@ -6390,13 +5420,6 @@ function App() {
               qqAvatar={qqAvatar}
               qqUserId={qqUserId}
               qqVip={qqVip}
-              appleLoggedIn={appleLoggedIn}
-              appleUsername={appleUsername}
-              appleAvatar={appleAvatar}
-              appleStorefront={appleStorefront}
-              spotifyLoggedIn={spotifyLoggedIn}
-              spotifyUsername={spotifyUsername}
-              spotifyAvatar={spotifyAvatar}
               onLoginClick={handleMinimalLogin}
               onProfileClick={handleViewProfileClick}
               onSearchClick={viewCallbacks.onSearchClick}
@@ -6453,16 +5476,8 @@ function App() {
               qqUserId={qqUserId}
               neteaseVip={neteaseVip}
               qqVip={qqVip}
-              appleLoggedIn={appleLoggedIn}
-              appleUsername={appleUsername}
-              onAppleLoginClick={openAppleLogin}
-              onAppleLogout={handleAppleLogout}
-              spotifyLoggedIn={spotifyLoggedIn}
-              spotifyUserId={spotifyUserId}
-              spotifyUsername={spotifyUsername}
               onNeteaseLogin={viewCallbacks.onNeteaseLogin}
               onQQLogin={viewCallbacks.onQQLogin}
-              onSpotifyLogin={viewCallbacks.onSpotifyLogin}
               onPlayNext={viewCallbacks.onPlayNext}
               onAddToFavorites={viewCallbacks.onAddToFavorites}
               onRemoveFromFavorites={viewCallbacks.onRemoveFromFavorites}
@@ -6492,7 +5507,7 @@ function App() {
               queue={playlist}
               currentIndex={currentIndex}
               isPlaying={isPlaying}
-              live={isLive || currentAppleRadio?.timeline === 'live'}
+              live={isLive}
               playbackTimeStore={audioPlayer.playbackTimeStore}
               dominantColor={dominantColor}
               analyzerStore={audioAnalyzer}
@@ -6511,13 +5526,6 @@ function App() {
               qqAvatar={qqAvatar}
               qqUserId={qqUserId}
               qqVip={qqVip}
-              appleLoggedIn={appleLoggedIn}
-              appleUsername={appleUsername}
-              appleAvatar={appleAvatar}
-              spotifyLoggedIn={spotifyLoggedIn}
-              spotifyUserId={spotifyUserId}
-              spotifyUsername={spotifyUsername}
-              spotifyAvatar={spotifyAvatar}
               onLoginClick={handleTraditionalLogin}
               onProfileClick={handleViewProfileClick}
               onSearchClick={viewCallbacks.onSearchClick}
@@ -6579,7 +5587,7 @@ function App() {
             backgroundBlur={backgroundBlur}
           />
         )}
-        {currentSong && !isAppleRadioPlayback && (
+        {currentSong && (
           <LazyBilibiliMvBackground
             songTitle={currentSong.name}
             songArtists={currentSongArtists}
@@ -6587,15 +5595,7 @@ function App() {
             platform={currentSong.platform}
             songId={currentSong.id || currentSong.mid}
             isPlaying={isPlaying}
-            getAudioElement={() => {
-              const el = audioPlayerRef.current.getAudioElement()
-              // WebView2 播放面：MV 背景同步时间源走 bridge（代理视图）
-              if (audioPlayerRef.current.isExternalPlaybackActive?.()) {
-                externalAudioViewRef.current = el
-                return externalAudioProxyRef.current
-              }
-              return el
-            }}
+            getAudioElement={() => audioPlayerRef.current.getAudioElement()}
             getPlaybackTimeSeconds={getMvPlaybackTimeSeconds}
             getTransitionTargetTimeSeconds={getMvTransitionTargetTimeSeconds}
             playerTheme={playerTheme}
@@ -6680,14 +5680,6 @@ function App() {
           qqVip,
           onQQLogin: viewCallbacks.onQQLogin,
           onQQLogout: viewCallbacks.onQQLogout,
-          appleLoggedIn,
-          appleUsername,
-          onAppleLogin: handleAppleLogin,
-          onAppleLogout: handleAppleLogout,
-          spotifyLoggedIn,
-          spotifyUsername,
-          onSpotifyLogin: viewCallbacks.onSpotifyLogin,
-          onSpotifyLogout: viewCallbacks.onSpotifyLogout,
           playerTheme,
             } as any)} />
         </Suspense>
@@ -6794,22 +5786,8 @@ function App() {
               qqUserId={qqUserId}
               qqVip={qqVip}
               onQQLogout={viewCallbacks.onQQLogout}
-              appleLoggedIn={appleLoggedIn}
-              appleUsername={appleUsername}
-              appleAvatar={appleAvatar}
-              appleStorefront={appleStorefront}
-              appleEmail={appleEmail}
-              onAppleLoginClick={openAppleLogin}
-              onAppleLogout={handleAppleLogout}
-              spotifyLoggedIn={spotifyLoggedIn}
-              spotifyUsername={spotifyUsername}
-              spotifyAvatar={spotifyAvatar}
-              spotifyUserId={spotifyUserId}
-              onSpotifyLogout={viewCallbacks.onSpotifyLogout}
               onNeteaseLoginClick={viewCallbacks.onNeteaseLoginClick}
               onQQLoginClick={viewCallbacks.onQQLoginClick}
-              onAppleProfileClick={openAppleLogin}
-              onLoginClick={handleMinimalLogin}
               onSearchClick={viewCallbacks.onSearchClick}
               onOpenDeviceControl={viewCallbacks.onOpenDeviceControl}
               onSettingsClick={viewCallbacks.onSettingsClick}
@@ -6887,7 +5865,7 @@ function App() {
 
               {/* 顶部中央歌词模式切换：createPortal 挂到 body，逃出 minimal-playback-surface 的
                   transform 层叠上下文——否则在看歌模式下会被 data-watch-surface(z-10) 盖住，无法 hover */}
-              {!isPureMusic && !isAppleRadioPlayback && createPortal((
+              {!isPureMusic && createPortal((
                 <>
                   <button
                     type="button"
@@ -7083,31 +6061,7 @@ function App() {
 
               {(() => {
             // 播放器事件监听，处理播放状态变化
-            return isAppleRadioPlayback && currentSong ? (
-              <motion.div
-                key="apple-radio-player"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 z-20"
-              >
-                <LazyAppleRadioNowPlayingPage
-                  song={currentSong}
-                  isPlaying={isPlaying}
-                  currentTime={currentTime}
-                  duration={duration}
-                  volume={volume}
-                  playerTheme={playerTheme}
-                  status={appleRadioStatus}
-                  error={appleRadioError}
-                  onBack={handlePlayerHome}
-                  onPlayPause={handlePlayPause}
-                  onSeek={audioPlayer.seek}
-                  onVolumeChange={handleVolumeChange}
-                  onRetry={() => { void loadAndPlaySong(currentSong, currentIndex, [currentSong]) }}
-                />
-              </motion.div>
-            ) : isPureMusic ? (
+            return isPureMusic ? (
               /* 纯音乐愭椂灞呬腑显示 */
               <motion.div
                 key="no-lyrics-player"
@@ -7133,8 +6087,6 @@ function App() {
                       transitionFromTrack={transitionFromTrack}
                       transitionToTrack={transitionToTrack}
                       pulseStore={audioPulseStore}
-                      animatedCoverUrl={appleDynamicCover.cover?.videoUrl ?? null}
-                      animatedCoverPoster={appleDynamicCover.cover?.posterUrl ?? null}
                     />
 
                     {/* 歌曲信息 - 过渡时双层淡入淡出 */}
@@ -7269,8 +6221,6 @@ function App() {
                       transitionFromTrack={transitionFromTrack}
                       transitionToTrack={transitionToTrack}
                       pulseStore={audioPulseStore}
-                      animatedCoverUrl={appleDynamicCover.cover?.videoUrl ?? null}
-                      animatedCoverPoster={appleDynamicCover.cover?.posterUrl ?? null}
                     />
 
                     {/* 歌曲信息 - 过渡时双层淡入淡出 */}
@@ -7413,7 +6363,7 @@ function App() {
           artist={currentTrack.artist}
           currentLyric={currentMiniLyric}
           hasLyrics={lyrics.length > 0}
-          live={isLive || currentAppleRadio?.timeline === 'live'}
+          live={isLive}
           accentColor={playbackCoverColor}
           onPlayPause={handlePlayPause}
           onNext={handleNext}
@@ -7516,8 +6466,6 @@ function App() {
             qqVip={qqVip}
             neteaseLoggedIn={neteaseLoggedIn}
             qqLoggedIn={qqLoggedIn}
-            appleLoggedIn={appleLoggedIn}
-            spotifyLoggedIn={spotifyLoggedIn}
             currentSong={currentSong}
             onPlayNext={viewCallbacks.onPlayNext}
             onAddToFavorites={viewCallbacks.onAddToFavorites}
@@ -7541,20 +6489,8 @@ function App() {
             onLoginSuccess={(cookie, username) => {
               if (loginPlatform === 'netease') handleNeteaseLogin(cookie)
               else if (loginPlatform === 'qq') handleQQLogin(cookie)
-              else if (loginPlatform === 'spotify') handleSpotifyLogin(cookie, username)
               setShowLogin(false)
             }}
-            />
-          )}
-          {showAppleLogin && (
-            <AppleLoginPanel
-              accentColor="#fa2d48"
-              onClose={() => setShowAppleLogin(false)}
-              onLoginSuccess={(user) => {
-                // user 为 null 表示面板内已退出登录（clearAppleLogin 后回调）
-                handleAppleLogin(user)
-                setShowAppleLogin(false)
-              }}
             />
           )}
         </AnimatePresence>
@@ -7600,7 +6536,6 @@ function App() {
             key={'album-' + selectedAlbumId}
             albumId={selectedAlbumId}
             platform={selectedAlbumPlatform}
-            storefront={selectedAlbumPlatform === 'apple' ? appleStorefront : undefined}
             onClose={stableDialogCallbacks.closeAlbumDetail}
             onSongSelect={handleAlbumDetailSongSelect}
             accentColor={playbackCoverColor}
@@ -7637,11 +6572,11 @@ function App() {
           backdrop-filter，退出节点在播放页挂载时会被 Chromium/framer-motion 卡住不卸载
           → 最近播放等弹窗选歌后残留盖在播放页上；普通条件渲染关闭即当帧卸载。 */}
       <Suspense fallback={null}>
-          {showProfile && (neteaseLoggedIn || qqLoggedIn || appleLoggedIn) && (
+          {showProfile && (neteaseLoggedIn || qqLoggedIn) && (
             <LazyProfileView
             initialPlatform={profileInitialPlatform}
             initialTab={profileInitialTab}
-            canSwitchPlatform={[neteaseLoggedIn, qqLoggedIn, appleLoggedIn].filter(Boolean).length >= 2}
+            canSwitchPlatform={[neteaseLoggedIn, qqLoggedIn].filter(Boolean).length >= 2}
             userId={profileInitialPlatform === 'netease' ? neteaseUserId : profileInitialPlatform === 'qq' ? qqUserId : ''}
             cookie={profileInitialPlatform === 'netease' ? _neteaseCookie : profileInitialPlatform === 'qq' ? _qqCookie : ''}
             onClose={stableDialogCallbacks.closeProfile}

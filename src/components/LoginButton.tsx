@@ -2,11 +2,8 @@ import { useState } from 'react'
 import { User, LogOut } from 'lucide-react'
 import { motion } from 'framer-motion'
 import type { MusicPlatform } from '../services/platforms'
-import type { AppleUserInfo } from '../services/appleAuth'
 import LoginPanel from './LoginPanel'
 import QQLoginPanel from './QQLoginPanel'
-import AppleLoginPanel from './AppleLoginPanel'
-import SpotifyLoginPanel from './SpotifyLoginPanel'
 
 interface LoginButtonProps {
   platform: MusicPlatform
@@ -14,22 +11,16 @@ interface LoginButtonProps {
   username?: string
   onLogin: (cookie: string, username?: string, extra?: { avatar?: string; userId?: string }) => void
   onLogout: () => void
-  /** Apple 登录成功/退出的回调（user 为 null 表示面板内退出） */
-  onAppleLogin?: (user: AppleUserInfo | null) => void
   playerTheme?: 'light' | 'dark'
 }
 
-export default function LoginButton({ platform, isLoggedIn, username, onLogin, onLogout, onAppleLogin, playerTheme = 'dark' }: LoginButtonProps) {
+export default function LoginButton({ platform, isLoggedIn, username, onLogin, onLogout, playerTheme = 'dark' }: LoginButtonProps) {
   const [showLoginPanel, setShowLoginPanel] = useState(false)
   
-  const platformName = platform === 'netease' ? '网易云' : platform === 'qq' ? 'QQ音乐' : platform === 'apple' ? 'Apple Music' : 'Spotify'
+  const platformName = platform === 'netease' ? '网易云' : 'QQ音乐'
   const platformColor = platform === 'netease'
     ? 'bg-red-600 hover:bg-red-700'
-    : platform === 'qq'
-      ? 'bg-green-600 hover:bg-green-700'
-      : platform === 'apple'
-        ? 'bg-pink-600 hover:bg-pink-700'
-        : 'bg-[#1DB954] hover:bg-[#17a74b]'
+    : 'bg-green-600 hover:bg-green-700'
 
   const handleLoginSuccess = (cookie: string, extraUsername?: string) => {
     onLogin(cookie, extraUsername)
@@ -79,27 +70,6 @@ export default function LoginButton({ platform, isLoggedIn, username, onLogin, o
         <QQLoginPanel
           onClose={() => setShowLoginPanel(false)}
           onLoginSuccess={handleLoginSuccess}
-        />
-      )}
-
-      {showLoginPanel && platform === 'apple' && (
-        <AppleLoginPanel
-          accentColor="#fa2d48"
-          onClose={() => setShowLoginPanel(false)}
-          onLoginSuccess={(user) => {
-            onAppleLogin?.(user)
-            setShowLoginPanel(false)
-          }}
-        />
-      )}
-
-      {showLoginPanel && platform === 'spotify' && (
-        <SpotifyLoginPanel
-          onClose={() => setShowLoginPanel(false)}
-          onLoginSuccess={(username) => {
-            onLogin('spotify-logged', username)
-            setShowLoginPanel(false)
-          }}
         />
       )}
     </>

@@ -164,8 +164,6 @@ export interface PreloadTrack {
   duration?: number
   albumId?: string
   albumCover?: string
-  /** Apple Music 原生 HLS 音源元数据（url 为 .m3u8 时由引擎用 hls.js 播放） */
-  appleHls?: import('../services/applePlayback').AppleNativeStream
   /** 预载管线完成通知；用于瞬时失败后由队列层决定是否重试。 */
   onPreloadSettled?: (success: boolean) => void
 }
@@ -174,7 +172,7 @@ export interface PlaybackEngineState {
   isPlaying?: boolean
   currentTime?: number
   duration?: number
-  /** 直播流（Apple 电台等）：时长置 0，UI 显示直播指示、禁拖动 */
+  /** 直播流：时长置 0，UI 显示直播指示、禁拖动 */
   live?: boolean
   volume?: number
   buffered?: number

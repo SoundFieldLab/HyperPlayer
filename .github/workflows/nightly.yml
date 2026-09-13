@@ -13,8 +13,6 @@
 #   - 生成并提交 `update-nightly.json`（nightly 渠道的更新清单）——供客户端
 #     「更新渠道 = 每日构建（Nightly）」时拉取；正式版清单 `update.json` 不受影响。
 #   - 无新增提交时自动跳过（手动触发时可用 force=true 强制构建）。
-#
-# 需要仓库 Secrets：EVS_ACCOUNT_NAME / EVS_PASSWD（castLabs Widevine VMP 签名）。
 
 name: Nightly Build 每日构建
 
@@ -147,12 +145,6 @@ jobs:
     if: needs.prepare.outputs.has_changes == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
-    # EVS 凭据用于 Widevine VMP 签名（仅 Apple Music 原生 DRM 需要）。
-    # 未配置 secrets 时自动降级为未签名构建，不阻断流水线。
-    env:
-      EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
-      EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
-      HAS_EVS: ${{ secrets.EVS_ACCOUNT_NAME != '' && secrets.EVS_PASSWD != '' }}
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
@@ -178,27 +170,8 @@ jobs:
       - name: 下载 Electron 运行时（npm ci 跳过其安装脚本）
         run: node node_modules/electron/install.js
 
-      - name: 安装 castLabs EVS（仅当配置了 EVS 凭据）
-        if: env.HAS_EVS == 'true'
-        # 用 `python -m pip`（而非 py -3 启动器）：与 scripts/evs-runner.cjs 的解释器探测顺序一致，
-        # 且避免 py 启动器在部分 runner 镜像上不可用。
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install castlabs-evs==1.3.2
-          python -c "import castlabs_evs; print('castlabs-evs', castlabs_evs.__version__)"
-
-      - name: 构建安装包（已签名，Apple Music 原生 DRM 可用）
-        if: env.HAS_EVS == 'true'
-        env:
-          EVS_NO_ASK: "1"
+      - name: 构建 NSIS 安装包
         run: npm run build:electron
-        timeout-minutes: 40
-
-      - name: 构建安装包（未签名：未配置 EVS 凭据，跳过 Widevine VMP）
-        if: env.HAS_EVS != 'true'
-        run: |
-          Write-Host '::warning::未配置 EVS_ACCOUNT_NAME / EVS_PASSWD，本次为未签名构建；Apple Music 原生 DRM 不可用（会自动回退网易云/QQ 载体匹配），其余功能不受影响。'
-          npm run build:electron:unsigned
         timeout-minutes: 40
 
       # 便携版 zip：直接对已构建的 win-unpacked 再跑一次 electron-builder 的 zip 目标，

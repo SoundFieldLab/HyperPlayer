@@ -86,11 +86,6 @@ contextBridge.exposeInMainWorld('electron', {
     setWallpaperWatcherEnabled: (enabled) => ipcRenderer.invoke('set-wallpaper-watcher', Boolean(enabled)),
   },
   
-  // 只读构建诊断（不暴露 EVS 输出、路径或凭据）
-  diagnostics: {
-    getVmpStatus: () => ipcRenderer.invoke('diagnostics:get-vmp-status'),
-  },
-
   // 开发者模式
   developerMode: {
     set: (enabled) => ipcRenderer.invoke('set-developer-mode', enabled),
@@ -148,8 +143,6 @@ contextBridge.exposeInMainWorld('electron', {
   
   // QQ 音乐登录
   openQQLoginWindow: () => ipcRenderer.invoke('open-qq-login-window'),
-  // Spotify OAuth 授权（Electron 弹窗；clientId 可选，自定义 Client ID）
-  openSpotifyLogin: (clientId) => ipcRenderer.invoke('open-spotify-login', clientId),
   // HSE 开发者模式：把场景微调的「发布种子」写回仓库源文件（仅开发模式生效）
   writeHseSceneSeed: (content) => ipcRenderer.invoke('hse-write-scene-seed', content),
   // HSE 离线导出：渲染完成的 MP3 直写用户桌面（<歌曲名>-Modified.mp3）
@@ -159,40 +152,6 @@ contextBridge.exposeInMainWorld('electron', {
     getFlag: () => ipcRenderer.invoke('oobe:get-flag'),
     setFlag: () => ipcRenderer.invoke('oobe:set-flag'),
   },
-  // Spotify 授权完成后回调（主进程返回 token/用户名）
-  onSpotifyAuthResult: (callback) => {
-    const listener = (_event, result) => callback(result)
-    ipcRenderer.on('spotify-auth-result', listener)
-    return () => ipcRenderer.removeListener('spotify-auth-result', listener)
-  },
-
-  // Apple Music 网页一键登录：内置窗口登录 Apple ID，自动抓取凭据
-  appleLogin: () => ipcRenderer.invoke('apple-login'),
-  // Apple Music 登出：关闭登录窗口并清除专用网页会话与落盘 Cookie
-  appleLogout: () => ipcRenderer.invoke('apple-logout'),
-  // 从 Apple 网页前端资源获取可用的 Developer Token（免密钥，约 70 天有效）
-  appleFetchDevToken: () => ipcRenderer.invoke('apple-fetch-dev-token'),
-  // amp-api 代理：渲染进程浏览器直连会被 CORS 拦截，改由主进程请求
-  appleApi: (path, developerToken, mediaUserToken, method, body) =>
-    ipcRenderer.invoke('apple-api', { path, developerToken, mediaUserToken, method, body }),
-  // Apple Music 原生音源：webPlayback 取流（主进程 POST play.itunes.apple.com，无 CORS）
-  applePlayback: (songId, developerToken, mediaUserToken) =>
-    ipcRenderer.invoke('apple-playback', { songId, developerToken, mediaUserToken }),
-  // Apple Music 电台直播取流（主进程优先 GET amp-api.music.apple.com/v1/play/assets，无 CORS）
-  applePlayAssets: (query, developerToken, mediaUserToken) =>
-    ipcRenderer.invoke('apple-play-assets', { query, developerToken, mediaUserToken }),
-  // Apple HLS 清单获取（主进程 fetch 文本，白名单限制 Apple 域名）
-  appleFetchUrl: (url) => ipcRenderer.invoke('apple-fetch-url', { url }),
-  // Apple 账号信息（buy.itunes 接口，需登录窗口抓取的 itunes cookie）
-  appleAccountInfo: (cookies) => ipcRenderer.invoke('apple-account-info', cookies),
-  // Apple 个人资料页（解析 og:image 头像）
-  appleFetchProfile: (profileUrl) => ipcRenderer.invoke('apple-fetch-profile', profileUrl),
-  // Apple 账号页面（Apple ID / Apple Account，带全量会话 cookie 解析名字与头像）
-  appleFetchAccount: (cookies) => ipcRenderer.invoke('apple-fetch-account', cookies),
-  // Apple 播放面 bridge（WebView2 原生源）：主进程拉起 apple_bridge.py（幂等）
-  spawnAppleBridge: () => ipcRenderer.invoke('apple-bridge:spawn'),
-  // Apple 播放面 bridge：渲染端节能联动（离开 Apple 平台 5 分钟）主动关闭
-  stopAppleBridge: () => ipcRenderer.invoke('apple-bridge:stop'),
   // 渲染进程日志转发到主进程控制台（后台窗口可见，便于排查）
   log: (message) => ipcRenderer.send('app-log', String(message)),
 

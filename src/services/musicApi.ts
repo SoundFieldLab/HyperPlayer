@@ -8,7 +8,6 @@ import {
   AUDIO_QUALITY_SETTINGS_EVENT,
   getAudioQualityRequest,
 } from './audioQualitySettings'
-import { getAppleMusicLyrics, isAppleMusicConfigured } from './appleMusic'
 
 const isYrcTimestampFragment = (value: string) => {
   const trimmed = value.trim()
@@ -145,40 +144,17 @@ export interface Song {
   mid?: string // QQ音乐需要mid
   songType?: number // QQ MusicU 写操作必须使用歌曲真实类型，不能固定为 0
   name: string
-  artists: { id?: number; name: string; mid?: string; appleId?: string }[]
+  artists: { id?: number; name: string; mid?: string }[]
   album: {
     id?: number // 网易云专辑ID，用于懒加载封面
     name: string
     picUrl: string
     mid?: string
     pmid?: string | number
-    appleId?: string
   }
   duration: number
   playCount?: number // 播放次数（听歌排行等）
   platform?: MusicPlatform // 标识来源平台
-  /** Apple Music 目录 ID，用于播放、评分和加入资料库 */
-  appleId?: string
-  /** Apple Music 资料库资源 ID，用于资料库删除和歌单移除 */
-  appleLibraryId?: string
-  /** Apple Music storefront，避免跨区详情回落到默认商店 */
-  appleStorefront?: string
-  /** Apple Music 电台/节目描述。队列只保存描述，每次播放重新解析有时效的 HLS。 */
-  appleRadio?: {
-    stationId: string
-    storefront: string
-    playParams?: import('./applePlayback').AppleRadioPlayParams
-    timeline: 'live' | 'vod' | 'unknown'
-    showName?: string
-    description?: string
-    airTime?: { start?: string; end?: string }
-    artworkUrl?: string
-    motionArtworkUrl?: string
-    motionPosterUrl?: string
-    heroArtworkUrl?: string
-    /** 旧会话兼容字段；新建队列不再持久化 stream。 */
-    stream?: import('./applePlayback').AppleNativeStream
-  }
   vip?: boolean // 是否为VIP歌曲
   /** 播放该曲所需的规范化会员档位；旧数据仅有 vip 时按 vip 处理。 */
   requiredTier?: EntitlementTier
@@ -190,7 +166,6 @@ export interface Song {
     platform: MusicPlatform
     id: number
     mid?: string
-    appleId?: string
     vip?: boolean
     noCopyright?: boolean
   }>
@@ -198,15 +173,13 @@ export interface Song {
 
 /**
  * 判定两首歌曲是否为同一首（平台感知）：
- * - Apple：id 可能为 0（库内曲目 id 是 l. 前缀的非数字串，Number() 得 NaN），
- *   必须用 appleId 判定；QQ 用 mid；其余平台用 id。
- * 所有「当前播放高亮 / 从歌单移除 / 队列定位」统一走这里，避免 AM 歌曲 id=0
- * 导致整单高亮或整单误删。
+ * - QQ 用 mid 判定；网易云用 id 判定。
+ * 所有「当前播放高亮 / 从歌单移除 / 队列定位」统一走这里。
  */
 export function isSameSong(a: Song | null | undefined, b: Song | null | undefined): boolean {
   if (!a || !b) return false
   if ((a.platform || 'netease') !== (b.platform || 'netease')) return false
-  const songIdOf = (song: Song) => song.mid || song.appleId || String(song.id || '')
+  const songIdOf = (song: Song) => song.mid || String(song.id || '')
   const idA = songIdOf(a)
   const idB = songIdOf(b)
   return Boolean(idA && idB && idA === idB)
@@ -223,19 +196,6 @@ export function getLocalAlbumIdentifier(song: Song, platform: MusicPlatform): st
 }
 
 export async function resolveSongAlbumIdentifier(song: Song, platform: MusicPlatform): Promise<string | null> {
-  if (platform === 'apple') {
-    const localId = song.album?.appleId
-    if (localId) return String(localId)
-    const songId = String(song.appleId || '')
-    if (!songId) return null
-    try {
-      const { fetchAppleSongDetail } = await import('./appleWebService')
-      const detail = await fetchAppleSongDetail(songId, song.appleStorefront)
-      return detail?.album?.playId || detail?.album?.id || null
-    } catch {
-      return null
-    }
-  }
   const localId = getLocalAlbumIdentifier(song, platform)
   if (localId) return localId
 
@@ -262,7 +222,6 @@ export async function resolveSongAlbumIdentifier(song: Song, platform: MusicPlat
 export interface Artist {
   id: number
   mid?: string // QQ音乐需要mid
-  appleId?: string // Apple Music 原始字符串 ID
   name: string
   picUrl: string
   albumSize?: number // 专辑数量
@@ -284,10 +243,9 @@ export interface Artist {
 export interface Album {
   id: number
   mid?: string // QQ音乐需要mid
-  appleId?: string // Apple Music 原始字符串 ID
   name: string
   picUrl: string
-  artist: { name: string; id?: number; mid?: string; appleId?: string }
+  artist: { name: string; id?: number; mid?: string }
   publishTime?: number
   size?: number // 歌曲数量
   description?: string // 专辑描述
@@ -320,10 +278,10 @@ export interface LyricLine {
   roman?: string // 罗马音（纯文本）
   romanWords?: LyricWord[] // 逐字罗马音
   role?: string
-  /** Apple Music 对唱/多声部：ttm:agent id（如 v1/v2） */
+  /** 对唱/多声部：ttm:agent id（如 v1/v2） */
   agent?: string
   agentId?: string
-  /** 该行演唱者名（由 Apple 曲目艺人列表按 agent 顺序映射） */
+  /** 该行演唱者名（由曲目艺人列表按 agent 顺序映射） */
   agentName?: string
   /** 同一文本的翻译、罗马音或其他角色文本。 */
   alternateTexts?: LyricAlternateText[]
@@ -414,18 +372,6 @@ export function getProxiedAudioUrl(originalUrl: string): string {
 export async function searchSongs(keywords: string, limit = 30, platform: MusicPlatform = 'netease'): Promise<SearchResult> {
   try {
     const devMode = localStorage.getItem('developerMode') === 'true'
-    if (platform === 'apple') {
-      const { searchAppleSongsAsSongs } = await import('./appleCatalog')
-      const storefront = localStorage.getItem('appleStorefront') || 'cn'
-      const songs = await searchAppleSongsAsSongs(keywords, storefront, limit)
-      return { songs, songCount: songs.length }
-    }
-    // Spotify：前端直连官方 API
-    if (platform === 'spotify') {
-      const { searchSpotifySongs, spotifyTrackToSong } = await import('./spotifyService')
-      const tracks = await searchSpotifySongs(keywords, limit)
-      return { songs: tracks.map(spotifyTrackToSong), songCount: tracks.length }
-    }
     const endpoint = platform === 'qq' ? '/qq/search' : '/netease/search'
     const response = await fetch(`${API_BASE}${endpoint}?keywords=${encodeURIComponent(keywords)}&limit=${limit}&devMode=${devMode}`)
     const data = await response.json()
@@ -556,30 +502,6 @@ export async function searchSuggest(keywords: string, platform: MusicPlatform = 
 // 搜索歌手
 export async function searchArtists(keywords: string, platform: MusicPlatform = 'netease'): Promise<Artist[]> {
   try {
-    if (platform === 'apple') {
-      const { searchAppleCatalogArtists } = await import('./appleCatalog')
-      const storefront = localStorage.getItem('appleStorefront') || 'cn'
-      const artists = await searchAppleCatalogArtists(keywords, storefront, 20)
-      return artists.map(artist => ({
-        id: Number(artist.id) || 0,
-        appleId: String(artist.id),
-        name: artist.name,
-        picUrl: artist.artworkUrl || '',
-        platform: 'apple' as const,
-      }))
-    }
-    // Spotify：官方 API 艺人搜索
-    if (platform === 'spotify') {
-      const { searchSpotifyArtists } = await import('./spotifyService')
-      const artists = await searchSpotifyArtists(keywords, 20)
-      return artists.map(a => ({
-        id: Number(parseInt(a.id.slice(0, 12), 36)) || 0,
-        mid: a.id,
-        name: a.name,
-        picUrl: a.coverUrl || '',
-        platform: 'spotify' as const,
-      }))
-    }
     const devMode = localStorage.getItem('developerMode') === 'true'
     if (platform === 'qq') {
       const url = `${API_BASE}/qq/search?keywords=${encodeURIComponent(keywords)}&type=singer&devMode=${devMode}`
@@ -640,34 +562,6 @@ export async function searchArtists(keywords: string, platform: MusicPlatform = 
 // 搜索专辑
 export async function searchAlbums(keywords: string, platform: MusicPlatform = 'netease'): Promise<Album[]> {
   try {
-    if (platform === 'apple') {
-      const { searchAppleCatalogAlbums } = await import('./appleCatalog')
-      const storefront = localStorage.getItem('appleStorefront') || 'cn'
-      const albums = await searchAppleCatalogAlbums(keywords, storefront, 20)
-      return albums.map(album => ({
-        id: Number(album.id) || 0,
-        appleId: String(album.id),
-        name: album.name,
-        picUrl: album.artworkUrl || '',
-        artist: { name: album.artistName },
-        publishTime: album.releaseDate ? new Date(album.releaseDate).getTime() : undefined,
-        platform: 'apple' as const,
-      }))
-    }
-    // Spotify：官方 API 专辑搜索
-    if (platform === 'spotify') {
-      const { searchSpotifyAlbums } = await import('./spotifyService')
-      const albums = await searchSpotifyAlbums(keywords, 20)
-      return albums.map(a => ({
-        id: Number(parseInt(a.id.slice(0, 12), 36)) || 0,
-        mid: a.id,
-        name: a.name,
-        artist: { name: a.artists.map(artist => artist.name).join(' / ') },
-        picUrl: a.coverUrl || '',
-        publishTime: a.releaseDate ? new Date(a.releaseDate).getTime() : 0,
-        platform: 'spotify' as const,
-      }))
-    }
     const devMode = localStorage.getItem('developerMode') === 'true'
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/search?keywords=${encodeURIComponent(keywords)}&type=album&devMode=${devMode}`)
@@ -732,9 +626,6 @@ export async function getSongUrl(id: number | string, platform: MusicPlatform = 
         const { preference, isVip } = getAudioQualityRequest('qq')
         apiUrl = `${API_BASE}/qq/song/url?mid=${encodeURIComponent(String(id))}&quality=${encodeURIComponent(preference)}&vip=${isVip ? 'true' : 'false'}${cookie ? '&cookie=' + encodeURIComponent(cookie) : ''}`
         readUrl = data => data.url || null
-      } else if (platform === 'spotify') {
-        // Spotify：未登录无自源音源，返回 null → 上层降级网易云/QQ
-        return null
       } else {
         const cookie = localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
         const fallbackSetting = localStorage.getItem('crossPlatformFallbackEnabled')
@@ -1251,14 +1142,6 @@ export async function getLyrics(
     
     const useThirdParty = thirdPartyEnabled !== null ? JSON.parse(thirdPartyEnabled) : true
     const useAdaptive = adaptiveLyrics !== null ? JSON.parse(adaptiveLyrics) : true
-    const isApplePlatform = platform === 'apple'
-    if (isApplePlatform && isAppleMusicConfigured()) {
-      const appleLyrics = await getAppleMusicLyrics(songName || '', artistName || '', duration, { songId: id })
-      if (appleLyrics.length > 0 || !useThirdParty || !useAdaptive || primarySource === 'Platform') return appleLyrics
-    }
-    if (isApplePlatform && (!useThirdParty || !useAdaptive || primarySource === 'Platform')) {
-      return []
-    }
     // 如果禁用第三方或禁用自适应，直接使用当前平台
     if (!useThirdParty || !useAdaptive || primarySource === 'Platform') {
       return await getPlatformLyrics(id, platform, songName, artistName)
@@ -1282,28 +1165,15 @@ export async function getLyrics(
     
     // 默认策略：流式加载 - 先显示基础歌词，再逐步增强
     type LyricsSourceResult = { source: string; lyrics: LyricLine[]; hasWW: boolean; hasTrans: boolean; hasRom: boolean }
-    const platformSourceName = platform === 'qq' ? 'QQ音乐' : isApplePlatform ? 'Apple Music' : platform === 'spotify' ? 'Spotify' : '网易云'
+    const platformSourceName = platform === 'qq' ? 'QQ音乐' : '网易云'
     
     // 平台互斥：QQ音乐歌曲不请求网易云API，网易云歌曲不请求QQ音乐API。
-    // Apple/Spotify 曲目不请求网易云/QQ 平台源。
-    const platformSourcePromise = isApplePlatform
-      ? Promise.resolve([])
-      : platform === 'spotify'
-        ? Promise.resolve([])
-        : getPlatformLyrics(id, platform, songName, artistName)
-    const amllSourcePromise = isApplePlatform
-      ? Promise.resolve([])
-      : getAMLLTTMLLyrics(id, platform)
+    const platformSourcePromise = getPlatformLyrics(id, platform, songName, artistName)
+    const amllSourcePromise = getAMLLTTMLLyrics(id, platform)
     const sources = [
       // 平台官方源只请求当前歌曲所属平台
       { name: platformSourceName, promise: platformSourcePromise },
       { name: 'AMLL TTML DB', promise: amllSourcePromise },
-      // Apple Music：仅在用户已完成 Apple 登录时才请求（未登录默认关闭，不替换平台歌词）
-      ...(isAppleMusicConfigured()
-        ? [{ name: 'Apple Music', promise: songName && artistName
-          ? getAppleMusicLyrics(songName, artistName, duration, isApplePlatform ? { songId: id } : undefined)
-          : Promise.resolve([]) }]
-        : []),
       { name: 'Lrclib', promise: songName && artistName ? getLrclibLyrics(songName, artistName, duration) : Promise.resolve([]) }
     ]
     
@@ -1414,14 +1284,10 @@ export async function getLyrics(
 
       const preferredSource = primarySource === 'AMLL'
         ? 'AMLL TTML DB'
-        : primarySource === 'Apple Music'
-          ? 'Apple Music'
-          : requestedOfficialPlatform === platform
-            ? platformSourceName
-            : platformSourceName
+        : platformSourceName
 
       // 先选逐字质量最高的骨架，再按时间把其他来源的翻译/罗马音补进来。
-      // 第三方/Apple 歌词源必须通过「同步性达标」检查，否则降权甚至不被采纳：
+      // 第三方歌词源必须通过「同步性达标」检查，否则降权甚至不被采纳：
       // 1) 时长一致性：歌词时间轴须落在歌曲时长范围内（过短/超长视为不同步）
       // 2) 平台歌词时间轴交叉验证：与当前平台官方歌词做文本对齐，时间偏差中位数小才加分
       const platformResult = successfulResults.find(result => result.source === platformSourceName)
@@ -1473,7 +1339,7 @@ export async function getLyrics(
             score -= 40
           }
         }
-        // 平台歌词交叉验证：第三方/Apple 源需与当前平台官方歌词时间轴对齐
+        // 平台歌词交叉验证：第三方源需与当前平台官方歌词时间轴对齐
         if (platformResult && result.source !== platformSourceName
           && result.lyrics.length > 0 && platformResult.lyrics.length > 0) {
           score += lyricTimingSyncScore(result.lyrics, platformResult.lyrics)
@@ -1524,17 +1390,6 @@ export async function getLyrics(
       }
 
       console.log(`  [Lyrics] 组合完成: 骨架=${baseResult.source}, 逐字=${hasWordByWord}, 罗马音=${hasRoman}, 翻译=${hasTranslation}`)
-      // Apple 曲目歌词诊断：转发到后台控制台，便于确认逐字/翻译/罗马音来源
-      if (isApplePlatform) {
-        try {
-          const bridge = (window as any).electron
-          if (bridge && typeof bridge.log === 'function') {
-            bridge.log(`[Apple歌词] 歌曲《${songName || ''}》骨架源=${baseResult.source} 逐字=${hasWordByWord} 罗马音=${hasRoman} 翻译=${hasTranslation}（${baseResult.lyrics.length}行）`)
-          }
-        } catch {
-          // 忽略
-        }
-      }
       if (onProgress) {
         onProgress(currentLyrics, baseResult.source, hasWordByWord, {
           logs: [...apiLogs],
@@ -1794,7 +1649,7 @@ function mergeLyricsWithTranslationAndRoman(
 }
 
 
-function parseAMLLTTMLLyrics(ttmlText: string): LyricLine[] {
+export function parseAMLLTTMLLyrics(ttmlText: string): LyricLine[] {
   const parsed = parseTTML(ttmlText)
 
   return parsed.lines
@@ -1807,12 +1662,33 @@ function parseAMLLTTMLLyrics(ttmlText: string): LyricLine[] {
       }))
       const text = words.map(word => word.word).join('').trim()
 
+      // 对唱/多声部：保留 ttm:agent，供渲染端按演唱者着色（与 TTML 转换同构，
+      // 但时间语义保持 AMLL 的歌曲绝对秒，不做前导静音平移）。
+      const backgroundVocals = line.backgroundVocals?.map(vocal => ({
+        time: vocal.startTime / 1000,
+        endTime: vocal.endTime / 1000,
+        text: vocal.text,
+        words: vocal.words.map(word => ({
+          word: word.text,
+          startTime: Math.max(0, word.startTime - vocal.startTime),
+          duration: Math.max(0, word.endTime - word.startTime),
+        })),
+        translation: vocal.translation,
+        roman: vocal.roman || vocal.romanization,
+        romanization: vocal.romanization || vocal.roman,
+        agent: vocal.agent,
+        agentId: vocal.agentId || vocal.agent,
+      }))
+
       return {
         time: line.startTime / 1000,
         text,
         words: words.length > 0 ? words : undefined,
         translation: line.translation?.trim() || undefined,
         roman: line.roman?.trim() || undefined,
+        agent: line.agent || undefined,
+        agentId: line.agent || undefined,
+        backgroundVocals: backgroundVocals?.length ? backgroundVocals : undefined,
       }
     })
     .filter(line => line.text)
@@ -1854,8 +1730,6 @@ async function fetchFirstValidAMLL(endpoints: AMLLEndpoint[]): Promise<{ lyrics:
 // 获取真正的 TTML，而不是仓库生成的普通 LRC；逐字、翻译和罗马音来自同一文档。
 async function getAMLLTTMLLyrics(id: number | string, platform: MusicPlatform): Promise<LyricLine[]> {
   const startTime = Date.now()
-  // Spotify：曲目 ID 与 AMLL 库（网易云/QQ 目录）不兼容，直接返回空避免无效请求
-  if (platform === 'spotify') return []
   const folder = platform === 'qq' ? 'qq-lyrics' : 'ncm-lyrics'
   const encodedId = encodeURIComponent(String(id))
   const primaryEndpoints: AMLLEndpoint[] = [
@@ -1993,41 +1867,6 @@ export async function loadAlbumCovers(songs: Song[]): Promise<Song[]> {
 // 获取歌手详情
 export async function getArtistDetail(id: number | string, platform: MusicPlatform = 'netease'): Promise<Artist | null> {
   try {
-    if (platform === 'apple') {
-      const { getAppleArtistDetail, getAppleCatalogArtist } = await import('./appleCatalog')
-      const storefront = localStorage.getItem('appleStorefront') || 'cn'
-      const [lookup, catalog] = await Promise.all([
-        getAppleArtistDetail(String(id), storefront),
-        getAppleCatalogArtist(String(id), storefront),
-      ])
-      const source = catalog || lookup?.artist
-      if (!source) return null
-      return {
-        id: Number(source.id) || 0,
-        appleId: String(source.id),
-        name: source.name,
-        picUrl: source.artworkUrl || lookup?.artist.artworkUrl || '',
-        description: 'bio' in source ? source.bio : undefined,
-        briefDesc: 'bio' in source ? source.bio : undefined,
-        platform: 'apple',
-      }
-    }
-    // Spotify：官方 API 艺人详情
-    if (platform === 'spotify') {
-      const { spotifyFetch } = await import('./spotifyService')
-      const data = await spotifyFetch(`/artists/${id}`)
-      if (!data) return null
-      const sid = String(data.id || id)
-      return {
-        id: Number(parseInt(sid.slice(0, 12), 36)) || 0,
-        mid: sid,
-        name: String(data.name || ''),
-        picUrl: data.images?.[0]?.url || '',
-        albumSize: data.total_albums,
-        musicSize: data.total_tracks,
-        platform: 'spotify' as const,
-      }
-    }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/artist?mid=${id}`)
       const data = await response.json()
@@ -2088,17 +1927,6 @@ export async function getArtistDetail(id: number | string, platform: MusicPlatfo
 // 获取歌手热门歌曲
 export async function getArtistTopSongs(id: number | string, platform: MusicPlatform = 'netease'): Promise<Song[]> {
   try {
-    if (platform === 'apple') {
-      const { getAppleArtistDetail, appleSongToSong } = await import('./appleCatalog')
-      const storefront = localStorage.getItem('appleStorefront') || 'cn'
-      const detail = await getAppleArtistDetail(String(id), storefront)
-      return (detail?.topSongs || []).map(song => appleSongToSong(song, storefront))
-    }
-    if (platform === 'spotify') {
-      const { fetchSpotifyArtistTopTracks, spotifyTrackToSong } = await import('./spotifyService')
-      const tracks = await fetchSpotifyArtistTopTracks(String(id), 'CN', 20)
-      return tracks.map(spotifyTrackToSong)
-    }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/artist/songs?mid=${id}`)
       const data = await response.json()
@@ -2160,39 +1988,6 @@ export async function getArtistTopSongs(id: number | string, platform: MusicPlat
 // 获取专辑详情
 export async function getAlbumDetail(id: number | string, platform: MusicPlatform = 'netease'): Promise<Album | null> {
   try {
-    if (platform === 'apple') {
-      const { getAppleAlbumDetail } = await import('./appleCatalog')
-      const storefront = localStorage.getItem('appleStorefront') || 'cn'
-      const detail = await getAppleAlbumDetail(String(id), storefront)
-      if (!detail) return null
-      return {
-        id: Number(detail.album.id) || 0,
-        appleId: detail.album.id,
-        name: detail.album.name,
-        picUrl: detail.album.artworkUrl || '',
-        artist: { name: detail.album.artistName },
-        publishTime: detail.album.releaseDate ? Date.parse(detail.album.releaseDate) : undefined,
-        size: detail.tracks.length,
-        platform: 'apple',
-      }
-    }
-    // Spotify：官方 API 专辑详情
-    if (platform === 'spotify') {
-      const { spotifyFetch } = await import('./spotifyService')
-      const data = await spotifyFetch(`/albums/${id}`)
-      if (!data) return null
-      const sid = String(data.id || id)
-      return {
-        id: Number(parseInt(sid.slice(0, 12), 36)) || 0,
-        mid: sid,
-        name: String(data.name || ''),
-        artist: { name: String(data.artists?.[0]?.name || ''), mid: data.artists?.[0]?.id ? String(data.artists[0].id) : undefined },
-        picUrl: data.images?.[0]?.url || '',
-        description: '',
-        publishTime: data.release_date || '',
-        platform: 'spotify' as const,
-      }
-    }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/album?mid=${id}`)
       const data = await response.json()
@@ -2243,17 +2038,6 @@ export async function getAlbumDetail(id: number | string, platform: MusicPlatfor
 // 获取专辑歌曲列表
 export async function getAlbumSongs(id: number | string, platform: MusicPlatform = 'netease'): Promise<Song[]> {
   try {
-    if (platform === 'apple') {
-      const { getAppleAlbumDetail, appleSongToSong } = await import('./appleCatalog')
-      const storefront = localStorage.getItem('appleStorefront') || 'cn'
-      const detail = await getAppleAlbumDetail(String(id), storefront)
-      return (detail?.tracks || []).map(song => appleSongToSong(song, storefront))
-    }
-    if (platform === 'spotify') {
-      const { fetchSpotifyAlbum, spotifyTrackToSong } = await import('./spotifyService')
-      const detail = await fetchSpotifyAlbum(String(id))
-      return (detail?.songs || []).map(spotifyTrackToSong)
-    }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/album?mid=${id}`)
       const data = await response.json()
@@ -2303,16 +2087,6 @@ export async function getAlbumSongs(id: number | string, platform: MusicPlatform
 // 获取歌手全部歌曲（分页加载）
 export async function getArtistAllSongs(id: number | string, platform: MusicPlatform = 'netease', offset: number = 0, limit: number = 40): Promise<{ songs: Song[], total: number }> {
   try {
-    if (platform === 'apple') {
-      const songs = await getArtistTopSongs(id, 'apple')
-      return { songs: songs.slice(offset, offset + limit), total: songs.length }
-    }
-    if (platform === 'spotify') {
-      const { fetchSpotifyArtistTopTracks, spotifyTrackToSong } = await import('./spotifyService')
-      const tracks = await fetchSpotifyArtistTopTracks(String(id), 'CN', Math.max(offset + limit, limit))
-      const songs = tracks.map(spotifyTrackToSong)
-      return { songs: songs.slice(offset, offset + limit), total: songs.length }
-    }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/artist/songs?mid=${id}&limit=${limit}&offset=${offset}`)
       const data = await response.json()
@@ -2352,38 +2126,6 @@ export async function getArtistAllSongs(id: number | string, platform: MusicPlat
 // 获取歌手专辑列表
 export async function getArtistAlbums(id: number | string, platform: MusicPlatform = 'netease', limit: number = 200, offset: number = 0): Promise<Album[]> {
   try {
-    if (platform === 'apple') {
-      const { getAppleCatalogArtistAlbums } = await import('./appleCatalog')
-      const storefront = localStorage.getItem('appleStorefront') || 'cn'
-      const albums = await getAppleCatalogArtistAlbums(String(id), storefront, Math.max(limit + offset, limit))
-      return albums.slice(offset, offset + limit).map(album => ({
-        id: Number(album.id) || 0,
-        appleId: album.id,
-        name: album.name,
-        picUrl: album.artworkUrl || '',
-        artist: { name: album.artistName },
-        publishTime: album.releaseDate ? Date.parse(album.releaseDate) : undefined,
-        size: album.trackCount,
-        platform: 'apple' as const,
-      }))
-    }
-    // Spotify：官方 API 艺人专辑
-    if (platform === 'spotify') {
-      const { spotifyFetch } = await import('./spotifyService')
-      const data = await spotifyFetch(`/artists/${id}/albums?limit=${Math.min(limit, 50)}&offset=${offset}`)
-      return (data?.items || []).map((item: any) => {
-        const sid = String(item.id || '')
-        return {
-          id: Number(parseInt(sid.slice(0, 12), 36)) || 0,
-          mid: sid,
-          name: String(item.name || ''),
-          artist: item.artists?.[0]?.name || '',
-          picUrl: item.images?.[0]?.url || '',
-          publishTime: item.release_date || '',
-          platform: 'spotify' as const,
-        }
-      })
-    }
     if (platform === 'qq') {
       const page = Math.floor(offset / limit) + 1
       const response = await fetch(`${API_BASE}/qq/artist/albums?mid=${id}&page=${page}&pageSize=${limit}`)
@@ -2842,13 +2584,6 @@ export async function subscribeArtist(
   options: { cookie?: string } = {}
 ): Promise<any> {
   try {
-    // Spotify：官方 API 关注/取关艺人（id 为 Spotify artist id）
-    if (platform === 'spotify') {
-      const { followSpotifyArtists } = await import('./spotifyService')
-      const ok = await followSpotifyArtists([id], subscribe)
-      if (!ok) throw new Error('Spotify 关注歌手失败（token 失效或网络异常）')
-      return { result: 200, platform: 'spotify' }
-    }
     const cookie = getPlatformCookie(platform, options.cookie)
     const body: Record<string, any> = { id, subscribe, t: subscribe ? '1' : '2', cookie }
     // QQ 的歌手关注使用 mid 字段而非 id
@@ -2873,12 +2608,6 @@ export async function subscribeArtist(
 /** 获取已关注歌手列表 */
 export async function getSubscribedArtists(platform: MusicPlatform = 'netease', options: { cookie?: string } = {}): Promise<any> {
   try {
-    // Spotify：官方 API 我关注的艺人
-    if (platform === 'spotify') {
-      const { fetchSpotifyFollowingArtists } = await import('./spotifyService')
-      const artists = await fetchSpotifyFollowingArtists(50)
-      return { artists }
-    }
     const cookie = getPlatformCookie(platform, options.cookie)
     const response = await fetch(`${API_BASE}/${platform}/artist/sublist?cookie=${encodeURIComponent(cookie)}`)
     const data = await response.json()
@@ -3038,37 +2767,6 @@ export interface PlaylistSearchResult {
 /** 搜索歌单；所有平台返回统一结构，不支持的平台显式标记。 */
 export async function searchPlaylists(keywords: string, platform: MusicPlatform = 'netease', limit: number = 20): Promise<PlaylistSearchResult> {
   try {
-    if (platform === 'spotify') {
-      const { searchSpotifyPlaylists } = await import('./spotifyService')
-      const playlists = await searchSpotifyPlaylists(keywords, limit)
-      return {
-        playlists: playlists.map(playlist => ({
-          id: playlist.id,
-          name: playlist.name,
-          coverImgUrl: playlist.coverUrl || '',
-          trackCount: playlist.tracksTotal || 0,
-          creator: playlist.owner || 'Spotify',
-          platform: 'spotify',
-        })),
-      }
-    }
-    if (platform === 'apple') {
-      const { searchAppleCatalogV1 } = await import('./appleCatalog')
-      const { getAppleCredentials } = await import('./appleAuth')
-      const storefront = getAppleCredentials().storefront || 'cn'
-      const result = await searchAppleCatalogV1(keywords, storefront, limit)
-      if (result.errorStatus) throw new Error(`Apple Music 歌单搜索失败（HTTP ${result.errorStatus}）`)
-      return {
-        playlists: result.playlists.map(playlist => ({
-          id: playlist.id,
-          name: playlist.name,
-          coverImgUrl: playlist.artworkUrl || '',
-          trackCount: playlist.trackCount || 0,
-          creator: playlist.curatorName || 'Apple Music 编辑',
-          platform: 'apple',
-        })),
-      }
-    }
     if (platform === 'qq') {
       const response = await fetch(`${API_BASE}/qq/search?keywords=${encodeURIComponent(keywords)}&limit=${limit}&type=playlist`)
       const data = await response.json()

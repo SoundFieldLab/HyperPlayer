@@ -10,25 +10,25 @@ describe('platformSync', () => {
   it('syncs the global key and all four legacy view keys, then broadcasts once', () => {
     const listener = vi.fn()
     window.addEventListener(PLATFORM_CHANGED_EVENT, listener)
-    syncPlatformAcrossViews('apple')
-    expect(localStorage.getItem(GLOBAL_PLATFORM_KEY)).toBe('apple')
-    expect(keys.map(key => localStorage.getItem(key))).toEqual(['apple', 'apple', 'apple', 'apple'])
+    syncPlatformAcrossViews('qq')
+    expect(localStorage.getItem(GLOBAL_PLATFORM_KEY)).toBe('qq')
+    expect(keys.map(key => localStorage.getItem(key))).toEqual(['qq', 'qq', 'qq', 'qq'])
     expect(listener).toHaveBeenCalledTimes(1)
-    expect((listener.mock.calls[0][0] as CustomEvent).detail).toBe('apple')
+    expect((listener.mock.calls[0][0] as CustomEvent).detail).toBe('qq')
     // Rewriting the same value is a no-op and cannot create an event loop.
-    syncPlatformAcrossViews('apple')
+    syncPlatformAcrossViews('qq')
     expect(listener).toHaveBeenCalledTimes(1)
     window.removeEventListener(PLATFORM_CHANGED_EVENT, listener)
   })
 
   it('prefers the global key over a view-specific legacy key', () => {
-    localStorage.setItem(GLOBAL_PLATFORM_KEY, 'spotify')
-    localStorage.setItem('desktopModePlatform', 'apple')
-    expect(readSyncedPlatform(['apple', 'spotify'], 'desktopModePlatform')).toBe('spotify')
+    localStorage.setItem(GLOBAL_PLATFORM_KEY, 'qq')
+    localStorage.setItem('desktopModePlatform', 'netease')
+    expect(readSyncedPlatform(['netease', 'qq'], 'desktopModePlatform')).toBe('qq')
   })
 
   it('restores every supported platform across views and respects visibility', () => {
-    const all = ['netease', 'qq', 'apple', 'spotify'] as const
+    const all = ['netease', 'qq'] as const
     for (const platform of all) {
       localStorage.clear()
       syncPlatformAcrossViews(platform)
@@ -37,18 +37,20 @@ describe('platformSync', () => {
       expect(readSyncedPlatform(all, 'traditionalPlatform')).toBe(platform)
       expect(readSyncedPlatform(all, 'desktopModePlatform')).toBe(platform)
     }
-    localStorage.setItem('selectedPlatform', 'spotify')
+    // 升级用户的历史键可能仍指向已移除平台，读取时必须回落首个可见平台。
+    localStorage.clear()
+    for (const key of LEGACY_PLATFORM_KEYS) localStorage.setItem(key, 'spotify')
     expect(readSyncedPlatform(['netease', 'qq'], 'desktopModePlatform')).toBe('netease')
   })
 
   it('rejects invalid legacy values and uses first visible platform', () => {
     localStorage.setItem('desktopModePlatform', 'legacy-platform')
-    expect(readSyncedPlatform(['apple', 'qq'], 'desktopModePlatform')).toBe('apple')
+    expect(readSyncedPlatform(['qq', 'netease'], 'desktopModePlatform')).toBe('qq')
   })
 
   it('protects reads when localStorage throws', () => {
     const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
-    expect(readSyncedPlatform(['qq', 'apple'], 'desktopModePlatform')).toBe('qq')
+    expect(readSyncedPlatform(['qq', 'netease'], 'desktopModePlatform')).toBe('qq')
     getItem.mockRestore()
   })
 })

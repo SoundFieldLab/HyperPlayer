@@ -26,8 +26,8 @@ describe('mode integration wiring', () => {
   it('keeps Explore song selection in place with its mini player', () => {
     const app = source('App.tsx')
     const explore = source('components/ExploreView.tsx')
-    expect(app).toContain("const playsInPlace = !isRadioSelection && (originMode === 'traditional' || originMode === 'explore')")
-    expect(app).toContain("if (viewMode !== 'minimal' && (!playsInPlace || isRadioSelection))")
+    expect(app).toContain("const playsInPlace = originMode === 'traditional' || originMode === 'explore'")
+    expect(app).toContain("if (viewMode !== 'minimal' && !playsInPlace)")
     expect(app).toContain("if (originMode === 'explore')")
     expect(app).toContain('setShowHome(true)')
     expect(app).toContain('} else if (!playsInPlace) {')
@@ -70,13 +70,12 @@ describe('mode integration wiring', () => {
     expect(app).not.toContain('findBestBilibiliMv =')
   })
 
-  it('preserves Apple Explore nested playback state', () => {
-    const panel = source('components/AppleExplorePanel.tsx')
-    expect(panel).toContain("surface: 'explore-apple'")
-    expect(panel).toContain('room: { id: roomDetail.id, name: roomDetail.name }')
-    expect(panel).toContain('postItem: postDetail.item')
-    expect(panel).toContain('chart: chartDetail')
-    expect(panel).toContain("drawerType: 'station'")
+  it('preserves Explore nested playback origins', () => {
+    const view = source('components/ExploreView.tsx')
+    expect(view).toContain("surface: 'explore-detail'")
+    expect(view).toContain("restorePlaybackOrigin?.surface !== 'explore-detail'")
+    expect(view).toContain('setDetail(restorePlaybackOrigin.detail as ExploreDetail)')
+    expect(view).toContain("surface: 'explore-fm'")
   })
 
   it('guards banner detail requests and Explore overlays', () => {
@@ -89,17 +88,12 @@ describe('mode integration wiring', () => {
 
   it('guards Traditional async and audio lifecycle teardown', () => {
     const view = source('components/TraditionalView.tsx')
-    const app = source('App.tsx')
-    const bridge = source('services/appleWebViewBridge.ts')
     const player = source('hooks/useAudioPlayer.ts')
     expect(view).toContain('playlistAbortRef.current?.abort()')
     expect(view).toContain('platform: originPlatform')
     expect(view).toContain("document.addEventListener('visibilitychange', onVisibilityChange)")
     expect(view).toContain("prefers-reduced-motion: reduce")
     expect(view).toContain("typeof context.roundRect === 'function'")
-    expect(app).toContain('clearExternalSpectrum()')
-    expect(bridge).toContain('generation !== pollGeneration')
-    expect(bridge).toContain('pollGeneration += 1')
     expect(player).toContain("cancelScheduledTransition('audio player unmounted', false, false)")
   })
 

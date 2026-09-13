@@ -198,15 +198,6 @@ export interface SignalRgbBridgeAPI {
   onStatus: (callback: (status: SignalRgbStatus) => void) => () => void
 }
 
-export interface VmpStatus {
-  status: 'valid' | 'expiring' | 'expired' | 'invalid' | 'unavailable'
-  kind: 'streaming' | null
-  daysLeft: number | null
-  expiresAt: number | null
-  checkedAt: number
-  source: 'development-verify' | 'build-metadata'
-}
-
 export interface ElectronAPI {
   /** 非 Electron 环境安装的兼容桩。 */
   isShim?: boolean
@@ -290,37 +281,6 @@ export interface ElectronAPI {
   }
   openQQLoginWindow: () => Promise<{ success: boolean; cookie?: string; error?: string }>
   openQQSkillKeyWindow: () => Promise<{ success: boolean; apiKey?: string; error?: string }>
-  /** Apple Music 网页一键登录：内置窗口登录 Apple ID，自动抓取 media-user-token 与 Developer Token */
-  appleLogin: () => Promise<{ success: boolean; mediaUserToken?: string; developerToken?: string; name?: string; email?: string; realName?: string; avatar?: string; billingAddress?: string; country?: string; paymentType?: string; accountBalance?: string; birthday?: string; language?: string; twoFactor?: string; trustedDevices?: string; passwordUpdated?: string; notificationEmail?: string; signInWithApple?: string; devices?: Array<{ name: string; model: string; icon?: string }>; icons?: Record<string, string>; error?: string }>
-  /** Apple Music 登出：关闭登录窗口并清除专用网页会话与落盘 Cookie */
-  appleLogout?: () => Promise<{ success: boolean; error?: string }>
-  /** 从 Apple 网页前端资源获取可用的 Developer Token（免密钥，约 70 天有效） */
-  appleFetchDevToken: () => Promise<{ success: boolean; token?: string; expiresAt?: number; error?: string }>
-  /** Apple 播放面 bridge（WebView2 原生源）：主进程拉起 apple_bridge.py（幂等） */
-  spawnAppleBridge?: () => Promise<{ ok: boolean; token?: string }>
-  /** Apple 播放面 bridge：渲染端节能联动主动关闭（离开 Apple 平台 5 分钟） */
-  stopAppleBridge?: () => Promise<boolean>
-  /** amp-api 代理（渲染进程直连会被 CORS 拦截，改由主进程请求） */
-  appleApi: (path: string, developerToken: string, mediaUserToken: string, method?: string, body?: string | null) =>
-    Promise<{ ok: boolean; status: number; data: unknown; error?: string }>
-  /** Apple Music webPlayback 原生音源取流 */
-  applePlayback?: (songId: string, developerToken: string, mediaUserToken: string) =>
-    Promise<{ ok: boolean; status: number; data?: unknown; error?: string }>
-  /** Apple Music 电台 /v1/play/assets 取流 */
-  applePlayAssets?: (query: string, developerToken: string, mediaUserToken: string) =>
-    Promise<{ ok: boolean; status: number; data?: unknown; error?: string }>
-  /** 获取 Apple HLS 清单文本 */
-  appleFetchUrl?: (url: string) => Promise<{ ok: boolean; status?: number; text?: string; error?: string }>
-  /** Apple 账号信息（buy.itunes 接口，需登录窗口抓取的 itunes cookie） */
-  appleAccountInfo: (cookies: string) => Promise<{ ok: boolean; status: number; data: unknown; error?: string }>
-  /** Apple 个人资料页（解析 og:image 头像） */
-  appleFetchProfile: (profileUrl: string) => Promise<{ ok: boolean; status: number; html?: string; error?: string }>
-  /** Apple 账号页面（Apple ID / Apple Account，带全量会话 cookie 解析名字与头像） */
-  appleFetchAccount: (cookies: string) => Promise<{ ok: boolean; status: number; html?: string; error?: string }>
-  /** Spotify OAuth 授权（Electron 弹窗；clientId 可选，自定义 Client ID） */
-  openSpotifyLogin: (clientId?: string) => Promise<{ success: boolean; username?: string; error?: string }>
-  /** Spotify 授权完成回调 */
-  onSpotifyAuthResult: (callback: (result: { success: boolean; accessToken?: string; refreshToken?: string; username?: string; avatar?: string; userId?: string; error?: string }) => void) => () => void
   /** HSE 开发者模式：把场景微调的「发布种子」写回仓库源文件（仅开发模式；TV/网页端缺失） */
   writeHseSceneSeed?: (content: string) => Promise<{ ok: boolean; path?: string; error?: string }>
   /** HSE 离线导出：渲染完成的 MP3 写到桌面（重名自动加序号；TV/网页端缺失走浏览器下载） */
@@ -332,9 +292,6 @@ export interface ElectronAPI {
     onWallpaperChange: (callback: (wallpaper: WallpaperPayload | string) => void) => () => void
     /** 按需启停壁纸监控：仅桌面模式 + 壁纸联动开启时启用（避免非桌面模式持续查询拖慢性能） */
     setWallpaperWatcherEnabled: (enabled: boolean) => Promise<{ success: boolean }>
-  }
-  diagnostics?: {
-    getVmpStatus: () => Promise<VmpStatus>
   }
   developerMode: {
     set: (enabled: boolean) => Promise<{ success: boolean }>

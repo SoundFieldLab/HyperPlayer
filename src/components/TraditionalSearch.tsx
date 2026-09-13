@@ -263,10 +263,10 @@ function TraditionalSearch({
             <div className={`overflow-hidden rounded-2xl border ${surface}`}>
               {artists.map((artist, index) => (
                 <button
-                  key={`${artist.appleId || artist.mid || artist.id}:${index}`}
+                  key={`${artist.mid || artist.id}:${index}`}
                   type="button"
                   onClick={() => {
-                    const artistId = artist.appleId || artist.mid || artist.id
+                    const artistId = artist.mid || artist.id
                     if (artistId) onOpenArtist?.(String(artistId), artist.platform || platform)
                   }}
                   className={`flex w-full items-center gap-3 border-b px-4 py-3 text-left transition last:border-b-0 ${isDark ? 'hover:bg-white/[.055]' : 'hover:bg-slate-50'}`}
@@ -286,10 +286,10 @@ function TraditionalSearch({
             <div className={`overflow-hidden rounded-2xl border ${surface}`}>
               {albums.map((album, index) => (
                 <button
-                  key={`${album.appleId || album.mid || album.id}:${index}`}
+                  key={`${album.mid || album.id}:${index}`}
                   type="button"
                   onClick={() => {
-                    const albumId = album.appleId || album.mid || album.id
+                    const albumId = album.mid || album.id
                     if (albumId) onOpenAlbum?.(String(albumId), album.platform || platform)
                   }}
                   className={`flex w-full items-center gap-3 border-b px-4 py-3 text-left transition last:border-b-0 ${isDark ? 'hover:bg-white/[.055]' : 'hover:bg-slate-50'}`}
@@ -334,12 +334,12 @@ function TraditionalSearch({
         onAddToPlaylist={onAddToPlaylist}
         onViewComments={onViewComments}
         onViewAlbum={song => {
-          const albumId = song.album?.appleId || song.album?.mid || song.album?.id
+          const albumId = song.album?.mid || song.album?.id
           if (albumId) onOpenAlbum?.(String(albumId), song.platform || platform)
         }}
         onViewArtist={song => {
           const artist = song.artists?.[0]
-          const artistId = artist?.appleId || artist?.mid || artist?.id
+          const artistId = artist?.mid || artist?.id
           if (artistId) onOpenArtist?.(String(artistId), song.platform || platform)
         }}
         onCopyInfo={onCopyInfo}

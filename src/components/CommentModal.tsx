@@ -588,13 +588,6 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
     const requestSeq = ++commentsRequestSeqRef.current
     // 本次请求是否仍是最新一次：快速切换排序/资源时旧响应晚到会覆盖新视图
     const isStaleRequest = () => requestSeq !== commentsRequestSeqRef.current
-    // Apple 无公开评论接口：不请求平台评论
-    if (resourcePlatform === 'apple') {
-      setLoading(false)
-      setIsLoadingMore(false)
-      setError(null)
-      return
-    }
     
     if (reset) {
       setLoading(true)

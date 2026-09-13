@@ -369,7 +369,7 @@ export default function BilibiliMvBackground({
   // 对齐检测读取最新歌词（App 每渲染传新引用，进依赖会导致效果反复重跑）
   const lyricsRef = useRef<LyricLine[]>(lyrics)
   lyricsRef.current = lyrics
-  // Apple TTML 可能在基础歌词后到；依赖内容签名而非仅“是否非空”，让字幕对齐获得完整歌词后重试。
+  // TTML 逐字歌词可能在基础歌词后到；依赖内容签名而非仅“是否非空”，让字幕对齐获得完整歌词后重试。
   const lyricsAlignmentSignature = useMemo(() => {
     let hash = 2166136261
     for (const line of lyrics) {

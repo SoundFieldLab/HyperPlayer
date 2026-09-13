@@ -202,7 +202,7 @@ function PlaylistDetailPanel({
     return true
   }, [contextMenu.show, onClose, pendingRemoval, removalLoading, show, showPlaylistInfo])
   
-  // 判断歌曲是否为当前播放的歌曲（Apple：id 可能为 0，用 isSameSong 按 appleId 判定）
+  // 判断歌曲是否为当前播放的歌曲（统一走 isSameSong，兼容各平台的 id 差异）
   const isSongCurrent = (song: Song) => isSameSong(currentSong, song)
   
   // 计算当前播放歌曲在列表中的索引
@@ -952,7 +952,7 @@ function PlaylistDetailPanel({
           onViewArtist={(song) => {
             const songPlatform = song.platform || currentPlatform
             const artist = song.artists?.[0]
-            const artistId = artist?.appleId || artist?.mid || artist?.id
+            const artistId = artist?.mid || artist?.id
             if (artistId) onOpenArtist?.(String(artistId), songPlatform)
             setContextMenu({ show: false, x: 0, y: 0, song: null })
           }}

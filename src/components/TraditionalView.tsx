@@ -20,8 +20,6 @@ import { getVisiblePlatforms, getPlatformCapabilities, getPlatformCookie, getPla
 import { isPlaylistOwner, isSpecialPlaylist } from '../services/playlistOwnership'
 import { fetchExploreHome, fetchExplorePlaylist, fetchExploreChart, type ExplorePayload, type ExplorePlaylist, type ExploreChart } from '../services/exploreApi'
 import { createPlaylist, deletePlaylist, getUserPlaylists, invalidateUserPlaylistsCache, removeSongFromPlaylist, subscribePlaylist, updatePlaylist } from '../services/playlistService'
-import { createApplePlaylist, deleteApplePlaylist, updateApplePlaylist, getLastAppleMutationResult, getAppleCatalogPlaylistTracks, getAppleFavoriteSongs, getAppleLibraryPlaylists, getAppleLibrarySongs, getApplePlaylistTracks, getAppleRecentPlayed, appleLibraryTrackToSong, appleSongToSong, removeAppleTracksFromPlaylist, APPLE_FAVORITES_ID, APPLE_LIBRARY_ID } from '../services/appleCatalog'
-import { fetchSpotifyLiked, fetchSpotifyRecentlyPlayed, spotifyTrackToSong } from '../services/spotifyService'
 import { useAudioAnalyzerSnapshot, type AudioAnalyzerStore } from '../hooks/useAudioAnalyzer'
 import { useTvBack, useTvMode, useRemoteCursorMode } from '../tv/tvCore'
 import { isPerfModeEnhanced } from '../tv/perfMode'
@@ -167,13 +165,6 @@ interface TraditionalViewProps {
   qqAvatar?: string
   qqUserId?: string
   qqVip?: boolean
-  appleLoggedIn: boolean
-  appleUsername: string
-  appleAvatar?: string
-  spotifyLoggedIn: boolean
-  spotifyUserId?: string
-  spotifyUsername: string
-  spotifyAvatar?: string
   authRevision?: number
   onLoginClick: (platform: MusicPlatform) => void
   onProfileClick: (platform: MusicPlatform) => void
@@ -203,10 +194,10 @@ interface TraditionalViewProps {
 }
 
 const PLATFORM_ACCENTS: Record<MusicPlatform, string> = {
-  netease: '#ec4899', qq: '#22c55e', apple: '#fa2d48', spotify: '#1ed760',
+  netease: '#ec4899', qq: '#22c55e',
 }
 
-const platformShortName = (platform: MusicPlatform) => ({ netease: '网易云', qq: 'QQ音乐', apple: 'Apple', spotify: 'Spotify' })[platform]
+const platformShortName = (platform: MusicPlatform) => ({ netease: '网易云', qq: 'QQ音乐' })[platform]
 const songKey = (song: Song) => `${song.platform}:${song.id || song.mid || song.name}`
 const coverOf = (song?: Song | null) => song?.album?.picUrl ? getProxiedImageUrl(song.album.picUrl) : ''
 const CoverImage = ({ src, alt, className }: { src?: string; alt: string; className: string }) => {
@@ -551,8 +542,7 @@ function TraditionalView({
   onSongSelect, restorePlaybackOrigin, currentSong, queue, isPlaying, live = false, playbackTimeStore, duration, lyrics, volume, playerTheme, dominantColor, analyzerStore, onOpenPlayer,
   neteaseLoggedIn, neteaseUsername, neteaseAvatar, neteaseUserId,
   qqLoggedIn, qqUsername, qqAvatar, qqUserId,
-  appleLoggedIn, appleUsername, appleAvatar,
-  spotifyLoggedIn, spotifyUserId, spotifyUsername, spotifyAvatar, authRevision = 0,
+  authRevision = 0,
   onLoginClick, onPlayPause, onNext, onPrevious, onSeek, onVolumeChange,
   liked = false, onToggleFavorite, playMode = 'sequential', onPlayModeChange, onOpenMixingStudio,
   neteaseVip = false, qqVip = false,
@@ -722,9 +712,9 @@ function TraditionalView({
     return false
   }, [showModePanel, historyIndex])
 
-  const loggedIn = platform === 'netease' ? neteaseLoggedIn : platform === 'qq' ? qqLoggedIn : platform === 'apple' ? appleLoggedIn : spotifyLoggedIn
-  const username = platform === 'netease' ? neteaseUsername : platform === 'qq' ? qqUsername : platform === 'apple' ? appleUsername : spotifyUsername
-  const avatar = platform === 'netease' ? neteaseAvatar : platform === 'qq' ? qqAvatar : platform === 'apple' ? appleAvatar : spotifyAvatar
+  const loggedIn = platform === 'netease' ? neteaseLoggedIn : qqLoggedIn
+  const username = platform === 'netease' ? neteaseUsername : qqUsername
+  const avatar = platform === 'netease' ? neteaseAvatar : qqAvatar
   const accent = PLATFORM_ACCENTS[platform]
   // 正在播放/歌词卡片的主题色跟随当前歌曲（dominantColor），未播放时用平台色
   const songTheme = currentSong && dominantColor ? dominantColor : accent
@@ -769,28 +759,12 @@ function TraditionalView({
     let cancelled = false
     const id = platform === 'netease' ? neteaseUserId
       : platform === 'qq' ? qqUserId
-        : platform === 'spotify' ? spotifyUserId
-          : ''
+        : ''
     const name = username
-    if (platform === 'apple') {
-      if (!appleLoggedIn) { setUserPlaylists([]); return }
-      void Promise.all([getAppleLibraryPlaylists(200), getAppleLibrarySongs(500), getAppleFavoriteSongs(5000)]).then(([playlists, tracks, favoriteTracks]) => {
-        if (cancelled) return
-        const mapped = playlists.map(item => ({ ...item, coverImgUrl: item.artworkUrl || '', platform: 'apple' as const, isLike: false, ownedByMe: item.ownedByMe }))
-        const librarySongs = tracks.map(appleLibraryTrackToSong)
-        const favoriteSongs = favoriteTracks.map(track => appleSongToSong(track))
-        setUserPlaylists([
-          ...(favoriteSongs.length ? [{ id: APPLE_FAVORITES_ID, name: '喜爱歌曲', coverImgUrl: favoriteSongs[0]?.album.picUrl || '', trackCount: favoriteSongs.length, platform: 'apple' as const, isLike: true }] : []),
-          ...(librarySongs.length ? [{ id: APPLE_LIBRARY_ID, name: '我的音乐库', coverImgUrl: librarySongs[0]?.album.picUrl || '', trackCount: librarySongs.length, platform: 'apple' as const }] : []),
-          ...mapped,
-        ])
-      }).catch(() => { if (!cancelled) setUserPlaylists([]) })
-      return () => { cancelled = true }
-    }
     if (!id && !name) { setUserPlaylists([]); return }
     void getUserPlaylists(platform, id || '', name || undefined).then(items => { if (!cancelled) setUserPlaylists(items || []) }).catch(() => { if (!cancelled) setUserPlaylists([]) })
     return () => { cancelled = true }
-  }, [platform, neteaseUserId, qqUserId, spotifyUserId, username, authRevision, appleLoggedIn])
+  }, [platform, neteaseUserId, qqUserId, username, authRevision])
 
   useEffect(() => {
     const reloadPlaylists = (event: Event) => {
@@ -798,7 +772,6 @@ function TraditionalView({
       if (detail?.platform !== platform) return
       const userId = platform === 'netease' ? neteaseUserId
         : platform === 'qq' ? qqUserId
-          : platform === 'spotify' ? spotifyUserId
             : ''
       void getUserPlaylists(platform, userId || '', username || undefined, { forceRefresh: true })
         .then(items => setUserPlaylists(items || []))
@@ -806,7 +779,7 @@ function TraditionalView({
     }
     window.addEventListener('playlist-content-changed', reloadPlaylists)
     return () => window.removeEventListener('playlist-content-changed', reloadPlaylists)
-  }, [platform, neteaseUserId, qqUserId, spotifyUserId, username])
+  }, [platform, neteaseUserId, qqUserId, username])
 
   // 未播放（无歌词）时自动切回播放列表 tab
   useEffect(() => {
@@ -870,19 +843,6 @@ function TraditionalView({
       })
     }
     try {
-      if ((playlist.platform || platform) === 'apple') {
-        const playlistId = String(playlist.id || '')
-        const storefront = localStorage.getItem('appleStorefront') || 'cn'
-        const songs = playlistId === APPLE_FAVORITES_ID
-          ? (await getAppleFavoriteSongs(5000, storefront)).map(track => appleSongToSong(track, storefront))
-          : playlistId === APPLE_LIBRARY_ID
-            ? (await getAppleLibrarySongs(5000)).map(appleLibraryTrackToSong)
-          : playlistId.startsWith('pl.')
-            ? (await getAppleCatalogPlaylistTracks(playlistId, storefront, 5000)).map(track => appleSongToSong(track, storefront))
-            : (await getApplePlaylistTracks(playlistId, 5000)).map(appleLibraryTrackToSong)
-        applyPlaylist(playlist, songs)
-        return
-      }
       const result = await fetchExplorePlaylist({ ...playlist, platform: playlist.platform || platform }, controller.signal)
       applyPlaylist(result.playlist || playlist, result.songs || [])
     } catch (error) {
@@ -933,29 +893,21 @@ function TraditionalView({
   }, [navigate])
   const openCommentsFor = useCallback((song: Song) => { if (song) navigate({ name: 'comments', song }) }, [navigate])
 
-  const ownsPlaylist = useCallback((playlist: any): boolean => isPlaylistOwner(playlist, { neteaseUserId, qqUserId, spotifyUserId }), [neteaseUserId, qqUserId, spotifyUserId])
+  const ownsPlaylist = useCallback((playlist: any): boolean => isPlaylistOwner(playlist, { neteaseUserId, qqUserId }), [neteaseUserId, qqUserId])
 
   const handleRemoveFromCurrentPlaylist = useCallback(async (song: Song, playlistId: string) => {
     if (currentPage.name !== 'playlist' || !ownsPlaylist(currentPage.playlist)) return
     const targetPlatform = (currentPage.playlist?.platform || platform) as MusicPlatform
     if (!getPlatformCapabilities(targetPlatform).removeTracksFromPlaylist) return
-    const userId = targetPlatform === 'netease' ? neteaseUserId : targetPlatform === 'qq' ? qqUserId : targetPlatform === 'spotify' ? spotifyUserId : ''
+    const userId = targetPlatform === 'netease' ? neteaseUserId : targetPlatform === 'qq' ? qqUserId : ''
     try {
-      if (targetPlatform === 'apple') {
-        const ok = await removeAppleTracksFromPlaylist(playlistId, [{
-          catalogId: song.appleId && !String(song.appleId).startsWith('i.') ? song.appleId : undefined,
-          libraryId: song.appleLibraryId || (String(song.appleId || '').startsWith('i.') ? song.appleId : undefined),
-        }])
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '从 Apple 歌单移除失败')
-      } else {
-        await removeSongFromPlaylist(playlistId, String(song.id), userId || '', targetPlatform, { songMid: song.mid, songType: song.songType })
-      }
+      await removeSongFromPlaylist(playlistId, String(song.id), userId || '', targetPlatform, { songMid: song.mid, songType: song.songType })
       window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: targetPlatform, type: 'playlist-tracks', playlistId, songId: song.mid || song.id } }))
       window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '已从歌单移除', type: 'success' } }))
     } catch (error) {
       window.dispatchEvent(new CustomEvent('showToast', { detail: { message: error instanceof Error ? error.message : '从歌单移除失败', type: 'error' } }))
     }
-  }, [currentPage, neteaseUserId, ownsPlaylist, platform, qqUserId, spotifyUserId])
+  }, [currentPage, neteaseUserId, ownsPlaylist, platform, qqUserId])
 
   const handleSubscribePlaylist = useCallback(async (playlist: any, subscribe: boolean) => {
     const targetPlatform = (playlist?.platform || platform) as MusicPlatform
@@ -975,35 +927,14 @@ function TraditionalView({
     }
   }, [platform])
 
-  const refreshApplePlaylists = useCallback(async () => {
-    const [playlists, tracks, favoriteTracks] = await Promise.all([
-      getAppleLibraryPlaylists(200),
-      getAppleLibrarySongs(500),
-      getAppleFavoriteSongs(5000),
-    ])
-    const librarySongs = tracks.map(appleLibraryTrackToSong)
-    const favoriteSongs = favoriteTracks.map(track => appleSongToSong(track))
-    setUserPlaylists([
-      ...(favoriteSongs.length ? [{ id: APPLE_FAVORITES_ID, name: '喜爱歌曲', coverImgUrl: favoriteSongs[0]?.album.picUrl || '', trackCount: favoriteSongs.length, platform: 'apple' as const, isLike: true }] : []),
-      ...(librarySongs.length ? [{ id: APPLE_LIBRARY_ID, name: '我的音乐库', coverImgUrl: librarySongs[0]?.album.picUrl || '', trackCount: librarySongs.length, platform: 'apple' as const }] : []),
-      ...playlists.map(item => ({ ...item, coverImgUrl: item.artworkUrl || '', platform: 'apple' as const, isLike: false, ownedByMe: item.ownedByMe })),
-    ])
-  }, [])
-
   const handleEditPlaylist = useCallback(async (data: { name: string; desc?: string }) => {
     const playlist = playlistMenu.playlist
     const targetPlatform = (playlist?.platform || platform) as MusicPlatform
     if (!playlist || !getPlatformCapabilities(targetPlatform).updatePlaylist) return
     setPlaylistMutationBusy(true)
     try {
-      if (targetPlatform === 'apple') {
-        const ok = await updateApplePlaylist(String(playlist.id || ''), { name: data.name, description: data.desc || undefined })
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '更新 Apple 歌单失败')
-        await refreshApplePlaylists()
-      } else {
-        const result = await updatePlaylist(String(playlist.id || playlist.dirId || ''), targetPlatform, { name: data.name, desc: data.desc })
-        if (result?.error) throw new Error(result.error)
-      }
+      const result = await updatePlaylist(String(playlist.id || playlist.dirId || ''), targetPlatform, { name: data.name, desc: data.desc })
+      if (result?.error) throw new Error(result.error)
       setShowEditPlaylist(false)
       setPlaylistMenu({ show: false, x: 0, y: 0, playlist: null })
       window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: targetPlatform, type: 'playlist-list' } }))
@@ -1013,7 +944,7 @@ function TraditionalView({
     } finally {
       setPlaylistMutationBusy(false)
     }
-  }, [platform, playlistMenu.playlist, refreshApplePlaylists])
+  }, [platform, playlistMenu.playlist])
 
   const handleDeletePlaylist = useCallback(async () => {
     const playlist = playlistMenu.playlist
@@ -1021,15 +952,9 @@ function TraditionalView({
     if (!playlist || !getPlatformCapabilities(targetPlatform).deletePlaylist) return
     setPlaylistMutationBusy(true)
     try {
-      if (targetPlatform === 'apple') {
-        const ok = await deleteApplePlaylist(String(playlist.id || ''))
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '删除 Apple 歌单失败')
-        await refreshApplePlaylists()
-      } else {
-        const deleteId = targetPlatform === 'qq' ? playlist.dirId || playlist.id : playlist.id
-        const result = await deletePlaylist(String(deleteId || ''), targetPlatform)
-        if (result?.error) throw new Error(result.error)
-      }
+      const deleteId = targetPlatform === 'qq' ? playlist.dirId || playlist.id : playlist.id
+      const result = await deletePlaylist(String(deleteId || ''), targetPlatform)
+      if (result?.error) throw new Error(result.error)
       setShowDeletePlaylist(false)
       setPlaylistMenu({ show: false, x: 0, y: 0, playlist: null })
       window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: targetPlatform, type: 'playlist-delete', playlistId: String(playlist.id || playlist.dirId || '') } }))
@@ -1039,7 +964,7 @@ function TraditionalView({
     } finally {
       setPlaylistMutationBusy(false)
     }
-  }, [platform, playlistMenu.playlist, refreshApplePlaylists])
+  }, [platform, playlistMenu.playlist])
 
   const handleCreatePlaylist = useCallback(async () => {
     const name = newPlaylistName.trim()
@@ -1047,28 +972,20 @@ function TraditionalView({
     if (!loggedIn) { onLoginClick(platform); return }
     setCreatingPlaylistBusy(true)
     try {
-      if (platform === 'apple') {
-        const ok = await createApplePlaylist(name)
-        if (!ok) throw new Error('创建 Apple 歌单失败')
-        await refreshApplePlaylists()
-      } else {
-        const result = await createPlaylist(name, platform)
-        const success = result && !result.error && (result.code === 200 || result.code === undefined || result.result === 0 || result.result === 100 || result.result === undefined)
-        if (!success) throw new Error(result?.message || result?.error || '创建歌单失败')
-        invalidateUserPlaylistsCache(platform, platform === 'netease' ? (neteaseUserId || '') : (qqUserId || ''))
-        const id = platform === 'netease' ? neteaseUserId
-      : platform === 'qq' ? qqUserId
-        : platform === 'spotify' ? spotifyUserId
-          : ''
-        void getUserPlaylists(platform, id || '', username || undefined).then(items => setUserPlaylists(items || [])).catch(() => undefined)
-      }
+      const result = await createPlaylist(name, platform)
+      const success = result && !result.error && (result.code === 200 || result.code === undefined || result.result === 0 || result.result === 100 || result.result === undefined)
+      if (!success) throw new Error(result?.message || result?.error || '创建歌单失败')
+      invalidateUserPlaylistsCache(platform, platform === 'netease' ? (neteaseUserId || '') : (qqUserId || ''))
+      const id = platform === 'netease' ? neteaseUserId
+      : qqUserId
+      void getUserPlaylists(platform, id || '', username || undefined).then(items => setUserPlaylists(items || [])).catch(() => undefined)
       window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform, type: 'playlist-list' } }))
       setCreatingPlaylist(false)
       setNewPlaylistName('')
     } catch (error) {
       window.dispatchEvent(new CustomEvent('showToast', { detail: { message: error instanceof Error ? error.message : '创建歌单失败', type: 'error' } }))
     } finally { setCreatingPlaylistBusy(false) }
-  }, [newPlaylistName, creatingPlaylistBusy, loggedIn, platform, neteaseUserId, qqUserId, username, onLoginClick, refreshApplePlaylists])
+  }, [newPlaylistName, creatingPlaylistBusy, loggedIn, platform, neteaseUserId, qqUserId, username, onLoginClick])
 
   const recommendationSongs = useMemo(() => {
     const list = [...(payload?.dailySongs || []), ...(payload?.radioSongs || []), ...(payload?.newSongs || [])]
@@ -1434,19 +1351,15 @@ function TraditionalView({
         </div>
       )}
 
-      <SongContextMenu show={songMenu.show} x={songMenu.x} y={songMenu.y} song={songMenu.song} onClose={() => setSongMenu({ show: false, x: 0, y: 0, song: null })} onPlayNow={song => onSongSelect(song, recommendationSongs, { mode: 'traditional', surface: 'mode-root', platform: song.platform || platform })} onPlayNext={onPlayNext} onAddToFavorites={onAddToFavorites} onRemoveFromFavorites={onRemoveFromFavorites} onAddToPlaylist={onAddToPlaylist} onViewComments={openCommentsFor} onViewAlbum={song => { const albumId = song.album?.appleId || song.album?.mid || song.album?.id; if (albumId) openAlbumDetail(String(albumId), song.platform || platform) }} onViewArtist={song => { const artist = song.artists?.[0]; const artistId = artist?.appleId || artist?.mid || artist?.id; if (artistId) openArtistDetail(String(artistId), song.platform || platform) }} onCopyInfo={onCopyInfo} userPlaylists={userPlaylists} platform={songMenu.song?.platform || platform} playerTheme={playerTheme} />
+      <SongContextMenu show={songMenu.show} x={songMenu.x} y={songMenu.y} song={songMenu.song} onClose={() => setSongMenu({ show: false, x: 0, y: 0, song: null })} onPlayNow={song => onSongSelect(song, recommendationSongs, { mode: 'traditional', surface: 'mode-root', platform: song.platform || platform })} onPlayNext={onPlayNext} onAddToFavorites={onAddToFavorites} onRemoveFromFavorites={onRemoveFromFavorites} onAddToPlaylist={onAddToPlaylist} onViewComments={openCommentsFor} onViewAlbum={song => { const albumId = song.album?.mid || song.album?.id; if (albumId) openAlbumDetail(String(albumId), song.platform || platform) }} onViewArtist={song => { const artist = song.artists?.[0]; const artistId = artist?.mid || artist?.id; if (artistId) openArtistDetail(String(artistId), song.platform || platform) }} onCopyInfo={onCopyInfo} userPlaylists={userPlaylists} platform={songMenu.song?.platform || platform} playerTheme={playerTheme} />
       <PlaylistContextMenu show={playlistMenu.show} x={playlistMenu.x} y={playlistMenu.y} playlist={playlistMenu.playlist} onClose={() => setPlaylistMenu({ show: false, x: 0, y: 0, playlist: null })} onEdit={() => setShowEditPlaylist(true)} onDelete={() => setShowDeletePlaylist(true)} onSubscribe={handleSubscribePlaylist} onShare={playlist => {
         const targetPlatform = (playlist?.platform || platform) as MusicPlatform
         const playlistId = String(playlist?.id || playlist?.dirId || '')
-        const storefront = localStorage.getItem('appleStorefront') || 'cn'
-        const url = targetPlatform === 'apple'
-          ? `https://music.apple.com/${encodeURIComponent(storefront)}/playlist/${encodeURIComponent(playlist?.name || 'playlist')}/${encodeURIComponent(playlistId)}`
-          : targetPlatform === 'qq' ? `https://y.qq.com/n/ryqq/playlist/${playlistId}`
-            : targetPlatform === 'spotify' ? `https://open.spotify.com/playlist/${playlistId}`
-              : `https://music.163.com/#/playlist?id=${playlistId}`
+        const url = targetPlatform === 'qq' ? `https://y.qq.com/n/ryqq/playlist/${playlistId}`
+          : `https://music.163.com/#/playlist?id=${playlistId}`
         void navigator.clipboard?.writeText(url)
         window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '歌单链接已复制', type: 'success' } }))
-      }} isOwner={isPlaylistOwner(playlistMenu.playlist, { neteaseUserId, qqUserId, spotifyUserId })} isSubscribed={playlistSubscribed || Boolean(playlistMenu.playlist?.isCollected || playlistMenu.playlist?.subscribed)} isSpecialPlaylist={isSpecialPlaylist(playlistMenu.playlist)} canEdit={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).updatePlaylist} canDelete={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).deletePlaylist} canSubscribe={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).subscribePlaylist && !isSpecialPlaylist(playlistMenu.playlist)} canShare={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).sharePlaylist && ((playlistMenu.playlist?.platform || platform) !== 'apple' || String(playlistMenu.playlist?.id || '').startsWith('pl.'))} />
+      }} isOwner={isPlaylistOwner(playlistMenu.playlist, { neteaseUserId, qqUserId })} isSubscribed={playlistSubscribed || Boolean(playlistMenu.playlist?.isCollected || playlistMenu.playlist?.subscribed)} isSpecialPlaylist={isSpecialPlaylist(playlistMenu.playlist)} canEdit={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).updatePlaylist} canDelete={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).deletePlaylist} canSubscribe={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).subscribePlaylist && !isSpecialPlaylist(playlistMenu.playlist)} canShare={getPlatformCapabilities((playlistMenu.playlist?.platform || platform) as MusicPlatform).sharePlaylist} />
       <EditPlaylistModal show={showEditPlaylist} onClose={() => setShowEditPlaylist(false)} onSubmit={data => { void handleEditPlaylist(data) }} playlist={playlistMenu.playlist} loading={playlistMutationBusy} />
       <DeletePlaylistModal show={showDeletePlaylist} onClose={() => setShowDeletePlaylist(false)} onConfirm={() => { void handleDeletePlaylist() }} playlistName={playlistMenu.playlist?.name || ''} loading={playlistMutationBusy} />
       <AudioQualitySettingsModal show={showQuality} onClose={() => setShowQuality(false)} playerTheme={playerTheme} neteaseVip={neteaseVip} qqVip={qqVip} neteaseLoggedIn={neteaseLoggedIn} qqLoggedIn={qqLoggedIn} />
@@ -1824,19 +1737,6 @@ function TraditionalRecent({ platform, accent, isDark, loggedIn, currentSong, au
       setError(message)
       setLoading(false)
     }
-    if (platform === 'apple') {
-      getAppleRecentPlayed(100)
-        .then(tracks => finish(tracks.map(track => appleSongToSong(track)).filter((song): song is Song => Boolean(song))))
-        .catch(() => finish([], '最近播放加载失败，请重试'))
-      return
-    }
-    if (platform === 'spotify') {
-      // Spotify 无官方最近播放接口：展示喜欢的歌曲（与简约模式同口径）
-      fetchSpotifyRecentlyPlayed(50)
-        .then(tracks => finish(tracks.map(track => spotifyTrackToSong(track))))
-        .catch(() => finish([], '最近播放加载失败，请重试'))
-      return
-    }
     const endpoint = platform === 'qq'
       ? `http://localhost:3001/api/qq/record/recent/song?limit=100${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
       : `http://localhost:3001/api/netease/record/recent/song?limit=100${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
@@ -1938,8 +1838,8 @@ function TraditionalRecent({ platform, accent, isDark, loggedIn, currentSong, au
         onRemoveFromFavorites={onRemoveFromFavorites}
         onAddToPlaylist={onAddToPlaylist}
         onViewComments={onViewComments}
-        onViewAlbum={song => { const albumId = song.album?.appleId || song.album?.mid || song.album?.id; if (albumId) onOpenAlbum?.(String(albumId), song.platform || platform) }}
-        onViewArtist={song => { const artist = song.artists?.[0]; const artistId = artist?.appleId || artist?.mid || artist?.id; if (artistId) onOpenArtist?.(String(artistId), song.platform || platform) }}
+        onViewAlbum={song => { const albumId = song.album?.mid || song.album?.id; if (albumId) onOpenAlbum?.(String(albumId), song.platform || platform) }}
+        onViewArtist={song => { const artist = song.artists?.[0]; const artistId = artist?.mid || artist?.id; if (artistId) onOpenArtist?.(String(artistId), song.platform || platform) }}
         onCopyInfo={onCopyInfo}
         userPlaylists={userPlaylists || []}
         platform={songMenu.song?.platform || platform}

@@ -74,7 +74,7 @@ describe('MV alignment negative cache', () => {
     expect(analyze).toHaveBeenCalledTimes(1)
   })
 
-  it('aligns Apple CENC tracks through lyrics and MV subtitles without decoding DRM audio', async () => {
+  it('aligns blob-backed tracks through lyrics and MV subtitles without decoding the audio', async () => {
     vi.spyOn(bilibiliApi, 'getBilibiliSubtitles').mockResolvedValue({
       code: 0,
       subtitles: [{ id: 1, lan: 'zh-CN', lanDoc: '中文', isLock: false, subtitleUrl: '', cacheKey: 'sub-cache' }],
@@ -89,7 +89,7 @@ describe('MV alignment negative cache', () => {
 
     const result = await ensureMvAlignment({
       ...baseInput,
-      songUrl: 'blob:http://127.0.0.1/apple-hls',
+      songUrl: 'blob:http://127.0.0.1/non-decodable-audio',
       lyrics: [lyric(10, '第一句歌词'), lyric(15, '第二句歌词'), lyric(20, '第三句歌词'), lyric(25, '第四句歌词')],
     })
 
@@ -97,13 +97,13 @@ describe('MV alignment negative cache', () => {
     expect(analyze).not.toHaveBeenCalled()
   })
 
-  it('keeps an Apple CENC MV in free-play mode when no reliable subtitles exist', async () => {
+  it('keeps a blob-backed MV in free-play mode when no reliable subtitles exist', async () => {
     vi.spyOn(bilibiliApi, 'getBilibiliSubtitles').mockResolvedValue({ code: 0, subtitles: [] })
     const analyze = vi.spyOn(autoMixAnalysisService, 'analyze')
 
     await expect(ensureMvAlignment({
       ...baseInput,
-      songUrl: 'blob:http://127.0.0.1/apple-hls',
+      songUrl: 'blob:http://127.0.0.1/non-decodable-audio',
       lyrics: [lyric(10, '第一句歌词')],
     })).resolves.toBeNull()
 

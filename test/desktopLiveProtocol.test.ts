@@ -10,7 +10,8 @@ describe('desktop live playback protocol', () => {
     const types = read('src/electron.d.ts')
 
     expect(types).toContain('live: boolean')
-    expect(app).toContain("live: isLive || currentAppleRadio?.timeline === 'live'")
+    expect(app).toContain('live: isLive')
+    expect(app).toContain('if (state.live !== undefined) setIsLive(state.live)')
     expect(main).toContain("if (desktopPlayerState.live === true && (action === 'prev' || action === 'next' || action === 'seek')) return")
     expect(main).toContain("desktopPlayerState.live === true ? 0 : Number(desktopPlayerState.duration) || 0")
     expect(main).toContain("if (!hasSong || desktopPlayerState.live === true)")

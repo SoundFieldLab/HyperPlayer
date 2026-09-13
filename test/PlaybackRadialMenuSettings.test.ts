@@ -25,8 +25,13 @@ describe('playback radial menu settings', () => {
   })
 
   it('filters actions by platform capability', () => {
-    expect(getAvailablePlaybackRadialActions('apple').some(action => action.id === 'comments')).toBe(false)
     expect(getAvailablePlaybackRadialActions('netease').some(action => action.id === 'comments')).toBe(true)
-    expect(getAvailablePlaybackRadialActions('spotify').some(action => action.id === 'similar')).toBe(false)
+    expect(getAvailablePlaybackRadialActions('qq').some(action => action.id === 'similar')).toBe(true)
+    // 缺省平台回退网易云能力表
+    expect(getAvailablePlaybackRadialActions()).toEqual(getAvailablePlaybackRadialActions('netease'))
+    // 无能力约束的动作两个平台都必须保留
+    for (const platform of ['netease', 'qq'] as const) {
+      expect(getAvailablePlaybackRadialActions(platform).some(action => action.id === 'copy-info')).toBe(true)
+    }
   })
 })

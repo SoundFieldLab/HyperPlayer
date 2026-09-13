@@ -53,7 +53,7 @@ export function useDesktopExploreHome(platform: MusicPlatform, enabled: boolean)
 }
 
 const artistsText = (song: Song) => song.artists.map(artist => artist.name).filter(Boolean).join(' / ') || '未知歌手'
-const songKey = (song: Song, index: number) => `${song.platform || 'unknown'}:${song.mid || song.appleId || song.id}:${index}`
+const songKey = (song: Song, index: number) => `${song.platform || 'unknown'}:${song.mid || song.id}:${index}`
 
 export function DesktopNewSongsView({ songs, compact, onPlay }: { songs: Song[]; compact: boolean; onPlay: (song: Song) => void }) {
   return <div className="space-y-1">{songs.map((song, index) => <button key={songKey(song, index)} type="button" onClick={event => { event.stopPropagation(); onPlay(song) }} className="flex w-full items-center gap-3 rounded-2xl px-2.5 py-2 text-left transition hover:bg-white/8">

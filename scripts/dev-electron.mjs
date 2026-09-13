@@ -1,4 +1,4 @@
-import { spawn, execFile, spawnSync } from 'child_process'
+import { spawn, execFile } from 'child_process'
 import { build, createServer, preview } from 'vite'
 import electron from 'electron'
 import { fileURLToPath } from 'url'
@@ -32,20 +32,6 @@ const require = createRequire(import.meta.url)
 const { selectHyperPlayerUserData } = require('../desktop/user-data-profile.cjs')
 const viteConfigFile = resolve(projectRoot, 'vite.config.ts')
 const distDir = resolve(projectRoot, 'dist')
-
-// 直接执行本脚本（快捷方式/IDE/`node scripts/dev-electron.mjs`）时 npm 不会运行
-// predev:electron。这里再次确保 ECS production streaming VMP，避免原生 Apple CENC
-// 因 development VMP 被 -1021 拒绝后误走 WebView2 兼容兜底。
-const vmpCheck = spawnSync(process.execPath, [resolve(projectRoot, 'scripts/ensure-dev-vmp.cjs')], {
-  cwd: projectRoot,
-  stdio: 'inherit',
-  env: process.env,
-  windowsHide: true,
-})
-if (vmpCheck.status !== 0) {
-  console.error('[EVS/VMP] 开发运行时校验失败，终止启动以避免静默退回非原生音源')
-  process.exit(vmpCheck.status || 1)
-}
 
 const localServiceToken = process.env.HYPERPLAYER_LOCAL_TOKEN || randomBytes(32).toString('base64url')
 const appDataRoot = process.platform === 'win32'
@@ -210,14 +196,14 @@ async function getPidOnPort(port) {
   return Number.isInteger(pid) && pid > 0 ? pid : null
 }
 
-/** 进程命令行是否为「本项目残留的 dev 进程」（vite dev server / local-server / python 服务） */
+/** 进程命令行是否为「本项目残留的 dev 进程」（vite dev server / local-server 等） */
 function isHyperPlayerDevLeftover(commandLine) {
   if (!commandLine) return false
   // 统一为正斜杠比较，避免 Windows 命令行的反斜杠/正斜杠混用误判
   const normalized = commandLine.replace(/[\\/]+/g, '/')
   const root = projectRoot.replace(/[\\/]+/g, '/')
   if (!normalized.includes(root)) return false
-  return /vite\/bin\/vite|local-server\.mjs|apple_bridge\.py/.test(normalized)
+  return /vite\/bin\/vite|local-server\.mjs/.test(normalized)
 }
 
 async function killProcess(pid) {

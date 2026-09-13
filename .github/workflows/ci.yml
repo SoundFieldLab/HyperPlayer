@@ -5,11 +5,11 @@
 #
 # 触发：
 #   push（任何分支）/ PR  -> 快速检查（ubuntu，便宜）
-#   打 v* tag / 手动触发   -> 额外在 Windows 上验证打包链路（不签名、不需要任何 secret）
+#   打 v* tag / 手动触发   -> 额外在 Windows 上验证打包链路（不需要任何 secret）
 #
-# 为什么打包验证用 build:electron:dir:unsigned：
-#   正式构建（build:electron）需要 castLabs EVS 凭据做 Widevine VMP 签名，那属于发布环节；
-#   CI 只关心「代码能否被 electron-builder 打好目录、资源是否齐全」，用 unsigned 变体即可。
+# 打包验证用的就是正式链路 `build:electron:dir`（断言无残留进程 → vite build →
+# electron-builder dir → verify-asar），CI 只关心「代码能否被 electron-builder
+# 打好目录、资源是否齐全」，所以跑到 dir 为止，不再做 NSIS 打包。
 
 name: CI 检查
 
@@ -69,7 +69,7 @@ jobs:
 
   # ---------- 打包验证（Windows；仅 tag / 手动触发） ----------
   package-verify:
-    name: 打包验证（Windows，未签名）
+    name: 打包验证（Windows）
     runs-on: windows-latest
     timeout-minutes: 45
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
@@ -89,8 +89,8 @@ jobs:
       - name: 下载 Electron 运行时（npm ci 跳过其安装脚本）
         run: node node_modules/electron/install.js
 
-      - name: 构建未签名目录（验证 electron-builder 配置与资源）
-        run: npm run build:electron:dir:unsigned
+      - name: 构建目录（验证 electron-builder 配置与资源）
+        run: npm run build:electron:dir
 
       - name: 校验打包产物关键文件齐全
         shell: pwsh

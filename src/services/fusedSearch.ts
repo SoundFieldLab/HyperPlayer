@@ -29,9 +29,7 @@ export interface FusedSearchOutput {
 }
 
 const platformOf = (item: { platform?: MusicPlatform }): MusicPlatform => (
-  item.platform === 'qq' || item.platform === 'apple' || item.platform === 'spotify'
-    ? (item.platform as MusicPlatform)
-    : 'netease'
+  item.platform === 'qq' ? 'qq' : 'netease'
 )
 
 /** NFKC lets full-width/half-width text match; punctuation and spacing should not affect equality. */
@@ -270,7 +268,6 @@ const rankAndMergeSongs = (keyword: string, songs: Song[], entitlements: FusionE
           platform: platformOf(item),
           id: item.id,
           mid: item.mid,
-          appleId: item.appleId,
           vip: item.vip,
           noCopyright: item.noCopyright,
         })),

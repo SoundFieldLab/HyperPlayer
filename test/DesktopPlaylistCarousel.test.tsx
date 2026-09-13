@@ -17,13 +17,13 @@ describe('Desktop playlist carousel', () => {
       id: 'broken-playlist',
       name: 'Broken Cover',
       coverImgUrl: 'https://example.test/broken.jpg',
-      platform: 'apple' as const,
+      platform: 'netease' as const,
     }
 
     render(
       <PlaylistCarousel3D
         playlists={[playlist]}
-        platform="apple"
+        platform="netease"
         onPlaylistSelect={vi.fn()}
       />,
     )
@@ -35,10 +35,10 @@ describe('Desktop playlist carousel', () => {
   it('preserves the playlist platform when selecting a desktop playlist', () => {
     const onPlaylistSelect = vi.fn()
     const playlist = {
-      id: 'spotify-playlist',
-      name: 'Spotify Mix',
+      id: 'qq-playlist',
+      name: 'QQ Mix',
       coverImgUrl: 'https://example.test/cover.jpg',
-      platform: 'spotify' as const,
+      platform: 'qq' as const,
       ownedByMe: true,
     }
 
@@ -50,7 +50,7 @@ describe('Desktop playlist carousel', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Spotify Mix' }))
+    fireEvent.click(screen.getByRole('button', { name: 'QQ Mix' }))
     expect(onPlaylistSelect).toHaveBeenCalledWith(playlist)
   })
 })

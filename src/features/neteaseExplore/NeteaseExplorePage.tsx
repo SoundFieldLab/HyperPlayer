@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, Disc3, HeartPulse, Loader2, LogIn, Mic2, Radio, RefreshCw, Sparkles, Trophy, UserRoundSearch, Waves, X } from 'lucide-react'
-import { HorizontalShelf } from '../../components/apple-explore/HorizontalShelf'
+import { HorizontalShelf } from '../../components/explore/HorizontalShelf'
 import CachedImage from '../../components/CachedImage'
 import type { Song } from '../../services/musicApi'
 import { getUserDetail } from '../../services/musicApi'

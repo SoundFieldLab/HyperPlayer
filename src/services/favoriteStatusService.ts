@@ -12,33 +12,15 @@ const pendingOwnerMutations = new Map<string, Array<{ identifier: string; add: b
 
 const ownerKey = (platform: FavoritePlatform, userId: string) => `${platform}:${userId}`
 
-const stableCredentialKey = (value: string): string => {
-  let hash = 2166136261
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
-  return (hash >>> 0).toString(36)
-}
-
 export function getFavoriteUserId(platform: FavoritePlatform): string {
-  if (platform === 'apple') {
-    const token = localStorage.getItem('appleMediaUserToken') || ''
-    return token ? `apple-${stableCredentialKey(token)}` : ''
-  }
   if (platform === 'qq') return localStorage.getItem('qq_user_id') || ''
-  // Spotify：用自己的登录归属键；旧会话未落 userId 时凭凭据存在性给固定键兜底
-  // （与 apple 同款策略）。绝不回落到其它平台的归属键——曾把外部平台 id 当网易云 uid 打错接口，
+  // 绝不回落到其它平台的归属键——曾把外部平台 id 当网易云 uid 打错接口，
   // 喜欢缓存也跨平台互染。
-  if (platform === 'spotify') {
-    return localStorage.getItem('spotify_user_id')
-      || (localStorage.getItem('spotify_access_token') ? 'spotify-user' : '')
-  }
   return localStorage.getItem('netease_user_id') || ''
 }
 
 export function getFavoriteSongIdentifiers(song: Song): string[] {
-  return [song.id, song.mid, song.appleId, song.appleLibraryId]
+  return [song.id, song.mid]
     .filter(value => value !== undefined && value !== null && String(value).trim())
     .map(value => String(value))
 }

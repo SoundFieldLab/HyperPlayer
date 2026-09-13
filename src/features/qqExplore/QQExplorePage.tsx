@@ -5,7 +5,7 @@ import type { ExploreChart, ExplorePayload, ExplorePlaylist } from '../../servic
 import type { MusicPlatform } from '../../services/platforms'
 import type { EntitlementTier } from '../../utils/musicEntitlements'
 import { shouldShowEntitlementBadge } from '../../utils/musicEntitlements'
-import { HorizontalShelf } from '../../components/apple-explore/HorizontalShelf'
+import { HorizontalShelf } from '../../components/explore/HorizontalShelf'
 import VideoPlayer from '../../components/VideoPlayer'
 import QQMusicJourney from '../../components/QQMusicJourney'
 import { fetchQQGuessYouLikeBatch, getExploreCookie } from '../../services/exploreApi'

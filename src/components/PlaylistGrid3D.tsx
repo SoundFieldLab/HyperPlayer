@@ -547,8 +547,7 @@ export default function PlaylistGrid3D({
           onViewArtist={onOpenArtist ? (song) => {
             const songPlatform = (song.platform || platform) as MusicPlatform
             const artist = song.artists?.[0]
-            const artistId = songPlatform === 'apple' ? (artist?.appleId || artist?.id)
-              : songPlatform === 'qq' ? (artist?.mid || artist?.id) : artist?.id
+            const artistId = songPlatform === 'qq' ? (artist?.mid || artist?.id) : artist?.id
             if (artistId) onOpenArtist(String(artistId), songPlatform)
             closeContextMenu()
           } : undefined}

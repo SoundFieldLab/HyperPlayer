@@ -133,7 +133,7 @@ ${segBarSvg(0, 484, W, 4, SEG_BOT)}
 <text x="700" y="136" font-family='${FONT}' font-size="18" font-weight="700" fill="${GOLD_DARK}" text-anchor="middle">软件特性</text>
 <line x1="600" y1="154" x2="800" y2="154" stroke="${GOLD}" stroke-width="1"/>
 <text x="586" y="188" font-family='${FONT}' font-size="14" fill="${GOLD_DARK}">● 多平台聚合</text>
-<text x="610" y="214" font-family='${FONT}' font-size="12" fill="#8A6B45">网易云 / QQ / 酷狗 / 汽水 / Spotify / Apple Music</text>
+<text x="610" y="214" font-family='${FONT}' font-size="12" fill="#8A6B45">网易云 / QQ 音乐 / B站看歌</text>
 <text x="586" y="248" font-family='${FONT}' font-size="14" fill="${GOLD_DARK}">● 沉浸式视觉</text>
 <text x="610" y="274" font-family='${FONT}' font-size="12" fill="#8A6B45">动态壁纸 · 歌词动效 · 频谱可视化</text>
 <text x="586" y="308" font-family='${FONT}' font-size="14" fill="${GOLD_DARK}">● 无缝混音</text>

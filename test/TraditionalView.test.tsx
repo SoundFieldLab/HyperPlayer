@@ -163,10 +163,6 @@ const baseProps = {
   neteaseVip: false,
   qqLoggedIn: false,
   qqUsername: '',
-  appleLoggedIn: false,
-  appleUsername: '',
-  spotifyLoggedIn: false,
-  spotifyUsername: '',
   authRevision: 0,
   onLoginClick: vi.fn(),
   onProfileClick: vi.fn(),
@@ -519,9 +515,9 @@ describe('传统模式 TraditionalView', () => {
     expect(timeRow?.textContent).toContain('0:00')
     expect(timeRow?.textContent).toContain('3:00')
   })
-  it('Apple 所有权只接受明确标记，不按 p. 前缀猜测', () => {
-    expect(isPlaylistOwner({ id: 'p.external', platform: 'apple' })).toBe(false)
-    expect(isPlaylistOwner({ id: 'p.mine', platform: 'apple', ownedByMe: true })).toBe(true)
+  it('所有权只接受明确标记，不按 id 前缀猜测', () => {
+    expect(isPlaylistOwner({ id: 'external', platform: 'netease' }, { neteaseUserId: 'u2' })).toBe(false)
+    expect(isPlaylistOwner({ id: 'external', platform: 'netease', ownedByMe: true })).toBe(true)
   })
 
   it('空封面渲染占位而不是空 src 图片', async () => {

@@ -3,7 +3,7 @@ import { EMPTY_AUDIO_PULSE_STORE, type AudioPulseStore } from '../hooks/useAudio
 import { memo, useEffect, useLayoutEffect, useMemo, useState, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { reconcileBoundaryParentheses } from '../utils/lyricBoundaryParentheses'
 import { normalizeSequentialWordTiming, prepareLyricWords } from '../utils/lyricWordTiming'
-import { getAgentTintColor, getAppleMusicSettings } from '../services/appleMusic'
+import { getAgentTintColor, getLyricDuetSettings } from '../services/appleLyricsStyle'
 
 /** 十六进制色 → rgba（对唱演唱者着色用） */
 const hexToRgba = (hex: string, alpha: number) => {
@@ -708,7 +708,7 @@ export default memo(function LyricsDisplay({
     [displayLyricsData]
   )
   const appleAgentCount = appleAgentOrder.length
-  const appleDuetColorsEnabled = useMemo(() => getAppleMusicSettings().duetColors, [])
+  const appleDuetColorsEnabled = useMemo(() => getLyricDuetSettings().duetColors, [])
 
   useEffect(() => {
     const updatePulseScale = () => {

@@ -1,8 +1,8 @@
 # HyperPlayer
 
-沉浸式桌面音乐播放器（Windows / Electron），共 **5 个音源**：**网易云音乐 / QQ音乐 / Apple Music / Spotify** 四个平台 + **B站看歌**。覆盖搜索、播放、歌词、可视化、无缝衔接、桌面模式与自定义壁纸。仓库同时含 **Apple 歌词/探索**分支。
+沉浸式桌面音乐播放器（Windows / Electron），共 **3 个音源**：**网易云音乐 / QQ音乐** 两个平台 + **B站看歌**。覆盖搜索、播放、歌词、可视化、无缝衔接、桌面模式与自定义壁纸。**Apple 风格逐字歌词**（逐词点亮 / 弹簧滚动 / 对唱着色）作为歌词特性保留。
 
-> 本仓库为**减配版（slimdown）**：已移除 Android TV、Python 节拍/响度/补偿服务、汽水与酷狗音源、音效引擎 v1/v2、Folia/多维 Diorama 等歌词模式、DG_LAB 插件、AirPlay / 分轨 / 远程遥控 / 设备授权 / 爱发电 / Smart AutoMix 等模块。功能以本文档与源码为准。
+> 本仓库为**减配版（slimdown）**：已移除 Android TV、Python 节拍/响度/补偿服务、汽水与酷狗音源、**Apple Music 与 Spotify 音源（含 Python 播放面 bridge 与 Widevine/VMP DRM 链）**、音效引擎 v1/v2、Folia/多维 Diorama 等歌词模式、DG_LAB 插件、AirPlay / 分轨 / 远程遥控 / 设备授权 / 爱发电 / Smart AutoMix 等模块。功能以本文档与源码为准。
 
 ## 快速开始
 
@@ -11,20 +11,19 @@ npm install                    # 安装依赖
 npm run dev:electron           # 一键启动：Vite(3000) + API(3001) + Electron 窗口
 ```
 
-- 后端为单文件 Express（`local-server.mjs`，端口 3001），由 `dev:electron` 自动拉起；也可直接 `node local-server.mjs` 单独启动（无 `dev:api` 脚本）。
-- Apple Music 播放面需要**系统 Python + pywebview** 运行 `python-apple-bridge/apple_bridge.py`（端口 18790），由主进程自动探测并 spawn；仅 Apple 原生播放路径依赖它，其余音源与功能不受影响。
+- 后端为单文件 Express（`local-server.mjs`，端口 3001），由 `dev:electron` 自动拉起；也可直接 `node local-server.mjs` 单独启动（无 `dev:api` 脚本）。后端与前端均**无任何 Python 依赖**。
 
 ## 核心功能
 
-- **多音源搜索与推荐**：网易云 / QQ / Apple Music / Spotify 实时搜索、每日推荐、榜单、猜你喜欢；平台可见性与顺序可自定义
+- **多音源搜索与推荐**：网易云 / QQ 实时搜索、每日推荐、榜单、猜你喜欢；平台可见性与顺序可自定义
 - **B站看歌**：B站 MV / 视频作为歌词模式播放，含弹幕、互动面板、MV 背景
 - **QQ 音乐 API Key 领取**：内置引导窗口直达 y.qq.com 领取 qmk API Key（独立隔离 session，每次打开清空登录态）
 - **无缝衔接播放**：`Fixed Crossfade`（固定时长交叉淡化，默认）+ gapless 直接拼接 + 专辑无缝（albumGapless），双 deck 等功率淡入淡出
-- **歌词系统**：LRC 解析、逐字歌词（QQ / Apple TTML）、实时滚动、点击跳转、翻译与罗马音；**4 种歌词模式**：现代 / 沉浸 / 看歌(B站) / PV
+- **歌词系统**：LRC 解析、逐字歌词（QQ YRC；网易云/QQ 曲目另有 **AMLL TTML DB** 免 token 逐字源）、实时滚动、点击跳转、翻译与罗马音；**Apple 风格逐字**渲染（逐词点亮 / 柔和 / 清晰三档特效、「崭新」弹簧滚动、TTML 对唱着色）；**4 种歌词模式**：现代 / 沉浸 / 看歌(B站) / PV
 - **桌面歌词**：独立透明窗口（`desktop-lyrics.html`），字体、字号、配色可调，经 IPC 持久化
 - **音效引擎 HSE（HyperSoundEngine）**：唯一引擎，14 级处理链 + 11 场景 + 分享串
 - **空间音频**：合成解析 HRTF 双耳渲染四模式（一键空间化 / 头锁定环绕 / 世界漫游 / 舞台影院），详见下方
-- **可视化**：实时频谱（对数频率轴）、波形、封面脉动、动态封面（Apple）
+- **可视化**：实时频谱（对数频率轴）、波形、封面脉动、封面粒子特效（`AppleCoverFx`，组件保留、当前未接线）
 - **桌面模式与小组件**：桌面小组件区、自定义壁纸、天气系统、桌面播放器小窗、任务栏播控条
 - **插件宿主**：App Store 式插件中心（卡片/详情/导入/卸载、开关持久化、使用须知门控），内置 **Razer Chroma** 与 **SignalRGB** 灯光联动插件——第三方插件开发见 [docs/plugin-development.md](./docs/plugin-development.md)
 - **社交/个人中心**：QQ/网易云关注与粉丝、查看他人主页、评论、歌单管理、私人 FM
@@ -35,28 +34,27 @@ npm run dev:electron           # 一键启动：Vite(3000) + API(3001) + Electro
 
 ```
 前端:    React 19 + TypeScript + Tailwind CSS 4 + Vite 6
-桌面:    Electron 42（主进程 CommonJS，preload 桥接）
+桌面:    Electron 42（官方 stock `42.8.0`，主进程 CommonJS，preload 桥接）
 后端:    Node.js + Express（local-server.mjs，单文件，端口 3001）
 音频:    Web Audio API + HSE（纯 TS DSP 内核 + AudioWorklet 渲染线程）
-音乐源:  qq-music-api + NeteaseCloudMusicApiEnhanced + Apple Music + Spotify + B站
+音乐源:  qq-music-api + NeteaseCloudMusicApiEnhanced + B站
 可视化:  Canvas/Web Audio 频谱与封面动效；空间音频 3D 视图用 Three.js + React Three Fiber
-多平台:  Apple 歌词/探索分支（src/components/Apple*，src/services/apple*）
+歌词:    Apple 风格逐字渲染（本地实现）+ AMLL TTML DB 逐字数据源
 ```
 
 ```
 HyperPlayer/
 ├── src/                        # React 前端
-│   ├── components/            # 组件（App.tsx 懒加载；Apple* 为 Apple 分支）
-│   ├── services/              # API 客户端、缓存、无缝衔接、apple* 服务
+│   ├── components/            # 组件（App.tsx 懒加载；含 AppleCoverFx 等 Apple 风格歌词侧组件）
+│   ├── services/              # API 客户端、缓存、无缝衔接、appleLyricsStyle（Apple 风格歌词工具）
 │   │   ├── audio-engine/      # 引擎适配层（V3Adapter + 注册表）
 │   │   ├── gapless/           # 无缝衔接（私有模块）
 │   │   └── HyperSoundEngine-v1/   # HSE 音效引擎（DSP + UI + 空间音频）
 │   ├── audio/                 # 播放引擎（队列/过渡计划/渲染器）
 │   ├── hooks/  api/  utils/  types/  vendor/pv/
 ├── desktop/                   # Electron 主进程 + preload（.cjs）+ splash/任务栏小窗
-├── server/                    # 后端附加路由（hazard/location/bilibili/apple-artwork/netease-native-explore）
+├── server/                    # 后端附加路由（hazard/location/bilibili/netease-native-explore）
 ├── local-server.mjs           # Express 后端（约 11k 行，单文件，端口 3001）
-├── python-apple-bridge/       # Apple Music 播放面 bridge（Python，端口 18790）
 ├── build/                     # 打包资源 + 自定义 NSIS 安装器 UI 资产
 └── scripts/                   # dev/build/打包/发布/测试脚本
 ```
@@ -69,11 +67,10 @@ npm run dev             # 仅 Vite（3000）
 npm run lint            # TypeScript 类型检查（tsc --noEmit）
 npm run test            # vitest 单测（2026-09-13 实测：140 文件 = 139 过 + 1 跳过；1269 用例 = 1264 过 + 5 跳过 + 0 todo，含 HSE v3 引擎与空间音频；跳过的 5 项为 HSE 的 LGPL 可选依赖未装自动跳过）
 npm run build           # 仅构建前端 -> dist/（三入口，不生成 EXE）
-npm run build:electron  # 发布：目录构建 → EVS production VMP → NSIS 安装包
-npm run build:electron:dir           # 发布目录包：构建 + EVS production VMP
-npm run build:electron:dir:unsigned  # 仅本地诊断，不能发布
+npm run build:electron  # 发布：目录构建（build + electron-builder dir + verify-asar）→ NSIS 安装包
+npm run build:electron:dir           # 发布目录包：build + electron-builder --win dir + verify-asar 校验
 npm run build:v3-worklet   # 重生成 HSE 的 AudioWorklet 单文件（predev/prebuild 自动执行）
-npm run build:apple-weather # 重新生成 Apple 天气场景资源
+npm run build:apple-weather # 重新生成 Apple 天气场景资源（纯天气视觉，与 Apple Music 音源无关）
 npm run build:splash    # 重新生成启动页（帧时基归一 -> desktop/splash.html + splash-baked.webm）
 npm run test:chroma     # Razer Chroma 插件自测
 npm run test:signalrgb  # SignalRGB 插件自测
@@ -83,20 +80,20 @@ npm run preview:setup   # 预览自定义安装器
 npm run version:patch|minor|major|pre  # 版本号更迭（自动 commit/tag/push）
 ```
 
-`npm run dev:electron` 启动前会快速验证开发 ECS 的 production streaming VMP；签名仍有效时不会重签。只有首次配置、重装或升级 Electron 后才会请求一次 EVS 签名，前端热更新与普通 `npm run build` 不生成 EXE、也不触发签名。开启应用级开发者模式后，可在"开发者选项"查看 VMP 剩余有效天数；剩余不超过 180 天时界面会提示安排续签。
+`npm run dev:electron` 启动前只做一件事——重打包 HSE 的 AudioWorklet 单文件；**已无任何 EVS/Widevine/VMP 预检或签名步骤**（Electron 为官方 stock `42.8.0`，不携带 Widevine）。前端热更新与普通 `npm run build` 不生成 EXE。
 
 ## 发布（GitHub Releases）
 
 **正式版（打 `v*` tag）的 release 资产 = NSIS 安装包 `release/HyperPlayer-<version>-Setup.exe` + 热更新包 `hyperplayer-hot-<version>.zip`（app.asar + app.asar.unpacked）；nightly 渠道额外发布便携版 `HyperPlayer-<version>-portable.zip`（解压即用、免安装）**；`release/win-unpacked/` 本身仍不入库、不随 releases 分发（仅本地调试产物）。安装版为每用户安装、**不携带任何用户数据/配置**——首次运行在该机 `%APPDATA%\HyperPlayer\` 自动生成全新配置并适配当前用户。
 
 ```bash
-npm run build:electron          # 构建安装版（强制 EVS production VMP）
+npm run build:electron          # 构建安装版
 node scripts/build-hot-update.mjs  # 生成热更新包 hyperplayer-hot-<version>.zip
 git tag v<version> && git push origin v<version>
 gh release create v<version> release/HyperPlayer-<version>-Setup.exe release/hyperplayer-hot-<version>.zip --title "v<version>" --notes "..."
 ```
 
-Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `castlabs-evs`。签名发生在构建机，正式构建要求 production streaming VMP 至少剩余 30 天，并将无敏感信息的有效期元数据写入安装包；低于门槛或签名无效会直接阻断发布。最终用户安装后**不需要 EVS、签名工具或任何手动签名步骤**；Apple Music 用户只需在应用内登录具有有效订阅的账号。CI：`.github/workflows/ci.yml`（类型/单测/构建 + tag 出包）、`nightly.yml`（每日 nightly 预发布）。
+发布机制：**无 EVS、无 VMP 签名、无 Widevine**——Electron 为官方 stock 构建，不要求任何签名账号或有效期门槛；调用链为 `assert-release-not-running` → `build` → `electron-builder --win dir` → `verify-asar`。最终用户安装后**不需要任何签名工具或手动步骤**。CI：`.github/workflows/ci.yml`（类型检查 / 单测 / 桌面与安装器测试 / 前端构建；tag 或手动触发时跑 Windows 打包验证）、`nightly.yml`（每日 nightly 预发布）。
 
 ### 更新渠道
 
@@ -115,9 +112,8 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 |---|---|---|
 | 3000 | Vite / 生产 preview | 前端（后端 CORS 白名单） |
 | 3001 | Express API | 后端（绑定 127.0.0.1，仅放行 localhost:3000 / file:// / null） |
-| 18790 | Apple Music Python bridge | 播放面 bridge（需系统 Python + pywebview） |
 
-> 历史上的 3002 / 3003 / 3004（Python 节拍 / 响度 / 频响补偿服务）已随减配移除，不再使用。
+> 历史上的 18790（Apple Music 播放面 Python bridge）、3002 / 3003 / 3004（Python 节拍 / 响度 / 频响补偿服务）已随音源移除与减配移除，不再使用。
 
 ## 音效引擎 HSE（HyperSoundEngine）
 
@@ -162,9 +158,10 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 1. 部分歌曲因版权/VIP 无法播放（未登录可播免费曲）
 2. 歌词第三方源（lrclib / amll-ttml-db）部分歌曲无词，属正常
 3. 首次播放网易云高音质需后端启动时联网拉取 xeapi 公钥（已自动化）
-4. Apple Music 原生播放依赖 18790 Python bridge（需系统 Python + pywebview）；不可用时走 Web 回退路径
-5. QQ 他人歌单/我喜欢歌曲/评论回复/听歌排行受平台限制；QQ 关注/粉丝接口必须用最新登录的 `qm_keyst`
-6. 过渡策略恒为 Fixed Crossfade（智能节拍混音已随减配移除），节拍分析能力仅用于 MV 对齐等场景
+4. QQ 他人歌单/我喜欢歌曲/评论回复/听歌排行受平台限制；QQ 关注/粉丝接口必须用最新登录的 `qm_keyst`
+5. 过渡策略恒为 Fixed Crossfade（智能节拍混音已随减配移除），节拍分析能力仅用于 MV 对齐等场景
+
+> 历史上的 Apple Music 原生播放限制（18790 Python bridge / Widevine CDM / VMP 签名有效期）已随音源与 DRM 链移除，不再适用。
 
 ## 文档
 
@@ -173,10 +170,10 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 - [HANDOVER.md](./HANDOVER.md) — 交接文档（环境 / 端口 / 已知问题 / 历史决策）
 - [CONTEXT.md](./CONTEXT.md) — 音效域词汇表（术语定义，已按 HSE 单引擎现状更新）
 - [docs/adr/](./docs/adr/) — 架构决策记录
-- [PRIVATE-LICENSE.md](./PRIVATE-LICENSE.md) — 私有模块许可（无缝衔接 / 看歌MV / 桌面模式 / 探索模式 / Apple 接入）
+- [PRIVATE-LICENSE.md](./PRIVATE-LICENSE.md) — 私有模块许可（无缝衔接 / 看歌MV / 桌面模式 / 探索模式）
 - [DEBUG_PAGES.md](./DEBUG_PAGES.md) — 独立调试页注册表（Weather Lab 等）
 - [docs/plugin-development.md](./docs/plugin-development.md) — 插件开发文档（公开，供开发者与 AI 编写 HyperPlayer 插件）
-- [docs/歌词对比-LyricsBlossom.md](./docs/歌词对比-LyricsBlossom.md) — Apple Music 歌词逆向对比（Apple 逐字模式）
+- [docs/歌词对比-LyricsBlossom.md](./docs/歌词对比-LyricsBlossom.md) — Apple Music 歌词逆向对比（Apple 风格逐字动画的设计参考）
 - [src/services/HyperSoundEngine-v1/docs/](./src/services/HyperSoundEngine-v1/docs/) — HSE 融合/UI/算法文档
 
 ## 许可证
@@ -187,6 +184,6 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 
 **私有模块**：无缝衔接（Gapless）、节拍分析与过渡编排（历史 AutoMix 模块：`autoMixAnalysisService.ts` /
 `audio/transitionPlanner.ts` / `audio/TransitionRenderer.ts`，现仅服务 MV 对齐 / PV 歌词 / Fixed Crossfade 过渡）、
-看歌 / MV 背景（Bilibili）、桌面模式、探索模式、Apple Music 接入等模块以 **私有模块许可**提供，适用范围与使用限制详见
+看歌 / MV 背景（Bilibili）、桌面模式、探索模式等模块以 **私有模块许可**提供，适用范围与使用限制详见
 [PRIVATE-LICENSE.md](./PRIVATE-LICENSE.md)（受保护文件头部 / 目录 `LICENSE.private` 亦标注）。
 HSE 音效引擎模块另受 CC BY-NC-ND 4.0 约束，见 [src/services/HyperSoundEngine-v1/LICENSE](./src/services/HyperSoundEngine-v1/LICENSE)。

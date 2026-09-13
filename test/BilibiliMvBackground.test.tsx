@@ -106,7 +106,7 @@ describe('BilibiliMvBackground regressions', () => {
 
   it.each([
     ['netease', 'http://audio/song'],
-    ['apple', 'blob:http://127.0.0.1/apple-hls'],
+    ['qq', 'http://audio/qq-song'],
   ])('matches and loads MV background for %s tracks', async (platform, audioUrl) => {
     const audio = new Audio()
     audio.src = audioUrl
@@ -118,7 +118,7 @@ describe('BilibiliMvBackground regressions', () => {
       <BilibiliMvBackground
         {...baseProps(audio)}
         platform={platform}
-        lyrics={[{ time: 12, text: 'Apple or platform lyric' }]}
+        lyrics={[{ time: 12, text: '平台歌词' }]}
       />,
     )
 
@@ -129,8 +129,8 @@ describe('BilibiliMvBackground regressions', () => {
     )
     await waitFor(() => expect(ensure).toHaveBeenCalledWith(
       expect.objectContaining({
-        songUrl: expect.stringContaining(platform === 'apple' ? 'blob:' : 'http://audio/song'),
-        lyrics: [expect.objectContaining({ text: 'Apple or platform lyric' })],
+        songUrl: expect.stringContaining(audioUrl),
+        lyrics: [expect.objectContaining({ text: '平台歌词' })],
         bvid: `${platform}-bvid`,
       }),
       expect.any(AbortSignal),
@@ -147,14 +147,14 @@ describe('BilibiliMvBackground regressions', () => {
       <BilibiliMvBackground
         {...baseProps(audio)}
         upcomingSongs={[
-          { songTitle: 'Apple Next', songArtists: ['Artist'], songDuration: 180, platform: 'apple', id: 'apple-next' },
+          { songTitle: 'Netease Next', songArtists: ['Artist'], songDuration: 180, platform: 'netease', id: 'netease-next' },
           { songTitle: 'QQ Later', songArtists: ['Artist'], songDuration: 180, platform: 'qq', id: 'qq-later' },
         ]}
       />,
     )
 
     await waitFor(() => expect(bili.findBestBilibiliMv).toHaveBeenCalledWith(
-      expect.objectContaining({ platform: 'apple', id: 'apple-next' }),
+      expect.objectContaining({ platform: 'netease', id: 'netease-next' }),
       expect.anything(),
     ))
     await waitFor(() => expect(bili.findBestBilibiliMv).toHaveBeenCalledWith(
@@ -163,7 +163,7 @@ describe('BilibiliMvBackground regressions', () => {
     ))
     await waitFor(() => expect(prewarm).toHaveBeenCalledTimes(1))
     expect(prewarm).toHaveBeenCalledWith(expect.objectContaining({
-      bvid: 'apple-bvid',
+      bvid: 'netease-bvid',
       videoUrl: 'http://stream/cache/audio',
     }))
   })

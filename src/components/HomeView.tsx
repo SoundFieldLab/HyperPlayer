@@ -11,7 +11,6 @@ import { getVisiblePlatforms, PLATFORM_VISIBILITY_EVENT, PLATFORM_ORDER_EVENT } 
 import PlaylistDetailPanel from './PlaylistDetailPanel'
 import ModeSelectionPanel, { MODE_SELECTION_CLOSE_MS, MODE_SELECTION_PANEL_HEIGHT } from './ModeSelectionPanel'
 import { getCachedUserPlaylists, getUserPlaylists, streamNeteasePlaylistTracks } from '../services/playlistService'
-import { getAppleLibraryPlaylists, enrichApplePlaylistTrackCounts, getAppleFavoriteSongs, getAppleRecentPlayed, getApplePlaylistTracks, getAppleCatalogPlaylistTracks, getAppleLibrarySongs, appleSongToSong, appleLibraryTrackToSong, createApplePlaylist, deleteApplePlaylist, updateApplePlaylist, removeAppleTracksFromPlaylist, getLastAppleMutationResult, APPLE_FAVORITES_ID, APPLE_LIBRARY_ID } from '../services/appleCatalog'
 import CachedImage from './CachedImage'
 import { imageCache } from '../utils/imageCache'
 import { wallpaperManager, WallpaperFile } from '../services/wallpaperManager'
@@ -47,23 +46,8 @@ interface HomeViewProps {
   qqUserId?: string
   qqVip?: boolean
   onQQLogout: () => void
-  appleLoggedIn?: boolean
-  appleUsername?: string
-  appleAvatar?: string
-  appleStorefront?: string
-  appleEmail?: string
-  onAppleLoginClick?: () => void
-  onAppleLogout?: () => void
-  onAppleProfileClick?: () => void
-  spotifyLoggedIn?: boolean
-  spotifyUsername?: string
-  spotifyAvatar?: string
-  spotifyUserId?: string
-  onSpotifyLogout?: () => void
   onNeteaseLoginClick: () => void
   onQQLoginClick: () => void
-  /** 通用登录入口（新平台：Spotify） */
-  onLoginClick?: (platform: MusicPlatform) => void
   onProfileClick: (platform: MusicPlatform, initialTab?: 'created' | 'subscribed' | 'detail' | 'recent') => void
   onSearchClick: () => void
   /** 播放设备控制（音频输出设备）弹窗 */
@@ -111,7 +95,7 @@ const readPersistedHomeModuleCache = (): Record<string, HomeModuleSessionSnapsho
 
 // localStorage 持久化只写精简字段：仅保留渲染与点击所需的小字段（均为 Song 接口字段），
 // 丢弃原始响应可能附带的歌词缓存/播放地址/privilege 等大字段，避免每次保存都同步序列化整份冗余数据。
-const SLIM_SONG_FIELDS = ['id', 'mid', 'songType', 'name', 'artists', 'album', 'duration', 'platform', 'appleId', 'appleLibraryId', 'appleStorefront', 'vip', 'noCopyright', 'commentCount', 'fee', 'fusedSources'] as const
+const SLIM_SONG_FIELDS = ['id', 'mid', 'songType', 'name', 'artists', 'album', 'duration', 'platform', 'vip', 'noCopyright', 'commentCount', 'fee', 'fusedSources'] as const
 const SLIM_PLAYLIST_FIELDS = ['id', 'name', 'coverImgUrl', 'trackCount', 'playCount', 'description', 'platform', 'source', 'creator', 'isLike', 'dirId', 'userId', 'isCollected'] as const
 
 const slimHomeModuleSnapshot = (snapshot: { songs: Song[]; playlists: any[] }): { songs: Song[]; playlists: any[] } => {
@@ -190,8 +174,8 @@ interface HomeModuleIdentity {
 
 /**
  * 首页模块会话缓存的归属键：按模块自身平台显式查表解析登录态与用户 ID。
- * 根因修复：此前除 netease 外的一切模块（含 Spotify/Apple）都窜到 QQ 分支，
- * 导致 QQ 登录/登出误使这些平台的缓存翻新、而其自身登录变化反而不影响 key。
+ * 根因修复：此前除 netease 外的一切模块都窜到 QQ 分支，
+ * 导致 QQ 登录/登出误使其他平台的缓存翻新、而其自身登录变化反而不影响 key。
  */
 const getHomeModuleSessionKey = (
   moduleId: HomeModuleType,
@@ -224,22 +208,8 @@ function HomeView({
   qqUserId,
   qqVip,
   onQQLogout,
-  appleLoggedIn = false,
-  appleUsername = '',
-  appleAvatar,
-  appleStorefront = 'cn',
-  appleEmail = '',
-  onAppleLoginClick,
-  onAppleLogout,
-  onAppleProfileClick,
-  spotifyLoggedIn = false,
-  spotifyUsername = '',
-  spotifyAvatar,
-  spotifyUserId = '',
-  onSpotifyLogout,
   onNeteaseLoginClick,
   onQQLoginClick,
-  onLoginClick,
   onProfileClick,
   onSearchClick,
   onOpenDeviceControl,
@@ -386,20 +356,6 @@ function HomeView({
     return saved ? sanitizeHomeModules(saved, 'qq') : getDefaultHomeModules('qq', qqLoggedIn)
   })
 
-  const [appleModules, setAppleModules] = useState<HomeModuleType[]>(() => {
-    const saved = localStorage.getItem('homeModules_apple')
-    return saved ? sanitizeHomeModules(saved, 'apple') : getDefaultHomeModules('apple', appleLoggedIn || false)
-  })
-
-  // Spotify：暂无平台专属模块时 state 保持空数组（首页主卡区自动降级）
-  const [spotifyModules] = useState<HomeModuleType[]>(() => {
-    const saved = localStorage.getItem('homeModules_spotify')
-    return saved ? sanitizeHomeModules(saved, 'spotify') : getDefaultHomeModules('spotify', false)
-  })
-  const [currentSpotifyIndex] = useState(0)
-  // 单模块平台的占位 setter：Tab 映射统一引用，平台未来加模块时无需再改
-  const setCurrentSpotifyIndex = (v: number) => { void v }
-  
   // 恢复上次选择的卡片索引（会话级别，重启后重置为0）
   const [currentNeteaseIndex, setCurrentNeteaseIndex] = useState(() => {
     const saved = localStorage.getItem('homeModuleIndex_netease')
@@ -415,29 +371,15 @@ function HomeView({
     const modules = sanitizeHomeModules(localStorage.getItem('homeModules_qq'), 'qq')
     return savedIndex < modules.length ? savedIndex : 0
   })
-  const [currentAppleIndex, setCurrentAppleIndex] = useState(() => {
-    const saved = localStorage.getItem('homeModuleIndex_apple')
-    const savedIndex = saved ? parseInt(saved, 10) : 0
-    // 确保索引不越界
-    const modules = sanitizeHomeModules(localStorage.getItem('homeModules_apple'), 'apple')
-    return savedIndex < modules.length ? savedIndex : 0
-  })
   const initialModuleId = platform === 'netease'
     ? neteaseModules[currentNeteaseIndex]
-    : platform === 'qq'
-      ? qqModules[currentQQIndex]
-      : platform === 'apple'
-        ? appleModules[currentAppleIndex]
-        : spotifyModules[currentSpotifyIndex]
+    : qqModules[currentQQIndex]
   // 当前平台生效的首页模块（简约模式主卡循环）
-  const activeModules = platform === 'netease' ? neteaseModules : platform === 'qq' ? qqModules : platform === 'apple' ? appleModules : spotifyModules
-  // 各平台登录身份：模块会话缓存按 HOME_MODULE_BY_ID[moduleId].platform 取对应平台身份，
-  // Apple 模块为 storefront 级内容（无账号维度），固定匿名归属
+  const activeModules = platform === 'netease' ? neteaseModules : qqModules
+  // 各平台登录身份：模块会话缓存按 HOME_MODULE_BY_ID[moduleId].platform 取对应平台身份
   const homeModuleIdentities: Partial<Record<MusicPlatform, HomeModuleIdentity>> = {
     netease: { loggedIn: neteaseLoggedIn, userId: neteaseUserId },
     qq: { loggedIn: qqLoggedIn, userId: qqUserId },
-    apple: { loggedIn: false },
-    spotify: { loggedIn: spotifyLoggedIn, userId: spotifyUserId },
   }
   const initialModuleSnapshot = initialModuleId
     ? getHomeModuleSessionSnapshot(getHomeModuleSessionKey(initialModuleId, homeModuleIdentities))
@@ -453,9 +395,6 @@ function HomeView({
   
   // Playlist detail panel state
   const [showPlaylistDetail, setShowPlaylistDetail] = useState(false)
-  // Apple 合成集合分别维护，避免将“喜爱歌曲”与整个资料库混为一谈。
-  const [appleFavoriteSongs, setAppleFavoriteSongs] = useState<Song[]>([])
-  const [appleLibrarySongs, setAppleLibrarySongs] = useState<Song[]>([])
   const [playlistSongs, setPlaylistSongs] = useState<Song[]>([])
   const [loadingPlaylistSongs, setLoadingPlaylistSongs] = useState(false)
   
@@ -481,7 +420,7 @@ function HomeView({
   const remoteCursorMode = useRemoteCursorMode()
   // TV 遥控器（无鼠标）：药丸变成单个可聚焦单元，左右键循环切换平台；PC/光标模式仍走拖拽
   const pillTvAdjust = tvMode && !remoteCursorMode
-  const platformLabel = { netease: '网易云', qq: 'QQ音乐', apple: 'Apple', spotify: 'Spotify' } as Record<MusicPlatform, string>
+  const platformLabel = { netease: '网易云', qq: 'QQ音乐' } as Record<MusicPlatform, string>
   const cyclePlatform = (dir: 1 | -1) => {
     setPlatform(prev => {
       const idx = Math.max(0, visiblePlatforms.indexOf(prev))
@@ -680,7 +619,7 @@ function HomeView({
 
   const getPlaylistPlaybackCacheKey = (playlist: any) => {
     const playlistPlatform = (playlist.platform || platform) as MusicPlatform
-    const accountId = playlistPlatform === 'qq' ? (qqUserId || 'guest') : playlistPlatform === 'apple' ? 'apple-user' : (neteaseUserId || 'guest')
+    const accountId = playlistPlatform === 'qq' ? (qqUserId || 'guest') : (neteaseUserId || 'guest')
     return `${playlistPlatform}:${accountId}:${authRevision}:${playlist.id}`
   }
 
@@ -731,34 +670,6 @@ function HomeView({
 
     const request = (async () => {
       let data: any
-
-      // Apple 合成集合使用各自已加载曲目；真实目录/资料库歌单走对应 API。
-      if (playlistPlatform === 'apple') {
-        if (String(playlist.id || '') === APPLE_FAVORITES_ID) {
-          const songs = appleFavoriteSongs
-          if (songs.length > 0) setPlaylistPlaybackCache(cacheKey, songs)
-          return songs
-        }
-        if (String(playlist.id || '') === APPLE_LIBRARY_ID) {
-          const songs = appleLibrarySongs.length > 0 ? appleLibrarySongs : []
-          if (songs.length > 0) {
-            setPlaylistPlaybackCache(cacheKey, songs)
-          }
-          return songs
-        }
-        const storefront = localStorage.getItem('appleStorefront') || 'cn'
-        const playlistId = String(playlist.id || '')
-        const tracks = playlistId.startsWith('pl.')
-          ? await getAppleCatalogPlaylistTracks(playlistId, storefront)
-          : await getApplePlaylistTracks(playlistId)
-        const songs = playlistId.startsWith('pl.')
-          ? tracks.map(track => appleSongToSong(track as Parameters<typeof appleSongToSong>[0], storefront))
-          : tracks.map(track => appleLibraryTrackToSong(track as Parameters<typeof appleLibraryTrackToSong>[0]))
-        if (songs.length > 0) {
-          setPlaylistPlaybackCache(cacheKey, songs)
-        }
-        return songs
-      }
 
       if (playlistPlatform === 'netease') {
         const neteaseCookie = localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
@@ -937,36 +848,6 @@ function HomeView({
     try {
       const playlistPlatform = playlist.platform || platform
 
-      // Apple 合成集合使用各自已加载曲目；真实目录/资料库歌单走对应 API。
-      if (playlistPlatform === 'apple') {
-        if (String(playlist.id || '') === APPLE_FAVORITES_ID) {
-          if (isCurrentRequest()) {
-            setSelectedPlaylist({ ...playlist, platform: 'apple' })
-            setPlaylistSongs(appleFavoriteSongs)
-          }
-          return
-        }
-        if (String(playlist.id || '') === APPLE_LIBRARY_ID) {
-          if (isCurrentRequest()) {
-            setSelectedPlaylist({ ...playlist, platform: 'apple' })
-            setPlaylistSongs(appleLibrarySongs)
-          }
-          return
-        }
-        const storefront = localStorage.getItem('appleStorefront') || 'cn'
-        const playlistId = String(playlist.id || '')
-        const tracks = playlistId.startsWith('pl.')
-          ? await getAppleCatalogPlaylistTracks(playlistId, storefront)
-          : await getApplePlaylistTracks(playlistId)
-        if (!isCurrentRequest()) return
-        const songs = playlistId.startsWith('pl.')
-          ? tracks.map(track => appleSongToSong(track as Parameters<typeof appleSongToSong>[0], storefront))
-          : tracks.map(track => appleLibraryTrackToSong(track as Parameters<typeof appleLibraryTrackToSong>[0]))
-        setSelectedPlaylist({ ...playlist, platform: 'apple', trackCount: songs.length })
-        setPlaylistSongs(songs)
-        return
-      }
-
       if (playlistPlatform === 'netease') {
         await streamNeteasePlaylistTracks(playlist.id, {
           signal: abortController.signal,
@@ -1076,16 +957,6 @@ function HomeView({
   const handleCreatePlaylist = async (name: string, privacy: 'public' | 'private', description?: string, coverDataUrl?: string) => {
     setOperationLoading(true)
     try {
-      // Apple：amp-api 创建资料库歌单（描述/封面不受公开接口支持）
-      if (platform === 'apple') {
-        const ok = await createApplePlaylist(name, description)
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '创建 Apple 歌单失败')
-        await refreshPlaylists()
-        window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: 'apple', type: 'playlist-list' } }))
-        setShowCreatePlaylist(false)
-        showPlaylistToast('Apple 歌单创建成功', 'success')
-        return
-      }
       const result = await createPlaylist(name, platform, {
         privacy: privacy === 'private' ? '10' : '0',
         type: 'NORMAL'
@@ -1129,19 +1000,6 @@ function HomeView({
     if (!selectedPlaylist) return
     setOperationLoading(true)
     try {
-      // Apple：PATCH 资料库歌单名称/描述
-      if (platform === 'apple') {
-        const ok = await updateApplePlaylist(String(selectedPlaylist.id || ''), {
-          name: data.name,
-          description: data.desc || undefined,
-        })
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '更新 Apple 歌单失败')
-        await refreshPlaylists()
-        window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: 'apple', type: 'playlist-list', playlistId: String(selectedPlaylist.id || '') } }))
-        setShowEditPlaylist(false)
-        showPlaylistToast('Apple 歌单信息已更新', 'success')
-        return
-      }
       const tags = Array.isArray(selectedPlaylist.tags) ? selectedPlaylist.tags.join(';') : (selectedPlaylist.tags || '')
       const result = await updatePlaylist(selectedPlaylist.id.toString(), 'netease', {
         name: data.name,
@@ -1173,18 +1031,6 @@ function HomeView({
     if (!selectedPlaylist) return
     setOperationLoading(true)
     try {
-      // Apple：删除资料库歌单（amp-api）
-      if (platform === 'apple') {
-        const ok = await deleteApplePlaylist(String(selectedPlaylist.id || ''))
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '删除 Apple 歌单失败')
-        await refreshPlaylists()
-        window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: 'apple', type: 'playlist-list', playlistId: String(selectedPlaylist.id || '') } }))
-        setShowDeletePlaylist(false)
-        setSelectedPlaylist(null)
-        setShowPlaylistDetail(false)
-        showPlaylistToast('Apple 歌单已删除', 'success')
-        return
-      }
       const deleteId = platform === 'qq' ? selectedPlaylist.dirId || selectedPlaylist.id : selectedPlaylist.id
       const result = await deletePlaylist(deleteId.toString(), platform)
       if (!isPlaylistActionSuccessful(result)) {
@@ -1207,11 +1053,6 @@ function HomeView({
   const handleSubscribePlaylist = async (playlist: any, subscribe: boolean) => {
     setOperationLoading(true)
     try {
-      // Apple 无收藏歌单概念（资料库歌单即我的歌单）
-      if (platform === 'apple') {
-        showPlaylistToast('Apple Music 暂不支持收藏歌单', 'info')
-        return
-      }
       const result = await subscribePlaylist(playlist.id.toString(), subscribe, platform)
       if (!isPlaylistActionSuccessful(result)) {
         throw new Error(result?.error || result?.message || (subscribe ? '收藏歌单失败' : '取消收藏失败'))
@@ -1257,43 +1098,19 @@ function HomeView({
     showPlaylistToast('歌单链接已复制', 'success')
   }
 
-  // 按平台显式解析「歌单归属用户 id」：新平台不复用网易/QQ 身份（否则 owner 校验会
-  // 被别的平台 userId 误命中/静默 no-op），无对应身份的平台返回空串，绝不兜底窜台。
+  // 按平台显式解析「歌单归属用户 id」：不复用其他平台身份（否则 owner 校验会被
+  // 别的平台 userId 误命中/静默 no-op）。
   const getPlaylistOwnerUserId = (plat: MusicPlatform): string => {
     switch (plat) {
       case 'netease': return neteaseUserId || ''
       case 'qq': return qqUserId || ''
-      case 'spotify': return spotifyUserId || ''
       default: return ''
     }
   }
 
   // Remove a song from a playlist
   const handleRemoveFromPlaylist = async (song: Song, playlistId: string) => {
-    // Apple：从资料库歌单移除曲目（amp-api）
-    if (platform === 'apple') {
-      if (!selectedPlaylist || selectedPlaylist.isLike || selectedPlaylist.isCollected) return
-      try {
-        const appleSongId = song.appleLibraryId || song.appleId || String(song.id)
-        const ok = await removeAppleTracksFromPlaylist(String(selectedPlaylist.id || ''), [appleSongId])
-        if (!ok) throw new Error(getLastAppleMutationResult().error || '从 Apple 歌单移除歌曲失败')
-        playlistPlaybackCacheRef.current.delete(getPlaylistPlaybackCacheKey(selectedPlaylist))
-        setPlaylistSongs(previous => previous.filter(item => !(
-          isSameSong(item, song)
-        )))
-        setSelectedPlaylist((previous: any) => previous ? {
-          ...previous,
-          trackCount: Math.max(0, Number(previous.trackCount || 0) - 1)
-        } : previous)
-        await refreshPlaylists()
-        showPlaylistToast('已从 Apple 歌单移除歌曲', 'success')
-      } catch (error) {
-        console.error('Remove song from Apple playlist failed:', error)
-        showPlaylistToast(error instanceof Error ? error.message : '从 Apple 歌单移除歌曲失败，请重试', 'error')
-      }
-      return
-    }
-    // 归属校验按当前平台显式取自有 userId（此前 else 窜到 neteaseUserId，spotify 必然静默 no-op）
+    // 归属校验按当前平台显式取自有 userId
     const userId = getPlaylistOwnerUserId(platform)
     if (
       !selectedPlaylist ||
@@ -1352,17 +1169,7 @@ function HomeView({
     const loadId = ++playlistLoadIdRef.current
     setPlaylistLoading(true)
     try {
-      // Apple：资料库歌单（amp-api）；列表接口对喜爱歌曲/收藏类歌单不返回 trackCount，
-      // 补拉一次曲目数，避免卡片显示「首歌曲」（空）或详情「undefined 首歌曲」
-      if (platform === 'apple') {
-        const playlists = await getAppleLibraryPlaylists(100)
-        const enriched = await enrichApplePlaylistTrackCounts(playlists)
-        if (loadId !== playlistLoadIdRef.current) return
-        setUserPlaylists(enriched)
-        if (showFeedback) showPlaylistToast('歌单列表已刷新', 'success')
-        return
-      }
-      // 归属身份按平台显式解析（此前 else 落到 qqUserId，导致缓存键错挂身份）
+      // 归属身份按平台显式解析
       const currentUserId = getPlaylistOwnerUserId(platform)
       if (!currentUserId) return
       const playlists = await getUserPlaylists(
@@ -1414,13 +1221,6 @@ function HomeView({
         trackCountDelta?: number
       }>).detail
       if (!detail || detail.platform !== platform) return
-      if (detail.type !== 'like' && platform === 'apple') {
-        void loadUserPlaylists(true)
-        if (selectedPlaylist && detail.playlistId && String(selectedPlaylist.id) === String(detail.playlistId)) {
-          void handlePlaylistClick(selectedPlaylist)
-        }
-        return
-      }
       if (detail.type !== 'like') return
 
       const patchLikedPlaylist = (playlist: any) => playlist?.isLike
@@ -1542,18 +1342,17 @@ function HomeView({
   ) => {
     const definition = HOME_MODULE_BY_ID[moduleId]
     const modulePlatform = definition.platform
-    const loggedIn = modulePlatform === 'netease' ? neteaseLoggedIn : modulePlatform === 'qq' ? qqLoggedIn : modulePlatform === 'apple' ? (appleLoggedIn || false) : (spotifyLoggedIn || false)
+    const loggedIn = modulePlatform === 'netease' ? neteaseLoggedIn : qqLoggedIn
 
     if (definition.loginRequired && !loggedIn) {
       setModuleSongs([])
       setModulePlaylists([])
-      setModuleError(`登录${modulePlatform === 'netease' ? '网易云音乐' : modulePlatform === 'qq' ? 'QQ 音乐' : modulePlatform === 'apple' ? 'Apple Music' : 'Spotify'}后即可加载${definition.name}`)
+      setModuleError(`登录${modulePlatform === 'netease' ? '网易云音乐' : 'QQ 音乐'}后即可加载${definition.name}`)
       return
     }
 
     const payload = await fetchExploreHome(modulePlatform, signal, {
       forceRefresh,
-      appleCountry: modulePlatform === 'apple' ? (appleStorefront || 'cn') : undefined,
     })
     if (signal?.aborted) return
 
@@ -1607,25 +1406,10 @@ function HomeView({
       case 'qq_new_songs':
         songs = payload.newSongs
         break
-      case 'apple_new_songs':
-        songs = payload.newSongs
-        break
-      case 'apple_playlists':
-        playlists = payload.playlists
-        break
-      case 'apple_hot_songs': {
-        const chart = payload.charts.find(item => /热门/.test(item.name)) || payload.charts[0]
-        if (chart) {
-          songs = (await fetchExploreChart(chart, signal)).songs
-          if (signal?.aborted) return
-        }
-        break
-      }
       case 'netease_hot_songs':
       case 'netease_rising_songs':
       case 'qq_hot_songs':
-      case 'qq_rising_songs':
-      case 'spotify_hot_songs': {
+      case 'qq_rising_songs': {
         const rising = moduleId.endsWith('rising_songs')
         const pattern = rising ? /飙升|上升/ : /热歌|TOP500|流行指数|热门/
         const chart = payload.charts.find(item => pattern.test(item.name)) || payload.charts[rising ? 1 : 0]
@@ -1635,12 +1419,6 @@ function HomeView({
         }
         break
       }
-      case 'spotify_new_songs':
-        songs = payload.newSongs.length > 0 ? payload.newSongs : payload.dailySongs
-        break
-      case 'spotify_playlists':
-        playlists = payload.playlists
-        break
     }
 
     playlists = playlists.map(item => ({
@@ -1685,10 +1463,6 @@ function HomeView({
         await loadModuleData(neteaseModules[currentNeteaseIndex], abortController.signal, shouldForceRefresh)
       } else if (platform === 'qq' && qqModules.length > 0) {
         await loadModuleData(qqModules[currentQQIndex], abortController.signal, shouldForceRefresh)
-      } else if (platform === 'apple' && appleModules.length > 0) {
-        await loadModuleData(appleModules[currentAppleIndex], abortController.signal, shouldForceRefresh)
-      } else if (platform === 'spotify' && spotifyModules.length > 0) {
-        await loadModuleData(spotifyModules[currentSpotifyIndex], abortController.signal, shouldForceRefresh)
       }
     }
     
@@ -1702,19 +1476,13 @@ function HomeView({
     platform,
     currentNeteaseIndex,
     currentQQIndex,
-    currentAppleIndex,
-    currentSpotifyIndex,
     forceReload,
     neteaseLoggedIn,
     qqLoggedIn,
-    appleLoggedIn,
-    spotifyLoggedIn,
     neteaseUserId,
     qqUserId,
     neteaseModules,
     qqModules,
-    appleModules,
-    spotifyModules,
     authRevision
   ])
 
@@ -1799,70 +1567,14 @@ function HomeView({
 
 
   const loadUserPlaylists = async (forceRefresh = false) => {
-    const loggedIn = platform === 'netease' ? neteaseLoggedIn : platform === 'qq' ? qqLoggedIn : platform === 'apple' ? (appleLoggedIn || false) : (spotifyLoggedIn || false)
-    const currentUserId = platform === 'netease' ? neteaseUserId : platform === 'qq' ? qqUserId : (spotifyUserId || '')
+    const loggedIn = platform === 'netease' ? neteaseLoggedIn : qqLoggedIn
+    const currentUserId = platform === 'netease' ? neteaseUserId : qqUserId
     const currentUsername = platform === 'netease' ? neteaseUsername : qqUsername
 
     if (!loggedIn) {
       ++playlistLoadIdRef.current
       setUserPlaylists([])
       setPlaylistLoading(false)
-      return
-    }
-    // Apple：资料库歌单 + 音乐库（喜爱歌曲）伪歌单（amp-api，无 userId 概念）
-    if (platform === 'apple') {
-      const loadId = ++playlistLoadIdRef.current
-      setUserPlaylists([])
-      setPlaylistLoading(true)
-      try {
-        const [playlistsRes, libraryRes, favoritesRes] = await Promise.allSettled([
-          getAppleLibraryPlaylists(100),
-          getAppleLibrarySongs(100),
-          getAppleFavoriteSongs(5000),
-        ])
-        if (loadId !== playlistLoadIdRef.current) return
-        // 资料库歌单：列表接口对喜爱歌曲/收藏类不返回 trackCount → 补拉曲目数；
-        // Apple 的「喜爱歌曲（Loved）」自动歌单 → isLike（爱心），重命名 + 首曲封面
-        const rawPlaylists = playlistsRes.status === 'fulfilled' ? playlistsRes.value : []
-        const enrichedPlaylists = await enrichApplePlaylistTrackCounts(rawPlaylists)
-        if (loadId !== playlistLoadIdRef.current) return
-        const playlists = enrichedPlaylists.map(playlist => ({
-          ...playlist,
-          coverImgUrl: playlist.artworkUrl || '',
-          isLike: false,
-        }))
-        let appleSongs: Song[] = []
-        if (libraryRes.status === 'fulfilled') {
-          appleSongs = libraryRes.value.map(track => appleLibraryTrackToSong(track))
-          setAppleLibrarySongs(appleSongs)
-        }
-        const favoriteSongs = favoritesRes.status === 'fulfilled'
-          ? favoritesRes.value.map(track => appleSongToSong(track))
-          : []
-        setAppleFavoriteSongs(favoriteSongs)
-        const syntheticPlaylists = [
-          ...(favoriteSongs.length > 0 ? [{
-            id: APPLE_FAVORITES_ID,
-            name: `${appleUsername || 'Apple Music 用户'} 的喜爱歌曲`,
-            coverImgUrl: favoriteSongs[0]?.album.picUrl || '',
-            trackCount: favoriteSongs.length,
-            platform: 'apple' as const,
-            isLike: true,
-          }] : []),
-          ...(appleSongs.length > 0 ? [{
-            id: APPLE_LIBRARY_ID,
-            name: '我的音乐库',
-            coverImgUrl: appleSongs[0]?.album.picUrl || '',
-            trackCount: appleSongs.length,
-            platform: 'apple' as const,
-          }] : []),
-        ]
-        setUserPlaylists([...syntheticPlaylists, ...playlists])
-      } catch (error) {
-        console.error('Load Apple playlists failed:', error)
-      } finally {
-        if (loadId === playlistLoadIdRef.current) setPlaylistLoading(false)
-      }
       return
     }
     if (!currentUserId) {
@@ -1897,24 +1609,18 @@ function HomeView({
 
   const currentHomeModuleId = platform === 'netease'
     ? neteaseModules[currentNeteaseIndex]
-    : platform === 'qq'
-      ? qqModules[currentQQIndex]
-      : appleModules[currentAppleIndex]
+    : qqModules[currentQQIndex]
   const currentHomeModule = currentHomeModuleId ? HOME_MODULE_BY_ID[currentHomeModuleId] : undefined
   const currentHomeModuleNeedsLogin = Boolean(
     currentHomeModule?.loginRequired && (
-      platform === 'netease' ? !neteaseLoggedIn : platform === 'qq' ? !qqLoggedIn : platform === 'apple' ? !(appleLoggedIn || false) : !(spotifyLoggedIn || false)
+      platform === 'netease' ? !neteaseLoggedIn : !qqLoggedIn
     )
   )
 
   const refreshCurrentHomeModule = () => {
     const currentModule = platform === 'netease'
       ? neteaseModules[currentNeteaseIndex]
-      : platform === 'qq'
-        ? qqModules[currentQQIndex]
-        : platform === 'apple'
-          ? appleModules[currentAppleIndex]
-          : spotifyModules[currentSpotifyIndex]
+      : qqModules[currentQQIndex]
     if (!currentModule) return
 
     // 取消上一次刷新的在途请求，避免旧响应覆盖新内容
@@ -1945,22 +1651,20 @@ function HomeView({
     }
   }
 
-  const isLoggedIn = platform === 'netease' ? neteaseLoggedIn : platform === 'qq' ? qqLoggedIn : platform === 'apple' ? (appleLoggedIn || false) : (spotifyLoggedIn || false)
-  const username = platform === 'netease' ? neteaseUsername : platform === 'qq' ? qqUsername : platform === 'apple' ? (appleUsername || '') : (spotifyUsername || '')
-  const avatar = platform === 'netease' ? neteaseAvatar : platform === 'qq' ? qqAvatar : platform === 'apple' ? appleAvatar : spotifyAvatar
-  const userId = platform === 'netease' ? neteaseUserId : platform === 'qq' ? qqUserId : (spotifyUserId || '')
-  const isVip = platform === 'netease' ? neteaseVip : platform === 'qq' ? qqVip : false
+  const isLoggedIn = platform === 'netease' ? neteaseLoggedIn : qqLoggedIn
+  const username = platform === 'netease' ? neteaseUsername : qqUsername
+  const avatar = platform === 'netease' ? neteaseAvatar : qqAvatar
+  const userId = platform === 'netease' ? neteaseUserId : qqUserId
+  const isVip = platform === 'netease' ? neteaseVip : qqVip
 
-  // 平台登录入口：netease/qq 走原有点击回调，新平台走通用 onLoginClick（打开对应登录面板）
+  // 平台登录入口
   const handlePlatformLoginClick = () => {
     if (platform === 'netease') { onNeteaseLoginClick(); return }
-    if (platform === 'qq') { onQQLoginClick(); return }
-    if (platform === 'apple') { onAppleLoginClick?.(); return }
-    onLoginClick?.(platform)
+    onQQLoginClick()
   }
   // 平台登录按钮文案/配色
-  const platformLoginLabel = platform === 'netease' ? '网易云登录' : platform === 'qq' ? 'QQ音乐登录' : platform === 'apple' ? 'Apple Music 登录' : 'Spotify 登录'
-  const platformLoginColor = platform === 'netease' ? 'bg-red-600 hover:bg-red-700' : platform === 'qq' ? 'bg-green-600 hover:bg-green-700' : platform === 'apple' ? 'bg-pink-600 hover:bg-pink-700' : 'bg-[#1DB954] hover:bg-[#17a74b]'
+  const platformLoginLabel = platform === 'netease' ? '网易云登录' : 'QQ音乐登录'
+  const platformLoginColor = platform === 'netease' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -1971,18 +1675,6 @@ function HomeView({
     const controller = new AbortController()
     const loadSummary = async () => {
       try {
-        // Spotify：无最近播放汇总，置空展示
-        if (platform === 'spotify') {
-          setRecentPlaybackSummary({ covers: [], count: 0 })
-          return
-        }
-        // Apple：最近播放走 amp-api（需登录 token）
-        if (platform === 'apple') {
-          const tracks = await getAppleRecentPlayed(100)
-          const covers = tracks.map(track => track.artworkUrl || '').filter(Boolean).slice(0, 4)
-          setRecentPlaybackSummary({ covers, count: tracks.length })
-          return
-        }
         const cookie = platform === 'qq'
           ? localStorage.getItem('qq_cookie') || localStorage.getItem('qqCookie') || ''
           : localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
@@ -2345,8 +2037,8 @@ function HomeView({
               {activeModules.map((moduleId, index) => {
                 const moduleInfo = HOME_MODULE_BY_ID[moduleId]
                 
-                const currentIndex = platform === 'netease' ? currentNeteaseIndex : platform === 'qq' ? currentQQIndex : platform === 'apple' ? currentAppleIndex : currentSpotifyIndex
-                const setCurrentIndex = platform === 'netease' ? setCurrentNeteaseIndex : platform === 'qq' ? setCurrentQQIndex : platform === 'apple' ? setCurrentAppleIndex : setCurrentSpotifyIndex
+                const currentIndex = platform === 'netease' ? currentNeteaseIndex : currentQQIndex
+                const setCurrentIndex = platform === 'netease' ? setCurrentNeteaseIndex : setCurrentQQIndex
                 
                 return (
                   <button
@@ -2727,7 +2419,7 @@ function HomeView({
                               </div>
                             }
                           />
-                          {playlist.isLike && (platform === 'qq' || platform === 'apple') && (
+                          {playlist.isLike && platform === 'qq' && (
                             <div className="absolute inset-0 flex items-center justify-center">
                               <Heart
                                 className="h-[42%] w-[42%] fill-white/75 text-white/75"
@@ -2849,8 +2541,8 @@ function HomeView({
                 {...(pillTvAdjust ? { 'data-tv-skip': '' } : {})}
               >
                 {visiblePlatforms.map(key => {
-                  const dotColor = key === 'netease' ? 'bg-red-500' : key === 'qq' ? 'bg-green-500' : key === 'apple' ? 'bg-pink-500' : 'bg-[#1DB954]'
-                  const label = key === 'netease' ? '网易云' : key === 'qq' ? 'QQ音乐' : key === 'apple' ? 'Apple' : 'Spotify'
+                  const dotColor = key === 'netease' ? 'bg-red-500' : 'bg-green-500'
+                  const label = key === 'netease' ? '网易云' : 'QQ音乐'
                   const active = platform === key
                   return (
                     <motion.button
@@ -2878,8 +2570,8 @@ function HomeView({
             <div className={`mt-2 text-center text-[10px] tracking-wide transition-opacity duration-1000 ${switcherHintVisible ? 'opacity-100' : 'opacity-0'} ${playerTheme === 'dark' ? 'text-white/25' : 'text-black/25'}`}>{pillTvAdjust ? '左右键切换平台' : '左右拖动切换平台'}</div>
           </div>
 
-          {/* 已播歌曲汇总卡：网易/QQ/Apple 原生记录，Spotify 无数据不展示 */}
-          {isLoggedIn && (platform === 'netease' || platform === 'qq' || platform === 'apple') && (
+          {/* 已播歌曲汇总卡：网易/QQ 原生记录 */}
+          {isLoggedIn && (platform === 'netease' || platform === 'qq') && (
             <div className="px-6 pt-5">
               <motion.button
                 type="button"
@@ -2952,12 +2644,9 @@ function HomeView({
                 </div>
 
                 {/* 账号ID */}
-                {((userId && !hideHomeAccountId) || (platform === 'apple' && appleEmail && !hideHomeAccountId)) && (
+                {userId && !hideHomeAccountId && (
                   <p className={`text-sm mb-6 ${playerTheme === 'dark' ? 'text-white/50' : 'text-black/50'}`}>
-                    {platform === 'netease' ? '网易云ID'
-                      : platform === 'qq' ? 'QQ号'
-                      : platform === 'apple' ? 'AppleID'
-                      : 'Spotify ID'}: {platform === 'apple' ? appleEmail : userId}
+                    {platform === 'netease' ? '网易云ID' : 'QQ号'}: {userId}
                   </p>
                 )}
 
@@ -3004,7 +2693,7 @@ function HomeView({
 
 
                   <button
-                    onClick={platform === 'netease' ? onNeteaseLogout : platform === 'qq' ? onQQLogout : platform === 'apple' ? (onAppleLogout || (() => {})) : (onSpotifyLogout || (() => {}))}
+                    onClick={platform === 'netease' ? onNeteaseLogout : onQQLogout}
                     className={`w-full px-6 py-3 rounded-full font-medium transition-all flex items-center justify-center gap-2 ${playerTheme === 'dark' ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-black/10 hover:bg-black/15 text-black/80'}`}
                   >
                     <LogOut className="w-4 h-4" />
@@ -3195,8 +2884,7 @@ function HomeView({
         onViewArtist={(song) => {
           const songPlatform = song.platform || platform
           const artist = song.artists?.[0]
-          const artistId = songPlatform === 'qq' ? (artist?.mid || artist?.id)
-            : songPlatform === 'apple' ? (artist?.appleId || artist?.id) : artist?.id
+          const artistId = songPlatform === 'qq' ? (artist?.mid || artist?.id) : artist?.id
           if (onOpenArtist && artistId) onOpenArtist(String(artistId), songPlatform)
           setContextMenuVisible(false)
         }}
@@ -3224,10 +2912,10 @@ function HomeView({
         }}
         onSubscribe={handleSubscribePlaylist}
         onShare={handleSharePlaylist}
-        isOwner={platform === 'apple' ? true : playlistContextMenu.playlist?.userId?.toString() === (platform === 'netease' ? neteaseUserId : qqUserId)}
+        isOwner={playlistContextMenu.playlist?.userId?.toString() === (platform === 'netease' ? neteaseUserId : qqUserId)}
         isSubscribed={isSubscribed}
         isSpecialPlaylist={Boolean(playlistContextMenu.playlist?.isLike)}
-        canEdit={platform === 'netease' || platform === 'apple'}
+        canEdit={platform === 'netease'}
       />
 
       {/* Create playlist dialog */}

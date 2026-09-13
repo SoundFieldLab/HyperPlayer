@@ -20,18 +20,9 @@ export const normalizeEntitlementTier = (value: unknown): EntitlementTier => {
 
 export const entitlementTierFromVip = (isVip: boolean): EntitlementTier => isVip ? 'vip' : 'free'
 
-export const entitlementTierFromSpotifyProduct = (product: unknown): EntitlementTier => {
-  const normalized = String(product ?? '').trim().toLowerCase()
-  if (normalized === 'premium') return 'vip'
-  if (normalized === 'free' || normalized === 'open') return 'free'
-  return 'unknown'
-}
-
 export const createPlatformEntitlements = (values: Partial<PlatformEntitlements> = {}): PlatformEntitlements => ({
   netease: 'unknown',
   qq: 'unknown',
-  apple: 'unknown',
-  spotify: 'unknown',
   ...values,
 })
 

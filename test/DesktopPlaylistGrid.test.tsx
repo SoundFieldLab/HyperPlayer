@@ -14,12 +14,12 @@ vi.mock('../src/components/SongContextMenu', () => ({
 
 const song = {
   id: 1,
-  mid: 'spotify-track',
+  mid: 'netease-track',
   name: 'Track',
   artists: [{ name: 'Artist' }],
   album: { name: 'Album', picUrl: '' },
   duration: 1000,
-  platform: 'spotify' as const,
+  platform: 'netease' as const,
 }
 
 beforeEach(() => {
@@ -38,7 +38,7 @@ function renderGrid(onRemoveFromPlaylist?: () => void) {
       loading={false}
       onPlaySong={vi.fn()}
       formatDuration={() => '0:01'}
-      platform="spotify"
+      platform="netease"
       neteaseVip={false}
       qqVip={false}
       onRemoveFromPlaylist={onRemoveFromPlaylist}

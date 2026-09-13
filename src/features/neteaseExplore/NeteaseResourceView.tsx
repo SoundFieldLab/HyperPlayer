@@ -1,5 +1,5 @@
 import { Ban, Crown, Disc3, ExternalLink, Film, Heart, MessageSquareText, Play, Radio, UserRound } from 'lucide-react'
-import { HorizontalShelf } from '../../components/apple-explore/HorizontalShelf'
+import { HorizontalShelf } from '../../components/explore/HorizontalShelf'
 import CachedImage from '../../components/CachedImage'
 import type { ExplorePlaylist } from '../../services/exploreApi'
 import type { Song } from '../../services/musicApi'

@@ -38,7 +38,8 @@ const specialLyrics: LyricLine[] = [{
 
 beforeEach(() => {
   localStorage.clear()
-  localStorage.setItem('appleMusicSettings', JSON.stringify({ duetColors: true }))
+  // 对唱配色开关的持久化键（appleLyricsStyle.getLyricDuetSettings 读取）
+  localStorage.setItem('appleDuetColors', 'true')
   vi.stubGlobal('ResizeObserver', class ResizeObserverMock {
     observe() {}
     disconnect() {}

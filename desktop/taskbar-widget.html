@@ -237,7 +237,7 @@
     }
     const lyric = state.lyric, primary = $('linePrimary'), secondary = $('lineSecondary')
     if (hasSong && lyric && lyric.line) { rebuildKaraoke(lyric); if (karaokeWords) { secondary.textContent = '' } else { primary.textContent = lyric.line; secondary.textContent = '' } }
-    else if (state.live) { primary.textContent = state.title || 'Apple Music 广播'; secondary.textContent = '正在直播'; karaokeWords = null; karaokeWordEls = [] }
+    else if (state.live) { primary.textContent = state.title || '正在播放'; secondary.textContent = '正在直播'; karaokeWords = null; karaokeWordEls = [] }
     else { primary.textContent = state.title || '未在播放'; secondary.textContent = state.artist || '' }
     // 歌词滚动：非逐字模式且文本超长时启用 marquee
     const wrap = $('lyricWrap'); wrap.classList.remove('marquee')

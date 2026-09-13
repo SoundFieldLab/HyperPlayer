@@ -4,7 +4,6 @@ import { getAddablePlaylists } from '../src/services/addablePlaylists'
 const owners = {
   neteaseUserId: 'n1',
   qqUserId: 'q1',
-  spotifyUserId: 's1',
 }
 
 describe('addable playlists', () => {
@@ -18,11 +17,11 @@ describe('addable playlists', () => {
     expect(getAddablePlaylists(playlists, 'netease', owners).map(item => item.id)).toEqual(['mine'])
   })
 
-  it('rejects followed Spotify playlists', () => {
+  it('accepts explicitly-owned playlists and rejects unknown ownership', () => {
     expect(getAddablePlaylists([
-      { id: 'owned', platform: 'spotify', ownedByMe: true },
-      { id: 'followed', platform: 'spotify', ownedByMe: false, owner: 'other' },
-    ], 'spotify', owners).map(item => item.id)).toEqual(['owned'])
+      { id: 'explicit', platform: 'qq', ownedByMe: true },
+      { id: 'unknown', platform: 'qq' },
+    ], 'qq', owners).map(item => item.id)).toEqual(['explicit'])
   })
 
   it('rejects other users\' playlists on QQ', () => {

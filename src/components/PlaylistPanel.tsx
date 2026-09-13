@@ -4,6 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { X, Play, Music, Loader2, Sparkles } from 'lucide-react'
 import { isTvModeActive } from '../platform'
 import { Song } from '../services/musicApi'
+import type { MusicPlatform } from '../services/platforms'
 import CachedImage from './CachedImage'
 import ScrollToTop from './ScrollToTop'
 import ScrollToCurrentSong from './ScrollToCurrentSong'
@@ -17,7 +18,7 @@ interface PlaylistPanelProps {
   onSongSelect: (index: number) => void
   neteaseVip?: boolean
   qqVip?: boolean
-  currentPlatform?: 'netease' | 'qq' | 'apple' | 'spotify'
+  currentPlatform?: MusicPlatform
   onSmartReorder?: () => void
   isSmartReordering?: boolean
   smartReorderProgress?: { completed: number; total: number }

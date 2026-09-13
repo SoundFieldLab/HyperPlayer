@@ -4,14 +4,14 @@ import { describe, expect, it, vi } from 'vitest'
 import DesktopMiniPlayer from '../src/components/DesktopMiniPlayer'
 import type { Song } from '../src/services/musicApi'
 
+// 直播态仍由桌面/任务栏协议驱动（如 QQ 电台），此处用最小歌曲数据验证界面收敛
 const radioSong: Song = {
   id: 0,
   name: 'Radio',
-  artists: [{ name: 'Apple Music' }],
+  artists: [{ name: 'QQ 音乐' }],
   album: { name: 'Radio', picUrl: '' },
   duration: 0,
-  platform: 'apple',
-  appleRadio: { stationId: 'station', storefront: 'cn', timeline: 'live' },
+  platform: 'qq',
 }
 
 describe('DesktopMiniPlayer live semantics', () => {

@@ -18,7 +18,6 @@ import type { PlaybackTimeStore } from '../audio/playbackTimeStore'
 import { clampPlaybackProgress, getLyricExcerpt } from '../services/desktopWidgetPlayback'
 import { fetchExploreHome, fetchExploreRecommendationBatch } from '../services/exploreApi'
 import { getNeteasePlaylistTrackPage, getPlaylistDetail } from '../services/playlistService'
-import { appleSongToSong, getAppleFavoriteSongs } from '../services/appleCatalog'
 import {
   clearDesktopMusicActivity,
   DESKTOP_MUSIC_ACTIVITY_EVENT,
@@ -165,9 +164,6 @@ function normalizePlaylistSongs(data: any, platform: MusicPlatform): Song[] {
   const raw = platform === 'qq'
     ? data?.songlist || data?.playlist?.tracks || data?.tracks || []
     : data?.playlist?.tracks || data?.songs || data?.tracks || []
-  if (platform === 'apple') {
-    return raw.filter((song: Song) => Boolean(song.appleId || song.appleLibraryId || song.id))
-  }
   return raw.map((item: any) => platform === 'qq' ? {
     id: Number(item.id || item.songid || 0), mid: item.mid || item.songmid, name: item.name || item.songname || '未知歌曲',
     artists: (item.artists || item.singer || []).map((artist: any) => ({ id: artist.id, mid: artist.mid, name: artist.name })),
@@ -421,15 +417,13 @@ function DesktopExtraWidgetContent({ type, cardBlurAmount, accentColor, context,
     if (type !== 'favoriteSongs') return
     let active = true
     setFavoritesLoading(true)
-    const request: Promise<Song[]> = context.platform === 'apple'
-      ? getAppleFavoriteSongs(5000).then(tracks => tracks.map(track => appleSongToSong(track)))
-      : (() => {
-        const liked = context.playlists.find(playlist => playlist.isLike)
-        if (!liked) return Promise.resolve([])
-        return context.platform === 'netease'
-          ? getNeteasePlaylistTrackPage(liked.id, 0, 120).then(page => normalizePlaylistSongs({ playlist: { tracks: page.tracks } }, context.platform))
-          : getPlaylistDetail(String(liked.id), context.platform).then(data => normalizePlaylistSongs(data, context.platform))
-      })()
+    const request: Promise<Song[]> = (() => {
+      const liked = context.playlists.find(playlist => playlist.isLike)
+      if (!liked) return Promise.resolve([])
+      return context.platform === 'netease'
+        ? getNeteasePlaylistTrackPage(liked.id, 0, 120).then(page => normalizePlaylistSongs({ playlist: { tracks: page.tracks } }, context.platform))
+        : getPlaylistDetail(String(liked.id), context.platform).then(data => normalizePlaylistSongs(data, context.platform))
+    })()
     request.then(songs => { if (active) setFavoriteSongs(songs) }).catch(() => { if (active) setFavoriteSongs([]) }).finally(() => { if (active) setFavoritesLoading(false) })
     return () => { active = false }
   }, [context.platform, context.playlists, type])
