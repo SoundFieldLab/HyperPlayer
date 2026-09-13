@@ -411,7 +411,7 @@ function sanitizeFileName(name: string): string {
 }
 
 /**
- * 离线导出：解码源音频 → 独立 EngineV3 分块处理（与实时链同一内核，逐样本一致）
+ * 离线导出：解码源音频 → 独立 HyperSoundEngine 分块处理（与实时链同一内核，逐样本一致）
  * → Float32→Int16 → lamejs MP3 128kbps。尾部以 1s 静音冲刷卷积混响/限幅器 lookahead 余量。
  * 保存：Electron 下经 IPC 直写桌面（<歌曲名>-Modified.mp3，重名自动 (2) 序号）；
  * 非 Electron（网页/TV）退化为浏览器下载。
@@ -434,7 +434,7 @@ export async function exportV3Mp3(sourceUrl: string, durationSeconds: number, op
   engine.setParams(currentParams)
 
   // 快照导出开始时的参数，处理期间参数变化不影响本次导出。
-  // 空间音频已内联进 EngineV3，engine.process 自动包含（无需独立后端包裹）。
+  // 空间音频已内联进 HyperSoundEngine，engine.process 自动包含（无需独立后端包裹）。
   const srcL = decoded.getChannelData(0)
   const srcR = decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : srcL
 

@@ -9,7 +9,7 @@
  *   并保留文件末尾的 registerProcessor 守卫；本文件以源码形态给出，便于阅读与单测。
  *
  * 线程模型：
- *   - 构造：以全局 sampleRate 创建 EngineV3（2 声道）；
+ *   - 构造：以全局 sampleRate 创建 HyperSoundEngine（2 声道）；
  *   - port.onmessage：接收主线程 {type:'params', params: V3EngineParams} 与
  *     {type:'reset'} 消息，参数快照语义（setParams 整体替换）；
  *   - 每 STATS_INTERVAL_CALLBACKS 次 process 回调（约 30×128 帧 ≈ 80ms @48kHz）

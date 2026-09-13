@@ -136,7 +136,7 @@ export default function SpatialStudioLayout({
   children,
   status,
 }: SpatialStudioLayoutProps) {
-  /* ── 状态栏：空间音频已内联 EngineV3（纯 TS DSP，无独立 worklet），
+  /* ── 状态栏：空间音频已内联 HyperSoundEngine（纯 TS DSP，无独立 worklet），
    *    延迟/后端/CPU 统计不再可用（原 fusion 层 worklet 回传已移除），
    *    状态栏静态显示「—」；活跃对象数按当前模式扬声器数即时计算。 ── */
 

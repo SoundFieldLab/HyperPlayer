@@ -140,7 +140,7 @@ Windows 发布机/CI 必须配置 `EVS_ACCOUNT_NAME`、`EVS_PASSWD` 并安装 `c
 
 ## 空间音频（Spatial Audio）
 
-空间音频是 **EngineV3 的第 15 级处理**（纯 TypeScript，内联调用 `src/services/HyperSoundEngine-v1/src/spatial/*` 纯模块），不是独立 AudioWorklet 节点，也无 WASM/Rust 后端；`mode='off'` 时完全旁路、逐位不触碰 L/R。参数属于 `V3EngineParams.spatial`，随 `hyperplayer:v3-params` 快照持久化。四种模式：
+空间音频是 **HyperSoundEngine 的第 15 级处理**（纯 TypeScript，内联调用 `src/services/HyperSoundEngine-v1/src/spatial/*` 纯模块），不是独立 AudioWorklet 节点，也无 WASM/Rust 后端；`mode='off'` 时完全旁路、逐位不触碰 L/R。参数属于 `V3EngineParams.spatial`，随 `hyperplayer:v3-params` 快照持久化。四种模式：
 
 - **A 一键空间化**：立体声展开为 ±30°（20..120° 可调）虚拟扬声器，干湿混合强度 / 房间模拟预设 / 房间混响可调
 - **B 头锁定环绕**：5.1 / 5.1.4 / 7.1 / 7.1.4 / 自定义布局预设 + 环形拖拽编辑器（上限 16 只扬声器）+ 逐扬声器声源路由（L / R / both），声场固定于头部朝向（耳机听感）

@@ -147,7 +147,7 @@ function defaultEqProBands(): EqBand[] {
 
 // ---------------------------------------------------------------------------
 // 空间音频（第 15 级）分享串编解码：plain-data JSON 块整体往返
-// 子结构形状由 spatial/types 定义、由 EngineV3 移植的 spatialConfigFromSettings 消费，
+// 子结构形状由 spatial/types 定义、由 HyperSoundEngine 移植的 spatialConfigFromSettings 消费，
 // share-code 层不做逐字段白名单（避免与 spatial/types 双份维护漂移）——编码端原样
 // 深拷贝为 plain object，解码端递归过滤只保留 boolean/有限 number/string/plain array/
 // plain object（防 prototype 污染 + 剔除函数/Symbol/循环引用等异常 payload）。
@@ -205,7 +205,7 @@ function deepSanitizeSpatial(v: unknown, depth: number): unknown {
 /**
  * 解码 SpatialSettings：raw 为对象 → 深度清洗 → 期望形状校验（关键字段 mode 在白名单内，
  * 子对象存在性）→ 强类型断言；非法/缺省 → createDefaultSpatialSettings()。
- * 形状校验保持宽松（仅 mode 白名单 + 各子对象为对象），完整字段有效性由 EngineV3 消费时
+ * 形状校验保持宽松（仅 mode 白名单 + 各子对象为对象），完整字段有效性由 HyperSoundEngine 消费时
  * 的 spatialConfigFromSettings 兜底（布局/场景助手自带钳位）。
  */
 function decodeSpatial(raw: unknown): SpatialSettings {

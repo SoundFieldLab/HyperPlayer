@@ -1,12 +1,11 @@
 /**
- * 空间音频（Spatial Audio）参数模型 —— HSE 独立命名空间
+ * 空间音频（Spatial Audio）参数模型 —— HyperSoundEngine 命名空间
  *
- * 空间音频是 v3 处理节点之后的兄弟 AudioWorklet 节点（同 SoundTouch 先例）：
- *   masterGain → [soundtouch?] → v3Node → [spatial?] → analyser
+ * 空间音频是处理链的**第 15 级**，纯 TS 内联在 HyperSoundEngine 内（不是 v3 之后的兄弟节点）：
+ *   masterGain → [soundtouch?] → v3 节点（内含第 15 级空间音频） → analyser
  *
- * 与 V3EngineParams 完全解耦：不进入场景快照（像音量一样是全局设置），
- * 独立持久化于 localStorage（hyperplayer:spatial-params）。EngineV3 零改动。
- * 角度单位：度；距离单位：米。
+ * 参数是 V3EngineParams.spatial 的一部分，随 `hyperplayer:v3-params` 快照持久化
+ * （没有独立的 localStorage 键）。角度单位：度；距离单位：米。
  */
 
 import { createLayoutSpeakers } from './layouts'

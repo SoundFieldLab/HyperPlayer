@@ -4,7 +4,7 @@
  *  - attach：masterGain 全断 → 接入 v3 节点 → 连 analyser（防新旧双链并联打架）；
  *  - dispose：恢复 masterGain→analyser 直连（v2 dispose 同款语义）；
  *  - 幂等 / 竞态（异步注册期间被 dispose → 放弃接线且直连已恢复）；
- *  - script 兜底通路：onaudioprocess 里音频真实经过 EngineV3 处理（限幅生效）。
+ *  - script 兜底通路：onaudioprocess 里音频真实经过 HyperSoundEngine 处理（限幅生效）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
 import { EngineV3Host, type V3AudioContextLike, type V3HostHandle } from '../src/integration/EngineV3Host'

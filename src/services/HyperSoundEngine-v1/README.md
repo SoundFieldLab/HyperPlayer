@@ -8,7 +8,7 @@
 │   │   └── API_SPEC.md                 # 模块契约（子代理实现规范）
 │   ├── engine/                         # 引擎总成
 │   │   ├── EngineV3.ts ScenePresets.ts ShareCodec.ts builtinSceneSeed.ts
-│   ├── spatial/                         # 第 15 级空间音频（纯 TS，EngineV3 内联调用，无 WASM/Rust）
+│   ├── spatial/                         # 第 15 级空间音频（纯 TS，HyperSoundEngine 内联调用，无 WASM/Rust）
 │   │   ├── types.ts TsConvolverBackend.ts TimeConvolver.ts SpatialBackend.ts
 │   │   ├── analyticHrtf.ts hrtfInterp.ts roomSim.ts ambisonics.ts
 │   │   └── layouts.ts scenes.ts controller.ts keymap.ts ambienceMixer.ts + test/

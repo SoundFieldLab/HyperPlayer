@@ -4,7 +4,7 @@
  * 从 SpatialPage 拆分而来（SpatialPage 现仅保留混响/3D环绕/立体声宽度等
  * V3EngineParams 效果卡）。本页只承载空间音频（Spatial Audio）：双耳渲染的
  * 4 档模式（instant/headLocked/world/stage）+ 标准/专业视图切换 +
- * 设置弹窗入口。状态走 V3EngineParams.spatial（EngineV3 第 15 级内联）。
+ * 设置弹窗入口。状态走 V3EngineParams.spatial（HyperSoundEngine 第 15 级内联）。
  *
  * 视图模式：标准视图（卡片流，默认）/ 专业视图（四象限工作室布局，窄窗
  * < 900px 自动回退标准视图 useProViewEligible）。
@@ -38,7 +38,7 @@ import { HEAD_LOCKED_LAYOUTS, SPATIAL_ROOM_OPTIONS } from '../components/spatial
 
 interface SpatialAudioPageProps {
   bridge: V3UiBridge
-  /** V3 引擎参数控制器：空间音频参数在 V3EngineParams.spatial（EngineV3 第 15 级内联）。 */
+  /** V3 引擎参数控制器：空间音频参数在 V3EngineParams.spatial（HyperSoundEngine 第 15 级内联）。 */
   controller: V3ParamsController
   theme: HSETheme
   onOpenEffect: (key: string) => void
@@ -72,7 +72,7 @@ const HEAD_LOCKED_EDITOR_VIEWS: { value: 'ring' | 'sphere'; label: string }[] = 
 ]
 
 export default function SpatialAudioPage({ bridge, controller, theme, playbackTimeStore }: SpatialAudioPageProps) {
-  /* ── 空间音频（V3EngineParams.spatial，EngineV3 第 15 级内联） ── */
+  /* ── 空间音频（V3EngineParams.spatial，HyperSoundEngine 第 15 级内联） ── */
   const { params, patch } = controller
   const spatial: SpatialSettings = params.spatial ?? createDefaultSpatialSettings()
 
@@ -96,7 +96,7 @@ export default function SpatialAudioPage({ bridge, controller, theme, playbackTi
   const worldActive = spatial.mode === 'world'
   const stageActive = spatial.mode === 'stage'
 
-  /** 深合并写入空间参数（V3EngineParams.spatial，EngineV3 第 15 级内联） */
+  /** 深合并写入空间参数（V3EngineParams.spatial，HyperSoundEngine 第 15 级内联） */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const patchSpatial = (p: any): void => {
     patch({ spatial: { ...spatial, ...p } })

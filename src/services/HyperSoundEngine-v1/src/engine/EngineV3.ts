@@ -1,5 +1,5 @@
 /**
- * HyperPlayer 音频引擎 v3 —— 引擎总成（EngineV3）
+ * HyperPlayer 音频引擎 HyperSoundEngine —— 引擎总成（代码标识符保留 v3 / EngineV3）
  *
  * 出处/许可：
  *  - 链式架构与参数模型：本项目《音频算法设计文档.md》§2 总体架构（自研）；
@@ -148,9 +148,9 @@ function cloneSpatial(s: SpatialSettings): SpatialSettings {
 
 // ==================== 第 15 级：空间音频配置推导（port 自 spatial/fusion.ts） ====================
 // fusion.ts 含浏览器/worklet 副作用（SpatialNode/localStorage/backendIndex），不可被纯 DSP
-// 内核 EngineV3 导入；以下为 fusion.spatialConfigFromParams / speakersFromParams 的纯函数移植，
+// 内核 HyperSoundEngine 导入；以下为 fusion.spatialConfigFromParams / speakersFromParams 的纯函数移植，
 // 复用 layouts/scenes/controller 纯模块，行为与 fusion 逐支一致。
-// 差异（EngineV3 为立体声内核）：① 无 output 分支（无该字段）；② hrtfInterp 直接由 settings
+// 差异（HyperSoundEngine 为立体声内核）：① 无 output 分支（无该字段）；② hrtfInterp 直接由 settings
 // 给出（无 perfMode 映射）；③ instant.multichannelAuto 退化为 instantSpeakers（输入恒 2 声道）；
 // ④ 不附加 ambience 扬声器（FOA 动态混合是处理器层能力，内联级不实现，ambience 字段保留待扩展）。
 
@@ -188,7 +188,7 @@ function trajectoryPosition(world: WorldSettings, sourceId: string): { x: number
 /** SpatialSettings → 虚拟扬声器列表（port 自 fusion.speakersFromParams） */
 function speakersFromSettings(s: SpatialSettings): VirtualSpeaker[] {
   if (s.mode === 'instant') {
-    // EngineV3 立体声内核（2 声道）：多声道自动映射无意义 → 常规立体声对
+    // HyperSoundEngine 立体声内核（2 声道）：多声道自动映射无意义 → 常规立体声对
     return instantSpeakers(s.instant)
   }
   if (s.mode === 'headLocked') {

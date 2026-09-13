@@ -153,7 +153,7 @@ npx esbuild src/services/HyperSoundEngine-v1/worklet/AudioEffectsProcessor.ts \
   `predev` / `predev:electron` / `prebuild` 钩子已自动执行该打包，无需手动跑。
 - `EngineV3Host` 的 `mode: 'auto'` 会**优先 worklet、失败自动回退 script**（无需打包也能出声，便于先联调后打包）。
 - 注意：worklet 内 `sampleRate` 为全局变量；参数经 `port.postMessage({type:'params'})` 下发。
-- **空间音频没有独立 worklet**：它是 EngineV3 内联第 15 级，**不存在** `public/spatial-worklet.js`
+- **空间音频没有独立 worklet**：它是 HyperSoundEngine 内联第 15 级，**不存在** `public/spatial-worklet.js`
   与 `build:spatial-worklet` 脚本（见 §6）。
 
 ### 步骤 4：参数对接（v3 自有模型，不做 v2 字段迁移）
@@ -230,7 +230,7 @@ v3 双路径共用同一内核：解码后 PCM → `EngineV3.process` 分块处�
 
 ---
 
-## 6. 空间音频（Spatial Audio）——现状：EngineV3 第 15 级内联
+## 6. 空间音频（Spatial Audio）——现状：HyperSoundEngine 第 15 级内联
 
 > **2026-09-13 校正（本节按当前代码重写）**：空间音频**不是**独立的 AudioWorklet 节点，
 > 也**没有** WASM / Rust 后端。它由 `EngineV3.ts` 以相对路径 `import '../spatial/...'` **内联调用**，
@@ -309,7 +309,7 @@ masterGain → [SoundTouch 变速变调（pitch 活跃时）] → v3 节点（�
 | `stage` | `StageSettings` | 见下 | 模式 D |
 | `ambience` | `AmbienceSettings` | `{ enabled: false, amount: 0.3 }` | 环境声 Ambisonics 上混叠加 |
 
-各模式子设置（`src/spatial/types.ts` 同名接口，UI 与 EngineV3 共用）：
+各模式子设置（`src/spatial/types.ts` 同名接口，UI 与 HyperSoundEngine 共用）：
 
 - **instant（模式 A）**：`spreadDeg`（20..120，虚拟扬声器 ±spreadDeg/2）、`amount`（0..1 干湿混合）、
   `room`（`RoomPreset`：off/studio/hall/stage/church/outdoor/bathroom/corridor）、`roomAmount`（0..1 房间混响叠加量）、`multichannelAuto`（多声道输入自动映射开关，默认 false）。
@@ -393,4 +393,4 @@ UI 侧可用的纯函数/表（直接 import `src/spatial/*`，不经引擎）�
   `hrtf-data/grid.bin` KEMAR 网格、`data/grid.ts` / `data/datasets.ts`、`hrtfStore.ts`（IndexedDB 数据集）
   一并移除。
 - **现状**：仅 `TsConvolverBackend`（分区 FFT）+ `TimeConvolver`（时域）两条纯 TS 路径，
-  由 `EngineV3` 第 15 级内联调用；`npm run build:v3-worklet` 只打包 `v3-worklet.js`。
+  由 `HyperSoundEngine` 第 15 级内联调用；`npm run build:v3-worklet` 只打包 `v3-worklet.js`。

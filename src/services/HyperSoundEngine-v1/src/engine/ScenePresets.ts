@@ -9,7 +9,7 @@
  *  - 每个场景 = createDefaultParams(48000) 派生后覆盖 EQ 曲线 + 混响 + 压缩 +
  *    低音 + 齿音等，构成完整参数快照（快照语义，params.sceneId = 自身 id）；
  *  - 快照不含 IR 数据（卷积 IR 一律 null，混响走算法混响，符合"用 irName 引用"约定）；
- *  - params.sampleRate 为快照标称采样率；EngineV3 实际以构造时采样率处理。
+ *  - params.sampleRate 为快照标称采样率；HyperSoundEngine 实际以构造时采样率处理。
  */
 
 import { createDefaultParams, PRO_EQ_DEFAULT_BANDS } from '../types'

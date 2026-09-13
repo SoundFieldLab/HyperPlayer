@@ -1,7 +1,7 @@
 /**
  * HyperPlayer v3 调音室 UI —— 引擎桥（V3UiBridge）
  *
- * UI 只依赖本文件的桥接口（不直接 import EngineV3），融合时把桥接实现换到
+ * UI 只依赖本文件的桥接口（不直接 import HyperSoundEngine），融合时把桥接实现换到
  * HyperPlayer 侧（引擎实例来自 EngineV3Host.engine 或直接 new EngineV3）即可。
  *
  * 桥职责：
@@ -102,7 +102,7 @@ function saveMyScenes(list: ScenePreset[]): void {
   }
 }
 
-/** 把 EngineV3 包装成 UI 桥（融合时在 HyperPlayer 侧调用） */
+/** 把 HyperSoundEngine 包装成 UI 桥（融合时在 HyperPlayer 侧调用） */
 export function createV3UiBridge(engine: EngineV3, sampleRate: number): V3UiBridge {
   const hearing = new HearingTest(sampleRate)
   let current: V3EngineParams = createDefaultParams(sampleRate)

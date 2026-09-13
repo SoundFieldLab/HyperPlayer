@@ -5,7 +5,7 @@
  *  - 本文件仅为模块聚合出口，无算法实现；各导出模块的出处/许可见各自源文件头部注释。
  *
  * 说明：
- *  - 导出内容：全部类型 + EngineV3 + 场景预设 + 分享串编解码 + 频谱分析器 +
+ *  - 导出内容：全部类型 + HyperSoundEngine + 场景预设 + 分享串编解码 + 频谱分析器 +
  *    听力分析 + 声源分离队列 + Worklet 处理器名 + 全部 dsp 模块；
  *  - 注意：AudioWorklet 处理器模块在 AudioWorkletGlobalScope 外无法裸加载
  *    （见 worklet/AudioEffectsProcessor.ts 注释），故此处不直接 import 该模块

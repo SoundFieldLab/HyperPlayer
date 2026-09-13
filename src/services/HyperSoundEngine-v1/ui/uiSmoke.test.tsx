@@ -2,7 +2,7 @@
  * HyperPlayer v3 调音室 UI —— HyperSoundEngine 风格新 UI 渲染冒烟测试（jsdom）
  *
  * 验证主面板可渲染、左侧导航切换、效果弹窗开合、场景应用、分享串往返、
- * 听力测试流程状态机推进。不依赖真实 Web Audio（桥由 EngineV3 真实实例提供）。
+ * 听力测试流程状态机推进。不依赖真实 Web Audio（桥由 HyperSoundEngine 真实实例提供）。
  * 环境：文件头 @vitest-environment jsdom。
  */
 

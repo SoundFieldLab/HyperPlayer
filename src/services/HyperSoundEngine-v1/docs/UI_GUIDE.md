@@ -111,7 +111,7 @@ const bridge = createV3UiBridge(host.engine, ctx.sampleRate) // host = EngineV3H
 
 ## 6. 设计说明（供审查）
 
-1. **UI 与引擎解耦**：所有面板只依赖 `V3UiBridge` 接口与参数快照，不 import EngineV3；
+1. **UI 与引擎解耦**：所有面板只依赖 `V3UiBridge` 接口与参数快照，不 import HyperSoundEngine；
    融合侧可替换桥实现（如包一层 Web Audio 适配）。
 2. **快照语义**：`useV3Params` 的 patch 做深合并后整包提交（`setParams` 完整快照），符合引擎契约；
    场景/分享串/恢复默认走 replace。

@@ -5,7 +5,7 @@
  *  - 输出模式：双耳 Binaural / 立体声下混 可切换（→ onPatch({ output })，字段
  *    SpatialParams.output = 'binaural' | 'stereo' | 'multichannel' 已落地）；
  *    多声道（开发中 禁用）；
- *  - HRTF：当前使用 EngineV3 内联合成解析 HRTF；外部数据集导入尚未实现，
+ *  - HRTF：当前使用 HyperSoundEngine 内联合成解析 HRTF；外部数据集导入尚未实现，
  *    因此不展示无效的文件选择控件；
  *  - 卷积模式：时域与分区 FFT 由引擎后端实现；
  *  - 渲染资源：最大对象数 16 → 64（引擎支持到 64 对象，本波性能基准已覆盖）。
@@ -23,7 +23,7 @@ import type { ReactNode } from 'react'
 import { Settings2, X } from 'lucide-react'
 import type { HSETheme } from '../hse-theme'
 import type { DeepPartial, SpatialParams } from '../../src/spatial/types'
-// 空间音频已内联 EngineV3（纯 TS DSP），当前使用合成解析 HRTF。
+// 空间音频已内联 HyperSoundEngine（纯 TS DSP），当前使用合成解析 HRTF。
 // 外部 SOFA 数据集导入与独立 fusion worklet 已移除，避免展示不可操作的占位控件。
 // 输出设备切换仍由主播放器的独立设备控制入口负责。
 import { Segmented, Slider } from './Primitives'

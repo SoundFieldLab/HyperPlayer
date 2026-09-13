@@ -6,7 +6,7 @@
  *    有 sinkId → 已选设备。
  *
  * 历史：弹窗「输出设备」区与 fusion 层 enumerateDevices/setSinkId/getSpatialParams
- * 联动用例（原测试 1-3）随空间音频内联 EngineV3、独立 fusion worklet 层移除而删除
+ * 联动用例（原测试 1-3）随空间音频内联 HyperSoundEngine、独立 fusion worklet 层移除而删除
  * （fusion.ts / sofa.ts / gridSource.ts 已删，输出设备切换标注「开发中」后续 wave 接
  * 主播放器 AudioContext.setSinkId）。SpatialStudioLayout 状态栏「输出」为静态展示，
  * 不依赖已删模块，保留。

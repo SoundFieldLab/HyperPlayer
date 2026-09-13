@@ -40,7 +40,7 @@
 | 25 | 引擎总成（双路径实时/离线） | `src/engine/EngineV3.ts` | 设计文档 §2/§5 | engine(12) | ✅ 确定性、零分配、latency 计算、限幅峰值约束 |
 | 26 | AudioWorklet 处理器 | `src/worklet/AudioEffectsProcessor.ts` | 设计文档 §2 | （打包期验证） | ✅ 结构正确；融合时 esbuild 打包单文件 |
 | 27 | **引擎宿主/切换接线**（EngineV3Host） | `src/integration/EngineV3Host.ts` | 切换语义同 v2（先断后连/恢复直连/幂等/竞态防护） | integration(9) | ✅ worklet/script 双模式 + 回退；dispose 恢复直连；竞态下不接线；script 通路限幅实测生效 |
-| 28 | **空间音频（第 15 级，EngineV3 内联）** | `src/spatial/*`（TS 后端 `TsConvolverBackend` / `TimeConvolver`）+ `src/engine/EngineV3.ts` | 自研 + 公开文献（镜像声源/FDN/Woodworth） | `src/spatial/test/` 8 文件 | ✅ 纯 TS 后端（**无 WASM/Rust**）；mode='off' 逐位旁路；参数随 `hyperplayer:v3-params` 持久化 |
+| 28 | **空间音频（第 15 级，HyperSoundEngine 内联）** | `src/spatial/*`（TS 后端 `TsConvolverBackend` / `TimeConvolver`）+ `src/engine/EngineV3.ts` | 自研 + 公开文献（镜像声源/FDN/Woodworth） | `src/spatial/test/` 8 文件 | ✅ 纯 TS 后端（**无 WASM/Rust**）；mode='off' 逐位旁路；参数随 `hyperplayer:v3-params` 持久化 |
 
 **合计 28 项条目（#15 已移除并入 #10，有效 27 项功能）/ 模块内 45 测试文件；全仓 vitest 140 文件 / 1269 用例 = 1264 过 + 5 跳过 + 0 todo（2026-09-13 实测）。**
 
@@ -73,7 +73,7 @@ DSPFilters(MIT, biquad TDF2 思路)、kissfft(BSD-3, FFT 蝶形)、stk(MIT 类, 
   （v2 同款 `TARGET_LUFS = -14`），对音乐播放器合理；EBU R128 广播标准为 -23 LUFS、
   Apple Music 为 -16 LUFS。
 - v3 的 `loudnessNormalization.targetLufs` 字段**可配置**，融合期可做成用户可调
-  （如 -14 流媒体 / -16 Apple / -23 广播三档），EngineV3 链内实时测量驱动（替代 v2 的整曲测量+静态增益）。
+  （如 -14 流媒体 / -16 Apple / -23 广播三档），HyperSoundEngine 链内实时测量驱动（替代 v2 的整曲测量+静态增益）。
 
 ### 2.4 GPL/AGPL 回避（本次调研确认）—— 0 引入
 - **pitchfinder（GPLv3）**：YIN/AMDF 的 JS 实现，**许可证不符，不采用**——自研 PitchYin 正确避免了 GPL；
@@ -110,6 +110,6 @@ DSPFilters(MIT, biquad TDF2 思路)、kissfft(BSD-3, FFT 蝶形)、stk(MIT 类, 
       （LGPL 可选依赖未安装时相关用例由 `describe.skipIf` 自动跳过）
 - [x] 类型检查走仓库根 `npm run lint`（`tsc --noEmit`）0 错误
 - [x] AudioWorklet 单文件打包走仓库根 `npm run build:v3-worklet` → `public/v3-worklet.js`
-      （**无 `build:spatial-worklet`**：空间音频是 EngineV3 内联第 15 级，无独立 worklet）
+      （**无 `build:spatial-worklet`**：空间音频是 HyperSoundEngine 内联第 15 级，无独立 worklet）
 - [x] 融合文档 `docs/FUSION_GUIDE.md` 完整（含 LGPL 合规指引）
 - [x] 许可声明 `THIRD_PARTY_NOTICES.md` + `vendor/README.md`
