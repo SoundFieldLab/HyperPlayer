@@ -121,17 +121,28 @@ const performanceSettings = readPerformanceSettings()
 if (performanceSettings.highRefreshRate === true && performanceSettings.highRefreshHz) {
   try { app.commandLine.appendSwitch('force-frame-rate', String(performanceSettings.highRefreshHz)) } catch { /* 忽略 */ }
 }
-// 软件合成标记：GPU 合成器禁用时置 true（app ready 后由 getGPUFeatureStatus 判定）。
-// createWindow 据此动态调整 splash 最短可见时间（软件合成下内容层提交慢）。
-let gpuCompositingDisabled = false
+// 硬件加速 / GPU 偏好（启动前必须决定，故用命令行开关）
 if (!performanceSettings.hardwareAcceleration) {
   app.disableHardwareAcceleration()
-} else if (performanceSettings.gpuPreference === 'discrete') {
-  // 强制使用独立显卡（高性能 GPU）
-  app.commandLine.appendSwitch('force_high_performance_gpu')
-} else if (performanceSettings.gpuPreference === 'integrated') {
-  // 强制使用核显/集成显卡（低功耗 GPU）
-  app.commandLine.appendSwitch('force_low_power_gpu')
+} else {
+  // 默认开启全部可用的 GPU 加速通道（用户要求「加速默认开起来」）：
+  //   enable-gpu-rasterization         GPU 栅格化（页面/模糊图层走 GPU，减轻 CPU）
+  //   enable-zero-copy                 零拷贝纹理上屏（视频/canvas 合成少一次内存拷贝）
+  //   enable-accelerated-video-decode  硬件视频解码（启动页 VP9 视频与 MV 播放走 GPU）
+  // 有意不加 --ignore-gpu-blocklist：本机实测（等 GPU 状态稳定后读）全部特性已 enabled，
+  // 无需绕过黑名单；强行绕过可能在驱动层引入不稳定，风险大于收益。
+  try {
+    app.commandLine.appendSwitch('enable-gpu-rasterization')
+    app.commandLine.appendSwitch('enable-zero-copy')
+    app.commandLine.appendSwitch('enable-accelerated-video-decode')
+  } catch { /* 忽略 */ }
+  if (performanceSettings.gpuPreference === 'discrete') {
+    // 强制使用独立显卡（高性能 GPU）
+    app.commandLine.appendSwitch('force_high_performance_gpu')
+  } else if (performanceSettings.gpuPreference === 'integrated') {
+    // 强制使用核显/集成显卡（低功耗 GPU）
+    app.commandLine.appendSwitch('force_low_power_gpu')
+  }
 }
 
 // ── Widevine CDM 引导（Apple Music 原生音源：HLS 流走 EME 解密的钥匙）────────
@@ -2347,51 +2358,78 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
-function createWindow() {
-  // 开发模式下主页面加载很快，必须让启动画面先完成绘制并保持可见，
-  // 否则 splash 的动画还没显示就会被主窗口关闭。
-  // 软件合成（GPU 加速禁用）下内容层提交慢，splash 最短可见时间动态加长，
-  // 给流体光斑/logo/文字足够时间真正上屏（否则只见渐变底，观感像未加载）。
-  //
-  // 注意：gpuCompositingDisabled 由异步探测填充（见 app.whenReady 中的 readStableGpuStatus），
-  // 创建窗口时可能尚未就绪 —— 故这里用「延迟求值」：真正读取该值是在「切主窗口」那一刻
-  // （splashMinVisibleMsFor），那时 GPU 状态早已稳定，避免误判成软件合成而白等 2.3s。
-  const splashMinVisibleMsFor = () => (isDev ? 1800 : (gpuCompositingDisabled ? 3500 : 1200))
-  let splashShownAt = 0
+// ── 启动页动画的完成回报 ──
+// 启动页是预渲染视频（desktop/splash.html，由 scripts/build-splash.mjs 生成）：
+// 窗口 show 后主进程发 splash:start 放行，页面才开始播放；视频播完（ended）或
+// 播放失败时经 splash-preload.cjs 通过 splash:entrance-done 回报，主进程据此才切主窗口。
+// 见 createWindow 内的 showMainWindowWhenReady。
+//
+// 兜底上限：正常路径由页面「播完回报」驱动；若回报因故始终未到达
+//（桥接异常 / 视频卡死 / 页面脚本出错），启动页**显示后**超过此时长就强行切主窗口，
+// 保证主窗口一定会出现。锚定「显示时刻」而非「主窗口就绪时刻」——启动页可能晚于
+// 主窗口就绪才显示（创建/加载兜底最晚 +3s），锚错会让兜底把还在正常播放的视频掐断。
+const SPLASH_ENTRANCE_FALLBACK_MS = 4500
+let splashEntranceDone = false
+let onSplashEntranceDone = null
+ipcMain.on('splash:entrance-done', () => {
+  splashEntranceDone = true
+  if (typeof onSplashEntranceDone === 'function') onSplashEntranceDone()
+})
+// 启动页诊断打点（页面侧时间点）：写入启动日志。
+// 用于区分「首帧栅格化慢」与「rAF 被节流」—— 前者 syncPaint 耗时长，
+// 后者 firstRAF 来得晚 / rAFCount 少。排障后可保留（开销可忽略）。
+ipcMain.on('splash:mark', (_event, name, sinceBootMs, rafCount) => {
+  logStartupTiming(`[splash] ${name} @页面内+${sinceBootMs}ms (rAF×${rafCount})`)
+})
 
-  // ── 先解析主窗口的目标布局，供 splash 与主窗口共用 ──
-  // splash 必须在主窗口之前创建，但主窗口尺寸取决于「窗口状态记忆」（userData/window-state.json）。
-  // 若两者尺寸不一致，启动画面 → 主界面会出现明显的窗口跳动，故这里提前算出同一份 bounds：
-  //   1) 有可用记忆且版本一致 → 用记忆的 bounds（钳制进所在显示器工作区）；
-  //   2) 否则用软件默认 1400×900（与 window-state.cjs 的 DEFAULT_* 一致）。
-  // 最大化 / kiosk 状态无法在窗口创建时套用到 splash（那是 show 之后才生效的状态），
-  // 此时 splash 用还原后的 bounds（getNormalBounds 语义），切到主窗口时自然放大，属预期行为。
+// ── 启动页：优先创建并显示，不等任何其它初始化 ──
+// 背景：原先启动页与主窗口在 createWindow() 里一起创建，而 createWindow() 之前还有
+// 若干阻塞等待（如 Widevine 组件 whenReady）；主窗口一创建又要启动后端、建渲染进程，
+// 与启动页抢资源 —— 结果是「决定创建」到「真的显示」要花 300ms+，用户感觉启动页出来得慢。
+// 现在改为：app 就绪后**第一步**就创建并显示启动页，主窗口仍并行在后台加载，
+// 因此总启动时间不变（取两者最大值），只是启动页出现得更早。
+//
+// 与主窗口的关系：启动页恒为 alwaysOnTop，会一直盖着主窗口，直到主窗口确实
+// 画出一帧后才撤下（见 commitSwitchToMain），因此不会出现「黑屏一闪」。
+let splashWindow = null
+let splashShownAt = 0
+
+/**
+ * 解析主窗口的目标布局（尺寸/位置），供启动页与主窗口共用 —— 两者用同一份 bounds
+ * 才能保证切换时窗口不跳动。启动页需要它在「很早」就被调用（主窗口还没创建），
+ * 因此这里只依赖 userData 里的窗口状态记忆 + 屏幕信息，不依赖任何其它初始化。
+ *   - 有可用记忆且版本一致 → 用记忆的 bounds（钳制进所在显示器工作区）
+ *   - 否则 → 软件默认 1400×900，并按工作区收窄（小屏不越界），位置交给系统居中
+ * 注意：只返回尺寸/位置；最大化 / kiosk 这类「显示后」的状态由 createWindow 另行处理。
+ */
+function resolveTargetBounds() {
   const DEFAULT_MAIN_WIDTH = 1400
   const DEFAULT_MAIN_HEIGHT = 900
-  let targetBounds = { width: DEFAULT_MAIN_WIDTH, height: DEFAULT_MAIN_HEIGHT }
-  let savedWindowState = null
   try {
     const { screen } = require('electron')
-    savedWindowState = loadWindowState(app)
-    if (savedWindowState) {
+    const saved = loadWindowState(app)
+    if (saved) {
       const displays = screen.getAllDisplays()
-      const targetDisplay = displays.find((d) => d.id === savedWindowState.displayId) || screen.getPrimaryDisplay()
-      targetBounds = clampBoundsToWorkArea(savedWindowState.bounds, targetDisplay.workArea)
-    } else {
-      // 无窗口记忆：沿用「系统居中 + 默认尺寸」，但先按工作区收窄尺寸，
-      // 避免小屏上 1400×900 超出可用区域（x/y 不指定，交给系统居中）。
-      const { workArea } = screen.getPrimaryDisplay()
-      targetBounds = {
-        width: Math.max(1200, Math.min(DEFAULT_MAIN_WIDTH, workArea.width)),
-        height: Math.max(800, Math.min(DEFAULT_MAIN_HEIGHT, workArea.height)),
-      }
+      const targetDisplay = displays.find((d) => d.id === saved.displayId) || screen.getPrimaryDisplay()
+      return clampBoundsToWorkArea(saved.bounds, targetDisplay.workArea)
+    }
+    const { workArea } = screen.getPrimaryDisplay()
+    return {
+      width: Math.max(1200, Math.min(DEFAULT_MAIN_WIDTH, workArea.width)),
+      height: Math.max(800, Math.min(DEFAULT_MAIN_HEIGHT, workArea.height)),
     }
   } catch (error) {
     // 屏幕/状态不可用：退回默认尺寸（不使用 x/y，交给系统居中）
-    targetBounds = { width: DEFAULT_MAIN_WIDTH, height: DEFAULT_MAIN_HEIGHT }
+    return { width: DEFAULT_MAIN_WIDTH, height: DEFAULT_MAIN_HEIGHT }
   }
+}
 
-  const splashWindow = new BrowserWindow({
+/** 创建并显示启动页。窗口尺寸/位置对齐主窗口的目标布局，避免切换时窗口跳动。 */
+function createSplashWindowEarly(targetBounds) {
+  splashEntranceDone = false
+  onSplashEntranceDone = null
+
+  splashWindow = new BrowserWindow({
     width: targetBounds.width,
     height: targetBounds.height,
     ...(typeof targetBounds.x === 'number' && typeof targetBounds.y === 'number'
@@ -2406,30 +2444,33 @@ function createWindow() {
     maximizable: false,
     fullscreenable: false,
     icon: windowIcon.isEmpty() ? undefined : windowIcon,
-    // 显示时机：等渲染器完成首帧绘制（ready-to-show）再 show。
-    // 本机 GPU 合成器为 disabled_software（软件合成，GPU 加速禁用）：
-    // 窗口隐藏时渲染器默认暂停绘制（paintWhenInitiallyHidden=false），首帧可能
-    // 不完整；ready-to-show 触发≠内容已上屏，show 时窗口表面可能是 OS 默认白。
-    // 修复：paintWhenInitiallyHidden:true 让渲染器在隐藏时也持续绘制，
-    // 首帧内容（渐变底+光斑+logo+词标）在 show 前已完整就绪。
     show: false,
     // 底色与 splash.html 的最底层渐变起点一致（浅色），避免首帧出现深色闪烁
     backgroundColor: '#EEF2FF',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      paintWhenInitiallyHidden: true,  // 隐藏时持续绘制，splash 首帧内容完整
+      // 隐藏期间持续绘制：启动页要在 show 之前就把首帧（渐变底+光斑+logo+词标）画完整，
+      // 否则 show 出来的瞬间可能只是 OS 默认底色。这是「启动页出现即完整」的前提。
+      paintWhenInitiallyHidden: true,
+      // 极小的时序桥：只暴露 entranceDone（进场动画播完回报），
+      // 主进程据此才知道动画何时播完、可以切主窗口。
+      preload: path.join(__dirname, 'splash-preload.cjs'),
     },
   })
 
   let splashShown = false
   const showSplash = () => {
-    if (splashShown || splashWindow.isDestroyed() || splashWindow.isVisible()) return
+    if (splashShown || !splashWindow || splashWindow.isDestroyed() || splashWindow.isVisible()) return
     splashShown = true
     splashShownAt = Date.now()
     splashWindow.show()
     splashWindow.focus()
-    logStartupTiming(`Splash animation shown`)
+    // 窗口已真正显示，放行启动页开始播放动画。
+    // 视频版启动页刻意不用 autoplay：否则页面加载即起跑，而窗口要 ~500ms 后才 show，
+    // 用户看到时动画已播掉一截（logo 弹出一半）。这个信号让动画起点与用户所见对齐。
+    try { splashWindow.webContents.send('splash:start') } catch { /* 页面未就绪时忽略 */ }
+    logStartupTiming('Splash animation shown')
   }
   let splashLoadDone = false
   let splashFrameDone = false
@@ -2440,27 +2481,56 @@ function createWindow() {
     splashFrameDone = true
     tryShowSplash()
   })
-  const splashReady = splashWindow.loadFile(path.join(__dirname, 'splash.html'))
+  splashWindow.loadFile(path.join(__dirname, 'splash.html'))
     .then(() => {
       splashLoadDone = true
       tryShowSplash()
-      return true
     })
     .catch(error => {
       console.warn('[Startup] Failed to load splash animation:', error.message)
       splashLoadDone = true
       tryShowSplash()
-      return false
     })
+  // 兜底：任一事件异常未触发时也把启动页显示出来（否则用户面对空屏）
   setTimeout(() => {
     splashLoadDone = true
     splashFrameDone = true
     tryShowSplash()
   }, 3000)
+}
+
+function createWindow() {
+  // ── 启动页停留时长 ──
+  // 启动页至少可见 SPLASH_MIN_VISIBLE_MS 才允许切主窗口，且必须等动画真的播完
+  //（见下方 showMainWindowWhenReady 的三个条件）。
+  //
+  // 启动页已是预渲染视频（3.2s），解码走 GPU 不与主窗口抢 CPU；此值实际只在
+  // 「视频短于该时长」时才生效（托底最短观感）。打包版取 3500ms（视频播完后
+  // 在末帧停留约 300ms 再切，避免「刚播完就立刻切走」的急促感）；
+  // 开发模式放宽到 2 秒即可（前端热更新后主窗口很快就绪，视频时长本身已超过它）。
+  const SPLASH_MIN_VISIBLE_MS = isDev ? 2000 : 3500
+  const splashMinVisibleMsFor = () => SPLASH_MIN_VISIBLE_MS
+
+  // ── 主窗口的目标布局 ──
+  // 与启动页共用同一份 bounds（启动页在 app 就绪第一步就已按它创建），
+  // 保证启动画面 → 主界面切换时窗口不跳动。解析逻辑见 resolveTargetBounds()。
+  // 最大化 / kiosk 无法在窗口创建时套用到启动页（那要 show 之后才生效），
+  // 启动页用还原后的 bounds（getNormalBounds 语义），切到主窗口时自然放大，属预期行为。
+  const targetBounds = resolveTargetBounds()
+  const savedWindowState = loadWindowState(app)
+
+  // 启动页已在 app 就绪后**第一步**创建并显示（见 createSplashWindowEarly）——
+  // 这里不再重复创建，只保留兜底：若那一步因异常没建起来，现在补建，
+  // 避免后续逻辑（等待进场回报、切换主窗口）面对一个不存在的启动页。
+  if (!splashWindow || splashWindow.isDestroyed()) {
+    console.warn('[Startup] 启动页未提前创建，在此补建')
+    createSplashWindowEarly(targetBounds)
+  }
+
   // 创建主窗口：默认原生不透明窗口（Windows 11 系统圆角/阴影/对齐吸附）。
   // 桌面融合穿透需要透明窗口，而 transparent 仅创建时生效——开启/关闭融合时
   // 由 recreateMainWindow 销毁重建切换透明属性，普通模式始终用原生窗口。
-  // 尺寸/位置复用上面为 splash 解析好的 targetBounds，保证启动画面与主窗口完全重合、无跳动。
+  // 尺寸/位置复用上面解析好的 targetBounds，保证启动画面与主窗口完全重合、无跳动。
   mainWindow = new BrowserWindow({
     width: targetBounds.width,
     height: targetBounds.height,
@@ -2635,24 +2705,95 @@ function createWindow() {
   let mainFirstFrameReady = false
   let mainLoaded = false
   let mainShown = false
+
+  // 真正执行切换：显示主窗口，但**先不关启动页** ——
+  // 主窗口底色是纯黑（app 自身首屏是深色），而 show() 到首帧真正提交之间有约
+  // 100~250ms 空档（实测），这段空档会露出纯黑底色 = 用户看到的「黑屏一闪」。
+  // 启动页是 alwaysOnTop，让它继续盖着主窗口，等主窗口确实画出一帧后再关闭，
+  // 就能彻底消除这个空档。若等待异常，有兜底计时器保证启动页一定会关掉。
+  let mainSwitchCommitted = false
+  const closeSplash = () => {
+    if (!splashWindow.isDestroyed()) splashWindow.close()
+  }
+  /** 等主窗口渲染器真的提交过一帧（double rAF）；失败/超时则直接返回，不阻塞启动 */
+  const waitMainWindowPainted = () => new Promise((resolve) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return resolve()
+    const fallback = setTimeout(resolve, 900)
+    mainWindow.webContents.executeJavaScript(
+      'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))',
+    ).then(() => { clearTimeout(fallback); resolve() })
+      .catch(() => { clearTimeout(fallback); resolve() })
+  })
+  const commitSwitchToMain = () => {
+    if (mainSwitchCommitted || !mainWindow || mainWindow.isDestroyed()) return
+    mainSwitchCommitted = true
+    onSplashEntranceDone = null
+    mainWindow.show()
+    mainWindow.focus()
+    logStartupTiming('Main window shown')
+    // 主窗口已画出一帧后才撤下启动页，避免中间露出主窗口的纯黑底色
+    void waitMainWindowPainted().then(() => {
+      closeSplash()
+      logStartupTiming('Splash closed after main window painted')
+    })
+  }
+
   const showMainWindowWhenReady = () => {
     if (mainShown || !mainWindow || mainWindow.isDestroyed()) return
     if (!mainFirstFrameReady || !mainLoaded) return
     mainShown = true
-    const visibleForMs = splashShownAt > 0 ? Date.now() - splashShownAt : 0
-    // splash 实际显示过才保证最短可见时间；未显示（加载失败等）则立即切换主窗。
-    // splashMinVisibleMsFor() 在此刻才求值：GPU 状态早已稳定，不会误判成软件合成。
-    const remainingMs = splashShownAt > 0
-      ? Math.max(0, splashMinVisibleMsFor() - visibleForMs)
-      : 0
 
+    // 只有「启动页根本不存在/已销毁」才跳过等待（加载失败等异常）。
+    // 注意不能再用 `splashShownAt <= 0` 判定「没显示过就跳过」——
+    // 视频版启动页加载极快，主窗口可能**先于**启动页就绪，此时 splashShownAt 仍是 0，
+    // 那样会把启动页直接跳掉（实测：启动页只显示 23ms 就被关闭，视频完全没播）。
+    // 正确做法：只要启动页还活着，就等它显示出来、并把动画播完再切。
+    if (!splashWindow || splashWindow.isDestroyed()) {
+      commitSwitchToMain()
+      return
+    }
+
+    // 切换需同时满足三个条件：
+    //   ① 启动页已真正显示（splashShownAt 由 showSplash 写入）；
+    //   ② 已达启动页最短可见时间；
+    //   ③ 进场动画已播完（视频版由 splash.html 的 ended 事件经 splash:entrance-done 回报）。
+    const checkAndSwitch = () => {
+      if (mainSwitchCommitted || !mainWindow || mainWindow.isDestroyed()) return
+      if (splashShownAt <= 0) return                    // 启动页尚未显示，等它
+      const shownFor = Date.now() - splashShownAt
+      // 兜底①：回报迟迟未到（视频卡死 / 桥接失效）——显示后超过上限就强行切。
+      // 锚定「显示时刻」而非「主窗口就绪时刻」：启动页可能晚于主窗口才显示，
+      // 锚错会把还在正常播放的视频中途掐断。
+      if (!splashEntranceDone && shownFor >= SPLASH_ENTRANCE_FALLBACK_MS) {
+        logStartupTiming(`Splash entrance not reported within ${SPLASH_ENTRANCE_FALLBACK_MS}ms of show; switching anyway`)
+        commitSwitchToMain()
+        return
+      }
+      if (shownFor < splashMinVisibleMsFor()) return    // 未到最短可见时间
+      if (!splashEntranceDone) return                   // 动画尚未播完
+      commitSwitchToMain()
+    }
+    // 动画播完时立即复查（正常路径就是在这里切换）
+    onSplashEntranceDone = checkAndSwitch
+
+    // 轮询复查：覆盖「启动页显示晚于主窗口就绪」的情形 ——
+    // 此时 splashShownAt 还没有基准（为 0），必须靠轮询等到它显示；也驱动上面的兜底①。
+    const poll = setInterval(() => {
+      if (mainSwitchCommitted) { clearInterval(poll); return }
+      checkAndSwitch()
+    }, 100)
+    // 兜底②：启动页一直没显示出来（创建/加载彻底失败）就强行切，避免无限等；
+    // 若已显示但动画未回报，交给轮询里的兜底①（按显示时刻计时，不会掐断正常播放）。
     setTimeout(() => {
-      if (!mainWindow || mainWindow.isDestroyed()) return
-      mainWindow.show()
-      mainWindow.focus()
-      if (!splashWindow.isDestroyed()) splashWindow.close()
-      logStartupTiming('Main window shown')
-    }, remainingMs)
+      if (!mainSwitchCommitted && splashShownAt <= 0) {
+        logStartupTiming(`Splash not shown within ${SPLASH_ENTRANCE_FALLBACK_MS}ms; switching anyway`)
+        commitSwitchToMain()
+      }
+    }, SPLASH_ENTRANCE_FALLBACK_MS)
+
+    // 立即复查一次：处理「回报早于主窗口就绪」的竞态
+    //（否则那一刻 onSplashEntranceDone 还没挂上，回报会落空）。
+    checkAndSwitch()
   }
   // 兜底：任一事件异常未触发（如 GPU 合成器问题），8s 后强制显示，避免永远黑屏卡住
   setTimeout(() => {
@@ -6641,6 +6782,18 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error('⚠️ [更新] 启动应用待更新失败:', error instanceof Error ? error.message : error)
   }
+
+  // ── 启动页优先：任何阻塞性初始化之前就把它建起来并显示 ──
+  // 主窗口还要做很多准备（后端、渲染进程、窗口状态等），页面也要等 React 加载；
+  // 而启动页只需一个轻量离线页面。让它先出现，用户不会面对空屏；
+  // 主窗口仍并行加载，故总启动时间不变（取两者最大值）。
+  // 窗口尺寸/位置先按「上次的记忆」解析出来，与主窗口共用，避免切换时窗口跳动。
+  try {
+    createSplashWindowEarly(resolveTargetBounds())
+  } catch (error) {
+    console.error('[Startup] 提前创建启动页失败（后续会补建）:', error?.message || error)
+  }
+
   // GPU 状态诊断：区分"splash 未渲染出来"（GPU 合成器异常）与"未加载出来"（资源失败）。
   //
   // ⚠️ 时机陷阱（2026-09-11 实测）：app ready 后的一小段时间内 GPU 进程尚未初始化完成，
@@ -6670,11 +6823,10 @@ app.whenReady().then(async () => {
     return { status: app.getGPUFeatureStatus(), settled: false }
   }
   void readStableGpuStatus().then(({ status: gpuInfo, settled }) => {
+    // 仅作诊断记录：确认显卡合成是否正常（排查启动页黑/白屏时用）。
+    // 启动页的停留时长已是固定值（见 createWindow 的 SPLASH_MIN_VISIBLE_MS），
+    // 不再随该状态变化 —— 早前按它动态延长最短可见时间的做法已移除。
     logStartupTiming(`GPU feature status: accelerated=${gpuInfo.gpu_compositing || '?'} webgl=${gpuInfo.webgl || '?'} (settled=${settled})`)
-    // 软件合成（GPU 加速禁用）下，窗口内容层提交明显变慢（可达 2s+）。
-    // 记录该状态，createWindow 据此动态延长 splash 最短可见时间，
-    // 给内容层足够时间真正上屏，避免 splash 显示 1.2s 后就被关闭、用户只见深色底（≈黑）。
-    gpuCompositingDisabled = gpuInfo.gpu_compositing === 'disabled_software' || gpuInfo.gpu_compositing === 'disabled'
   }).catch((error) => {
     logStartupTiming(`GPU feature status unavailable: ${error.message}`)
   })
