@@ -8,10 +8,10 @@
 
 ```bash
 npm install                    # 安装依赖
-npm run dev:electron           # 一键启动：Vite(3000) + API(3001) + Electron 窗口
+npm run dev:electron           # 一键启动：Vite(3210) + API(3211) + Electron 窗口
 ```
 
-- 后端为单文件 Express（`local-server.mjs`，端口 3001），由 `dev:electron` 自动拉起；也可直接 `node local-server.mjs` 单独启动（无 `dev:api` 脚本）。后端与前端均**无任何 Python 依赖**。
+- 后端为单文件 Express（`local-server.mjs`，端口 3211），由 `dev:electron` 自动拉起；也可直接 `node local-server.mjs` 单独启动（无 `dev:api` 脚本）。后端与前端均**无任何 Python 依赖**。
 
 ## 核心功能
 
@@ -35,7 +35,7 @@ npm run dev:electron           # 一键启动：Vite(3000) + API(3001) + Electro
 ```
 前端:    React 19 + TypeScript + Tailwind CSS 4 + Vite 6
 桌面:    Electron 42（官方 stock `42.8.0`，主进程 CommonJS，preload 桥接）
-后端:    Node.js + Express（local-server.mjs，单文件，端口 3001）
+后端:    Node.js + Express（local-server.mjs，单文件，端口 3211）
 音频:    Web Audio API + HSE（纯 TS DSP 内核 + AudioWorklet 渲染线程）
 音乐源:  qq-music-api + NeteaseCloudMusicApiEnhanced + B站
 可视化:  Canvas/Web Audio 频谱与封面动效；空间音频 3D 视图用 Three.js + React Three Fiber
@@ -54,7 +54,7 @@ HyperPlayer/
 │   ├── hooks/  api/  utils/  types/  vendor/pv/
 ├── desktop/                   # Electron 主进程 + preload（.cjs）+ splash/任务栏小窗
 ├── server/                    # 后端附加路由（hazard/location/bilibili/netease-native-explore）
-├── local-server.mjs           # Express 后端（约 11k 行，单文件，端口 3001）
+├── local-server.mjs           # Express 后端（约 11k 行，单文件，端口 3211）
 ├── build/                     # 打包资源 + 自定义 NSIS 安装器 UI 资产
 └── scripts/                   # dev/build/打包/发布/测试脚本
 ```
@@ -63,7 +63,7 @@ HyperPlayer/
 
 ```bash
 npm run dev:electron    # 完整开发（前端+后端+Electron）
-npm run dev             # 仅 Vite（3000）
+npm run dev             # 仅 Vite（3210）
 npm run lint            # TypeScript 类型检查（tsc --noEmit）
 npm run test            # vitest 单测（2026-09-13 实测：140 文件 = 139 过 + 1 跳过；1269 用例 = 1264 过 + 5 跳过 + 0 todo，含 HSE v3 引擎与空间音频；跳过的 5 项为 HSE 的 LGPL 可选依赖未装自动跳过）
 npm run build           # 仅构建前端 -> dist/（三入口，不生成 EXE）
@@ -110,8 +110,8 @@ gh release create v<version> release/HyperPlayer-<version>-Setup.exe release/hyp
 
 | 端口 | 服务 | 说明 |
 |---|---|---|
-| 3000 | Vite / 生产 preview | 前端（后端 CORS 白名单） |
-| 3001 | Express API | 后端（绑定 127.0.0.1，仅放行 localhost:3000 / file:// / null） |
+| 3210 | Vite / 生产 preview | 前端（后端 CORS 白名单） |
+| 3211 | Express API | 后端（绑定 127.0.0.1，仅放行 localhost:3210 / file:// / null） |
 
 > 历史上的 18790（Apple Music 播放面 Python bridge）、3002 / 3003 / 3004（Python 节拍 / 响度 / 频响补偿服务）已随音源移除与减配移除，不再使用。
 

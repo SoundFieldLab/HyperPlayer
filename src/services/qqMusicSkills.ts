@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:3001/api'
+const API_BASE = 'http://localhost:3211/api'
 const OFFICIAL_KEY_URL = 'https://y.qq.com/n/ryqq_v2/qqmusic_skills'
 const SESSION_KEY = 'hyperplayer.qqmusicSkills.sessionKey'
 

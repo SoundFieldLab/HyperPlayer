@@ -18,9 +18,9 @@ import { recordLogin, clearLoginExpiry, isLoginExpired } from './loginExpiry'
 import { Converter } from 'opencc-js/t2cn'
 import { BILIBILI_MV_DECLARATION_VERSION, getDeveloperBilibiliMvDeclaration } from '../data/bilibiliMvDeclarations'
 
-export let BILI_API_BASE = 'http://localhost:3001/api/bilibili'
+export let BILI_API_BASE = 'http://localhost:3211/api/bilibili'
 
-/** 覆盖 API 基址（测试/调试用；生产固定指向本机后端 3001） */
+/** 覆盖 API 基址（测试/调试用；生产固定指向本机后端 3211） */
 export function setBilibiliApiBaseForTest(base: string): void {
   BILI_API_BASE = base
 }

@@ -26,8 +26,8 @@ function eventFrom(win, frame = win.webContents.mainFrame) {
 
 function createFixture() {
   const windows = {
-    main: makeWindow('http://127.0.0.1:3000/'),
-    player: makeWindow('http://127.0.0.1:3000/desktop-player.html'),
+    main: makeWindow('http://127.0.0.1:3210/'),
+    player: makeWindow('http://127.0.0.1:3210/desktop-player.html'),
     lyrics: makeWindow('file:///C:/HyperPlayer/dist/desktop-lyrics.html'),
     taskbar: makeWindow('file:///C:/HyperPlayer/desktop/taskbar-widget.html'),
   }
@@ -36,13 +36,13 @@ function createFixture() {
       main: {
         getWindow: () => windows.main,
         isAllowedUrl: createDocumentUrlMatcher([
-          'http://127.0.0.1:3000/',
+          'http://127.0.0.1:3210/',
           'file:///C:/HyperPlayer/dist/index.html',
         ]),
       },
       desktopPlayer: {
         getWindow: () => windows.player,
-        isAllowedUrl: createDocumentUrlMatcher(['http://127.0.0.1:3000/desktop-player.html']),
+        isAllowedUrl: createDocumentUrlMatcher(['http://127.0.0.1:3210/desktop-player.html']),
       },
       desktopLyrics: {
         getWindow: () => windows.lyrics,

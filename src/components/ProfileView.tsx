@@ -801,8 +801,8 @@ function ProfileView({
     try {
       const response = await fetch(
         platform === 'qq'
-          ? `http://localhost:3001/api/qq/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`
-          : `http://localhost:3001/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`
+          ? `http://localhost:3211/api/qq/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`
+          : `http://localhost:3211/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`
       )
       const data = await response.json()
       if (!response.ok || data.error) throw new Error(data.error || '读取歌单失败')
@@ -913,7 +913,7 @@ function ProfileView({
       let response, data
       
       if (platform === 'netease') {
-        response = await fetch(`http://localhost:3001/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`)
+        response = await fetch(`http://localhost:3211/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`)
         data = await response.json()
         if (!response.ok || data.error) throw new Error(data.error || '读取网易云歌单失败')
         if (data.playlist) {
@@ -936,7 +936,7 @@ function ProfileView({
         }
       } else if (platform === 'qq') {
         console.log('📤 正在获取QQ音乐歌单详情，ID:', playlist.id)
-        response = await fetch(`http://localhost:3001/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`)
+        response = await fetch(`http://localhost:3211/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`)
         data = await response.json()
         
         console.log('📥 QQ音乐歌单详情:', data)
@@ -1096,8 +1096,8 @@ function ProfileView({
     try {
       const requestType = requestPlatform === 'qq' ? 'song' : type
       const endpoint = requestPlatform === 'qq'
-        ? 'http://localhost:3001/api/qq/record/recent/song'
-        : `http://localhost:3001/api/netease/record/recent/${requestType}`
+        ? 'http://localhost:3211/api/qq/record/recent/song'
+        : `http://localhost:3211/api/netease/record/recent/${requestType}`
       const query = new URLSearchParams({ limit: '100', cookie: requestCookie })
       const response = await fetch(`${endpoint}?${query.toString()}`, {
         cache: 'no-store',
@@ -1420,7 +1420,7 @@ function ProfileView({
     if (platform === 'netease') {
       try {
         // 获取用户歌单（查看他人时展示对方的歌单/我喜欢）
-        const playlistRes = await fetch(`http://localhost:3001/api/netease/user/playlist?uid=${uid}&cookie=${encodeURIComponent(cookie)}`)
+        const playlistRes = await fetch(`http://localhost:3211/api/netease/user/playlist?uid=${uid}&cookie=${encodeURIComponent(cookie)}`)
         const playlistData = await playlistRes.json()
         
         if (playlistData.playlist) {
@@ -1440,7 +1440,7 @@ function ProfileView({
         }
 
         // 获取用户详情
-        const detailRes = await fetch(`http://localhost:3001/api/netease/user/detail?uid=${uid}`)
+        const detailRes = await fetch(`http://localhost:3211/api/netease/user/detail?uid=${uid}`)
         const detailData = await detailRes.json()
         
         if (detailData.profile) {
@@ -1487,7 +1487,7 @@ function ProfileView({
         console.log('📤 正在获取QQ音乐用户数据...')
         
         // 获取用户详情（包含歌单）
-        const detailRes = await fetch(`http://localhost:3001/api/qq/user/detail?id=${userId}&cookie=${encodeURIComponent(cookie)}`)
+        const detailRes = await fetch(`http://localhost:3211/api/qq/user/detail?id=${userId}&cookie=${encodeURIComponent(cookie)}`)
         const detailData = await detailRes.json()
         
         console.log('📥 QQ音乐用户详情:', detailData)

@@ -10,6 +10,10 @@
 # 打包验证用的就是正式链路 `build:electron:dir`（断言无残留进程 → vite build →
 # electron-builder dir → verify-asar），CI 只关心「代码能否被 electron-builder
 # 打好目录、资源是否齐全」，所以跑到 dir 为止，不再做 NSIS 打包。
+#
+# 端口约定（由 `node scripts/check-ports.mjs` 把关）：本项目固定 **3210**（Vite dev/preview）
+# 与 **3211**（Express 后端）。**不要改回 3000–3002** —— 本机 WaveForge（3000/3001/3002…）
+# 与 ReWaveForge（3001/3101）常驻占用该段，撞上会表现为「后端起不来 / 前端拿到空数据」。
 
 name: CI 检查
 
@@ -51,6 +55,9 @@ jobs:
 
       - name: 类型检查（tsc --noEmit）
         run: npm run lint
+
+      - name: 端口一致性闸门（禁止回退到 WaveForge 占用的 3000–3002）
+        run: node scripts/check-ports.mjs
 
       - name: 单元测试（vitest）
         run: npm run test

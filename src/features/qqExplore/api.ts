@@ -2,7 +2,7 @@ import { getExploreCookie } from '../../services/exploreApi'
 import type { Song } from '../../services/musicApi'
 import type { QQExploreCursor, QQExploreFeed, QQExploreRefreshToken, QQExploreSnapshot } from './model'
 
-const API_BASE = 'http://localhost:3001/api/explore/qq/native'
+const API_BASE = 'http://localhost:3211/api/explore/qq/native'
 
 async function post<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const cookie = getExploreCookie('qq')

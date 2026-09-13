@@ -11,7 +11,7 @@ export interface PlaylistOptions {
   skipCache?: boolean
 }
 
-const API_BASE = 'http://localhost:3001/api'
+const API_BASE = 'http://localhost:3211/api'
 const userPlaylistsCache = new Map<string, any[]>()
 const userPlaylistsPending = new Map<string, Promise<any[]>>()
 const MAX_USER_PLAYLIST_CACHE_ENTRIES = 16
@@ -213,7 +213,7 @@ async function fetchUserPlaylists(
   const firstArray = (...values: any[]) => values.find(value => Array.isArray(value)) || []
   
   if (platform === 'netease') {
-    const url = `http://localhost:3001/api/netease/user/playlist?uid=${userId}${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
+    const url = `http://localhost:3211/api/netease/user/playlist?uid=${userId}${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
     const response = await fetchWithTimeout(url)
     if (!response.ok) {
       throw new Error(`获取网易云歌单失败（HTTP ${response.status}）`)
@@ -240,7 +240,7 @@ async function fetchUserPlaylists(
     // 1. 获取自建歌单
     try {
       const devMode = localStorage.getItem('developerMode') === 'true'
-      const url = `http://localhost:3001/api/qq/user/playlist?id=${userId}&cookie=${encodeURIComponent(cookie)}&devMode=${devMode}`
+      const url = `http://localhost:3211/api/qq/user/playlist?id=${userId}&cookie=${encodeURIComponent(cookie)}&devMode=${devMode}`
       const response = await fetchWithTimeout(url)
       const createdData = await response.json()
       
@@ -277,7 +277,7 @@ async function fetchUserPlaylists(
     // 2. 获取收藏歌单
     try {
       const devMode = localStorage.getItem('developerMode') === 'true'
-      const url = `http://localhost:3001/api/qq/user/collect?id=${userId}&cookie=${encodeURIComponent(cookie)}&devMode=${devMode}`
+      const url = `http://localhost:3211/api/qq/user/collect?id=${userId}&cookie=${encodeURIComponent(cookie)}&devMode=${devMode}`
       const response = await fetchWithTimeout(url)
       const collectedData = await response.json()
       
@@ -448,8 +448,8 @@ export async function getPlaylistDetail(
   console.log(`🌐 从服务器获取歌单详情: ${playlistId}`)
   const devMode = localStorage.getItem('developerMode') === 'true'
   const url = platform === 'netease'
-    ? `http://localhost:3001/api/netease/playlist/detail?id=${encodeURIComponent(playlistId)}&cookie=${encodeURIComponent(localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || '')}`
-    : `http://localhost:3001/api/qq/playlist/detail?id=${playlistId}&devMode=${devMode}&cookie=${encodeURIComponent(localStorage.getItem('qq_cookie') || localStorage.getItem('qqCookie') || '')}`
+    ? `http://localhost:3211/api/netease/playlist/detail?id=${encodeURIComponent(playlistId)}&cookie=${encodeURIComponent(localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || '')}`
+    : `http://localhost:3211/api/qq/playlist/detail?id=${playlistId}&devMode=${devMode}&cookie=${encodeURIComponent(localStorage.getItem('qq_cookie') || localStorage.getItem('qqCookie') || '')}`
   
   const maxRetries = 3
   const retryDelay = 1000 // 1秒
@@ -652,8 +652,8 @@ export async function addSongToPlaylist(
   console.log(`➕ 添加歌曲 ${songId} 到歌单 ${playlistId}`)
 
   const url = platform === 'netease'
-    ? `http://localhost:3001/api/netease/playlist/tracks`
-    : `http://localhost:3001/api/qq/playlist/tracks`
+    ? `http://localhost:3211/api/netease/playlist/tracks`
+    : `http://localhost:3211/api/qq/playlist/tracks`
   
   const response = await fetch(url, {
     method: 'POST',
@@ -703,8 +703,8 @@ export async function removeSongFromPlaylist(
   console.log(`➖ 从歌单 ${playlistId} 删除歌曲 ${songId}`)
 
   const url = platform === 'netease'
-    ? `http://localhost:3001/api/netease/playlist/tracks`
-    : `http://localhost:3001/api/qq/playlist/tracks`
+    ? `http://localhost:3211/api/netease/playlist/tracks`
+    : `http://localhost:3211/api/qq/playlist/tracks`
   
   const response = await fetch(url, {
     method: 'POST',
@@ -829,7 +829,7 @@ export async function updatePlaylist(
 ): Promise<any> {
   console.log(`✏️ 更新歌单: ${playlistId}`)
   const cookie = options.cookie || localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
-  const url = 'http://localhost:3001/api/netease/playlist/update'
+  const url = 'http://localhost:3211/api/netease/playlist/update'
   
   const response = await fetch(url, {
     method: 'POST',
@@ -858,7 +858,7 @@ export async function updatePlaylistCover(
   options: { cookie?: string } = {}
 ): Promise<any> {
   const cookie = options.cookie || localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
-  const response = await fetch('http://localhost:3001/api/netease/playlist/cover', {
+  const response = await fetch('http://localhost:3211/api/netease/playlist/cover', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

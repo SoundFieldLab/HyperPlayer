@@ -5,7 +5,7 @@
 >
 > ⚠️ 本文档描述的是**减配版（slimdown 分支）**。历史上大量功能已移除，凡本文档未提及者即视为不存在——**不要**依据旧版本文档或 `git log` 里的旧提交去恢复功能。
 > 📌 已按 **2026-09-13** 代码校正主要失效点（测试计数、律动背景、引擎切换胶囊、未决清单、netease 初始化位置等），剩余历史决策段落保留。
-> 📌 **2026-09-13 又一批移除**：**Apple Music 与 Spotify 音源**（登录 / 目录 / 播放面 Python bridge（端口 18790）/ Apple 探索·电台·视频组件 / Spotify OAuth 窗）、**Widevine/VMP DRM 播放链**（castLabs EVS 脚本与状态卡、`desktop/vmp-status.cjs`、`apple-url-policy.cjs`、`build:electron:dir:unsigned` / `vmp:*` 脚本），Electron 已从 castLabs 分叉**回退为官方 stock `42.8.0`**。**Apple 风格歌词特性（逐词点亮 / 崭新弹簧滚动 / 对唱着色 / TTML）刻意保留**，勿当作音源残留删除。当前音源为 **3 个**：网易云 / QQ（`MusicPlatform` 只有这两个成员）+ B站看歌；端口只剩 3000 / 3001。
+> 📌 **2026-09-13 又一批移除**：**Apple Music 与 Spotify 音源**（登录 / 目录 / 播放面 Python bridge（端口 18790）/ Apple 探索·电台·视频组件 / Spotify OAuth 窗）、**Widevine/VMP DRM 播放链**（castLabs EVS 脚本与状态卡、`desktop/vmp-status.cjs`、`apple-url-policy.cjs`、`build:electron:dir:unsigned` / `vmp:*` 脚本），Electron 已从 castLabs 分叉**回退为官方 stock `42.8.0`**。**Apple 风格歌词特性（逐词点亮 / 崭新弹簧滚动 / 对唱着色 / TTML）刻意保留**，勿当作音源残留删除。当前音源为 **3 个**：网易云 / QQ（`MusicPlatform` 只有这两个成员）+ B站看歌；端口只剩 3210 / 3211。
 > 📌 文中出现的文件行号**随提交漂移**，定位代码时**优先按符号名 grep**（如 `grep -n "MediaPlayPause" desktop/main.cjs`），行号仅作粗略参考。
 
 ---
@@ -15,7 +15,7 @@
 - **阶段**：减配（slimdown）已完成，处于维护/优化阶段；2026-09-13 又完成一批**音源与 DRM 收敛**（见 §2）。核心功能（三音源搜索/播放/歌词/无缝衔接/桌面模式/音效 HSE/空间音频）均已实现。
 - **代码基线**：分支 `main`；`package.json` 版本 **1.0.0**（自 1.0.0 起重新编号，0.x 记录已废弃）。
 - **稳定性（`npm run test` 实测 2026-09-13）**：**120 文件 = 119 过 + 1 跳过；1173 用例 = 1168 过 + 5 跳过 + 0 失败**（口径：`test/` vitest 收集的 `.ts`/`.tsx` + HSE `test/` + HSE `ui/` + spatial `test/`；另有 `.cjs`/`.mjs` 归 `npm run test:desktop`（7 文件 26 用例）与 `test:installer`（16 用例））。跳过的 5 项是 HSE 模块 LGPL 可选依赖未装（属设计行为）。Apple/Spotify 音源与 Widevine/VMP 链的测试已随功能整体删除。`test/chromaStyles.test.ts` 的 `keeps decay timing approximately frame-rate independent` 在满载并发时会 5s 超时，单独运行通过——属**已有偶发抖动**，不是减配引入的回归。
-- **代码规模**：`src/` 约 540 个 `.ts`/`.tsx`；后端 `local-server.mjs` 单文件 **约 11.2k 行**（端口 3001）。**已无任何 Python 代码与 Python 运行时**（Apple bridge 随音源移除）。
+- **代码规模**：`src/` 约 540 个 `.ts`/`.tsx`；后端 `local-server.mjs` 单文件 **约 11.2k 行**（端口 3211）。**已无任何 Python 代码与 Python 运行时**（Apple bridge 随音源移除）。
 
 ## 2. 减配说明（2026-09-10 首轮；2026-09-13 追加音源/DRM 收敛）
 
@@ -43,11 +43,11 @@
 | 组件 | 版本/说明 |
 |---|---|
 | Node/桌面 | **Electron 42（官方 stock `42.8.0`，无 Widevine）**、React 19、Vite 6、TypeScript 5.8、Tailwind CSS 4 |
-| 后端 | Node + Express 单文件 `local-server.mjs`（端口 3001，127.0.0.1） |
+| 后端 | Node + Express 单文件 `local-server.mjs`（端口 3211，127.0.0.1） |
 | Python | **已无任何 Python 依赖**：Apple 播放面 bridge（`python-apple-bridge/`）与嵌入式运行时均已删除 |
 | 平台 | Windows x64（NSIS 每用户安装，`perMachine: false`） |
 
-> ⚠️ **端口占用坑（2026-08-16 实测，仍适用）**：本机另一个项目 **ReWaveForge**（`E:\FolderForVibeCoding\dsh\ReWaveForge\backend-go\bin\waveforge-server.exe`）会抢占 **3001/3101** 端口——HyperPlayer 后端启动失败（日志"端口已被占用"）、前端连到 Go 服务的空数据（首页/榜单全部"没有加载到内容"）。**症状 = 前端功能大面积不对时先查 3001 是否被其他进程占用**（`netstat -ano | grep :3001`）。
+> ⚠️ **端口占用坑（本机多项目共存，仍适用）**：本机还有 **WaveForge**（现役，其 Node 后端固定占用 **3001**，另见 3000/3002/30082）与 **ReWaveForge**（`E:\FolderForVibeCoding\dsh\ReWaveForge\backend-go\bin\waveforge-server.exe`，占用 **3001 / 3101**）。**HyperPlayer 自 2026-09-14 起把端口迁到 3210（Vite）/ 3211（Express 后端），与上述端口完全错开，可与两者同时运行**。若前端大面积"没有加载到内容"或后端日志报"端口已被占用"，先 `netstat -ano | grep :3211` 看是否被别的进程抢占（历史症状即 ReWaveForge 抢 3001 导致前端连到 Go 服务的空数据）。
 
 **运行时升级历史**：2026-08-13 曾将嵌入式 Python 从 3.11.9 升到 3.13.15——该嵌入式运行时已随减配整体删除，此历史仅作留痕。
 
@@ -55,17 +55,17 @@
 
 | 端口 | 服务 |
 |---|---|
-| 3000 | Vite dev / preview（后端 CORS 白名单仅放行此端口 + file:// + null） |
-| 3001 | Express API（127.0.0.1） |
+| 3210 | Vite dev / preview（后端 CORS 白名单仅放行此端口 + file:// + null） |
+| 3211 | Express API（127.0.0.1） |
 
 > 已停用：**18790**（Apple Music 播放面 Python bridge，随音源移除）、**3002**（旧 Python 节拍服务）、**3003**（旧 Python 响度测量）、**3004**（旧 Python 频响补偿设计）。历史文档中的 5001 同样是过时信息。
 
 ## 5. 已知问题 / 踩坑记录
 
 1. **网易云 xeapi 公钥**：`/api/netease/song/url` 报 `xeapi public key is missing` 时，说明 `os.tmpdir()/xeapi_public_key` 被系统清理了 —— 重启后端即可（`initNeteaseAPI()` 启动时自动 `generateConfig()` 重新拉取，见 `local-server.mjs` 约 1670-1690 行：`generateConfig()` 调用约 1673 行、`initNeteaseAPI()` 顶层调用约 1689 行）。
-2. **SSRF 守卫与内部代理链**：`proxy-image → cover`（`localhost:3001`）是本应用合法内部代理链，SSRF 守卫必须放行本服务自身端口 3001，否则评论区/歌单封面裂。**不要在守卫中一刀切封 localhost**。见 `local-server.mjs` 中 `isBlockedFetchUrl`（约 1372 行）内的放行分支。
+2. **SSRF 守卫与内部代理链**：`proxy-image → cover`（`localhost:3211`）是本应用合法内部代理链，SSRF 守卫必须放行本服务自身端口 3211，否则评论区/歌单封面裂。**不要在守卫中一刀切封 localhost**。见 `local-server.mjs` 中 `isBlockedFetchUrl`（约 1372 行）内的放行分支。
 3. **wallpaper-engine 路径穿越防护**：`/api/wallpaper-engine/preview|media` 用 `resolve + startsWith(base+sep)` 校验（`local-server.mjs` 约 8976 / 9024 行），改动时保持。
-4. **Electron will-navigate 守卫**：主窗口 / 桌面播放器 / 歌词窗 / 任务栏小窗均已挂 `guardAgainstExternalNavigation()`（dev: localhost:3000/127.0.0.1:3000；prod: file:// 入口）。**QQ 音乐 QMK API Key 领取窗口是唯一被允许打开 `y.qq.com` 的窗口**（`QMK_SESSION_PARTITION = 'hyperplayer-qq-skill-key'`，独立 session 且每次打开前清空避免复用登录态）——不要为其他窗口放宽守卫。
+4. **Electron will-navigate 守卫**：主窗口 / 桌面播放器 / 歌词窗 / 任务栏小窗均已挂 `guardAgainstExternalNavigation()`（dev: localhost:3210/127.0.0.1:3210；prod: file:// 入口）。**QQ 音乐 QMK API Key 领取窗口是唯一被允许打开 `y.qq.com` 的窗口**（`QMK_SESSION_PARTITION = 'hyperplayer-qq-skill-key'`，独立 session 且每次打开前清空避免复用登录态）——不要为其他窗口放宽守卫。
 5. **热路径日志**：播放/动画热路径必须用 `debugLog()`（`src/utils/debugLog.ts`），裸 console.log 会造成内存增长。开关：`localStorage['hyperplayer:verbose-log']='1'`（gapless 方案提示 `GaplessModeToast` 与过渡调试面板共用此开关）。
 6. **Electron 为官方 stock 构建，不含 Widevine**：castLabs `+wvcus` 分叉、EVS/VMP 签名链与 Apple 原生 CENC 播放已整体移除，DMCA/DRM 相关脚本与状态卡不复存在。**若要做 Electron 性能改造**：把自编译产物整个目录替换到 `node_modules/electron/dist` 即可，electron-builder 的 `electronDist` 就指向该目录（打包链无需改动）；替换后跑 `npm run build:electron:dir` 验证，并避免让 `npm install/ci` 把目录重装回官方版。
 7. **过渡策略只有 Fixed Crossfade**：`src/audio/transitionPlanner.ts` 的 `planTransition` / `planTransitionV2` 只产出 `fixed-crossfade`（`smart-rendered` / `smart-rendered-v2` / `beat-crossfade` 生成分支已整体移除）。节拍/结构分析能力（`autoMixAnalysisService.ts`）**保留**，但只服务 MV 对齐、PV 歌词等消费者，不再用于智能混音。别再从 `git log` 里恢复 Smart AutoMix。
@@ -124,8 +124,8 @@
 
 ```bash
 # 开发
-npm run dev:electron          # 完整开发环境：Vite(3000) + Express(3001) + Electron 窗口
-npm run dev                   # 仅 Vite dev (3000)；天气调试页 http://127.0.0.1:3000/weather-debug.html
+npm run dev:electron          # 完整开发环境：Vite(3210) + Express(3211) + Electron 窗口
+npm run dev                   # 仅 Vite dev (3210)；天气调试页 http://127.0.0.1:3210/weather-debug.html
 
 # 验证
 npm run lint                  # 类型检查 tsc --noEmit（仅覆盖 src/，仓库无 ESLint）

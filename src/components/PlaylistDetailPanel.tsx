@@ -108,7 +108,7 @@ function PlaylistDetailPanel({
     setSmartLoading(true)
     try {
       const res = await fetch(
-        `http://localhost:3001/api/netease/playmode/intelligence/list?cookie=${encodeURIComponent(cookie)}&id=${encodeURIComponent(String(songs[0].id))}&pid=${encodeURIComponent(String(playlist.id))}`
+        `http://localhost:3211/api/netease/playmode/intelligence/list?cookie=${encodeURIComponent(cookie)}&id=${encodeURIComponent(String(songs[0].id))}&pid=${encodeURIComponent(String(playlist.id))}`
       )
       const data = await res.json()
       const raw = Array.isArray(data?.data) ? data.data : []
@@ -492,7 +492,7 @@ function PlaylistDetailPanel({
                   <div 
                     className="absolute inset-0"
                     style={{
-                      backgroundImage: `url(http://localhost:3001/api/proxy-image?url=${encodeURIComponent(playlist.coverImgUrl)})`,
+                      backgroundImage: `url(http://localhost:3211/api/proxy-image?url=${encodeURIComponent(playlist.coverImgUrl)})`,
                       backgroundSize: 'cover',
                       backgroundPosition: 'center',
                       filter: playerTheme === 'dark' ? 'blur(60px) brightness(0.8)' : 'blur(60px) brightness(1.05)',

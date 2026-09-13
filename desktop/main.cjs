@@ -237,13 +237,13 @@ function readDesktopWidgetDisks() {
 }
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
-const devServerUrl = process.env.HYPERPLAYER_DEV_SERVER_URL || 'http://127.0.0.1:3000'
+const devServerUrl = process.env.HYPERPLAYER_DEV_SERVER_URL || 'http://127.0.0.1:3210'
 
 // 导航白名单：只允许应用自身的地址（开发模式 Vite 服务器 / 生产模式打包产物），
 // 阻止同窗口被任意外部页面导航——特权 preload 桥一旦跟到外部站点就会被滥用。
 const ALLOWED_DEV_SERVER_ORIGINS = new Set([
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
+  'http://localhost:3210',
+  'http://127.0.0.1:3210',
 ])
 const ALLOWED_APP_FILE_URLS = new Set([
   pathToFileURL(path.join(__dirname, '../dist/index.html')).href,
@@ -1907,7 +1907,7 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       stream: true,
       supportFetchAPI: true,
-      // 关键：允许从 http://127.0.0.1:3000（渲染 origin）跨源 fetch 该协议。
+      // 关键：允许从 http://127.0.0.1:3210（渲染 origin）跨源 fetch 该协议。
       // 缺失时 AI 混音 wav（hyperplayer-media://）被 Chromium CORS 拦截 → 缓冲加载失败
       // → 回退普通交叉淡化 → 音量突变 + MV 预载链路断裂（用户实测的"介入即衰减/
       // MV 不叠加/封面回退"均由此引起）。registerSchemesAsPrivileged 仅在启动时生效，
@@ -4280,7 +4280,7 @@ ipcMain.handle('get-system-location', async () => {
 })
 
 /**
- * 启动生产版常驻本地后端。Express API（local-server.mjs，端口 3001）通过
+ * 启动生产版常驻本地后端。Express API（local-server.mjs，端口 3211）通过
  * utilityProcess.fork 启动。 */
 let localApiChild = null
 
@@ -4289,7 +4289,7 @@ let localApiChild = null
 // try 块内会因作用域不可见抛 ReferenceError（静默失效）。
 const { promisify } = require('util')
 const execFileAsync = promisify(execFile)
-const BACKEND_PORTS = [3001]
+const BACKEND_PORTS = [3211]
 async function sweepBackendOrphans(reason) {
   for (const port of BACKEND_PORTS) {
     try {
@@ -4329,7 +4329,7 @@ async function probeLocalBackendReady() {
     try {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), 1500)
-      const res = await fetch('http://127.0.0.1:3001/health', {
+      const res = await fetch('http://127.0.0.1:3211/health', {
         headers: { 'X-HyperPlayer-Local-Token': LOCAL_SERVICE_TOKEN },
         signal: controller.signal,
       })
@@ -4354,7 +4354,7 @@ async function startLocalBackend() {
   if (!app.isPackaged) return // 开发模式由 dev-electron.mjs 启动
   if (process.env.HYPERPLAYER_DISABLE_LOCAL_BACKEND === '1') return
 
-  // 1) Express API（3001）
+  // 1) Express API（3211）
   try {
     await sweepBackendOrphans('startup')
     const serverEntry = path.join(process.resourcesPath, 'app.asar', 'local-server.mjs')
@@ -4485,7 +4485,7 @@ app.whenReady().then(async () => {
 
   // Electron 本地服务请求认证：token 只存在于主进程和受控子进程环境，renderer 无法读取。
   session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['http://localhost:3001/*', 'http://127.0.0.1:3001/*'] },
+    { urls: ['http://localhost:3211/*', 'http://127.0.0.1:3211/*'] },
     (details, callback) => {
       if (mainWindow && details.webContentsId === mainWindow.webContents.id) {
         details.requestHeaders['X-HyperPlayer-Local-Token'] = LOCAL_SERVICE_TOKEN
@@ -4515,7 +4515,7 @@ app.whenReady().then(async () => {
     }
   })
   
-  // 启动生产版常驻本地 API（3001）。
+  // 启动生产版常驻本地 API（3211）。
   // 开发模式继续由 scripts/dev-electron.mjs 预启动。
   startLocalBackend()
   // 启动页门控条件之三：后端就绪后放行动画（不等它把启动页挡住 —— 只是不抢资源）

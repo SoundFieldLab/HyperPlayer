@@ -134,7 +134,7 @@ async function waitForPort(port, timeoutMs = 10000) {
 
 // ---- 端口占用识别与残留进程清理 ----------------------------------------
 // 端口被占用不等于服务可用：之前有残留的 vite dev server（他人/其他会话 `npm run dev`
-// 留下、或本启动器崩溃后的孤儿）抢占 3001，导致 local API server 起不来，
+// 留下、或本启动器崩溃后的孤儿）抢占 3211，导致 local API server 起不来，
 // 渲染端所有 /api/* 请求打到 Vite 上返回 HTML → 登录/扫码/账号信息全部失败。
 // 这里先 HTTP 验证端口上是否真是 API 服务，再决定是否需要清理。
 const ps = (args, opts = {}) => new Promise(resolve => {
@@ -150,7 +150,7 @@ async function isLocalApiServerHealthy() {
   try {
     const controller = new AbortController()
     timer = setTimeout(() => controller.abort(), 1500)
-    const res = await fetch('http://127.0.0.1:3001/health', {
+    const res = await fetch('http://127.0.0.1:3211/health', {
       headers: { 'X-HyperPlayer-Local-Token': localServiceToken },
       signal: controller.signal,
     })
@@ -176,12 +176,12 @@ async function waitForLocalApi(timeoutMs = 10000) {
 }
 
 async function createStaleLocalApiError() {
-  const pid = await getPidOnPort(3001)
+  const pid = await getPidOnPort(3211)
   const pidText = pid ? `（PID ${pid}）` : ''
   return new Error([
     '',
     '============================================================',
-    `检测到 3001 端口上存在旧的或其他会话的 HyperPlayer 后端${pidText}。`,
+    `检测到 3211 端口上存在旧的或其他会话的 HyperPlayer 后端${pidText}。`,
     '为避免当前调试界面连接到错误的登录会话，本次启动已停止。',
     '请先清理该残留后端，再重新运行 npm run dev:electron。',
     '启动器没有自动终止该进程，也没有读取或输出任何登录凭据。',
@@ -238,9 +238,9 @@ async function startDev() {
   let apiProcess = null
 
   const startAPI = async () => {
-    if (await isPortOpen(3001)) {
+    if (await isPortOpen(3211)) {
       if (await isLocalApiServerHealthy()) {
-        console.log('Local API server already running on http://localhost:3001')
+        console.log('Local API server already running on http://localhost:3211')
         return null
       }
       throw await createStaleLocalApiError()
@@ -262,9 +262,9 @@ async function startDev() {
     
     waitForLocalApi(10000).then(success => {
       if (success) {
-        console.log('Local API server started successfully on http://localhost:3001')
+        console.log('Local API server started successfully on http://localhost:3211')
       } else {
-        console.warn('Local API server did not become ready on port 3001 within 10 seconds')
+        console.warn('Local API server did not become ready on port 3211 within 10 seconds')
       }
     })
     
@@ -274,9 +274,9 @@ async function startDev() {
   const startRendererServer = async () => {
     const useLiveRenderer = process.env.HYPERPLAYER_LIVE_UI === '1'
 
-    // 3000 是渲染服务专用端口：被残留的 vite dev server 占用会因 strictPort 直接失败
-    if (await isPortOpen(3000)) {
-      await freePortIfHijacked(3000, 'renderer server')
+    // 3210 是渲染服务专用端口：被残留的 vite dev server 占用会因 strictPort 直接失败
+    if (await isPortOpen(3210)) {
+      await freePortIfHijacked(3210, 'renderer server')
     }
 
     if (useLiveRenderer) {
@@ -285,7 +285,7 @@ async function startDev() {
         configFile: viteConfigFile,
         server: {
           host: '127.0.0.1',
-          port: 3000,
+          port: 3210,
           strictPort: true,
         },
       })
@@ -301,7 +301,7 @@ async function startDev() {
       configFile: viteConfigFile,
       preview: {
         host: '127.0.0.1',
-        port: 3000,
+        port: 3210,
         strictPort: true,
       },
     })
@@ -312,14 +312,14 @@ async function startDev() {
 
   // The cached production renderer is the default fast path; set HYPERPLAYER_LIVE_UI=1
   // to restore full Vite HMR.
-  // 先完成 3001 预检，避免旧会话存在时仍启动其余服务并遗留更多进程。
+  // 先完成 3211 预检，避免旧会话存在时仍启动其余服务并遗留更多进程。
   const api = await startAPI()
   const server = await startRendererServer()
 
   apiProcess = api
 
   logStartup('Backend launch tasks dispatched')
-  const devServerUrl = server.resolvedUrls?.local?.[0] || 'http://127.0.0.1:3000/'
+  const devServerUrl = server.resolvedUrls?.local?.[0] || 'http://127.0.0.1:3210/'
   console.log(`Electron loading ${devServerUrl}`)
 
   logStartup('Spawning Electron')

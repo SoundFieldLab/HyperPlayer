@@ -8,7 +8,7 @@
   "main": "desktop/main.cjs",
   "private": true,
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "vite --port=3210 --host=0.0.0.0",
     "dev:electron": "node scripts/dev-electron.mjs",
     "build:apple-weather": "node scripts/build-apple-weather-scenes.mjs",
     "build:splash": "node scripts/build-splash.mjs",
@@ -25,6 +25,7 @@
     "benchmark:mv": "node scripts/bilibili-mv-benchmark.mjs",
     "test:desktop": "node --test test/audio-download-security.test.cjs test/audio-download-policy.test.cjs test/local-api-health.test.mjs test/taskbar-widget-polling.test.cjs test/trusted-ipc.test.cjs test/update-manager-security.test.cjs test/user-data-profile.test.cjs",
     "lint": "tsc --noEmit",
+    "check:ports": "node scripts/check-ports.mjs",
     "prebuild": "node scripts/build-v3-worklet.mjs",
     "test:installer": "node scripts/generate-installer-ui.mjs && node --test test/installer.test.cjs",
     "version:patch": "node scripts/bump-version.mjs patch",

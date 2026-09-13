@@ -7,7 +7,7 @@ This file is the registry for standalone developer-only pages in the HyperPlayer
 | Field | Value |
 |---|---|
 | Page | `weather-debug.html` |
-| Local URL | `http://127.0.0.1:3000/weather-debug.html` |
+| Local URL | `http://127.0.0.1:3210/weather-debug.html` |
 | Start command | `npm run dev` |
 | Source entry | `src/weather-debug/main.tsx` |
 | Scenario factory | `src/weather-debug/scenarios.ts` |
@@ -41,7 +41,7 @@ card=simple: increase hourly forecast readability
 
 - Do not import `DesktopWidgetZone` or `WeatherWidget` into this page. They perform real weather and hazard refreshes.
 - Keep all data in `scenarios.ts`; do not call Open-Meteo, Nominatim, location services, or hazard APIs from the page.
-- Reuse the existing Vite `3000` server and open `/weather-debug.html`; do not start a second dev server.
+- Reuse the existing Vite `3210` server and open `/weather-debug.html`; do not start a second dev server.
 - Keep this page outside production build inputs. It is a visual validation tool, not a customer-facing route.
 - When adding another independent debug page, add a separate section in this registry with its URL, command, scope, source files, production status, and API/network constraints.
 
@@ -50,7 +50,7 @@ card=simple: increase hourly forecast readability
 | Field | Value |
 |---|---|
 | Page | `mv-decode-test.html` |
-| Local URL | `http://127.0.0.1:3000/mv-decode-test.html` (paste an audio URL into the input, or pass `?url=<encoded>` to auto-run; add `?rate=22050` to reproduce the app's detection sample rate — the page default is `12000`) |
+| Local URL | `http://127.0.0.1:3210/mv-decode-test.html` (paste an audio URL into the input, or pass `?url=<encoded>` to auto-run; add `?rate=22050` to reproduce the app's detection sample rate — the page default is `12000`) |
 | Start command | `npm run dev` |
 | Source entry | `public/mv-decode-test.html` (single self-contained HTML file; no `src/<feature>-debug/` folder) |
 | Styles | inline `<style>` in the same file |

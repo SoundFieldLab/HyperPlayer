@@ -286,7 +286,7 @@ class DesktopWallpaperManager {
               // 根据壁纸类型返回正确的格式
               if (selected.type === 'video') {
                 // 视频壁纸 - 返回 DesktopLiveWallpaperSource
-                const mediaUrl = `http://localhost:3001/api/wallpaper-engine/media?id=${selected.id}&file=${encodeURIComponent(selected.file)}`
+                const mediaUrl = `http://localhost:3211/api/wallpaper-engine/media?id=${selected.id}&file=${encodeURIComponent(selected.file)}`
                 return {
                   kind: 'wallpaper-engine',
                   sourceType: 'video',
@@ -296,10 +296,10 @@ class DesktopWallpaperManager {
                 } as DesktopLiveWallpaperSource
               } else if (selected.type === 'image') {
                 // 图片壁纸 - 返回真实文件 URL（容错 UNC 路径）
-                return toWallpaperUrl(`http://localhost:3001/api/wallpaper-engine/media?id=${selected.id}&file=${encodeURIComponent(selected.file)}`)
+                return toWallpaperUrl(`http://localhost:3211/api/wallpaper-engine/media?id=${selected.id}&file=${encodeURIComponent(selected.file)}`)
               } else {
                 // 其他类型使用预览图
-                return toWallpaperUrl(`http://localhost:3001${selected.preview}`)
+                return toWallpaperUrl(`http://localhost:3211${selected.preview}`)
               }
             }
           } catch (error) {

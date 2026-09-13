@@ -1479,7 +1479,7 @@ function TraditionalProfile({ platform, accent, isDark, loggedIn, username, avat
     const fallback = { nickname: isSelf ? username : (targetNickname || ''), avatarUrl: (isSelf ? avatar : targetAvatar) || '', signature: '' }
     if (!uid) { setDetail(fallback); return }
     if (platform === 'netease') {
-      fetch(`http://localhost:3001/api/netease/user/detail?uid=${encodeURIComponent(uid)}`, { cache: 'no-store' })
+      fetch(`http://localhost:3211/api/netease/user/detail?uid=${encodeURIComponent(uid)}`, { cache: 'no-store' })
         .then(r => r.json())
         .then(data => {
           if (cancelled) return
@@ -1489,7 +1489,7 @@ function TraditionalProfile({ platform, accent, isDark, loggedIn, username, avat
         .catch(() => { if (!cancelled) setDetail(fallback) })
     } else if (platform === 'qq') {
       const cookie = getPlatformCookie('qq')
-      fetch(`http://localhost:3001/api/qq/user/detail?id=${encodeURIComponent(uid)}${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`, { cache: 'no-store' })
+      fetch(`http://localhost:3211/api/qq/user/detail?id=${encodeURIComponent(uid)}${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`, { cache: 'no-store' })
         .then(r => r.json())
         .then(data => {
           if (cancelled) return
@@ -1509,7 +1509,7 @@ function TraditionalProfile({ platform, accent, isDark, loggedIn, username, avat
     let cancelled = false
     if (platform === 'netease') {
       const cookie = getPlatformCookie('netease')
-      fetch(`http://localhost:3001/api/netease/user/playlist?uid=${encodeURIComponent(uid)}${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`, { cache: 'no-store' })
+      fetch(`http://localhost:3211/api/netease/user/playlist?uid=${encodeURIComponent(uid)}${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`, { cache: 'no-store' })
         .then(r => r.json())
         .then(data => {
           if (cancelled) return
@@ -1519,7 +1519,7 @@ function TraditionalProfile({ platform, accent, isDark, loggedIn, username, avat
         .catch(() => { if (!cancelled) setOtherPlaylists([]) })
     } else if (platform === 'qq') {
       const cookie = getPlatformCookie('qq')
-      fetch(`http://localhost:3001/api/qq/user/playlist?id=${encodeURIComponent(uid)}${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`, { cache: 'no-store' })
+      fetch(`http://localhost:3211/api/qq/user/playlist?id=${encodeURIComponent(uid)}${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`, { cache: 'no-store' })
         .then(r => r.json())
         .then(data => {
           if (cancelled) return
@@ -1738,8 +1738,8 @@ function TraditionalRecent({ platform, accent, isDark, loggedIn, currentSong, au
       setLoading(false)
     }
     const endpoint = platform === 'qq'
-      ? `http://localhost:3001/api/qq/record/recent/song?limit=100${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
-      : `http://localhost:3001/api/netease/record/recent/song?limit=100${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
+      ? `http://localhost:3211/api/qq/record/recent/song?limit=100${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
+      : `http://localhost:3211/api/netease/record/recent/song?limit=100${cookie ? `&cookie=${encodeURIComponent(cookie)}` : ''}`
     fetch(endpoint, { cache: 'no-store' })
       .then(response => response.json().catch(() => null).then(payload => ({ response, payload })))
       .then(({ response, payload }) => {

@@ -220,7 +220,7 @@ const CommentItem = memo(function CommentItem({
     >
       <div className="flex items-start space-x-3">
         <img
-          src={comment.user.avatarUrl ? `http://localhost:3001/api/proxy-image?url=${encodeURIComponent(comment.user.avatarUrl)}` : ''}
+          src={comment.user.avatarUrl ? `http://localhost:3211/api/proxy-image?url=${encodeURIComponent(comment.user.avatarUrl)}` : ''}
           alt={comment.user.nickname}
           loading="lazy"
           className="w-10 h-10 rounded-full object-cover flex-shrink-0"
@@ -513,7 +513,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
         // 获取当前用户ID
         if (neteaseCookie) {
           try {
-            const res = await fetch(`http://localhost:3001/api/netease/user/account?cookie=${encodeURIComponent(neteaseCookie)}`)
+            const res = await fetch(`http://localhost:3211/api/netease/user/account?cookie=${encodeURIComponent(neteaseCookie)}`)
             const data = await res.json()
             if (data.profile?.userId) {
               setCurrentUserId(data.profile.userId.toString())
@@ -530,7 +530,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
         // QQ音乐获取用户ID
         if (qqCookie) {
           try {
-            const res = await fetch('http://localhost:3001/api/qq/user/setCookie', {
+            const res = await fetch('http://localhost:3211/api/qq/user/setCookie', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ data: qqCookie })
@@ -560,7 +560,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
   // 模拟当前用户信息
   const currentUser = {
     nickname: '我',
-    avatarUrl: 'http://localhost:3001/api/proxy-image?url=' + encodeURIComponent('https://p1.music.126.net/VnZiScyynLG7atLIZ2YPkw==/18686200114669622.jpg')
+    avatarUrl: 'http://localhost:3211/api/proxy-image?url=' + encodeURIComponent('https://p1.music.126.net/VnZiScyynLG7atLIZ2YPkw==/18686200114669622.jpg')
   }
 
   useEffect(() => {
@@ -615,12 +615,12 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
         // 最新评论使用cursor分页，精彩评论使用offset分页
         if (viewMode === 'latest') {
           const cursorToUse = reset ? '-1' : cursor
-          endpoint = `http://localhost:3001/api/netease/comment/music?id=${encodeURIComponent(String(songId))}&limit=${limit}&offset=${offset}&sortType=${sortType}&cursor=${cursorToUse}&type=${commentType}&cookie=${encodeURIComponent(localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || '')}`
+          endpoint = `http://localhost:3211/api/netease/comment/music?id=${encodeURIComponent(String(songId))}&limit=${limit}&offset=${offset}&sortType=${sortType}&cursor=${cursorToUse}&type=${commentType}&cookie=${encodeURIComponent(localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || '')}`
         } else {
-          endpoint = `http://localhost:3001/api/netease/comment/music?id=${encodeURIComponent(String(songId))}&limit=${limit}&offset=${offset}&sortType=${sortType}&type=${commentType}&cookie=${encodeURIComponent(localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || '')}`
+          endpoint = `http://localhost:3211/api/netease/comment/music?id=${encodeURIComponent(String(songId))}&limit=${limit}&offset=${offset}&sortType=${sortType}&type=${commentType}&cookie=${encodeURIComponent(localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || '')}`
         }
       } else {
-        endpoint = `http://localhost:3001/api/qq/comment?id=${encodeURIComponent(String(songId))}&pagenum=${pageToLoad}&pagesize=${limit}&type=${viewMode}&biztype=${qqCommentBizType}&cookie=${encodeURIComponent(userCookie)}`
+        endpoint = `http://localhost:3211/api/qq/comment?id=${encodeURIComponent(String(songId))}&pagenum=${pageToLoad}&pagesize=${limit}&type=${viewMode}&biztype=${qqCommentBizType}&cookie=${encodeURIComponent(userCookie)}`
       }
       
       console.log(`[评论加载] 平台: ${platform}, 歌曲ID: ${songId}, 页码: ${pageToLoad}`)
@@ -694,7 +694,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
             const floorOf = async (comment: any) => {
               try {
                 const floorResponse = await fetch(
-                  `http://localhost:3001/api/netease/comment/floor?id=${encodeURIComponent(String(songId))}&parentCommentId=${comment.commentId}&limit=2&type=${commentType}&cookie=${encodeURIComponent(localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || '')}`
+                  `http://localhost:3211/api/netease/comment/floor?id=${encodeURIComponent(String(songId))}&parentCommentId=${comment.commentId}&limit=2&type=${commentType}&cookie=${encodeURIComponent(localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || '')}`
                 )
                 if (floorResponse.ok) {
                   const floorData = await floorResponse.json()
@@ -871,7 +871,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
       const platform = resourcePlatform
       
       if (platform === 'netease') {
-        const response = await fetch('http://localhost:3001/api/netease/comment/like', {
+        const response = await fetch('http://localhost:3211/api/netease/comment/like', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -899,7 +899,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
         }
       } else {
         // QQ音乐
-        const response = await fetch('http://localhost:3001/api/qq/comment/like', {
+        const response = await fetch('http://localhost:3211/api/qq/comment/like', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -940,7 +940,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
       
       if (platform === 'netease') {
         // 调用网易云API删除评论
-        const response = await fetch('http://localhost:3001/api/netease/comment/delete', {
+        const response = await fetch('http://localhost:3211/api/netease/comment/delete', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -964,7 +964,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
         }
       } else {
         // QQ音乐删除评论API
-        const response = await fetch('http://localhost:3001/api/qq/comment/del', {
+        const response = await fetch('http://localhost:3211/api/qq/comment/del', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -1023,7 +1023,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
       
       if (platform === 'netease') {
         // 调用网易云API发布评论
-        const response = await fetch('http://localhost:3001/api/netease/comment/add', {
+        const response = await fetch('http://localhost:3211/api/netease/comment/add', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -1045,7 +1045,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
         }
       } else {
         // QQ音乐发布评论API
-        const response = await fetch('http://localhost:3001/api/qq/comment/send', {
+        const response = await fetch('http://localhost:3211/api/qq/comment/send', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -1091,7 +1091,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
       
       if (platform === 'netease') {
         // 调用网易云API回复评论
-        const response = await fetch('http://localhost:3001/api/netease/comment/reply', {
+        const response = await fetch('http://localhost:3211/api/netease/comment/reply', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -1114,7 +1114,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
         }
       } else {
         // QQ 回复与顶级评论共用接口，但必须携带根评论和父评论 ID 才能形成楼中楼。
-        const response = await fetch('http://localhost:3001/api/qq/comment/send', {
+        const response = await fetch('http://localhost:3211/api/qq/comment/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1153,7 +1153,7 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
 
     try {
       const response = await fetch(
-        `http://localhost:3001/api/netease/comment/floor?id=${encodeURIComponent(String(resourceId))}&parentCommentId=${comment.commentId}&limit=${Math.min(comment.replyCount, 50)}&type=${commentType}&cookie=${encodeURIComponent(userCookie)}`
+        `http://localhost:3211/api/netease/comment/floor?id=${encodeURIComponent(String(resourceId))}&parentCommentId=${comment.commentId}&limit=${Math.min(comment.replyCount, 50)}&type=${commentType}&cookie=${encodeURIComponent(userCookie)}`
       )
       const result = await response.json()
       if (!response.ok || result.code !== 200) throw new Error(result.message || result.error || '加载回复失败')

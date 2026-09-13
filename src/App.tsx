@@ -499,7 +499,7 @@ async function loadQQSongDetail(song: Song): Promise<Song> {
   if (!songMid) return song
 
   try {
-    const response = await fetch(`http://localhost:3001/api/qq/song/detail?mid=${encodeURIComponent(String(songMid))}`)
+    const response = await fetch(`http://localhost:3211/api/qq/song/detail?mid=${encodeURIComponent(String(songMid))}`)
     if (!response.ok) return song
 
     const data = await response.json()
@@ -1467,8 +1467,8 @@ function App() {
       ?? currentSong.album?.id
       ?? currentSong.id
     const endpoint = platform === 'qq'
-      ? 'http://localhost:3001/api/qq/record/recent/report'
-      : 'http://localhost:3001/api/netease/record/recent/report'
+      ? 'http://localhost:3211/api/qq/record/recent/report'
+      : 'http://localhost:3211/api/netease/record/recent/report'
     const body = platform === 'qq'
       ? { cookie, songId: currentSong.id }
       : {
@@ -4620,7 +4620,7 @@ function App() {
     
     // 获取网易云账号资料
     try {
-      const res = await fetch(`http://localhost:3001/api/netease/user/account?cookie=${encodeURIComponent(cookie)}`)
+      const res = await fetch(`http://localhost:3211/api/netease/user/account?cookie=${encodeURIComponent(cookie)}`)
       const data = await res.json()
       if (data.profile) {
         const profileUserId = data.profile.userId?.toString() || ''
@@ -4672,7 +4672,7 @@ function App() {
   const handleQQLogin = async (cookie: string, showToastMessage = true) => {
     try {
       // 1. 先写入 QQ cookie 到后端服务器
-      const setCookieRes = await fetch('http://localhost:3001/api/qq/user/setCookie', {
+      const setCookieRes = await fetch('http://localhost:3211/api/qq/user/setCookie', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: cookie })
@@ -4692,7 +4692,7 @@ function App() {
         // 2. 获取用户详细信息（失败不回滚已成功的 cookie 登录，仅用默认资料）
         let userDetailData: any = null
         try {
-          const userDetailRes = await fetch(`http://localhost:3001/api/qq/user/detail?id=${uin}&cookie=${encodeURIComponent(cookie)}`)
+          const userDetailRes = await fetch(`http://localhost:3211/api/qq/user/detail?id=${uin}&cookie=${encodeURIComponent(cookie)}`)
           userDetailData = await userDetailRes.json()
         } catch (detailError) {
           console.warn('⚠️ 获取QQ音乐用户详情网络失败，使用默认信息:', detailError)
@@ -4771,7 +4771,7 @@ function App() {
     clearLoginExpiry('qq')
     setAuthRevision(previous => previous + 1)
     window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'qq' } }))
-    void fetch('http://localhost:3001/api/qq/cookie', { method: 'DELETE' }).catch(() => undefined)
+    void fetch('http://localhost:3211/api/qq/cookie', { method: 'DELETE' }).catch(() => undefined)
   }
 
   const handleRemoveFromFavorites = async (song: Song): Promise<boolean> => {

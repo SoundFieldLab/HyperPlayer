@@ -27,7 +27,7 @@ async function loadCoverAsObjectUrl(imageUrl: string): Promise<CoverSource> {
   } catch {
     // 缓存读取失败时直接走代理下载
   }
-  const proxyUrl = `http://localhost:3001/api/proxy-image?url=${encodeURIComponent(imageUrl)}`
+  const proxyUrl = `http://localhost:3211/api/proxy-image?url=${encodeURIComponent(imageUrl)}`
   try {
     const response = await fetch(proxyUrl)
     if (!response.ok) return { url: imageUrl, isObjectUrl: false }

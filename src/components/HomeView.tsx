@@ -673,7 +673,7 @@ function HomeView({
 
       if (playlistPlatform === 'netease') {
         const neteaseCookie = localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
-        const response = await fetch(`http://localhost:3001/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(neteaseCookie)}`)
+        const response = await fetch(`http://localhost:3211/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(neteaseCookie)}`)
         data = await response.json()
         if (!response.ok || data.error) throw new Error(data.error || '读取网易云歌单失败')
         const songs = mapPlaylistTracksToSongs(data.playlist?.tracks || [], 'netease')
@@ -688,7 +688,7 @@ function HomeView({
       }
 
       const cookie = localStorage.getItem('qq_cookie') || ''
-      const response = await fetch(`http://localhost:3001/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`)
+      const response = await fetch(`http://localhost:3211/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`)
       data = await response.json()
       if (!response.ok || data.error) throw new Error(data.error || '读取QQ歌单失败')
       const songs = mapPlaylistTracksToSongs(data.songlist || data.data?.songlist || [], 'qq')
@@ -867,7 +867,7 @@ function HomeView({
         })
       } else if (playlistPlatform === 'qq') {
         const cookie = localStorage.getItem('qq_cookie') || ''
-        const data = await fetchWithRetry(`http://localhost:3001/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`)
+        const data = await fetchWithRetry(`http://localhost:3211/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`)
         if (!isCurrentRequest()) return
 
         if (data.playlist) {
@@ -1680,8 +1680,8 @@ function HomeView({
           : localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
         if (!cookie) return
         const endpoint = platform === 'qq'
-          ? 'http://localhost:3001/api/qq/record/recent/song'
-          : 'http://localhost:3001/api/netease/record/recent/song'
+          ? 'http://localhost:3211/api/qq/record/recent/song'
+          : 'http://localhost:3211/api/netease/record/recent/song'
         const recentQuery = new URLSearchParams({ limit: '100', cookie })
         const response = await fetch(`${endpoint}?${recentQuery.toString()}`, {
           cache: 'no-store',

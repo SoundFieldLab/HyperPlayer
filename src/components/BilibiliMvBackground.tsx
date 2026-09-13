@@ -200,7 +200,7 @@ async function findFallbackMvUrl(ctx: { songTitle: string; artists: string[]; so
   if (!title) return null
   try {
     // 1. 网易云搜索（取前 5 条，匹配标题+歌手）
-    const searchUrl = `http://localhost:3001/api/netease/search?keyword=${encodeURIComponent(`${title} ${artist}`)}&limit=5`
+    const searchUrl = `http://localhost:3211/api/netease/search?keyword=${encodeURIComponent(`${title} ${artist}`)}&limit=5`
     const searchResp = await fetch(searchUrl, { signal })
     if (!searchResp.ok) return null
     const searchJson = await searchResp.json()
@@ -214,7 +214,7 @@ async function findFallbackMvUrl(ctx: { songTitle: string; artists: string[]; so
     })
     if (!match?.mv) return null
     // 2. 获取 MV 播放地址
-    const mvUrl = `http://localhost:3001/api/netease/mv/url?id=${match.mv}`
+    const mvUrl = `http://localhost:3211/api/netease/mv/url?id=${match.mv}`
     const mvResp = await fetch(mvUrl, { signal })
     if (!mvResp.ok) return null
     const mvJson = await mvResp.json()

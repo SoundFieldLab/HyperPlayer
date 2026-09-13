@@ -1,6 +1,6 @@
 # AGENTS.md — HyperPlayer
 
-Desktop music player (Windows/Electron)，共 **3 个音源**：网易云 / QQ 两个音乐平台（`src/services/platforms.ts` 的 `MusicPlatform`，现为 `'netease' | 'qq'`）+ **B站看歌**（`BilibiliMvPlayer` / 歌词模式 `video`）。Frontend React 19 + TypeScript + Tailwind CSS 4 + Vite 6, backend Node/Express（`local-server.mjs`，端口 3001）；**后端与前端均无任何 Python 依赖**。UI text and code comments are predominantly **Chinese** — keep new user-facing strings consistent with the existing language. **Apple Music / Spotify 音源已移除**（登录、目录、播放面 bridge、DRM 适配与 `Apple*` 探索/登录/电台/视频组件一并删除），但 **Apple 风格歌词特性全部保留**：`src/services/appleLyricsStyle.ts`（对唱着色 / TTML → 播放时间轴）、`AppleCoverFx.tsx`、`QuickSettings` 的「逐词点亮」与「崭新」（弹簧滚动）、`docs/歌词对比-LyricsBlossom.md`——**勿当作音源残留删除**。
+Desktop music player (Windows/Electron)，共 **3 个音源**：网易云 / QQ 两个音乐平台（`src/services/platforms.ts` 的 `MusicPlatform`，现为 `'netease' | 'qq'`）+ **B站看歌**（`BilibiliMvPlayer` / 歌词模式 `video`）。Frontend React 19 + TypeScript + Tailwind CSS 4 + Vite 6, backend Node/Express（`local-server.mjs`，端口 3211）；**后端与前端均无任何 Python 依赖**。UI text and code comments are predominantly **Chinese** — keep new user-facing strings consistent with the existing language. **Apple Music / Spotify 音源已移除**（登录、目录、播放面 bridge、DRM 适配与 `Apple*` 探索/登录/电台/视频组件一并删除），但 **Apple 风格歌词特性全部保留**：`src/services/appleLyricsStyle.ts`（对唱着色 / TTML → 播放时间轴）、`AppleCoverFx.tsx`、`QuickSettings` 的「逐词点亮」与「崭新」（弹簧滚动）、`docs/歌词对比-LyricsBlossom.md`——**勿当作音源残留删除**。
 
 **本仓库为减配版（slimdown）**：已移除 Android TV（`android/`、TV 键盘/媒体键桥、nodejs-mobile 构建）、Python 节拍/响度/频响补偿服务（端口 3002/3003/3004 全部不再使用，`resources/python-embed/` 嵌入式运行时已删）、汽水（Qishui/Soda）与酷狗音源、**Apple Music / Spotify 音源与其播放面 Python bridge（端口 18790）、Widevine/VMP DRM 播放链（castLabs 分叉，已回官方 stock Electron）**、音效引擎 v1/v2（**只剩 HSE v3 一个引擎**）、Folia/多维 Diorama/摩登/光荣/壁纸歌词等歌词模式（收敛为 4 种）、DG_LAB 插件、AirPlay / 分轨 Stem / 远程遥控 / 设备授权 / 代理管理 / 爱发电同步 / Smart AutoMix（只保留 Fixed Crossfade + gapless + 专辑无缝）。**旧文档中描述这些功能的段落一律失效，勿据此恢复。**
   - ⚠️ **例外：播放页「封面模糊铺底 + 背景律动」已按用户要求恢复**（2026-09-13）。减配时它随"律动背景"被整块删除（`6b5f1aa` 删组件、`51fdd0d` 删接线），但那是陪葬——它是**播放页的常驻兜底背景**，MV 未开启/未匹配时用户看到的就是它，删掉后播放页只剩近黑渐变（用户实测反馈"怎么只剩黑色"）。现状：`src/components/CrossfadeBackground.tsx`（封面交叉淡入 + 模糊）+ `App.tsx` 的 `PulsingCrossfadeBackground` 包装（随音频脉冲缩放/提亮）+ 挂载点在 MV 层之前 + `QuickSettings.tsx` 的「背景律动」开关与三档强度。**勿再当作减配残留删除。**
@@ -8,9 +8,10 @@ Desktop music player (Windows/Electron)，共 **3 个音源**：网易云 / QQ �
 ## Commands
 
 ```bash
-npm run dev:electron     # Full dev: Vite (3000) + API server (3001) + Electron window
-npm run dev              # Vite dev server only (port 3000; Weather Lab: http://127.0.0.1:3000/weather-debug.html)
+npm run dev:electron     # Full dev: Vite (3210) + API server (3211) + Electron window
+npm run dev              # Vite dev server only (port 3210; Weather Lab: http://127.0.0.1:3210/weather-debug.html)
 npm run lint             # Typecheck: tsc --noEmit (covers src/ only; no ESLint in repo)
+npm run check:ports      # 端口一致性闸门（必须 3210/3211，禁止回退 3000–3002；已接入 CI checks）
 npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-09-13 实测：120 文件 = 119 过 + 1 跳过；1173 用例 = 1168 过 + 5 跳过 + 0 失败。跳过的 5 项是 v3 LGPL 可选依赖未装自动跳过)
 npm run build:v3-worklet # 重生成 v3 AudioWorklet 单文件 -> public/v3-worklet.js（predev/predev:electron/prebuild 已自动执行）
 npm run build            # vite build -> dist/（三入口：index.html / desktop-player.html / desktop-lyrics.html）
@@ -32,14 +33,16 @@ npm run start            # electron .（直接起已构建产物）
 
 注意：`prebuild` / `predev` / `predev:electron` 钩子只做一件事——运行 `build:v3-worklet` 重打包 HSE 的 AudioWorklet 单文件到 `public/v3-worklet.js`。
 
-**端口**：只有 3000（Vite dev/preview）与 3001（Express 后端）。旧文档里的 18790（Apple Music 播放面 Python bridge，随音源移除）与 3002/3003/3004（Python 节拍/响度/补偿）已全部停用。
+**端口**：只有 **3210**（Vite dev/preview）与 **3211**（Express 后端，仅 127.0.0.1）。旧文档里的 18790（Apple Music 播放面 Python bridge，随音源移除）与 3002/3003/3004（Python 节拍/响度/补偿）已全部停用。
+
+> ⚠️ **不要改回 3000/3001/3002**（2026-09-14 迁移）：本机 WaveForge（3000 / 3001 / 3002 / 30082…）与 ReWaveForge（3001 / 3101）常驻占用该段，撞上的症状是「后端日志报端口已被占用、前端连到别的服务拿到空数据」，排查成本极高。端口分散在 `vite.config.ts` / `package.json` dev 脚本 / `local-server.mjs`（默认端口 + CORS 白名单 + SSRF 放行自身端口）/ `desktop/main.cjs`（`BACKEND_PORTS` + 健康检查 + 放行的渲染 origin）/ `scripts/dev-electron*.mjs` / `src/services/apiConfig.ts`，**`node scripts/check-ports.mjs` 是这道约定的闸门**（已接入 `.github/workflows/ci.yml` 的 checks 作业），改端口后必须让它通过。
 
 ## Independent debug pages
 
 Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./DEBUG_PAGES.md). It registers developer-only visual tools, their launch command, local URL, data/network constraints, and production-build status.
 
-- **Weather Lab**: run the existing `npm run dev`, then open `http://127.0.0.1:3000/weather-debug.html`. Use it to compare all Apple weather scenes and desktop `full`/`simple` cards with local mock data. Do not add `weather-debug.html` to production Vite inputs（`vite.config.ts` 的 `rollupOptions.input` 已显式白名单为三个入口）。
-- **MV Decode Probe**: run the existing `npm run dev`, then open `http://127.0.0.1:3000/mv-decode-test.html`（可带 `?url=<音频直链>&rate=22050` 复现 app 检测采样率）。用于核对 B 站 MV / 音频的**音乐起点检测**：`decodeAudioData` → 单声道降采样 → `frameRms`/`onset` 包络 → `window.__decodeResult`，与 `autoMixAnalysisService.ts` / `mvAlignment.ts` 的包络互相对照。注意该页在 `public/` 下，Vite 会原样拷入 `dist/`（即随打包产物分发）。
+- **Weather Lab**: run the existing `npm run dev`, then open `http://127.0.0.1:3210/weather-debug.html`. Use it to compare all Apple weather scenes and desktop `full`/`simple` cards with local mock data. Do not add `weather-debug.html` to production Vite inputs（`vite.config.ts` 的 `rollupOptions.input` 已显式白名单为三个入口）。
+- **MV Decode Probe**: run the existing `npm run dev`, then open `http://127.0.0.1:3210/mv-decode-test.html`（可带 `?url=<音频直链>&rate=22050` 复现 app 检测采样率）。用于核对 B 站 MV / 音频的**音乐起点检测**：`decodeAudioData` → 单声道降采样 → `frameRms`/`onset` 包络 → `window.__decodeResult`，与 `autoMixAnalysisService.ts` / `mvAlignment.ts` 的包络互相对照。注意该页在 `public/` 下，Vite 会原样拷入 `dist/`（即随打包产物分发）。
 
 **打包规则（electron-builder）**：`build.files` 白名单 = `desktop/**/*`、`dist/**/*`、`server/**/*`、`shared/**/*`、`local-server.mjs`、`package.json`、`logo.png`、`build/**/*`（清单里还列了 `THIRD_PARTY_NOTICES.md`，但该文件当前不存在于仓库根，属悬空条目）。**已无 `asarUnpack`**——原先唯一的解包项是 Apple bridge 的 `.py`（Python 脚本不能从 asar 内执行），随音源移除后整块删除；现已无 Python 服务与离线 wheels，无需任何排除规则。**`scripts/verify-asar.cjs` 已接入 dir 构建链**（`build:electron:dir`：electron-builder 之后）：校验 asar 结构自洽（头部/条目越界/package.json 可解析）。**构建运行期间不要编辑任何会被打包的文件**——electron-builder 先按 stat 尺寸写头部、后拷贝内容，中途文件被改（哪怕只改注释）会静默产出 **Node 能读、Electron 拒载**的坏包（症状：启动停在 Electron 默认页/帮助文案），闸门就是拦这个的。
 
@@ -116,7 +119,7 @@ HyperPlayer 共 **4 个界面模式**（简约 minimal / 传统 traditional / �
   - **启动窗口位置（2026-09-13 起恒居中）**：启动页与主窗口共用 `resolveTargetBounds()` 的同一份 bounds（切换不跳动）；**位置恒为该显示器工作区几何中心**（`window-state.cjs` 的 `centerBoundsInWorkArea`），**不恢复记忆里的 x/y**——记忆位置可能来自最大化/全屏/kiosk 等瞬态（实测存出过贴顶的 y=7，用户观感「不在屏幕正中」）。尺寸、最大化状态、所在显示器仍按 `window-state.json` 记忆恢复；**勿改回「照搬记忆位置」**。
   - 初始阶段曾把设计稿（`new-splash/hyperplayer-splash/` 与 `new-splash/new-splash/`，二者均为 pen.dev 导出 + `build.py` 生成实时动画版 `index.html`）直接适配为实时动画页；现保留作**设计源与参考**（改速度/幅度改各自 `build.py`），但不再接入启动页。`new-splash/new-splash/build.py` 会把运动幅度按 1400/1920 等比缩放，改画布尺寸时勿忘同步。
 - `src/desktop-lyrics/` + `src/desktop-player/` — standalone renderer entries for `desktop-lyrics.html` / `desktop-player.html`。
-- `local-server.mjs` — single-file Express backend（~11k 行, port 3001）。Extra route modules in `server/` are registered here（`hazard-api` / `location-api` / `bilibili-api` / `netease-native-explore`；工具模块 `byte-lru-cache` / `comment-api-utils` / `local-api-health` / `local-service-auth` / `qrc-decoder`）。QQ cookie state must flow through the single `qqMusicCookie` source of truth. **cookie 单事实源规则**：全局 `qqMusicCookie` 只在显式登录/设置接口（`/api/qq/cookie`、`/api/qq/user/setCookie`）更新；播放/读取路由一律用 `resolveRequestCookie(cookie)`（请求 cookie 仅本次使用，绝不回写全局），写操作按请求级 cookie 传递——并发播放/写操作不得互相冲掉登录态。
+- `local-server.mjs` — single-file Express backend（~11k 行, port 3211）。Extra route modules in `server/` are registered here（`hazard-api` / `location-api` / `bilibili-api` / `netease-native-explore`；工具模块 `byte-lru-cache` / `comment-api-utils` / `local-api-health` / `local-service-auth` / `qrc-decoder`）。QQ cookie state must flow through the single `qqMusicCookie` source of truth. **cookie 单事实源规则**：全局 `qqMusicCookie` 只在显式登录/设置接口（`/api/qq/cookie`、`/api/qq/user/setCookie`）更新；播放/读取路由一律用 `resolveRequestCookie(cookie)`（请求 cookie 仅本次使用，绝不回写全局），写操作按请求级 cookie 传递——并发播放/写操作不得互相冲掉登录态。
 - **Apple 风格歌词能力（音源移除后刻意保留）**：`src/services/appleLyricsStyle.ts`（TTML 的 `ttm:agent` → 对唱/多声部着色，设置项 `appleDuetColors`；TTML 本地化合并 → LyricLine。全程纯本地、无登录无网络请求）、`src/utils/ttmlParser.ts`、`src/components/AppleCoverFx.tsx`（封面粒子特效，当前未接线）。逐字歌词数据源 = 平台官方（网易云/QQ）+ **AMLL TTML DB**（`musicApi.getAMLLTTMLLyrics`），对唱着色对网易云/QQ 的 AMLL TTML 歌词同样生效；播放页「现代」模式的逐字效果（clear/soft/**apple 逐词点亮**）与「崭新」弹簧滚动（`QuickSettings`）也属保留范围。**勿把这些当作 Apple 音源残留删除。**
 - `build/` 打包资源 — 不止 icon：**自定义 NSIS 安装器 UI 资产**（`installer.nsh` + `installerHeader/Sidebar.bmp` 等主题图 + `ui/`、`ui-clone/` 中文按钮/页面 bmp），由 `scripts/generate-installer-art.mjs` / `generate-installer-ui.mjs` / `generate-installer-clone.mjs` 生成；预览用 `node scripts/preview-setup.mjs`（独立 NSI 在 `scripts/setup-preview/preview.nsi`）。改安装器视觉先跑生成脚本再构建。
 - `desktop/main.cjs` 含 **QQ音乐 QMK API Key 领取窗口**（`QMK_OFFICIAL_KEY_URL` y.qq.com；独立 session partition `hyperplayer-qq-skill-key`，每次打开前清空避免复用登录态）——编辑时保留隔离分区与导航守卫逻辑。
@@ -130,12 +133,12 @@ HyperPlayer 共 **4 个界面模式**（简约 minimal / 传统 traditional / �
 - **Use `debugLog()` (src/utils/debugLog.ts) instead of `console.log` in hot paths** — gated behind `localStorage['hyperplayer:verbose-log']` to avoid console memory growth.
 - **Files must be UTF-8** — Windows encoding issues previously broke Chinese UI text（曾出现 GBK 误读乱码，含正则字符类损坏）。
 - **性能基线（已完成的优化，勿回退）**：三视图/弹窗/列表行组件 memo + latest-ref 稳定回调（`viewCallbacks`/`stableDialogCallbacks`）；过渡进度 30fps 节流；评论/艺人列表 react-window 虚拟化；封面代理流式转发；`/api/cover`、`/api/proxy-image` 经 `streamProxyImage()` 流式（不整读进内存）；后端 gzip（compression 中间件，filter 排除 image/video/audio）；axios keepAlive；vite `manualChunks` 拆 vendor（react / framer-motion / leaflet）。
-- Ports: **3000** Vite / **3001** backend (127.0.0.1, CORS allows only localhost:3000, file://, null origins)。
+- Ports: **3210** Vite / **3211** backend (127.0.0.1, CORS allows only localhost:3210, file://, null origins)。
 
 ## Backend security invariants (do not break when editing)
 
 - **Electron 主进程**：所有窗口（主窗口/桌面播放器/歌词窗/任务栏小窗）都挂 `guardAgainstExternalNavigation()`（will-navigate 拦截外部跳转）；QQ QMK 领取窗口是唯一被允许打开 `y.qq.com` 的窗口——不要为其他窗口放宽守卫。
-- `/api/cover` and `/api/proxy-image` have an SSRF guard blocking private/loopback/link-local IPs and DNS names resolving to them. **The internal proxy chain `proxy-image → cover` is legitimate**: guard must keep allowing `localhost:3001` (the app's own origin) — inner `/api/cover` still validates the final CDN target, so blocking localhost:3001 would break comment/playlist avatars.
+- `/api/cover` and `/api/proxy-image` have an SSRF guard blocking private/loopback/link-local IPs and DNS names resolving to them. **The internal proxy chain `proxy-image → cover` is legitimate**: guard must keep allowing `localhost:3211` (the app's own origin) — inner `/api/cover` still validates the final CDN target, so blocking localhost:3211 would break comment/playlist avatars.
 - `/api/wallpaper-engine/preview` & `/media` enforce path containment under the WE base dir (resolve + startsWith(base+sep)).
 - **Netease xeapi**: `initNeteaseAPI()` in local-server.mjs calls the lib's `generateConfig()` at startup to register an anonymous token and fetch the xeapi public key (cached in `os.tmpdir()/xeapi_public_key`). If `/api/netease/song/url` starts returning `xeapi public key is missing`, the tmp cache was cleared — restart the server.
 - **QQ 播放/写操作 cookie**：播放类路由（song/url、mv/url、mv/detail、comment、user/detail 等）用 `resolveRequestCookie(cookie)` 只读不写全局；写操作（like、playlist/tracks、subscribe、artist/subscribe）一律传请求级 cookie 并 `cookie || qqMusicCookie` 回退。改 cookie 逻辑时保持此单事实源约束。

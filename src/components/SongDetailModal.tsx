@@ -154,7 +154,7 @@ function SongDetailModal({ song, onClose, onPlayNow, onOpenPlaylist, onOpenAlbum
       try {
         if (song.platform === 'qq') {
           const mid = String(song.mid || song.id)
-          const res = await fetch(`http://localhost:3001/api/qq/song/detail?mid=${encodeURIComponent(mid)}`)
+          const res = await fetch(`http://localhost:3211/api/qq/song/detail?mid=${encodeURIComponent(mid)}`)
           const data = await res.json()
           if (!cancelled && data?.song) {
             setExtra({
@@ -186,7 +186,7 @@ function SongDetailModal({ song, onClose, onPlayNow, onOpenPlaylist, onOpenAlbum
           }
           if (!cancelled) setLyricsLoading(false)
         } else {
-          const res = await fetch(`http://localhost:3001/api/netease/song/detail?ids=${encodeURIComponent(String(song.id))}`)
+          const res = await fetch(`http://localhost:3211/api/netease/song/detail?ids=${encodeURIComponent(String(song.id))}`)
           const data = await res.json()
           const detail = data?.songs?.[0]
           if (!cancelled && detail) {

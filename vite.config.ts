@@ -28,7 +28,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3000,
+    port: 3210,
     host: '127.0.0.1',
     watch: {
       ignored: ['**/dist/**', '**/release/**'],

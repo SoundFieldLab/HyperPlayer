@@ -123,7 +123,7 @@ export default function LoginView({ platform, onCancel, onLoginSuccess }: LoginV
       pollControllerRef.current = controller
       let finished = false
       try {
-        const res = await fetch(`http://localhost:3001/api/netease/login/qr/check?key=${key}`, { signal: controller.signal })
+        const res = await fetch(`http://localhost:3211/api/netease/login/qr/check?key=${key}`, { signal: controller.signal })
         const data = await res.json()
         if (!isCurrent(generation)) return
 
@@ -161,12 +161,12 @@ export default function LoginView({ platform, onCancel, onLoginSuccess }: LoginV
     setLoading(true)
     setStatus('pending')
     try {
-      const keyRes = await fetch('http://localhost:3001/api/netease/login/qr/key', { signal: controller.signal })
+      const keyRes = await fetch('http://localhost:3211/api/netease/login/qr/key', { signal: controller.signal })
       const keyData = await keyRes.json()
       if (!keyData.data?.unikey) throw new Error('failed to get QR key')
 
       const key = keyData.data.unikey
-      const qrRes = await fetch(`http://localhost:3001/api/netease/login/qr/create?key=${key}&qrimg=true`, { signal: controller.signal })
+      const qrRes = await fetch(`http://localhost:3211/api/netease/login/qr/create?key=${key}&qrimg=true`, { signal: controller.signal })
       const qrData = await qrRes.json()
       if (!isCurrent(generation)) return
       if (!qrData.data?.qrimg) throw new Error('failed to generate QR code')

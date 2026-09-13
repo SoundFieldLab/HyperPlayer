@@ -639,7 +639,7 @@ function ExploreView({
     }
     setFmLoading(true)
     try {
-      const res = await fetch(`http://localhost:3001/api/netease/personal_fm?cookie=${encodeURIComponent(cookie)}`)
+      const res = await fetch(`http://localhost:3211/api/netease/personal_fm?cookie=${encodeURIComponent(cookie)}`)
       const data = await res.json()
       const raw = Array.isArray(data?.data) ? data.data : []
       const songs: Song[] = raw.map((s: any) => ({

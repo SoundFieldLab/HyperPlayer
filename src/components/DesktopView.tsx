@@ -590,8 +590,8 @@ function DesktopView({
           return
         }
         const endpoint = currentPlatform === 'qq'
-          ? 'http://localhost:3001/api/qq/record/recent/song'
-          : 'http://localhost:3001/api/netease/record/recent/song'
+          ? 'http://localhost:3211/api/qq/record/recent/song'
+          : 'http://localhost:3211/api/netease/record/recent/song'
         const query = new URLSearchParams({ limit: '100', cookie })
         const response = await fetch(`${endpoint}?${query.toString()}`, {
           cache: 'no-store',
@@ -1077,7 +1077,7 @@ function DesktopView({
         })
       } else if (playlistPlatform === 'qq') {
         const cookie = localStorage.getItem('qq_cookie') || ''
-        const response = await fetch(`http://localhost:3001/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`, {
+        const response = await fetch(`http://localhost:3211/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`, {
           signal: playlistLoadController.signal,
           cache: 'no-store',
         })

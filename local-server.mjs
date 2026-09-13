@@ -59,14 +59,14 @@ axios.defaults.httpAgent = new HttpAgent({ keepAlive: true, maxSockets: 64 })
 axios.defaults.httpsAgent = new HttpsAgent({ keepAlive: true, maxSockets: 64 })
 
 const app = express()
-const PORT = Number(process.env.PORT) || 3001
+const PORT = Number(process.env.PORT) || 3211
 const LOCAL_SERVICE_TOKEN = String(process.env.HYPERPLAYER_LOCAL_TOKEN || '')
 const ALLOWED_RENDERER_ORIGINS = new Set([
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  // TV 真机：WebView 页面源与 API 同源（localhost:3001），fetch POST 会带 Origin，必须放行
-  'http://localhost:3001',
-  'http://127.0.0.1:3001',
+  'http://localhost:3210',
+  'http://127.0.0.1:3210',
+  // TV 真机：WebView 页面源与 API 同源（localhost:3211），fetch POST 会带 Origin，必须放行
+  'http://localhost:3211',
+  'http://127.0.0.1:3211',
   'file://',
   'null',
 ])
@@ -1379,7 +1379,7 @@ async function isBlockedFetchUrl(rawUrl) {
   // 放行代理到本服务自身（如 /api/proxy-image → /api/cover 的内部代理链）。
   // 内层 /api/cover 仍会对最终目标做 CDN 公网校验，因此不会绕过 SSRF 防护。
   const port = String(parsed.port || (parsed.protocol === 'https:' ? '443' : '80'))
-  if ((hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') && port === '3001') {
+  if ((hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') && port === '3211') {
     return false
   }
 

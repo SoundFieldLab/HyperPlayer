@@ -16,7 +16,7 @@ interface CommentItem {
   replyCount: number
 }
 
-const API_BASE = 'http://localhost:3001'
+const API_BASE = 'http://localhost:3211'
 const getCookie = () => localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
 
 const formatDate = (ms: number) => {

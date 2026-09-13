@@ -663,7 +663,7 @@ export default function ArtistDetailModal({
       
       if (platform === 'netease') {
         // 网易云音乐：调用全部歌曲接口
-        const response = await fetch(`http://localhost:3001/api/netease/artist/songs?id=${artistId}&limit=${limit}&offset=${offset}`)
+        const response = await fetch(`http://localhost:3211/api/netease/artist/songs?id=${artistId}&limit=${limit}&offset=${offset}`)
         const data = await response.json()
         
         // 检查是否有错误
@@ -702,7 +702,7 @@ export default function ArtistDetailModal({
         }))
       } else {
         // QQ音乐：调用后端API，传入offset和limit（使用mid参数）
-        const response = await fetch(`http://localhost:3001/api/qq/artist/songs?mid=${artistId}&limit=${limit}`)
+        const response = await fetch(`http://localhost:3211/api/qq/artist/songs?mid=${artistId}&limit=${limit}`)
         const data = await response.json()
         const newSongs = data.songs || []
         total = data.total || 0

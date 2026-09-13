@@ -5,8 +5,14 @@ import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
 import net from 'net'
 
+// CDP 调试启动器：与 scripts/dev-electron.mjs 同样的三件套（Vite + 本地 API + Electron），
+// 区别只是给 Electron 打开 --remote-debugging-port。端口与主启动器保持一致：
+// Vite 3210 / 本地 API 3211（避开 WaveForge 系的 3000–3002，两者可同时运行）。
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
+
+const VITE_PORT = 3210
+const API_PORT = 3211
 
 function isPortOpen(port, host = 'localhost') {
   return new Promise(resolve => {
@@ -42,56 +48,18 @@ async function waitForPort(port, timeoutMs = 10000) {
 
 async function startDev() {
   let apiProcess = null
-  let pythonProcess = null
-
-  // 并行启动所有服务
-  const startPython = async () => {
-    if (await isPortOpen(3002)) {
-      console.log('Python Beat Service already running on http://localhost:3002')
-      return null
-    }
-    
-    console.log('Starting Python Beat Service...')
-    const pythonExe = resolve(__dirname, '../resources/python-embed/python.exe')
-    const beatAnalyzer = resolve(__dirname, '../python-beat-service/beat_analyzer.py')
-    
-    const pythonProc = spawn(
-      pythonExe,
-      [beatAnalyzer],
-      { 
-        stdio: ['ignore', 'inherit', 'inherit'],
-        windowsHide: true,
-        env: {
-          ...process.env,
-          PYTHONIOENCODING: 'utf-8',
-          PYTHONUNBUFFERED: '1'
-        }
-      }
-    )
-    
-    // 后台等待，不阻塞主流程
-    waitForPort(3002, 15000).then(success => {
-      if (success) {
-        console.log('Python Beat Service started successfully on http://localhost:3002')
-      } else {
-        console.warn('Python Beat Service did not open port 3002 within 15 seconds')
-      }
-    })
-    
-    return pythonProc
-  }
 
   const startAPI = async () => {
-    if (await isPortOpen(3001)) {
-      console.log('Local API server already running on http://localhost:3001')
+    if (await isPortOpen(API_PORT)) {
+      console.log(`Local API server already running on http://localhost:${API_PORT}`)
       return null
     }
-    
+
     console.log('Starting Local API Server...')
     const apiProc = spawn(
       process.execPath,
       [resolve(__dirname, '../local-server.mjs')],
-      { 
+      {
         stdio: ['ignore', 'inherit', 'inherit'],
         windowsHide: true,
         env: {
@@ -100,15 +68,15 @@ async function startDev() {
         }
       }
     )
-    
-    waitForPort(3001, 10000).then(success => {
+
+    waitForPort(API_PORT, 10000).then(success => {
       if (success) {
-        console.log('Local API server started successfully on http://localhost:3001')
+        console.log(`Local API server started successfully on http://localhost:${API_PORT}`)
       } else {
-        console.warn('Local API server did not open port 3001 within 10 seconds')
+        console.warn(`Local API server did not open port ${API_PORT} within 10 seconds`)
       }
     })
-    
+
     return apiProc
   }
 
@@ -122,16 +90,14 @@ async function startDev() {
   }
 
   // 并行启动所有服务
-  const [python, api, server] = await Promise.all([
-    startPython(),
+  const [api, server] = await Promise.all([
     startAPI(),
     startVite()
   ])
-  
-  pythonProcess = python
+
   apiProcess = api
-  
-  const devServerUrl = server.resolvedUrls?.local?.[0] || 'http://127.0.0.1:3000/'
+
+  const devServerUrl = server.resolvedUrls?.local?.[0] || `http://127.0.0.1:${VITE_PORT}/`
   console.log(`Electron loading ${devServerUrl}`)
 
   const electronProcess = spawn(
@@ -142,7 +108,6 @@ async function startDev() {
       env: {
         ...process.env,
         HYPERPLAYER_DEV_SERVER_URL: devServerUrl,
-        PYTHONIOENCODING: 'utf-8',
       },
     }
   )
@@ -152,10 +117,6 @@ async function startDev() {
 
     if (apiProcess && !apiProcess.killed) {
       apiProcess.kill()
-    }
-
-    if (pythonProcess && !pythonProcess.killed) {
-      pythonProcess.kill()
     }
   }
 
