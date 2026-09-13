@@ -84,7 +84,7 @@ npm run version:patch|minor|major|pre  # 版本号更迭（自动 commit/tag/pus
 
 ## 发布（GitHub Releases）
 
-**正式版（打 `v*` tag）的 release 资产 = NSIS 安装包 `release/HyperPlayer-<version>-Setup.exe` + 热更新包 `hyperplayer-hot-<version>.zip`（app.asar + app.asar.unpacked）；nightly 渠道额外发布便携版 `HyperPlayer-<version>-portable.zip`（解压即用、免安装）**；`release/win-unpacked/` 本身仍不入库、不随 releases 分发（仅本地调试产物）。安装版为每用户安装、**不携带任何用户数据/配置**——首次运行在该机 `%APPDATA%\HyperPlayer\` 自动生成全新配置并适配当前用户。
+**正式版（打 `v*` tag）的 release 资产 = NSIS 安装包 `release/HyperPlayer-<version>-Setup.exe` + 热更新包 `hyperplayer-hot-<version>.zip`（app.asar + app.asar.unpacked）；nightly 渠道**同样只发 NSIS 安装包（2026-09-14 起不再发便携版 zip）**；`release/win-unpacked/` 本身仍不入库、不随 releases 分发（仅本地调试产物）。安装版为每用户安装、**不携带任何用户数据/配置**——首次运行在该机 `%APPDATA%\HyperPlayer\` 自动生成全新配置并适配当前用户。
 
 ```bash
 npm run build:electron          # 构建安装版
