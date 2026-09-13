@@ -63,7 +63,7 @@ const LOCAL_SERVICE_TOKEN = process.env.HYPERPLAYER_LOCAL_TOKEN || crypto.random
 const {
   loadWindowState,
   saveWindowState,
-  clampBoundsToWorkArea,
+  centerBoundsInWorkArea,
 } = require('./window-state.cjs')
 const startupTimingLogPath = process.env.HYPERPLAYER_STARTUP_LOG || ''
 function logStartupTiming(message) {
@@ -2435,8 +2435,9 @@ let splashShownAt = 0
  * 解析主窗口的目标布局（尺寸/位置），供启动页与主窗口共用 —— 两者用同一份 bounds
  * 才能保证切换时窗口不跳动。启动页需要它在「很早」就被调用（主窗口还没创建），
  * 因此这里只依赖 userData 里的窗口状态记忆 + 屏幕信息，不依赖任何其它初始化。
- *   - 有可用记忆且版本一致 → 用记忆的 bounds（钳制进所在显示器工作区）
- *   - 否则 → 软件默认 1400×900，并按工作区收窄（小屏不越界），位置交给系统居中
+ *   - 尺寸 / 所在显示器：沿用记忆（尺寸钳制进工作区；无记忆用默认 1400×900 + 主屏）
+ *   - 位置：**恒为工作区几何中心**，不恢复记忆里的 x/y —— 记忆位置可能来自最大化 /
+ *     全屏 / kiosk 等瞬态（实测存出过贴顶的 y=7），照搬会让启动窗口不在屏幕正中
  * 注意：只返回尺寸/位置；最大化 / kiosk 这类「显示后」的状态由 createWindow 另行处理。
  */
 function resolveTargetBounds() {
@@ -2445,16 +2446,14 @@ function resolveTargetBounds() {
   try {
     const { screen } = require('electron')
     const saved = loadWindowState(app)
-    if (saved) {
-      const displays = screen.getAllDisplays()
-      const targetDisplay = displays.find((d) => d.id === saved.displayId) || screen.getPrimaryDisplay()
-      return clampBoundsToWorkArea(saved.bounds, targetDisplay.workArea)
-    }
-    const { workArea } = screen.getPrimaryDisplay()
-    return {
-      width: Math.max(1200, Math.min(DEFAULT_MAIN_WIDTH, workArea.width)),
-      height: Math.max(800, Math.min(DEFAULT_MAIN_HEIGHT, workArea.height)),
-    }
+    const displays = screen.getAllDisplays()
+    const targetDisplay = saved
+      ? displays.find((d) => d.id === saved.displayId) || screen.getPrimaryDisplay()
+      : screen.getPrimaryDisplay()
+    const size = saved
+      ? { width: saved.bounds.width, height: saved.bounds.height }
+      : { width: DEFAULT_MAIN_WIDTH, height: DEFAULT_MAIN_HEIGHT }
+    return centerBoundsInWorkArea(size, targetDisplay.workArea)
   } catch (error) {
     // 屏幕/状态不可用：退回默认尺寸（不使用 x/y，交给系统居中）
     return { width: DEFAULT_MAIN_WIDTH, height: DEFAULT_MAIN_HEIGHT }
