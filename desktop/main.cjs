@@ -2358,29 +2358,66 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
-// ── 启动页动画的完成回报 ──
-// 启动页是预渲染视频（desktop/splash.html，由 scripts/build-splash.mjs 生成）：
-// 窗口 show 后主进程发 splash:start 放行，页面才开始播放；视频播完（ended）或
-// 播放失败时经 splash-preload.cjs 通过 splash:entrance-done 回报，主进程据此才切主窗口。
-// 见 createWindow 内的 showMainWindowWhenReady。
+// ── 启动页动画的放行与完成回报 ──
+// 启动页是预渲染视频（desktop/splash.html，由 scripts/build-splash.mjs 生成），分两段走：
+//   阶段一「假 splash」：窗口一显示就摆着视频第 0 帧 —— 那正好是**纯背景**（无 logo/文字），
+//     零解码开销、天然不卡，用来兜住程序加载这段时间；
+//   阶段二「真 splash」：程序就绪后才发 splash:start 放行动画（见 tryStartSplashAnimation 门控），
+//     入场动画于是不会和启动抢资源。
+// 视频播完（ended）或播放失败时经 splash-preload.cjs 通过 splash:entrance-done 回报，
+// 主进程据此才切主窗口（见 createWindow 内的 showMainWindowWhenReady）。
 //
 // 兜底上限：正常路径由页面「播完回报」驱动；若回报因故始终未到达
-//（桥接异常 / 视频卡死 / 页面脚本出错），启动页**显示后**超过此时长就强行切主窗口，
-// 保证主窗口一定会出现。锚定「显示时刻」而非「主窗口就绪时刻」——启动页可能晚于
-// 主窗口就绪才显示（创建/加载兜底最晚 +3s），锚错会让兜底把还在正常播放的视频掐断。
+//（桥接异常 / 视频卡死 / 页面脚本出错），**动画起播后**超过此时长就强行切主窗口，
+// 保证主窗口一定会出现。锚定「起播时刻」而非「窗口显示时刻」——
+// 放行推迟后，锚在显示时刻会把还在正常播放的视频拦腰切断。
 const SPLASH_ENTRANCE_FALLBACK_MS = 4500
+// 门控等待上限：窗口显示后最多等这么久「程序就绪」，超时就强制放行动画。
+// 防止后端异常/信号丢失导致启动页一直停在静帧背景上（那样比掉几帧严重得多）。
+// 取值依据（2026-09-13 实测）：本地后端从进程启动到 /health 可用约 3.85～4.2s
+//（sweepBackendOrphans 的 PowerShell 探测 + utilityProcess 载入 11k 行模块），
+// 故上限放在其之上，让"后端真的就绪"成为常态路径，超时只作安全网。
+const SPLASH_START_MAX_WAIT_MS = 4500
+// 后端探测自身的放弃上限（纯安全网，远大于门控上限）：
+// **不能**和门控上限同值——那样探测器会抢在门控计时器之前"强行放行"，
+// 让本该由「后端就绪」驱动的放行退化成超时路径，行为不确定。
+const BACKEND_PROBE_GIVE_UP_MS = 15000
 let splashEntranceDone = false
 let onSplashEntranceDone = null
 ipcMain.on('splash:entrance-done', () => {
   splashEntranceDone = true
   if (typeof onSplashEntranceDone === 'function') onSplashEntranceDone()
 })
-// 启动页诊断打点（页面侧时间点）：写入启动日志。
-// 用于区分「首帧栅格化慢」与「rAF 被节流」—— 前者 syncPaint 耗时长，
-// 后者 firstRAF 来得晚 / rAFCount 少。排障后可保留（开销可忽略）。
-ipcMain.on('splash:mark', (_event, name, sinceBootMs, rafCount) => {
-  logStartupTiming(`[splash] ${name} @页面内+${sinceBootMs}ms (rAF×${rafCount})`)
+// 启动页诊断打点（页面侧时间点与帧节拍统计）：写入启动日志。
+// 帧节拍行形如 `视频 3433ms / 呈现 103 帧 / 最大帧间隔 34ms / 解码掉帧 0/103 (ended)`，
+// 是判断"动画到底卡不卡"的客观依据。开销可忽略，排障后保留。
+ipcMain.on('splash:mark', (_event, name, sincePageLoadMs) => {
+  logStartupTiming(`[splash] ${name} @页面内+${sincePageLoadMs}ms`)
 })
+
+// ── 动画放行门控：主窗口首帧 + 主窗口加载完成 + 本地后端就绪，三者齐备才放行 ──
+// 为什么不是"窗口一显示就播"：启动页要在最忙的时段（主窗口加载 React、后端起服务）
+// 只摆一张静帧背景，等这些重活干完再播入场动画 —— 动画是整段里最需要观感的部分。
+const splashGate = { mainFirstFrame: false, mainLoaded: false, backendReady: false }
+let splashAnimationStartedAt = 0
+let splashGateWaitTimer = null
+
+/** 记录门控条件并尝试放行（幂等，多处调用安全） */
+function noteSplashGate(key) {
+  if (key && splashGate[key] !== undefined) splashGate[key] = true
+  tryStartSplashAnimation()
+}
+
+function tryStartSplashAnimation() {
+  if (splashAnimationStartedAt > 0) return
+  if (!splashWindow || splashWindow.isDestroyed()) return
+  if (splashShownAt <= 0) return // 窗口还没显示，等 showSplash 再触发
+  if (!(splashGate.mainFirstFrame && splashGate.mainLoaded && splashGate.backendReady)) return
+  splashAnimationStartedAt = Date.now()
+  if (splashGateWaitTimer) { clearTimeout(splashGateWaitTimer); splashGateWaitTimer = null }
+  try { splashWindow.webContents.send('splash:start') } catch { /* 页面未就绪时忽略 */ }
+  logStartupTiming(`Splash animation started (gate: firstFrame=${splashGate.mainFirstFrame} loaded=${splashGate.mainLoaded} backend=${splashGate.backendReady})`)
+}
 
 // ── 启动页：优先创建并显示，不等任何其它初始化 ──
 // 背景：原先启动页与主窗口在 createWindow() 里一起创建，而 createWindow() 之前还有
@@ -2466,11 +2503,21 @@ function createSplashWindowEarly(targetBounds) {
     splashShownAt = Date.now()
     splashWindow.show()
     splashWindow.focus()
-    // 窗口已真正显示，放行启动页开始播放动画。
-    // 视频版启动页刻意不用 autoplay：否则页面加载即起跑，而窗口要 ~500ms 后才 show，
-    // 用户看到时动画已播掉一截（logo 弹出一半）。这个信号让动画起点与用户所见对齐。
-    try { splashWindow.webContents.send('splash:start') } catch { /* 页面未就绪时忽略 */ }
     logStartupTiming('Splash animation shown')
+    // 窗口显示后先摆着视频第 0 帧（纯背景）当"假 splash"，等程序就绪（门控三条件）
+    // 再放行动画 —— 入场动画不跟启动抢资源。
+    // 兜底：等待超过 SPLASH_START_MAX_WAIT_MS 就强制放行，避免一直停在静帧上。
+    splashGateWaitTimer = setTimeout(() => {
+      splashGateWaitTimer = null
+      if (splashAnimationStartedAt > 0) return
+      logStartupTiming(`Splash gate not satisfied within ${SPLASH_START_MAX_WAIT_MS}ms; starting animation anyway`)
+      splashGate.mainFirstFrame = true
+      splashGate.mainLoaded = true
+      splashGate.backendReady = true
+      tryStartSplashAnimation()
+    }, SPLASH_START_MAX_WAIT_MS)
+    // 若显示时就已就绪（罕见：主窗口与后端都早于启动页显示完成），立即放行
+    tryStartSplashAnimation()
   }
   let splashLoadDone = false
   let splashFrameDone = false
@@ -2602,6 +2649,7 @@ function createWindow() {
     // 资源加载完成（React 已挂载）——满足主窗显示条件之一
     mainLoaded = true
     showMainWindowWhenReady()
+    noteSplashGate('mainLoaded') // 启动页门控：主窗口加载完成
     if (appleAcceptanceMode) {
       void runAppleAcceptance(mainWindow, appleAcceptanceMode, appleAcceptanceOutput)
     }
@@ -2761,11 +2809,12 @@ function createWindow() {
       if (mainSwitchCommitted || !mainWindow || mainWindow.isDestroyed()) return
       if (splashShownAt <= 0) return                    // 启动页尚未显示，等它
       const shownFor = Date.now() - splashShownAt
-      // 兜底①：回报迟迟未到（视频卡死 / 桥接失效）——显示后超过上限就强行切。
-      // 锚定「显示时刻」而非「主窗口就绪时刻」：启动页可能晚于主窗口才显示，
-      // 锚错会把还在正常播放的视频中途掐断。
-      if (!splashEntranceDone && shownFor >= SPLASH_ENTRANCE_FALLBACK_MS) {
-        logStartupTiming(`Splash entrance not reported within ${SPLASH_ENTRANCE_FALLBACK_MS}ms of show; switching anyway`)
+      // 兜底①：回报迟迟未到（视频卡死 / 桥接失效）——**起播后**超过上限就强行切。
+      // 锚定「起播时刻」而非「显示时刻」：动画放行已推迟到程序就绪，锚在显示时刻
+      // 会把还在正常播放的视频拦腰切断。未起播时不判（门控自带等待上限）。
+      if (!splashEntranceDone && splashAnimationStartedAt > 0
+        && Date.now() - splashAnimationStartedAt >= SPLASH_ENTRANCE_FALLBACK_MS) {
+        logStartupTiming(`Splash entrance not reported within ${SPLASH_ENTRANCE_FALLBACK_MS}ms of animation start; switching anyway`)
         commitSwitchToMain()
         return
       }
@@ -2799,11 +2848,14 @@ function createWindow() {
   setTimeout(() => {
     mainFirstFrameReady = true
     mainLoaded = true
+    noteSplashGate('mainFirstFrame')
+    noteSplashGate('mainLoaded')
     showMainWindowWhenReady()
   }, 8000)
   mainWindow.once('ready-to-show', () => {
     mainFirstFrameReady = true
     showMainWindowWhenReady()
+    noteSplashGate('mainFirstFrame') // 启动页门控：主窗口首帧就绪
   })
   // 事件接线（状态推送/窗口记忆/F12 等）——与融合穿透重建（recreateMainWindow）共用
   wireMainWindowEvents(mainWindow)
@@ -6588,6 +6640,44 @@ async function sweepBackendOrphans(reason) {
   }
 }
 
+/**
+ * 后端就绪探测（供启动页门控用）：轮询本机 /health 直到契约匹配。
+ * 判定与 dev 启动器 `isLocalApiServerHealthy()` 完全一致（同 header、同健康契约），
+ * 避免"两套就绪标准"各自漂移。轮询上限 SPLASH_START_MAX_WAIT_MS，超时后由主门控兜底放行。
+ */
+async function probeLocalBackendReady() {
+  // 开发模式后端由 dev-electron.mjs 拉起（且它已等到健康才开 Electron），无需再探
+  if (!app.isPackaged || process.env.HYPERPLAYER_DISABLE_LOCAL_BACKEND === '1') {
+    noteSplashGate('backendReady')
+    return
+  }
+  const startedAt = Date.now()
+  const deadline = startedAt + BACKEND_PROBE_GIVE_UP_MS
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 1500)
+      const res = await fetch('http://127.0.0.1:3001/health', {
+        headers: { 'X-HyperPlayer-Local-Token': LOCAL_SERVICE_TOKEN },
+        signal: controller.signal,
+      })
+      clearTimeout(timer)
+      if (res.ok) {
+        const body = await res.json().catch(() => null)
+        if (body && body.status === 'ok' && body.service === 'hyperplayer-local-api') {
+          logStartupTiming(`Local backend ready after ${Date.now() - startedAt}ms`)
+          noteSplashGate('backendReady')
+          return
+        }
+      }
+    } catch { /* 还没起来，继续轮询 */ }
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  // 走到这里说明探测自己放弃了（安全网）。不在这里强行放行——放行与否交给门控计时器，
+  // 避免两个计时器抢跑导致行为不确定。
+  logStartupTiming(`Local backend probe gave up after ${BACKEND_PROBE_GIVE_UP_MS}ms`)
+}
+
 async function startLocalBackend() {
   if (!app.isPackaged) return // 开发模式由 dev-electron.mjs 启动
   if (process.env.HYPERPLAYER_DISABLE_LOCAL_BACKEND === '1') return
@@ -6935,6 +7025,8 @@ app.whenReady().then(async () => {
   // 启动生产版常驻本地 API（3001）。
   // 开发模式继续由 scripts/dev-electron.mjs 预启动。
   startLocalBackend()
+  // 启动页门控条件之三：后端就绪后放行动画（不等它把启动页挡住 —— 只是不抢资源）
+  void probeLocalBackendReady()
   
   // Razer Chroma：本地 REST 会话、设备探测与高频灯效帧。
   try {
