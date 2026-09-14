@@ -1,15 +1,7 @@
 /** @vitest-environment jsdom */
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import ImmersiveControls from '../src/components/ImmersiveControls'
-
-let tvMode = false
-let remoteCursorMode = false
-
-vi.mock('../src/tv/tvCore', () => ({
-  useTvMode: () => tvMode,
-  useRemoteCursorMode: () => remoteCursorMode,
-}))
 
 vi.mock('../src/components/QuickSettings', () => ({
   default: () => <button type="button" aria-label="快速设置" />,
@@ -25,11 +17,6 @@ const baseProps = {
   hasRoman: true,
   onMvBackgroundToggle: vi.fn(),
 }
-
-beforeEach(() => {
-  tvMode = false
-  remoteCursorMode = false
-})
 
 afterEach(cleanup)
 
@@ -48,13 +35,5 @@ describe('ImmersiveControls', () => {
 
     expect(screen.queryByRole('button', { name: 'MV 背景' })).toBeNull()
     expect(screen.getByRole('button', { name: '快速设置' }).parentElement?.style.top).toBe('4rem')
-  })
-
-  it('uses compact TV row spacing and trigger sizing', () => {
-    tvMode = true
-    const { container } = render(<ImmersiveControls {...baseProps} />)
-
-    expect(screen.getByRole('button', { name: '快速设置' }).parentElement?.style.top).toBe('12.8rem')
-    expect((container.firstElementChild as HTMLElement).style.height).toBe('272px')
   })
 })

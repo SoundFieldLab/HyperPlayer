@@ -1,7 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { Layers, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { useTvBack } from '../tv/tvCore'
 
 interface FusionEnableConfirmModalProps {
   show: boolean
@@ -16,14 +15,6 @@ export default function FusionEnableConfirmModal({
   onClose,
   onConfirm,
 }: FusionEnableConfirmModalProps) {
-  // TV 遥控器 BACK：关闭确认弹窗
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  }, [show, onClose])
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('accentColor') || '#3B82F6')
 
   useEffect(() => {
@@ -47,7 +38,6 @@ export default function FusionEnableConfirmModal({
           onClick={onClose}
         >
           <motion.div
-            data-tv-scope
             initial={{ scale: 0.94, opacity: 0, y: 12 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.94, opacity: 0, y: 12 }}

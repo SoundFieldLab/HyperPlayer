@@ -1,19 +1,14 @@
 import { memo, useState, useEffect, useRef } from 'react'
 import { Minus, Square, X, Minimize2, Maximize2 } from 'lucide-react'
-import { useTvMode } from '../tv/tvCore'
 
 // 无 props 的常驻组件：memo 后父级（App 1Hz 重渲染）不再连带重渲染它，
 // 其状态仅由窗口 IPC/鼠标事件驱动
 export default memo(function TitleBar() {
-  const tvMode = useTvMode()
   const [isMaximized, setIsMaximized] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isKiosk, setIsKiosk] = useState(false)
   const hideTimeoutRef = useRef<number | null>(null)
-
-  // TV 遥控器模式没有窗口化概念，整个标题栏无意义，直接隐藏。
-  if (tvMode) return null
 
   useEffect(() => {
     const unsubscribers: Array<() => void> = []

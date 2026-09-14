@@ -12,7 +12,6 @@ import ScrollToTop from './ScrollToTop'
 import ScrollToCurrentSong from './ScrollToCurrentSong'
 import CommentModal from './CommentModal'
 import DeleteSongModal from './DeleteSongModal'
-import { useTvBack } from '../tv/tvCore'
 
 const DETAIL_ROW_HEIGHT = 60
 const DETAIL_CARD_HEIGHT = 56
@@ -187,20 +186,6 @@ function PlaylistDetailPanel({
     song: null
   })
 
-  // TV BACK closes nested surfaces before dismissing the playlist panel.
-  useTvBack(() => {
-    if (!show) return false
-    if (pendingRemoval) {
-      if (!removalLoading) setPendingRemoval(null)
-    } else if (contextMenu.show) {
-      setContextMenu({ show: false, x: 0, y: 0, song: null })
-    } else if (showPlaylistInfo) {
-      setShowPlaylistInfo(false)
-    } else {
-      onClose()
-    }
-    return true
-  }, [contextMenu.show, onClose, pendingRemoval, removalLoading, show, showPlaylistInfo])
   
   // 判断歌曲是否为当前播放的歌曲（统一走 isSameSong，兼容各平台的 id 差异）
   const isSongCurrent = (song: Song) => isSameSong(currentSong, song)
@@ -467,7 +452,6 @@ function PlaylistDetailPanel({
           >
             {/* 包装容器 - 包含主容器和按钮，使按钮能相对于主容器定位 */}
             <div 
-              data-tv-scope
               className="w-full max-w-4xl h-full relative"
               onClick={(e) => e.stopPropagation()}
             >

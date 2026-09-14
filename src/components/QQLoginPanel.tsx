@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Music, ExternalLink, Copy, Check, QrCode } from 'lucide-react'
-import { useTvBack } from '../tv/tvCore'
 
 interface QQLoginPanelProps {
   onClose: () => void
@@ -9,11 +8,6 @@ interface QQLoginPanelProps {
 }
 
 export default function QQLoginPanel({ onClose, onLoginSuccess }: QQLoginPanelProps) {
-  // TV 遥控器 BACK 关闭登录面板
-  useTvBack(() => {
-    onClose()
-    return true
-  })
   const [cookie, setCookie] = useState('')
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
@@ -126,7 +120,6 @@ document.cookie
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-50 flex items-center justify-center p-8"
-        data-tv-scope
         onClick={onClose}
       >
         <motion.div

@@ -9,7 +9,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X } from 'lucide-react'
-import { useTvBack } from '../tv/tvCore'
+
 import {
   getBilibiliWatchSettings,
   saveBilibiliWatchSettings,
@@ -132,10 +132,6 @@ function SliderRow({
 }
 
 export default function BilibiliWatchSettingsModal({ onClose, playerTheme = 'dark', ambientMode = 'off', onAmbientModeChange }: BilibiliWatchSettingsModalProps) {
-  useTvBack(() => {
-    onClose()
-    return true
-  })
   const dark = playerTheme === 'dark'
   const [settings, setSettings] = useState<BilibiliWatchSettings>(() => getBilibiliWatchSettings())
   const [danmakuSettings, setDanmakuSettings] = useState<DanmakuSettings>(() => getDanmakuSettings())
@@ -157,7 +153,6 @@ export default function BilibiliWatchSettingsModal({ onClose, playerTheme = 'dar
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-6"
-        data-tv-scope
         onClick={onClose}
       >
         <motion.div

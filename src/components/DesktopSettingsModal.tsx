@@ -17,7 +17,6 @@ import {
 import type { LocationOption } from '../services/locationHierarchy'
 import { MirroredGlobalSettings, makeSkin } from './MirroredGlobalSettings'
 import type { MirrorActionId } from '../services/globalSettingsRegistry'
-import { useTvBack } from '../tv/tvCore'
 
 // 全局设置镜像里的共享弹窗（按需加载，与简约 / 传统 / 探索模式同一组件）
 const LazyAudioQualityModal = lazy(() => import('./AudioQualitySettingsModal'))
@@ -50,17 +49,6 @@ export default function DesktopSettingsModal({
   const [activeSubmenu, setActiveSubmenu] = useState<SubmenuType>(null)
   // 全局设置镜像里打开的共享弹窗（音质 / 缓存清理）
   const [globalModal, setGlobalModal] = useState<MirrorActionId | null>(null)
-  useTvBack(() => {
-    if (!show) return false
-    if (globalModal) {
-      setGlobalModal(null)
-    } else if (activeSubmenu) {
-      setActiveSubmenu(null)
-    } else {
-      onClose()
-    }
-    return true
-  }, [show, globalModal, activeSubmenu, onClose])
   // 二级菜单滚动记忆：进子菜单回到顶部，返回主菜单恢复离开时的位置
   const contentScrollRef = useRef<HTMLDivElement>(null)
   const mainMenuScrollTopRef = useRef(0)

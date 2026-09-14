@@ -6,7 +6,6 @@ import {
   PLAYBACK_SHORTCUT_SETTINGS_EVENT,
   type PlaybackShortcutSettings,
 } from '../services/playbackShortcutSettings'
-import { useTvMode, useRemoteCursorMode } from '../tv/tvCore'
 
 interface PlayerControlsProps {
   isPlaying: boolean
@@ -193,14 +192,7 @@ export default function PlayerControls({
 }: PlayerControlsProps) {
   const [isHovered, setIsHovered] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
-  // TV 遥控器模式：无鼠标，控件常驻显示（isHovered 视为恒真）。
-  // 但手机遥控器连上（光标模式）时恢复真实 hover，让虚拟鼠标驱动展开，与 PC 一致。
-  const tvMode = useTvMode()
-  const remoteCursorMode = useRemoteCursorMode()
-  const effectiveHovered = (tvMode && !remoteCursorMode) || isHovered
-  // TV 遥控器模式（无远程遥控光标）：药丸常驻但采用紧凑 TV 布局（更小、适配 D-pad 排版）；
-  // 手机遥控器连上时恢复 PC 式 hover 展开布局。
-  const tvCompact = tvMode && !remoteCursorMode
+  const effectiveHovered = isHovered
   const [dragValue, setDragValue] = useState(0)
   const [showVolumeSlider, setShowVolumeSlider] = useState(false)
   /** 音量条打开时间（3 秒宽限：打开后短暂移动不因离开大药丸而关闭） */
@@ -557,7 +549,7 @@ export default function PlayerControls({
           {formatTime(displayTime)}
         </span>
 
-        <div className={`relative ${sliderWidthClass} flex items-center`} data-tv-arrows="seek">
+        <div className={`relative ${sliderWidthClass} flex items-center`}>
           <input
             type="range"
             min="0"
@@ -701,11 +693,11 @@ export default function PlayerControls({
                 onMouseLeave={handleImmersivePillLeave}
               >
                 <motion.div
-                  initial={{ width: tvCompact ? '480px' : '360px' }}
+                  initial={{ width: '360px' }}
                   animate={{
-                    width: tvCompact ? '480px' : isExpanded ? '640px' : '360px',
-                    paddingTop: tvCompact ? '10px' : isExpanded ? '16px' : '12px',
-                    paddingBottom: tvCompact ? '10px' : isExpanded ? '16px' : '12px',
+                    width: isExpanded ? '640px' : '360px',
+                    paddingTop: isExpanded ? '16px' : '12px',
+                    paddingBottom: isExpanded ? '16px' : '12px',
                   }}
                   transition={{ duration: 0.35, delay: isExpanded ? 0 : 0.2, ease: [0.32, 0.72, 0, 1] }}
                   className="relative rounded-full backdrop-blur-3xl px-5"
@@ -725,7 +717,7 @@ export default function PlayerControls({
                       animate={{ scale: 1, opacity: isExpanded ? 1 : 0.7 }}
                       transition={{ duration: 0.3, delay: isExpanded ? 0.15 : 0.15, ease: 'easeInOut' }}
                     >
-                      {renderProgressContent(tvCompact ? 'w-40' : 'w-56', tvCompact ? 'gap-1.5' : 'gap-3')}
+                      {renderProgressContent('w-56', 'gap-3')}
                     </motion.div>
                   </div>
 
@@ -739,10 +731,10 @@ export default function PlayerControls({
                           opacity: { duration: 0.22, delay: isExpanded ? 0.25 : 0, ease: 'easeOut' },
                           x: { duration: 0.28, delay: isExpanded ? 0.25 : 0, ease: [0.32, 0.72, 0, 1] },
                         }}
-                        className={`absolute left-5 top-1/2 -translate-y-1/2 flex items-center ${tvCompact ? 'gap-1.5' : 'gap-2'}`}
+                        className="absolute left-5 top-1/2 -translate-y-1/2 flex items-center gap-2"
                       >
                         <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }} onClick={onPrevious} disabled={!onPrevious}
-                          className={`${tvCompact ? 'p-1.5' : 'p-2'} rounded-full transition-colors disabled:opacity-30 ${playerTheme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-black/10'}`}>
+                          className={`p-2 rounded-full transition-colors disabled:opacity-30 ${playerTheme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-black/10'}`}>
                           <SkipBack className={`w-4 h-4 ${playerTheme === 'dark' ? 'text-white' : 'text-black'}`} />
                         </motion.button>
                         <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={onPlayPause}
@@ -767,10 +759,10 @@ export default function PlayerControls({
                           opacity: { duration: 0.22, delay: isExpanded ? 0.25 : 0, ease: 'easeOut' },
                           x: { duration: 0.28, delay: isExpanded ? 0.25 : 0, ease: [0.32, 0.72, 0, 1] },
                         }}
-                        className={`absolute right-5 top-1/2 -translate-y-1/2 flex items-center ${tvCompact ? 'gap-1.5' : 'gap-2'}`}
+                        className="absolute right-5 top-1/2 -translate-y-1/2 flex items-center gap-2"
                       >
                         <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }} onClick={onPlaylistClick}
-                          className={`${tvCompact ? 'p-1.5' : 'p-2'} rounded-full transition-colors ${playerTheme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-black/10'}`}>
+                          className={`p-2 rounded-full transition-colors ${playerTheme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-black/10'}`}>
                           <List className={`w-4 h-4 ${playerTheme === 'dark' ? 'text-white/70' : 'text-black/60'}`} />
                         </motion.button>
                         <div className="relative flex items-center">
@@ -782,7 +774,6 @@ export default function PlayerControls({
                             {showVolumeSlider && (
                               <motion.div initial={{ opacity: 0, y: 8, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.95 }} transition={{ duration: 0.15 }}
                                 className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex items-center gap-2 px-3 py-2 rounded-full backdrop-blur-3xl whitespace-nowrap"
-                                data-tv-arrows="volume"
                                 onMouseEnter={() => {
                                   if (volumeCloseTimerRef.current !== null) {
                                     window.clearTimeout(volumeCloseTimerRef.current)
@@ -1166,7 +1157,6 @@ export default function PlayerControls({
                         exit={{ opacity: 0, y: 8, scale: 0.95 }}
                         transition={{ duration: 0.15 }}
                         className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex items-center gap-2 px-3 py-2 rounded-full backdrop-blur-3xl whitespace-nowrap"
-                        data-tv-arrows="volume"
                         style={{
                           background: playerTheme === 'dark'
                             ? backgroundEffect === 'transparent'

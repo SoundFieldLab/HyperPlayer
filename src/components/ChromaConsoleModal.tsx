@@ -30,7 +30,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useTvBack } from "../tv/tvCore";
+
 import {
   getChromaClient,
   useChromaClient,
@@ -576,17 +576,6 @@ export default function ChromaConsoleModal() {
     return () => window.removeEventListener("focus", refresh);
   }, [chromaConsoleOpen, client, tab]);
 
-  useTvBack(() => {
-    if (guideOpen) {
-      setGuideOpen(false);
-      return true;
-    }
-    if (chromaConsoleOpen) {
-      closeChromaConsole();
-      return true;
-    }
-    return false;
-  }, [chromaConsoleOpen, guideOpen]);
   if (!chromaConsoleOpen) return null;
 
   const update = (patch: Partial<ChromaSettings>) =>
@@ -661,7 +650,6 @@ export default function ChromaConsoleModal() {
           backgroundColor: "rgba(0,0,0,0.84)",
           backdropFilter: "blur(14px)",
         }}
-        data-tv-scope
         onClick={closeChromaConsole}
       >
         <motion.div

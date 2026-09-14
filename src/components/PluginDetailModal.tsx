@@ -6,7 +6,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Trash2, Download } from 'lucide-react'
-import { useTvBack } from '../tv/tvCore'
+
 import { getPluginManifest, isBuiltinPlugin } from '../plugins/registry'
 import { requestTogglePlugin, showToast } from '../plugins/toggle'
 import {
@@ -39,13 +39,6 @@ function ScreenshotTile({ index, manifest }: { index: number; manifest: ReturnTy
 export default function PluginDetailModal() {
   const { detailPluginId } = usePluginHostState()
   const [confirmUninstall, setConfirmUninstall] = useState(false)
-  useTvBack(() => {
-    if (detailPluginId) {
-      closePluginDetail()
-      return true
-    }
-    return false
-  }, [detailPluginId])
 
   const manifest = detailPluginId ? getPluginManifest(detailPluginId) : undefined
   if (!detailPluginId || !manifest) return null
@@ -63,7 +56,6 @@ export default function PluginDetailModal() {
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-[92] flex items-center justify-center p-6"
         style={{ backgroundColor: 'rgba(5,8,14,0.8)', backdropFilter: 'blur(14px)' }}
-        data-tv-scope
         onClick={closePluginDetail}
       >
         {confirmUninstall && (

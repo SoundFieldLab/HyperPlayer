@@ -10,7 +10,6 @@ import {
   type HomeModuleDefinition,
   type HomeModuleType,
 } from '../services/homeModules'
-import { useTvBack } from '../tv/tvCore'
 
 interface ModuleCustomizeModalProps {
   show: boolean
@@ -19,14 +18,6 @@ interface ModuleCustomizeModalProps {
 }
 
 export default function ModuleCustomizeModal({ show, onClose, playerTheme = 'dark' }: ModuleCustomizeModalProps) {
-  // TV 遥控器 BACK：关闭首页模块自定义弹窗
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  }, [show, onClose])
   const textPrimary = playerTheme === 'dark' ? 'text-white' : 'text-black'
   const textSecondary = playerTheme === 'dark' ? 'text-white/60' : 'text-black/60'
   const textTertiary = playerTheme === 'dark' ? 'text-white/40' : 'text-black/40'
@@ -181,7 +172,6 @@ export default function ModuleCustomizeModal({ show, onClose, playerTheme = 'dar
           
           {/* 弹窗 */}
           <motion.div
-            data-tv-scope
             initial={{ x: '100%', opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: '100%', opacity: 0 }}

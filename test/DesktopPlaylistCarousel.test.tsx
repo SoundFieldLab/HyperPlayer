@@ -3,12 +3,6 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import PlaylistCarousel3D from '../src/components/PlaylistCarousel3D'
 
-vi.mock('../src/platform', () => ({ isTvModeActive: () => false }))
-vi.mock('../src/tv/tvCore', () => ({
-  setTvFocus: vi.fn(),
-  useTvFocus: () => null,
-}))
-
 afterEach(cleanup)
 
 describe('Desktop playlist carousel', () => {

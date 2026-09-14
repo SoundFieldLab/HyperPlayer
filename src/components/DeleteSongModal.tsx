@@ -1,6 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, Trash2, X } from 'lucide-react'
-import { useTvBack } from '../tv/tvCore'
 
 interface DeleteSongModalProps {
   show: boolean
@@ -19,14 +18,6 @@ export default function DeleteSongModal({
   onClose,
   onConfirm
 }: DeleteSongModalProps) {
-  // TV 遥控器 BACK：关闭删除歌曲确认弹窗
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  }, [show, onClose])
   return (
     <AnimatePresence>
       {show && (
@@ -40,7 +31,6 @@ export default function DeleteSongModal({
           />
 
           <motion.div
-            data-tv-scope
             initial={{ opacity: 0, scale: 0.92, y: 18 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.92, y: 18 }}

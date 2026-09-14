@@ -4,7 +4,7 @@ import { Search, X, Music, History, Clock, User, Disc, Sparkles, TrendingUp, Lis
 import { searchSongs, searchSuggest, searchArtists, searchAlbums, searchQuick, searchPlaylists, Song, Artist, Album, SearchSuggestion, getProxiedImageUrl, loadAlbumCovers, resolveSongAlbumIdentifier, searchHot } from '../services/musicApi'
 import { mergeFusedSearchResults, type FusedSearchIntent, type MusicPlatform } from '../services/fusedSearch'
 import { isPlatformVisible, platformLabel } from '../services/platforms'
-import { useTvBack } from '../tv/tvCore'
+
 import CachedImage from './CachedImage'
 import ArtistDetailModal from './ArtistDetailModal'
 import AlbumDetailModal from './AlbumDetailModal'
@@ -282,20 +282,6 @@ export default function SearchPanel({
   const selectedAlbumPlatform: MusicPlatform = selectedAlbum?.platform || 'netease'
   const [selectedArtistAlbumId, setSelectedArtistAlbumId] = useState<string | number | undefined>()
   const [selectedArtistTab, setSelectedArtistTab] = useState<PlaybackOrigin['artistTab']>('hotSongs')
-  // TV BACK closes the deepest search surface before dismissing the whole panel.
-  useTvBack(() => {
-    if (songContextMenu.show) {
-      setSongContextMenu(previous => ({ ...previous, show: false }))
-    } else if (selectedAlbum) {
-      setSelectedAlbum(null)
-    } else if (selectedArtist) {
-      setSelectedArtist(null)
-      setSelectedArtistAlbumId(undefined)
-    } else {
-      onClose()
-    }
-    return true
-  }, [onClose, selectedAlbum, selectedArtist, songContextMenu.show])
   // 选歌播放：退出动画零时长，覆盖层当帧卸载。整屏 backdrop-filter 的退出节点在
   // 播放页同时挂载时会被 Chromium 保留为残留合成层（首页同款故障），退出动画越久越易触发。
   const [instantClose, setInstantClose] = useState(false)
@@ -816,7 +802,6 @@ export default function SearchPanel({
   return (
     <>
     <motion.div
-      data-tv-scope
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={instantClose ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0 }}

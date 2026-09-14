@@ -14,7 +14,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Play, Pause, Volume2, VolumeX, Maximize, Minimize, X, RotateCcw, Subtitles, CaptionsOff, Link2,
 } from 'lucide-react'
-import { useTvMode, useTvBack } from '../tv/tvCore'
 import {
   getBilibiliView,
   getBilibiliPlayUrl,
@@ -43,12 +42,6 @@ interface BilibiliVideoPlayerOverlayProps {
 }
 
 export default function BilibiliVideoPlayerOverlay({ bvid, title, onClose, initialSeek, setAsMvContext }: BilibiliVideoPlayerOverlayProps) {
-  const tvMode = useTvMode()
-  useTvBack(() => {
-    onClose()
-    return true
-  })
-
   const videoRef = useRef<HTMLVideoElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -92,11 +85,11 @@ export default function BilibiliVideoPlayerOverlay({ bvid, title, onClose, initi
 
   const scheduleControlsHide = useCallback(() => {
     clearControlsTimer()
-    if (tvMode || !settings.autoHideControls) return
+    if (!settings.autoHideControls) return
     controlsTimerRef.current = window.setTimeout(() => {
       if (videoRef.current && !videoRef.current.paused) setShowControls(false)
     }, 3000)
-  }, [tvMode, settings.autoHideControls])
+  }, [settings.autoHideControls])
 
   // 加载视频
   useEffect(() => {
@@ -311,7 +304,6 @@ export default function BilibiliVideoPlayerOverlay({ bvid, title, onClose, initi
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-[95] bg-black/95 flex items-center justify-center"
-      data-tv-scope
       // 阻断冒泡：浮层内任何点击（X/进度条/视频本体）不得触发宿主（个人中心根容器）的 onClose，
       // 否则关闭视频会直接把整个个人中心也关掉、落回设置页
       onClick={(e) => e.stopPropagation()}
@@ -442,7 +434,6 @@ export default function BilibiliVideoPlayerOverlay({ bvid, title, onClose, initi
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 16 }}
               className="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black/85 to-transparent p-4"
-              data-tv-arrows="seek volume"
             >
               <div className="flex items-center gap-3">
                 <span className="text-xs text-white/70 w-10 text-right">{formatBiliTime(currentTime)}</span>

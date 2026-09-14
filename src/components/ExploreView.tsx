@@ -5,7 +5,6 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type ReactNode } from 'react'
 import { PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } from '../services/platformSync'
 import { AnimatePresence, motion } from 'framer-motion'
-import { useTvBack, useTvMode, useRemoteCursorMode } from '../tv/tvCore'
 import { isPerfModeEnhanced } from '../tv/perfMode'
 import ModeSelectionPanel, { MODE_SELECTION_CLOSE_MS, MODE_SELECTION_PANEL_HEIGHT } from './ModeSelectionPanel'
 import {
@@ -224,10 +223,7 @@ function CoverWallBackground({
   blurPx: number
   accentRgb: string
 }) {
-  const tvMode = useTvMode()
-  // TV 上封面墙漂移 = 全屏 backdrop-filter 每帧对移动封面重模糊（弱 GPU 帧率杀手）；
-  // 非增强档停掉漂移、保留静态封面墙；桌面/增强档行为不变。
-  const driftAnimated = animated && (!tvMode || isPerfModeEnhanced())
+  const driftAnimated = animated
   const urls = useMemo(() => {
     const unique = Array.from(new Set(covers.filter(Boolean)))
     // 扩充到足够铺满背景的封面数
@@ -690,13 +686,7 @@ function ExploreView({
     setDetailOpen(true)
   }, [restorePlaybackOrigin?.revision])
   const [modeTriggerHovered, setModeTriggerHovered] = useState(false)
-  // TV 遥控器模式无鼠标：顶部模式切换按钮视为恒 hover（常驻可聚焦）；
-  // 手机遥控器连上（光标模式）时恢复真实 hover，与 HomeView/DesktopView 同策略
-  const tvMode = useTvMode()
-  const remoteCursorMode = useRemoteCursorMode()
-  const topBarActive = (tvMode && !remoteCursorMode) || modeTriggerHovered
-  // 常驻小元素（模式下拉 chevron）的无限浮动：TV 非增强档静态化（JS 动画，tv.css 杀不掉）
-  const tvChevronFloat = !tvMode || isPerfModeEnhanced()
+  const topBarActive = modeTriggerHovered
 
   useEffect(() => {
     const closeForModeSwitch = () => {
@@ -716,13 +706,6 @@ function ExploreView({
   ]), [])
   const [moreSection, setMoreSection] = useState<ExploreSectionId | null>(null)
   const exploreScrollRef = useRef<HTMLDivElement>(null)
-  useTvBack(() => {
-    if (globalModal) { setGlobalModal(null); return true }
-    if (settingsOpen) { setSettingsOpen(false); return true }
-    if (moreSection) { setMoreSection(null); return true }
-    if (showModePanel) { setShowModePanel(false); return true }
-    return false
-  }, [globalModal, moreSection, settingsOpen, showModePanel])
   const [preferences, setPreferences] = useState<ExplorePreferences>(() => {
     try {
       const saved = localStorage.getItem('explorePreferences')
@@ -1250,7 +1233,6 @@ function ExploreView({
             <motion.button
               type="button"
               aria-label="打开模式选择"
-              data-tv-focus
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
@@ -1263,8 +1245,8 @@ function ExploreView({
               whileTap={{ scale: 0.98 }}
             >
               <motion.svg
-                animate={tvChevronFloat ? { y: [0, 2, 0] } : { y: 0 }}
-                transition={tvChevronFloat ? { duration: 1, repeat: Infinity } : { duration: 0 }}
+                animate={{ y: [0, 2, 0] }}
+                transition={{ duration: 1, repeat: Infinity }}
                 className="h-6 w-6"
                 fill="none"
                 stroke="currentColor"
@@ -2003,7 +1985,6 @@ function ExploreView({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[160] bg-[#080b11]/98 text-white backdrop-blur-2xl"
-            data-tv-scope
           >
             <div className="flex h-full flex-col pt-8">
               <div className="flex items-center gap-4 border-b border-white/[0.08] px-5 py-4 md:px-8 lg:px-10">
@@ -2035,7 +2016,7 @@ function ExploreView({
         )}
       </AnimatePresence>
 
-      <div data-tv-scope={settingsOpen ? '' : undefined}>
+      <div>
         <ExploreSettingsPanel
           show={settingsOpen}
           platform={platform}

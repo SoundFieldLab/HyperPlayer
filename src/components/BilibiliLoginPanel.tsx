@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Loader2 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
-import { useTvBack } from '../tv/tvCore'
+
 import {
   generateBilibiliQr,
   checkBilibiliQr,
@@ -21,10 +21,6 @@ interface BilibiliLoginPanelProps {
 const BILI_PINK = '#FB7299'
 
 export default function BilibiliLoginPanel({ onClose, onLoginSuccess }: BilibiliLoginPanelProps) {
-  useTvBack(() => {
-    onClose()
-    return true
-  })
 
   const [qrUrl, setQrUrl] = useState('')
   const [loading, setLoading] = useState(true)
@@ -136,7 +132,6 @@ export default function BilibiliLoginPanel({ onClose, onLoginSuccess }: Bilibili
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-8"
-        data-tv-scope
         onClick={onClose}
       >
         <motion.div

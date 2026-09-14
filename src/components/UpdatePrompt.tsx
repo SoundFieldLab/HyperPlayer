@@ -24,7 +24,7 @@ import {
   type UpdateManifest,
 } from '../services/updateConstants'
 import { getVersionDisplay } from '../services/versionInfo'
-import { isAndroid, isDesktop } from '../platform'
+import { isDesktop } from '../platform'
 
 interface UpdatePromptProps {
   playerTheme?: 'dark' | 'light'
@@ -75,7 +75,6 @@ export default function UpdatePrompt({ playerTheme = 'dark' }: UpdatePromptProps
   }, [])
 
   useEffect(() => {
-    if (isAndroid()) return
     let cancelled = false
     const run = async () => {
       setChecking(true)
@@ -174,8 +173,8 @@ export default function UpdatePrompt({ playerTheme = 'dark' }: UpdatePromptProps
 
   return (
     <AnimatePresence>
-      {/* 顶部更新卡片（任何模式可见；Android 端由原生弹窗处理，不显示） */}
-      {cardVisible && !isAndroid() && isNewer && manifest && (
+      {/* 顶部更新卡片（任何模式可见） */}
+      {cardVisible && isNewer && manifest && (
         <motion.div
           key="update-card"
           initial={{ opacity: 0, y: -32, scale: 0.96 }}

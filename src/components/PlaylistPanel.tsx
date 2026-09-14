@@ -2,13 +2,11 @@ import { memo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { X, Play, Music, Loader2, Sparkles } from 'lucide-react'
-import { isTvModeActive } from '../platform'
 import { Song } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
 import CachedImage from './CachedImage'
 import ScrollToTop from './ScrollToTop'
 import ScrollToCurrentSong from './ScrollToCurrentSong'
-import { useTvBack } from '../tv/tvCore'
 
 interface PlaylistPanelProps {
   show: boolean
@@ -145,11 +143,6 @@ function PlaylistPanel({
   const isVip = currentPlatform === 'netease' ? neteaseVip : qqVip
   const isDark = playerTheme === 'dark'
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  // TV 遥控器 BACK 关闭面板
-  useTvBack(() => {
-    onClose()
-    return true
-  })
 
   const onSelect = useCallback((index: number) => onSongSelect(index), [onSongSelect])
 
@@ -180,7 +173,6 @@ function PlaylistPanel({
             exit={{ x: '100%' }}
             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
             className="fixed right-0 top-0 z-50 h-full w-full max-w-md shadow-2xl"
-            data-tv-scope
             style={{
               background: isDark
                 ? 'linear-gradient(180deg, rgba(10, 10, 16, 0.82) 0%, rgba(4, 5, 10, 0.74) 100%)'
@@ -201,7 +193,7 @@ function PlaylistPanel({
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {onSmartReorder && !isTvModeActive() && (
+                {onSmartReorder && (
                   <motion.button
                     type="button"
                     whileHover={!isSmartReordering ? { scale: 1.03 } : undefined}

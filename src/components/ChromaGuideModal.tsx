@@ -8,7 +8,6 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import { useTvBack } from "../tv/tvCore";
 
 interface ChromaGuideModalProps {
   open: boolean;
@@ -45,11 +44,6 @@ export default function ChromaGuideModal({
   open,
   onClose,
 }: ChromaGuideModalProps) {
-  useTvBack(() => {
-    if (!open) return false;
-    onClose();
-    return true;
-  }, [open, onClose]);
 
   return (
     <AnimatePresence>
@@ -63,7 +57,6 @@ export default function ChromaGuideModal({
             backgroundColor: "rgba(0,0,0,0.86)",
             backdropFilter: "blur(10px)",
           }}
-          data-tv-scope
           onClick={(event) => {
             event.stopPropagation();
             onClose();

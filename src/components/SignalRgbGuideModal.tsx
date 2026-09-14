@@ -9,7 +9,6 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import { useTvBack } from "../tv/tvCore";
 
 export interface SignalRgbGuideModalProps {
   open: boolean;
@@ -43,11 +42,6 @@ export default function SignalRgbGuideModal({
   open,
   onClose,
 }: SignalRgbGuideModalProps) {
-  useTvBack(() => {
-    if (!open) return false;
-    onClose();
-    return true;
-  }, [open, onClose]);
 
   return (
     <AnimatePresence>
@@ -58,7 +52,6 @@ export default function SignalRgbGuideModal({
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[98] flex items-center justify-center p-3 sm:p-6"
           style={{ background: "rgba(0,0,0,.88)", backdropFilter: "blur(10px)" }}
-          data-tv-scope
           onClick={(event) => {
             event.stopPropagation();
             onClose();

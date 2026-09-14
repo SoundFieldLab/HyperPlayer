@@ -82,8 +82,9 @@ describe('mode integration wiring', () => {
     const view = source('components/ExploreView.tsx')
     expect(view).toContain('const requestId = ++detailRequestRef.current')
     expect(view).toContain('if (requestId !== detailRequestRef.current || controller.signal.aborted) return')
-    expect(view).toContain('if (settingsOpen) { setSettingsOpen(false); return true }')
-    expect(view).toContain('if (moreSection) { setMoreSection(null); return true }')
+    // 遮罩层关闭：more 面板与全局弹窗各自有对应关闭入口
+    expect(view).toContain('const closeMoreAnd = (action: () => void) => {')
+    expect(view).toContain('setMoreSection(null)')
   })
 
   it('guards Traditional async and audio lifecycle teardown', () => {

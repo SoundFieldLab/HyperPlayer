@@ -1,7 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { Edit3, Trash2, Star, StarOff, Share2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { useTvBack } from '../tv/tvCore'
 
 /** 与 SongContextMenu.showMenuToast 一致的全局 toast 通道 */
 const showMenuToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -46,15 +45,6 @@ export default function PlaylistContextMenu({
   canShare = true
 }: PlaylistContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
-  // TV 遥控器 BACK 关闭菜单（必须带 show 守卫：本组件常驻挂载于 HomeView 等宿主，
-  // 无守卫会在隐藏时也消费 BACK 键，导致全场景 BACK 失效）
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  })
   const [adjustedPosition, setAdjustedPosition] = useState({ x, y })
 
   // 计算菜单位置，确保不超出屏幕
@@ -150,7 +140,6 @@ export default function PlaylistContextMenu({
           exit={{ opacity: 0, scale: 0.9 }}
           transition={{ duration: 0.15 }}
           className="fixed z-[100] min-w-[180px] py-2 rounded-xl overflow-hidden"
-          data-tv-scope
           style={{
             left: adjustedPosition.x,
             top: adjustedPosition.y,

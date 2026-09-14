@@ -9,7 +9,7 @@ import AlbumDetailModal from './AlbumDetailModal'
 import VideoPlayer from './VideoPlayer'
 import ScrollToTop from './ScrollToTop'
 import ScrollToCurrentSong from './ScrollToCurrentSong'
-import { useTvBack } from '../tv/tvCore'
+
 import SongContextMenu from './SongContextMenu'
 import { getUserPlaylists } from '../services/playlistService'
 import { getReadableAccentColor } from '../utils/desktopAccentColor'
@@ -434,10 +434,6 @@ export default function ArtistDetailModal({
   const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null)
   const [selectedMV, setSelectedMV] = useState<{ id: number | string; name: string; platform?: 'netease' | 'qq'; index: number } | null>(null)
   // 子视频优先消费返回键，避免关闭父艺人页。
-  useTvBack(() => {
-    onClose()
-    return true
-  }, [onClose])
   const [userPlaylists, setUserPlaylists] = useState<any[]>([])
   // 选歌播放：退出动画零时长，弹窗当帧卸载。整屏 backdrop-filter 退出节点在播放页
   // 同时挂载时会被 Chromium 保留为残留合成层（首页同款故障），退出动画越久越易触发。
@@ -922,7 +918,6 @@ export default function ArtistDetailModal({
         }}
       >
         <motion.div
-          data-tv-scope
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={instantClose ? { scale: 0.9, opacity: 0, transition: { duration: 0 } } : { scale: 0.9, opacity: 0 }}

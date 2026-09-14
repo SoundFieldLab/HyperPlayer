@@ -23,7 +23,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useTvBack } from "../tv/tvCore";
+
 import {
   getSignalRgbClient,
   useSignalRgbClient,
@@ -157,17 +157,6 @@ export default function SignalRgbConsoleModal({ open, onClose }: SignalRgbConsol
   const [guideOpen, setGuideOpen] = useState(false);
   const [confirmInstall, setConfirmInstall] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
-  useTvBack(() => {
-    if (guideOpen) {
-      setGuideOpen(false);
-      return true;
-    }
-    if (open) {
-      onClose();
-      return true;
-    }
-    return false;
-  }, [guideOpen, onClose, open]);
   if (!open) return null;
 
   const update = (patch: Partial<SignalRgbSettings>) => client.updateSettings(patch);
@@ -181,7 +170,7 @@ export default function SignalRgbConsoleModal({ open, onClose }: SignalRgbConsol
 
   return (
     <AnimatePresence>
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[96] flex items-center justify-center p-2 sm:p-4" style={{ background: "rgba(0,0,0,.86)", backdropFilter: "blur(14px)" }} data-tv-scope onClick={onClose}>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[96] flex items-center justify-center p-2 sm:p-4" style={{ background: "rgba(0,0,0,.86)", backdropFilter: "blur(14px)" }} onClick={onClose}>
         <motion.div initial={{ scale: 0.97, y: 10, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.97, y: 10, opacity: 0 }} onClick={(event) => event.stopPropagation()} className="flex h-[min(96vh,880px)] w-full max-w-[1200px] flex-col overflow-hidden rounded-lg border border-cyan-300/25 bg-[#080d11] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="signalrgb-console-title">
           <header className="shrink-0 border-b border-white/10">
             <div className="flex min-h-16 items-center justify-between gap-3 px-3 py-2 sm:px-5">

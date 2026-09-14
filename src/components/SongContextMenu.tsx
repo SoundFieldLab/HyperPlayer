@@ -4,7 +4,7 @@ import { Song, getProxiedImageUrl } from '../services/musicApi'
 import { getPlatformCapabilities, getPlatformFavoriteLabels } from '../services/platforms'
 import type { MusicPlatform } from '../services/platforms'
 import { useEffect, useLayoutEffect, useState, useRef } from 'react'
-import { useTvBack } from '../tv/tvCore'
+
 import CachedImage from './CachedImage'
 import {
   applyFavoriteMutation,
@@ -244,14 +244,6 @@ export default function SongContextMenu({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [show, onClose])
 
-  // TV 遥控器 BACK 关闭菜单（带 show 守卫：部分宿主常驻挂载本组件，无守卫会吞掉全场景 BACK 键）
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  })
 
   // 菜单在未选中歌曲时仍会随页面渲染；此时保持空渲染，不能读取歌曲字段。
   if (!song) return null

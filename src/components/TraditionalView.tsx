@@ -21,8 +21,6 @@ import { isPlaylistOwner, isSpecialPlaylist } from '../services/playlistOwnershi
 import { fetchExploreHome, fetchExplorePlaylist, fetchExploreChart, type ExplorePayload, type ExplorePlaylist, type ExploreChart } from '../services/exploreApi'
 import { createPlaylist, deletePlaylist, getUserPlaylists, invalidateUserPlaylistsCache, removeSongFromPlaylist, subscribePlaylist, updatePlaylist } from '../services/playlistService'
 import { useAudioAnalyzerSnapshot, type AudioAnalyzerStore } from '../hooks/useAudioAnalyzer'
-import { useTvBack, useTvMode, useRemoteCursorMode } from '../tv/tvCore'
-import { isPerfModeEnhanced } from '../tv/perfMode'
 import ModeSelectionPanel, { MODE_SELECTION_CLOSE_MS } from './ModeSelectionPanel'
 import TraditionalPlaylistDetail from './TraditionalPlaylistDetail'
 import TraditionalSearch from './TraditionalSearch'
@@ -611,25 +609,6 @@ function TraditionalView({
   const [showDeletePlaylist, setShowDeletePlaylist] = useState(false)
   const [playlistMutationBusy, setPlaylistMutationBusy] = useState(false)
   const [topBarActive, setTopBarActive] = useState(false)
-  // TV 遥控器模式（无鼠标）：顶部模式下拉条常驻显示；平台药丸变成单个可聚焦单元，左右键切换。
-  // 手机遥控器连上（光标模式）后恢复 PC 式 hover/拖拽交互。
-  const tvMode = useTvMode()
-  const remoteCursorMode = useRemoteCursorMode()
-  const topBarTvActive = tvMode && !remoteCursorMode
-  const pillTvAdjust = tvMode && !remoteCursorMode
-  // 常驻小元素（模式下拉 chevron）的无限浮动：TV 非增强档静态化（JS 动画，tv.css 杀不掉）
-  const tvChevronFloat = !tvMode || isPerfModeEnhanced()
-  const cyclePlatform = (dir: 1 | -1) => {
-    setPlatform(prev => {
-      const idx = Math.max(0, visiblePlatforms.indexOf(prev))
-      const next = (idx + dir + visiblePlatforms.length) % visiblePlatforms.length
-      return visiblePlatforms[next] ?? prev
-    })
-  }
-  const platformKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'ArrowLeft') { e.preventDefault(); cyclePlatform(-1) }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); cyclePlatform(1) }
-  }
   // 右栏只订阅 App 传入的共享 analyzer store，不创建额外采样循环。
   // 右栏：播放列表 / 同步歌词 共用一张卡片，点击切换；未播放时无歌词，只显示播放列表
   const [rightTab, setRightTab] = useState<'playlist' | 'lyrics'>('playlist')
@@ -700,17 +679,6 @@ function TraditionalView({
     mainRef.current?.scrollTo({ top: 0 })
   }, [history.length])
 
-  useTvBack(() => {
-    if (showModePanel) {
-      setShowModePanel(false)
-      return true
-    }
-    if (historyIndexRef.current > 0) {
-      goBack()
-      return true
-    }
-    return false
-  }, [showModePanel, historyIndex])
 
   const loggedIn = platform === 'netease' ? neteaseLoggedIn : qqLoggedIn
   const username = platform === 'netease' ? neteaseUsername : qqUsername
@@ -1055,8 +1023,7 @@ function TraditionalView({
     : preferences.background === 'cover' && currentSong
       ? `linear-gradient(135deg, rgba(${isDark ? '8,12,22' : '255,255,255'},${isDark ? '.96' : '.72'}), rgba(${isDark ? '8,12,22' : '255,255,255'},${isDark ? '.78' : '.48'})), url(${coverOf(currentSong)}) center/cover`
       : (isDark ? 'radial-gradient(circle at 88% 0%, rgba(236,72,153,.22), transparent 34%), radial-gradient(circle at 32% 24%, rgba(59,130,246,.16), transparent 36%), #090d16' : 'radial-gradient(circle at 88% 0%, rgba(236,72,153,.16), transparent 34%), #f2f4f8')
-  // TV 弱 GPU：全屏 filter blur 是栅格化大头，TV 上把背景模糊钳到 4px（桌面保持用户设置）
-  const bgBlur = tvMode ? Math.min(preferences.backgroundBlur, 4) : preferences.backgroundBlur
+  const bgBlur = preferences.backgroundBlur
   const bgStyle = bgBlur > 0
     ? { background: bgBase, filter: `blur(${bgBlur}px)`, transform: 'scale(1.06)' }
     : { background: bgBase }
@@ -1064,7 +1031,7 @@ function TraditionalView({
   return (
     <div className={`relative h-full overflow-hidden ${text}`}>
       {/* 背景层：可独立模糊/暗化，不影响前景内容 */}
-      <div className={`pointer-events-none absolute inset-0 transition-[filter] ${tvMode ? 'duration-100' : 'duration-300'}`} style={bgStyle} />
+      <div className="pointer-events-none absolute inset-0 transition-[filter] duration-300" style={bgStyle} />
       {preferences.backgroundDim && <div className={`pointer-events-none absolute inset-0 ${isDark ? 'bg-black/25' : 'bg-white/12'}`} />}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/15" />
 
@@ -1072,18 +1039,9 @@ function TraditionalView({
       <header className="relative z-30 flex h-20 items-end gap-3 border-b px-4 pb-2.5 backdrop-blur-xl" style={{ borderColor: isDark ? 'rgba(255,255,255,.08)' : 'rgba(15,23,42,.1)' }}>
         {/* 平台药丸（左上角，拖拽切换） */}
         <div className="relative h-9 w-[240px] shrink-0 overflow-hidden rounded-2xl border" style={{ borderColor: isDark ? 'rgba(255,255,255,.12)' : 'rgba(15,23,42,.12)' }}
-          {...(pillTvAdjust
-            ? {
-                'data-tv-focus': '',
-                tabIndex: 0,
-                'data-tv-arrows': 'horizontal',
-                'aria-label': `平台切换，当前 ${platformShortName(platform)}，左右键切换`,
-                onKeyDown: platformKeyDown,
-              }
-            : {})}
         >
           <div className="pointer-events-none absolute left-1/2 top-1/2 h-7 w-[76px] -translate-x-1/2 -translate-y-1/2 rounded-xl transition-colors" style={{ background: `${accent}1f`, border: `1px solid ${accent}55` }} />
-          <motion.div className="relative flex touch-none select-none" style={{ x: platformStripX, cursor: 'grab' }} onPointerDown={platformPointerDown} onPointerMove={platformPointerMove} onPointerUp={platformPointerUp} onPointerCancel={platformPointerUp} {...(pillTvAdjust ? { 'data-tv-skip': '' } : {})}>
+          <motion.div className="relative flex touch-none select-none" style={{ x: platformStripX, cursor: 'grab' }} onPointerDown={platformPointerDown} onPointerMove={platformPointerMove} onPointerUp={platformPointerUp} onPointerCancel={platformPointerUp}>
             {visiblePlatforms.map(key => {
               const active = platform === key
               return (
@@ -1141,7 +1099,7 @@ function TraditionalView({
         onClick={() => { if (!showModePanel) setShowModePanel(true) }}
       >
         <AnimatePresence>
-          {(topBarTvActive || topBarActive) && !showModePanel && (
+          {topBarActive && !showModePanel && (
             <motion.button
               aria-label="打开模式选择"
               initial={{ opacity: 0, y: -10 }}
@@ -1151,7 +1109,7 @@ function TraditionalView({
               className={`absolute left-1/2 top-0 -translate-x-1/2 rounded-b-2xl border border-t-0 backdrop-blur-md transition-colors ${isDark ? 'border-white/20 bg-white/10 hover:bg-white/20' : 'border-black/15 bg-black/5 hover:bg-black/10'}`}
               style={{ width: '200px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
-              <motion.div animate={tvChevronFloat ? { y: [0, 2, 0] } : { y: 0 }} transition={tvChevronFloat ? { y: { duration: 1, repeat: Infinity } } : { duration: 0 }}>
+              <motion.div animate={{ y: [0, 2, 0] }} transition={{ y: { duration: 1, repeat: Infinity } }}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className={`h-6 w-6 ${isDark ? 'text-white' : 'text-black/70'}`}><path d="M6 9l6 6 6-6" /></svg>
               </motion.div>
             </motion.button>

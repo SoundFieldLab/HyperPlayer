@@ -3,7 +3,6 @@ import { X, Music, Lock, Globe, ImagePlus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { preparePlaylistCover } from '../utils/playlistCover'
 import { getProxiedImageUrl } from '../services/musicApi'
-import { useTvBack } from '../tv/tvCore'
 
 interface CreatePlaylistModalProps {
   show: boolean
@@ -18,14 +17,6 @@ export default function CreatePlaylistModal({
   onSubmit,
   loading = false
 }: CreatePlaylistModalProps) {
-  // TV 遥控器 BACK：关闭创建歌单弹窗
-  useTvBack(() => {
-    if (show) {
-      handleClose()
-      return true
-    }
-    return false
-  }, [show, onClose])
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('accentColor') || '#3B82F6')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -78,7 +69,6 @@ export default function CreatePlaylistModal({
     <AnimatePresence>
       {show && (
         <motion.div
-          data-tv-scope
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

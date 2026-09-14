@@ -5,14 +5,11 @@ import './assets/fonts/fonts.css'
 import './index.css'
 import App from './App'
 import { startMemoryWatchdog } from './utils/memoryWatchdog'
-import { initPlatformUI } from './platform'
 import { installElectronShim } from './electronShim'
 import { initPerfMode } from './tv/perfMode'
 import ErrorBoundary from './components/ErrorBoundary'
 
-// 平台初始化：桌面版为空实现（保留调用点，符号仍在 platform.ts）。
-// 并给非 Electron 环境（纯浏览器）注入 window.electron 最小桩。
-initPlatformUI()
+// 非 Electron 环境（纯浏览器）注入 window.electron 最小桩。
 installElectronShim()
 
 // ── AutoMix 桥自检（诊断用）：确认 window.electron 真实可用性 ──

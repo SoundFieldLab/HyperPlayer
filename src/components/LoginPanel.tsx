@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Music, Loader2 } from 'lucide-react'
-import { useTvBack } from '../tv/tvCore'
 
 interface LoginPanelProps {
   platform: 'netease' | 'qq'
@@ -10,11 +9,6 @@ interface LoginPanelProps {
 }
 
 export default function LoginPanel({ platform, onClose, onLoginSuccess }: LoginPanelProps) {
-  // TV 遥控器 BACK 关闭登录面板
-  useTvBack(() => {
-    onClose()
-    return true
-  })
   const [qrCode, setQrCode] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<'pending' | 'scanned' | 'success' | 'expired'>('pending')
@@ -150,7 +144,6 @@ export default function LoginPanel({ platform, onClose, onLoginSuccess }: LoginP
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-8"
-        data-tv-scope
         onClick={onClose}
       >
         <motion.div

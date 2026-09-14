@@ -2,8 +2,6 @@ import React, { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Music, RefreshCw, Copy, Check, ExternalLink } from 'lucide-react'
 import type { MusicPlatform } from '../services/platforms'
-import { isTvModeActive } from '../platform'
-import { isPerfModeEnhanced } from '../tv/perfMode'
 import GlobalToast from './GlobalToast'
 
 interface LoginViewProps {
@@ -20,8 +18,6 @@ export default function LoginView({ platform, onCancel, onLoginSuccess }: LoginV
   const pollTimerRef = useRef<number | null>(null)
   const requestControllerRef = useRef<AbortController | null>(null)
   const pollControllerRef = useRef<AbortController | null>(null)
-  // TV 弱 GPU：装饰性光晕（40vw 大圆 filter:blur(80px) + 12s 无限动画）非增强档静态化
-  const glowAnimated = !isTvModeActive() || isPerfModeEnhanced()
   const websiteTimerRef = useRef<number | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   const generationRef = useRef(0)
@@ -279,7 +275,7 @@ export default function LoginView({ platform, onCancel, onLoginSuccess }: LoginV
 
   return (
     <>
-      <div className="fixed inset-0 w-full h-full overflow-hidden z-50" data-tv-scope>
+      <div className="fixed inset-0 w-full h-full overflow-hidden z-50">
         {/* 动态背景 */}
       <motion.div 
         className="absolute inset-0"
@@ -302,12 +298,12 @@ export default function LoginView({ platform, onCancel, onLoginSuccess }: LoginV
         className="absolute w-[40vw] h-[40vw] max-w-[500px] max-h-[500px] rounded-full"
         style={{
           background: 'radial-gradient(circle, rgba(255, 105, 180, 0.5) 0%, transparent 70%)',
-          filter: glowAnimated ? 'blur(80px)' : 'blur(20px)',
+          filter: 'blur(80px)',
           top: '20%',
           left: '15%',
         }}
-        animate={glowAnimated ? { scale: [1, 1.3, 1], x: [0, 60, 0], y: [0, 40, 0] } : { scale: 1, x: 0, y: 0 }}
-        transition={glowAnimated ? { duration: 12, repeat: Infinity, ease: 'easeInOut' } : { duration: 0 }}
+        animate={{ scale: [1, 1.3, 1], x: [0, 60, 0], y: [0, 40, 0] }}
+        transition={{ duration: 12, repeat: Infinity, ease: 'easeInOut' }}
       />
       
       {/* 遮罩 */}

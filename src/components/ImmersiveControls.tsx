@@ -2,7 +2,6 @@ import { motion } from 'framer-motion'
 import { AudioLines, Captions, ChevronDown, Film, Home, Languages } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import QuickSettings from './QuickSettings'
-import { useTvMode, useRemoteCursorMode } from '../tv/tvCore'
 
 interface ImmersiveControlsProps {
   /** 播放页封面主色（预留，目前未参与按钮渲染） */
@@ -45,12 +44,7 @@ export default function ImmersiveControls({
 }: ImmersiveControlsProps) {
   const [isVisible, setIsVisible] = useState(true)
   const [isHovered, setIsHovered] = useState(false)
-  // TV 遥控器模式：控件常驻（方向键可聚焦）。手机遥控器连上（光标模式）时恢复真实 hover。
-  const tvMode = useTvMode()
-  const remoteCursorMode = useRemoteCursorMode()
-  const effectiveHovered = (tvMode && !remoteCursorMode) || isHovered
-  // TV 紧凑布局：按钮/间距更小、更适配遥控器排版（手机遥控器连上时用 PC 式布局）
-  const tvCompact = tvMode && !remoteCursorMode
+  const effectiveHovered = isHovered
 
   // 左上角布局（沉浸模式专属）：按钮列贴左，顶部多一个可收起的向下箭头，
   // 其余按钮整体下移一行给箭头让位；收起后仅剩箭头常驻。
@@ -103,21 +97,21 @@ export default function ImmersiveControls({
 
   const showMvButton = typeof onMvBackgroundToggle === 'function'
   const featureButtonCount = (hasTranslation ? 1 : 0) + (hasRoman ? 1 : 0) + (showMvButton ? 1 : 0) // MV 背景按钮常驻
-  const rowRem = tvCompact ? 3.2 : 4 // 每个按钮行占位高度（rem），TV 紧凑更小
+  const rowRem = 4 // 每个按钮行占位高度（rem）
   // 左上角布局：箭头独占第一行，其余按钮整体下移一行
   const rowOffsetRem = leftLayout ? rowRem : 0
   const shiftTop = (top: string) => (leftLayout ? `calc(${top} + ${rowOffsetRem}rem)` : top)
-  // 各按钮顶位置都按同一行高网格计算（不能混用 Tailwind top-16=4rem：TV 紧凑档会错位/重叠）
+  // 各按钮顶位置都按同一行高网格计算（不能混用 Tailwind top-16=4rem：会错位/重叠）
   // 左上角布局行序：箭头(0) → Home(4rem) → 翻译(8rem) → …整体比右上角布局多让出一行给箭头
-  const homeButtonTop = leftLayout ? `${(tvCompact ? 3.2 : 4)}rem` : undefined
-  const translationButtonTop = shiftTop(`${(tvCompact ? 3.2 : 4)}rem`)
-  const romanButtonTop = shiftTop(hasTranslation ? `${(tvCompact ? 6.4 : 8)}rem` : `${(tvCompact ? 3.2 : 4)}rem`)
+  const homeButtonTop = leftLayout ? '4rem' : undefined
+  const translationButtonTop = shiftTop('4rem')
+  const romanButtonTop = shiftTop(hasTranslation ? '8rem' : '4rem')
   // MV 背景按钮：紧跟翻译/罗马音功能行的下一行
-  const mvButtonTop = shiftTop(`${(tvCompact ? 3.2 : 4) + (featureButtonCount - 1) * rowRem}rem`)
-  const quickSettingsTop = shiftTop(`${(tvCompact ? 3.2 : 4) + featureButtonCount * rowRem}rem`)
-  const mixingStudioTop = shiftTop(`${(tvCompact ? 6.4 : 8) + featureButtonCount * rowRem}rem`)
-  const btnPad = tvCompact ? 'p-2.5' : 'p-3' // 按钮内边距
-  const iconCls = tvCompact ? 'w-5 h-5' : 'w-6 h-6' // 图标尺寸
+  const mvButtonTop = shiftTop(`${4 + (featureButtonCount - 1) * rowRem}rem`)
+  const quickSettingsTop = shiftTop(`${4 + featureButtonCount * rowRem}rem`)
+  const mixingStudioTop = shiftTop(`${8 + featureButtonCount * rowRem}rem`)
+  const btnPad = 'p-3' // 按钮内边距
+  const iconCls = 'w-6 h-6' // 图标尺寸
   const featureButtonTransition = {
     duration: 0.48,
     ease: [0.22, 1, 0.36, 1] as const,
@@ -176,8 +170,8 @@ export default function ImmersiveControls({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       style={leftLayout
-        ? { width: tvCompact ? '52px' : '60px', height: collapsed ? (tvCompact ? '56px' : '64px') : (tvCompact ? `${158 + featureButtonCount * 38 + rowOffsetRem * 16}px` : `${214 + featureButtonCount * 50 + rowOffsetRem * 16}px`) }
-        : { width: tvCompact ? '104px' : '120px', height: tvCompact ? `${158 + featureButtonCount * 38}px` : `${214 + featureButtonCount * 50}px` }}
+        ? { width: '60px', height: collapsed ? '64px' : `${214 + featureButtonCount * 50 + rowOffsetRem * 16}px` }
+        : { width: '120px', height: `${214 + featureButtonCount * 50}px` }}
     >
       {/* 鼠标靠近感应区（隐形，仅左上角布局）：比按钮列大一圈，靠近即唤醒整组按钮 */}
       {leftLayout && (
@@ -208,7 +202,7 @@ export default function ImmersiveControls({
           whileTap={{ scale: 0.88 }}
           className={`group absolute top-3 ${sideCls} flex items-center justify-center ${unifiedGlassCls}`}
           style={{
-            padding: tvCompact ? 7 : 9,
+            padding: 9,
             boxShadow: unifiedGlassShadow,
           }}
         >
@@ -219,7 +213,7 @@ export default function ImmersiveControls({
             transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
           >
             <ChevronDown
-              className={`${tvCompact ? 'h-4 w-4' : 'h-[18px] w-[18px]'} ${playerTheme === 'dark' ? 'text-white/90' : 'text-black/80'}`}
+              className={`h-[18px] w-[18px] ${playerTheme === 'dark' ? 'text-white/90' : 'text-black/80'}`}
               strokeWidth={2.25}
             />
           </motion.span>

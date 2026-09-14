@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import type { DragEvent } from 'react'
-import { useTvBack } from '../tv/tvCore'
+
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   CalendarDays,
@@ -124,12 +124,6 @@ export default function DesktopCustomizationEditor({ open, settings, onClose }: 
   const [activeLocationResult, setActiveLocationResult] = useState(0)
   const autoLocationLabel = useMemo(() => formatLocationLabel(draft), [draft])
 
-  useTvBack(() => {
-    if (!open) return false
-    if (showOptions) setShowOptions(false)
-    else onClose()
-    return true
-  }, [open, showOptions, onClose])
 
   useEffect(() => {
     if (open) {

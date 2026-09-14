@@ -51,7 +51,6 @@ import {
   type UpdateChannel,
 } from '../services/updateConstants'
 import { VERSION_HISTORY } from '../services/versionHistory'
-import { isTvModeActive } from '../platform'
 import {
   loadPlaybackShortcutSettings,
   savePlaybackShortcutSettings,
@@ -699,10 +698,10 @@ function SettingsPanel({
     return parseStoredBoolean(saved, true)
   })
 
-  // 开发者模式（调试阶段 TV 端默认开，正式版默认关）
+  // 开发者模式（正式版默认关）
   const [developerMode, setDeveloperMode] = useState(() => {
     const saved = localStorage.getItem('developerMode')
-    return parseStoredBoolean(saved, isTvModeActive())
+    return parseStoredBoolean(saved, false)
   })
   // 过渡调试：开启后切歌/过渡时右上角弹窗显示引擎/衔接方式
   const [transitionDebugEnabled, setTransitionDebugEnabled] = useState(() => {
@@ -1006,12 +1005,11 @@ function SettingsPanel({
         {/* 设置面板 */}
         <motion.div
             key="settings-panel"
-            data-tv-scope
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            className={`fixed right-0 top-0 h-full w-full z-50 shadow-2xl overflow-hidden ${isTvModeActive() ? 'max-w-2xl' : 'max-w-md'}`}
+            className="fixed right-0 top-0 h-full w-full z-50 shadow-2xl overflow-hidden max-w-md"
           >
             {/* 液态玻璃背景层 - 增强版 */}
             <div className="absolute inset-0">
@@ -1745,7 +1743,7 @@ function SettingsPanel({
                   </div>
                   
                   {/* 桌面歌词 */}
-                  <div data-tv-hide="desktop">
+                  <div>
                     <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>桌面歌词</h3>
                     <div className={`${bgCard} rounded-xl p-4 border ${borderColor}`}>
                       <div className="flex items-center justify-between gap-6">
@@ -1849,7 +1847,7 @@ function SettingsPanel({
                   </div>
 
                   {/* 桌面播放器 */}
-                  <div data-tv-hide="desktop">
+                  <div>
                     <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>桌面播放器</h3>
                     <div className={`${bgCard} rounded-xl p-4 border ${borderColor}`}>
                       <div className="flex items-center justify-between mb-2">
@@ -1926,7 +1924,7 @@ function SettingsPanel({
                   </div>
 
                   {/* 任务栏迷你播控（贴任务栏带） */}
-                  <div data-tv-hide="desktop">
+                  <div>
                     <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>任务栏迷你播控</h3>
                     <div className={`${bgCard} rounded-xl p-4 border ${borderColor}`}>
                       <div className="flex items-center justify-between gap-6">
@@ -2076,7 +2074,7 @@ function SettingsPanel({
                   </div>
 
                   {/* 全屏窗口模式设置（TV 端常驻全屏，无需设置） */}
-                  <div data-tv-hide="desktop">
+                  <div>
                     <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>窗口设置</h3>
                     <div className={`${bgCard} rounded-xl p-4 border ${borderColor}`}>
                       <div className="mb-4">
@@ -2615,7 +2613,6 @@ function SettingsPanel({
                   <div>
                     <h3 className={`text-lg font-semibold ${textPrimary} mb-4`}>性能优化</h3>
                     <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`}>
-                      {!isTvModeActive() && (
                       <div className="flex items-center justify-between">
                         <div>
                           <div className={`${textPrimary} font-medium mb-1`}>GPU 硬件加速</div>
@@ -2631,26 +2628,19 @@ function SettingsPanel({
                           <div className={`w-11 h-6 ${playerTheme === 'dark' ? 'bg-white/20' : 'bg-black/20'} peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`} style={{ backgroundColor: gpuAcceleration ? accentColor : '' }}></div>
                         </label>
                       </div>
-                      )}
                       <div className={`${textTertiary} text-xs mt-3 p-3 rounded-lg`} style={{ backgroundColor: playerTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
-                        {isTvModeActive() ? (
-                          <div>TV 端渲染由系统 WebView 自动管理（GPU 合成），无需手动配置。当前状态：{gpuStatus?.actualEnabled ? 'GPU 合成已启用' : '未知'}</div>
-                        ) : (
-                          <>
-                            <div>建议保持开启。动态壁纸、歌词动画和界面合成依赖 GPU；关闭后界面可能明显卡顿。仅建议在显卡驱动兼容故障时关闭，重启后生效。</div>
-                            {gpuStatus && (
-                              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
-                                <span>{gpuStatus.actualEnabled ? '当前已启用 GPU 合成' : '当前使用软件渲染'}</span>
-                                {gpuStatus.gpu && <span>{gpuStatus.gpu.deviceString || gpuStatus.gpu.vendorString || '已检测显卡'}{gpuStatus.gpu.driverVersion ? ` | 驱动 ${gpuStatus.gpu.driverVersion}` : ''}</span>}
-                                {gpuStatus.actualEnabled !== gpuAcceleration && <span className="text-amber-400">当前设置尚未生效，请重启软件</span>}
-                              </div>
-                            )}
-                          </>
+                        <div>建议保持开启。动态壁纸、歌词动画和界面合成依赖 GPU；关闭后界面可能明显卡顿。仅建议在显卡驱动兼容故障时关闭，重启后生效。</div>
+                        {gpuStatus && (
+                          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                            <span>{gpuStatus.actualEnabled ? '当前已启用 GPU 合成' : '当前使用软件渲染'}</span>
+                            {gpuStatus.gpu && <span>{gpuStatus.gpu.deviceString || gpuStatus.gpu.vendorString || '已检测显卡'}{gpuStatus.gpu.driverVersion ? ` | 驱动 ${gpuStatus.gpu.driverVersion}` : ''}</span>}
+                            {gpuStatus.actualEnabled !== gpuAcceleration && <span className="text-amber-400">当前设置尚未生效，请重启软件</span>}
+                          </div>
                         )}
                       </div>
                     </div>
 
-                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`} data-tv-hide="desktop">
+                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`}>
                       <div className="mb-3">
                         <div className={`${textPrimary} font-medium mb-1`}>显卡选择</div>
                         <div className={`${textSecondary} text-sm`}>优先使用哪块显卡进行加速渲染（切换后重启生效）</div>
@@ -2715,7 +2705,7 @@ function SettingsPanel({
                     </div>
 
                     {/* 全局高刷：渲染帧率跟随所在显示器刷新率（最高 300Hz） */}
-                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`} data-tv-hide="desktop">
+                    <div className={`${bgCard} rounded-xl p-4 border ${borderColor} mb-4`}>
                       <div className="flex items-center justify-between">
                         <div>
                           <div className={`${textPrimary} font-medium mb-1`}>全局高刷</div>

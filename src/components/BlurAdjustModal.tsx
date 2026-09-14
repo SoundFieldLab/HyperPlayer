@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Check, X } from 'lucide-react'
-import { useTvBack } from '../tv/tvCore'
 
 interface BlurAdjustModalProps {
   show: boolean
@@ -12,14 +11,6 @@ interface BlurAdjustModalProps {
 }
 
 export default function BlurAdjustModal({ show, onClose, playerTheme = 'dark', onBackToCustomize, onBackToSettings }: BlurAdjustModalProps) {
-  // TV 遥控器 BACK：关闭毛玻璃调节弹窗
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  }, [show, onClose])
   const [blurAmount, setBlurAmount] = useState(() => {
     const saved = localStorage.getItem('cardBlurAmount')
     return saved ? parseInt(saved) : 10
@@ -117,7 +108,6 @@ export default function BlurAdjustModal({ show, onClose, playerTheme = 'dark', o
           
           {/* 底部控制条 */}
           <motion.div
-            data-tv-scope
             initial={{ y: '100%', opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: '100%', opacity: 0 }}

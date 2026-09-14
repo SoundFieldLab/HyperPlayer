@@ -1185,7 +1185,6 @@ export default function CommentModal({ isOpen, onClose, song = null, playlist = 
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
-        data-tv-scope
         onClick={onClose}
       >
         <motion.div

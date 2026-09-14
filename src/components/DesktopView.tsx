@@ -2,9 +2,7 @@
  * 私有模块（Private Module）—— 见仓库根 PRIVATE-LICENSE.md。
  * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
-import { isTvModeActive } from '../platform'
 import { PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } from '../services/platformSync'
-import { useTvMode, useRemoteCursorMode, useTvBack } from '../tv/tvCore'
 import { lazy, Suspense, memo, useState, useEffect, useRef, useMemo, useCallback, useSyncExternalStore } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronDown, Search, Settings, X, Play, Clock, Volume2, VolumeX, LogIn, Captions, Heart, Speaker } from 'lucide-react'
@@ -230,12 +228,8 @@ function DesktopView({
     }
   }, [currentPlatform, visiblePlatforms])
 
-  // TV 遥控器模式（html.tv-mode 激活）：桌面模式下的歌单栏/小白条交互需要适配遥控器
-  const tvMode = useTvMode()
-  const remoteCursorMode = useRemoteCursorMode()
-  const isTvUi = isTvModeActive()
-  // 歌单栏在 TV 模式下默认展开（遥控器没有 hover 触发小白条，直接常驻）
-  const [showPlaylistCarousel, setShowPlaylistCarousel] = useState(() => isTvModeActive())
+  // 歌单栏默认收起（由小白条 hover 触发展开）
+  const [showPlaylistCarousel, setShowPlaylistCarousel] = useState(false)
   
   // 歌单列表
   const [playlists, setPlaylists] = useState<Playlist[]>([])
@@ -256,9 +250,7 @@ function DesktopView({
   const [themePanelSettled, setThemePanelSettled] = useState(false)
   const [isTopHovered, setIsTopHovered] = useState(false)
   const [showUpArrowHint, setShowUpArrowHint] = useState(false)
-  // TV 无鼠标：顶部/底部悬浮控件视为恒 hover（控件常驻可聚焦）；
-  // 手机遥控器连上（光标模式）时恢复真实 hover，与 PC 一致（与 HomeView 同策略）
-  const topBarActive = (tvMode && !remoteCursorMode) || isTopHovered
+  const topBarActive = isTopHovered
 
   useEffect(() => {
     const closeForModeSwitch = () => {
@@ -877,31 +869,6 @@ function DesktopView({
     closePlaylistDetail()
   }, [closePlaylistDetail])
 
-  // TV 遥控器 BACK：按层级关闭 歌单详情 → 设置/搜索 → 模式面板 → 切换模式
-  useTvBack(() => {
-    if (showPlaylistDetail) {
-      closePlaylistDetail()
-      return true
-    }
-    if (showSettings) {
-      setShowSettings(false)
-      return true
-    }
-    if (showSearch) {
-      setShowSearch(false)
-      return true
-    }
-    if (showDesktopCustomizer) {
-      setShowDesktopCustomizer(false)
-      return true
-    }
-    if (showThemePanel) {
-      setThemePanelSettled(false)
-      setShowThemePanel(false)
-      return true
-    }
-    return false
-  }, [showPlaylistDetail, showSettings, showSearch, showDesktopCustomizer, showThemePanel, closePlaylistDetail])
 
   const handleWidgetOverlayChange = useCallback((side: 'left' | 'right', open: boolean) => {
     if (open) {
@@ -1515,7 +1482,7 @@ function DesktopView({
             animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
             exit={{ opacity: 0, scale: 0.985, filter: 'blur(12px)' }}
             transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-            className={`desktop-lyrics-fusion absolute z-20 flex items-center justify-center overflow-hidden ${isTvUi ? 'bottom-72' : 'bottom-16'}`}
+            className="desktop-lyrics-fusion absolute z-20 flex items-center justify-center overflow-hidden bottom-16"
             style={{
               top: 'clamp(178px, 19vh, 224px)',
               left: '6vw',
@@ -1523,7 +1490,7 @@ function DesktopView({
             }}
           >
             <div
-              className={`relative h-full w-full ${isTvUi ? 'max-h-[420px]' : 'max-h-[680px]'}`}
+              className="relative h-full w-full max-h-[680px]"
               style={{
                 maxWidth: desktopCustomization.left.length > 0 || desktopCustomization.right.length > 0
                   ? 'min(1080px, 54vw)'
@@ -1574,7 +1541,6 @@ function DesktopView({
           {(topBarActive || showUpArrowHint) && !showThemePanel && (
             <motion.button
               aria-label="打开模式选择"
-              data-tv-focus
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
@@ -1682,7 +1648,6 @@ function DesktopView({
                 }}
                 platform={currentPlatform}
                 initialFocusedIndex={recentEntry ? 1 : 0}
-                compact={isTvUi}
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-64 gap-4">
@@ -1900,11 +1865,10 @@ function DesktopView({
             onMouseEnter={handleBottomBarMouseEnter}
             onClick={handleBottomBarMouseEnter}
           >
-            {/* 小白条：TV 遥控器模式下可聚焦（data-tv-focus），OK 键展开歌单栏 */}
+            {/* 小白条：悬停/点击展开歌单栏 */}
             <motion.div
-              data-tv-focus
               aria-label="显示歌单"
-              className={`${isTvUi ? 'w-64 h-2.5' : 'w-96 h-1.5'} rounded-full bg-white/40 cursor-pointer`}
+              className="w-96 h-1.5 rounded-full bg-white/40 cursor-pointer"
               style={{
                 boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
               }}

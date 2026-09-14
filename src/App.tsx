@@ -1,7 +1,7 @@
 import { debugLog, isTransitionDebugEnabled } from './utils/debugLog'
 import { parseStoredBoolean } from './utils/storage'
-import { isTv, isDesktop } from './platform'
-import { useTvBack } from './tv/tvCore'
+import { isDesktop } from './platform'
+
 import { isPerfModeEfficiency } from './tv/perfMode'
 import { lazy, memo, Suspense, useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore, type ComponentProps, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -514,9 +514,7 @@ function App() {
   // 视图模式状态（探索 / 简约 / 桌面）
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     const saved = localStorage.getItem('viewMode')
-    const mode = saved === 'explore' || saved === 'minimal' || saved === 'traditional' || saved === 'desktop' ? saved : 'minimal'
-    // TV 效能档隐藏桌面模式（普通/增强显示）：历史保存值也不会恢复成桌面
-    return isTv() && isPerfModeEfficiency() && mode === 'desktop' ? 'minimal' : mode
+    return saved === 'explore' || saved === 'minimal' || saved === 'traditional' || saved === 'desktop' ? saved : 'minimal'
   })
   const viewModeChangeRevisionRef = useRef(0)
   // 桌面融合穿透：桌面模式空区域鼠标穿透到真实桌面（退出 kiosk + 组件区可交互）
@@ -1055,24 +1053,6 @@ function App() {
   const currentSongArtistLabel = useMemo(() => currentSongArtists.join(', '), [currentSongArtists])
   const isPlaybackPage = Boolean(currentSong) && (showSharedPlayer || (viewMode === 'minimal' && !showHome))
   const canShowUpNextOnCurrentSurface = isPlaybackPage || showUpNextOutsidePlayer
-
-  // TV 遥控器 BACK 兜底（最低优先级，弹窗/面板的 useTvBack 优先消费）：
-  // 个人中心页回主页、播放页回主页；其他情况不消费（交给原生层）。
-  // 用 ref 读最新状态避免 deps 变化把本处理器顶到栈尾抢在弹窗之前。
-  const backStateRef = useRef({ isPlaybackPage, showProfile })
-  backStateRef.current = { isPlaybackPage, showProfile }
-  useTvBack(() => {
-    if (backStateRef.current.showProfile) {
-      setShowProfile(false)
-      return true
-    }
-    if (backStateRef.current.isPlaybackPage) {
-      setShowSharedPlayer(false)
-      setShowHome(true)
-      return true
-    }
-    return false
-  }, [])
 
   const playlistKeys = useMemo(() => playlist.map(getSongKey), [playlist])
   // 看歌预加载：即将播放的后 2 首歌（预匹配评分高的 B 站视频）
@@ -2280,8 +2260,6 @@ function App() {
   // 监听视图模式变化
   useEffect(() => {
     const applyMode = (mode: 'explore' | 'minimal' | 'traditional' | 'desktop') => {
-      // TV 效能档无桌面模式：遥控器/远程/恢复路径都不会进入桌面（模式卡片也已隐藏）
-      if (isTv() && isPerfModeEfficiency() && mode === 'desktop') mode = 'minimal'
       setViewMode(mode)
       setEnteredFromMode(mode)
       // 壁纸监控按需启停（桌面模式 + 联动开启才启动）

@@ -10,7 +10,6 @@ import {
   searchMVs
 } from '../services/musicApi'
 import VideoPlayer from './VideoPlayer'
-import { useTvBack } from '../tv/tvCore'
 
 interface MVItem {
   id: string | number
@@ -40,11 +39,6 @@ const NETESE_AREAS = ['全部', '内地', '港台', '欧美', '日本', '韩国'
 const NETEASE_TYPES = ['全部', '官方版', '原声', '现场版', '网易出品']
 
 export default function MVExploreModal({ initialPlatform = 'netease', initialMvId, onClose, playerTheme = 'dark' }: MVExploreModalProps) {
-  // TV 遥控器 BACK：关闭 MV 浏览弹窗
-  useTvBack(() => {
-    onClose()
-    return true
-  }, [onClose])
   const dark = playerTheme === 'dark'
   const textPrimary = dark ? 'text-white' : 'text-black'
   const textSecondary = dark ? 'text-white/60' : 'text-black/60'
@@ -253,7 +247,6 @@ export default function MVExploreModal({ initialPlatform = 'netease', initialMvI
       onClick={onClose}
     >
       <motion.div
-        data-tv-scope
         initial={{ scale: 0.94, opacity: 0, y: 14 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.94, opacity: 0, y: 14 }}

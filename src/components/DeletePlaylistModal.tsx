@@ -1,7 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { AlertTriangle, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { useTvBack } from '../tv/tvCore'
 
 interface DeletePlaylistModalProps {
   show: boolean
@@ -18,14 +17,6 @@ export default function DeletePlaylistModal({
   playlistName,
   loading = false
 }: DeletePlaylistModalProps) {
-  // TV 遥控器 BACK：关闭删除歌单确认弹窗
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  }, [show, onClose])
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('accentColor') || '#3B82F6')
 
   useEffect(() => {
@@ -49,7 +40,6 @@ export default function DeletePlaylistModal({
           onClick={onClose}
         >
           <motion.div
-            data-tv-scope
             initial={{ scale: 0.94, opacity: 0, y: 12 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.94, opacity: 0, y: 12 }}

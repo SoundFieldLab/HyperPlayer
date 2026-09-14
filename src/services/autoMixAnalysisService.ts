@@ -3,7 +3,6 @@
  * 版权所有（c）2026 HyperPlayer，保留所有权利；未经书面授权禁止复制/移植/再分发。
  */
 import { debugLog } from '../utils/debugLog'
-import { isTvModeActive } from '../platform'
 import { refreshSongUrlOnce } from './musicApi'
 import type { BeatFeatureFrame, SectionMarker, TrackAnalysis } from '../audio/types'
 
@@ -902,16 +901,8 @@ class AutoMixAnalysisService {
     // 不缓存/不持久化，避免把歌曲永久钉在空节拍网格上。
     let isTransientFallback = false
     try {
-      if (isTvModeActive()) {
-        // TV 弱机：浏览器整曲 decodeAudioData 在 WebView 里是数百 MB 级开销
-        //（每次 AutoMix 过渡都会触发）。直接元数据回退，保持 fixed-crossfade 可用。
-        debugLog('⚠️ [AutoMix] TV 端跳过浏览器整曲解码，使用元数据回退')
-        isTransientFallback = true
-        analysis = metadataOnly(input, 'metadata-only')
-      } else {
-        debugLog('⚠️ [AutoMix] 使用浏览器本地节拍检测')
-        analysis = await this.analyzeInBrowser(input)
-      }
+      debugLog('⚠️ [AutoMix] 使用浏览器本地节拍检测')
+      analysis = await this.analyzeInBrowser(input)
     } catch (error) {
       if (input.signal?.aborted) throw error
       console.warn('⚠️ [AutoMix] 本地分析失败，使用保守回退方案', error)

@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, ShieldAlert } from 'lucide-react'
-import { useTvBack } from '../tv/tvCore'
+
 import { getPluginManifest } from '../plugins/registry'
 import type { NoticeKind } from '../services/pluginStore'
 
@@ -24,13 +24,6 @@ export default function PluginNoticeModal({ open, pluginId, kind, onResolve, pla
   const manifest = getPluginManifest(pluginId)
   const lines = kind === 'view' ? manifest?.notice?.entry : manifest?.notice?.consent
 
-  useTvBack(() => {
-    if (open) {
-      onResolve(false)
-      return true
-    }
-    return false
-  }, [open, onResolve])
 
   // 打开时重置倒计时
   useEffect(() => {
@@ -54,7 +47,6 @@ export default function PluginNoticeModal({ open, pluginId, kind, onResolve, pla
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
         style={{ backgroundColor: 'rgba(0, 0, 0, 0.78)' }}
-        data-tv-scope
         onClick={() => onResolve(false)}
       >
         <motion.div

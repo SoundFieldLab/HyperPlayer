@@ -1,7 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { memo, useState, useEffect, type CSSProperties } from 'react'
 import { SlidersHorizontal, Plus, Minus, X } from 'lucide-react'
-import { useTvBack } from '../tv/tvCore'
 
 interface QuickSettingsProps {
   forceClose?: boolean
@@ -44,14 +43,6 @@ export default memo(function QuickSettings({
   const [isOpen, setIsOpen] = useState(false)
   const [activeSection, setActiveSection] = useState<'appearance' | 'features'>('appearance')
 
-  // TV 遥控器 BACK：收起快捷设置下拉
-  useTvBack(() => {
-    if (isOpen) {
-      setIsOpen(false)
-      return true
-    }
-    return false
-  }, [isOpen])
 
   const [accentColor, setAccentColor] = useState(() => {
     const saved = localStorage.getItem('accentColor')

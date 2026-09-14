@@ -3,7 +3,6 @@ import { X, Edit3, Lock, Globe, ImagePlus } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 import { preparePlaylistCover } from '../utils/playlistCover'
 import { getProxiedImageUrl } from '../services/musicApi'
-import { useTvBack } from '../tv/tvCore'
 
 interface EditPlaylistModalProps {
   show: boolean
@@ -20,14 +19,6 @@ export default function EditPlaylistModal({
   playlist,
   loading = false
 }: EditPlaylistModalProps) {
-  // TV 遥控器 BACK：关闭编辑歌单弹窗
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  }, [show, onClose])
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('accentColor') || '#3B82F6')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -102,7 +93,6 @@ export default function EditPlaylistModal({
           onClick={handleClose}
         >
           <motion.div
-            data-tv-scope
             initial={{ scale: 0.94, opacity: 0, y: 12 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.94, opacity: 0, y: 12 }}

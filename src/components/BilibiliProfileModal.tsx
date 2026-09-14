@@ -13,7 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   X, ChevronLeft, Eye, PlayCircle, FolderHeart, History, Upload, Users, Loader2, BadgeCheck, Crown, RefreshCw, ArrowUp, ChevronRight, FolderOpen, Heart, Clock3,
 } from 'lucide-react'
-import { useTvBack } from '../tv/tvCore'
+
 import {
   getBilibiliSpaceAcc,
   getBilibiliSpaceVideos,
@@ -67,14 +67,6 @@ function biliPic(url: string, w = 320, h = 180): string {
 }
 
 export default function BilibiliProfileModal({ initialMid, onClose, playerTheme = 'dark', currentSongContext }: BilibiliProfileModalProps) {
-  useTvBack(() => {
-    if (folderModal) {
-      setFolderModal(null)
-      return true
-    }
-    onClose()
-    return true
-  })
 
   const dark = playerTheme === 'dark'
   const [loginReady, setLoginReady] = useState(() => isBilibiliLoggedIn())
@@ -593,7 +585,6 @@ export default function BilibiliProfileModal({ initialMid, onClose, playerTheme 
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-[60] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8"
-      data-tv-scope
       onClick={onClose}
     >
       <motion.div

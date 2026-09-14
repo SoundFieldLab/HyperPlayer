@@ -5,7 +5,6 @@ import { cacheManager } from '../services/cacheManager'
 import { indexedDBCache } from '../services/indexedDBCache'
 import { clearUserPlaylistsMemoryCache } from '../services/playlistService'
 import GlobalToast from './GlobalToast'
-import { useTvBack } from '../tv/tvCore'
 
 interface CacheClearModalProps {
   show: boolean
@@ -20,15 +19,6 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
   const bgCard = playerTheme === 'dark' ? 'bg-white/5' : 'bg-black/5'
   const borderColor = playerTheme === 'dark' ? 'border-white/10' : 'border-black/10'
   
-  // TV 遥控器 BACK 关闭弹窗（必须带 show 守卫：本组件经 SettingsPanel 常驻挂载，
-  // 无守卫会在隐藏时也消费 BACK 键，导致全场景 BACK 失效、无注册弹窗关不掉）
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  })
   const [accentColor, setAccentColor] = useState(() => {
     const saved = localStorage.getItem('accentColor')
     return saved || '#3B82F6'
@@ -296,7 +286,6 @@ export default function CacheClearModal({ show, onClose, playerTheme = 'dark' }:
             exit={{ x: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
             className="fixed right-0 top-0 h-full w-full max-w-lg z-[610] shadow-2xl overflow-hidden"
-            data-tv-scope
             style={{
               background: playerTheme === 'dark' 
                 ? 'linear-gradient(135deg, rgba(30, 30, 40, 0.98) 0%, rgba(20, 20, 30, 0.98) 100%)'

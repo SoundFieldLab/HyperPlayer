@@ -6,7 +6,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Blocks, Download, Lock } from 'lucide-react'
 import { useEffect, useMemo, useReducer } from 'react'
-import { useTvBack } from '../tv/tvCore'
+
 import { getAllPluginManifests } from '../plugins/registry'
 import { openDetailGated, requestTogglePlugin } from '../plugins/toggle'
 import { usePluginHostState, openPluginImport, closePluginCenter, PLUGIN_STATE_EVENT } from '../services/pluginStore'
@@ -68,13 +68,6 @@ function PluginToggle({ manifest }: { manifest: PluginManifest }) {
 export default function PluginCenterModal() {
   const { centerOpen } = usePluginHostState()
   const [version, force] = useReducer((x: number) => x + 1, 0)
-  useTvBack(() => {
-    if (centerOpen) {
-      closePluginCenter()
-      return true
-    }
-    return false
-  }, [centerOpen])
 
   // 导入/开关/卸载等状态变化后刷新卡片
   useEffect(() => {
@@ -95,7 +88,6 @@ export default function PluginCenterModal() {
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[90] flex items-center justify-center p-6"
           style={{ backgroundColor: 'rgba(5,8,14,0.78)', backdropFilter: 'blur(14px)' }}
-          data-tv-scope
           onClick={closePluginCenter}
         >
           <motion.div

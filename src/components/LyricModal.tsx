@@ -2,7 +2,6 @@ import { useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { X, Music, Copy, ScrollText, Languages, Mic2 } from 'lucide-react'
 import { getProxiedImageUrl } from '../services/musicApi'
-import { useTvBack } from '../tv/tvCore'
 
 interface LyricModalProps {
   songName: string
@@ -17,11 +16,6 @@ const showToast = (message: string, type: 'success' | 'info' | 'error' = 'succes
 }
 
 export default function LyricModal({ songName, artistName, coverUrl, lyrics, onClose }: LyricModalProps) {
-  // TV 遥控器 BACK：关闭歌词详情弹窗
-  useTvBack(() => {
-    onClose()
-    return true
-  }, [onClose])
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('accentColor') || '#3B82F6')
   const [showTrans, setShowTrans] = useState(false)
   const [showRoman, setShowRoman] = useState(false)
@@ -77,7 +71,6 @@ export default function LyricModal({ songName, artistName, coverUrl, lyrics, onC
 
   return (
     <motion.div
-      data-tv-scope
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}

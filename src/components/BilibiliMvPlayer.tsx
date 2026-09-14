@@ -21,7 +21,6 @@ import {
   Search, X, Subtitles, CaptionsOff, ArrowLeft, RefreshCw, Eye, Clock, ListVideo, Music,
   Settings as SettingsIcon, ThumbsDown, RotateCcw, Home, ListMusic, Info, MessageCircle, MessageCircleOff, PlayCircle, Shuffle,
 } from 'lucide-react'
-import { useTvMode, useTvBack } from '../tv/tvCore'
 import { useAutoHideCursor } from '../hooks/useAutoHideCursor'
 
 /** B 站小电视图标（简化版 logo：圆角机身 + 顶部双鳍天线 + 屏幕） */
@@ -293,8 +292,6 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
   },
   ref,
 ) {
-  const tvMode = useTvMode()
-
   // 看歌主题色：从当前歌曲封面提取主色调
   const { dominantColor } = useColorThief(coverUrl)
   const watchAccent = dominantColor || BILI_PINK
@@ -612,7 +609,7 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
 
   const scheduleControlsHide = useCallback(() => {
     clearControlsTimer()
-    if (tvMode || !settingsRef.current.autoHideControls) return
+    if (!settingsRef.current.autoHideControls) return
     controlsTimerRef.current = window.setTimeout(() => {
       // 音量小药丸打开时不隐藏控件（避免小药丸被一起收走）；由再次点击音量按钮关闭
       if (videoRef.current && !videoRef.current.paused && !showVolumeSliderRef.current) {
@@ -623,7 +620,7 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
         setShowQualityMenu(false)
       }
     }, 3000)
-  }, [tvMode])
+  }, [])
 
   /** 底部 / 左上角鼠标区域联动：只有悬停在底部栏位置才显示底部栏（连带左上信息）；
    *  只有悬停在左上角歌名处才单独显示左上信息；其余位置不弹控件，离开 3 秒后隐藏 */
@@ -2024,16 +2021,6 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
     return () => document.removeEventListener('fullscreenchange', onChange)
   }, [])
 
-  // TV 遥控器 BACK：登录面板 → 设置 → 个人主页 → 候选列表 → 返回音频（仅播放器为可见表面时接管）
-  useTvBack(() => {
-    if (!surfaceVisible) return false
-    if (showLogin) setShowLogin(false)
-    else if (showSettings) setShowSettings(false)
-    else if (showProfile) setShowProfile(false)
-    else if (showPicker) setShowPicker(false)
-    else onBackToAudio()
-    return true
-  })
 
   // ESC 键盘
   useEffect(() => {
@@ -2222,7 +2209,6 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
     <div
       ref={(el) => { containerRef.current = el; cursorHideRef(el) }}
       className="relative w-full h-full overflow-hidden"
-      data-tv-scope
       onMouseMove={handleContainerMouseMove}
       onMouseLeave={scheduleControlsHide}
       // 手势解锁：autoplay 被策略拒绝时，任意一次点击即授予用户激活 → 视频正式开播
@@ -2481,7 +2467,7 @@ const BilibiliMvPlayer = forwardRef<BilibiliMvPlayerHandle, BilibiliMvPlayerProp
                 {/* 单行：上一曲/播放/下一曲 + 时间 + 进度条（flex-1 止于右侧按钮组左侧）+ 右下角按钮组。
                     右侧按钮组位置不动；进度条不再通长。 */}
                 <div className="flex min-w-0 flex-wrap items-center gap-3 pointer-events-auto">
-                  <div className="flex items-center gap-1.5 flex-shrink-0" data-tv-arrows="play prev next">
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button type="button" onClick={onPrevious} className="w-9 h-9 rounded-full flex items-center justify-center text-white/80 hover:bg-white/15 hover:text-white transition-colors" title="上一首">
                       <ChevronLeft size={20} />
                     </button>

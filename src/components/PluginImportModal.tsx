@@ -6,7 +6,7 @@
 import { useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, FileJson, CheckCircle2, AlertCircle, Upload } from 'lucide-react'
-import { useTvBack } from '../tv/tvCore'
+
 import { installImportedPlugin, usePluginHostState, closePluginImport } from '../services/pluginStore'
 import { showToast } from '../plugins/toggle'
 import type { PluginManifest } from '../plugins/types'
@@ -23,13 +23,6 @@ export default function PluginImportModal() {
   const [installed, setInstalled] = useState(false)
   const [installing, setInstalling] = useState(false)
 
-  useTvBack(() => {
-    if (importOpen) {
-      closePluginImport()
-      return true
-    }
-    return false
-  }, [importOpen])
 
   const reset = () => {
     setManifest(null)
@@ -103,7 +96,6 @@ export default function PluginImportModal() {
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-[93] flex items-center justify-center p-4"
         style={{ backgroundColor: 'rgba(5,8,14,0.72)' }}
-        data-tv-scope
         onClick={() => { reset(); closePluginImport() }}
       >
         <motion.div

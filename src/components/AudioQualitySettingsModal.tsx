@@ -7,7 +7,6 @@ import {
   type AudioQualityPreference,
   type AudioQualitySettings,
 } from '../services/audioQualitySettings'
-import { useTvBack } from '../tv/tvCore'
 
 interface AudioQualitySettingsModalProps {
   show: boolean
@@ -93,14 +92,6 @@ export default function AudioQualitySettingsModal({
   neteaseLoggedIn,
   qqLoggedIn,
 }: AudioQualitySettingsModalProps) {
-  // TV 遥控器 BACK：关闭音质设置弹窗
-  useTvBack(() => {
-    if (show) {
-      onClose()
-      return true
-    }
-    return false
-  }, [show, onClose])
   const [settings, setSettings] = useState<AudioQualitySettings>(loadAudioQualitySettings)
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('accentColor') || '#3B82F6')
   const textPrimary = playerTheme === 'dark' ? 'text-white' : 'text-black'
@@ -170,7 +161,6 @@ export default function AudioQualitySettingsModal({
         <>
           <motion.div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[600]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
           <motion.div
-            data-tv-scope
             className="fixed right-0 top-0 h-full w-full max-w-lg z-[610] shadow-2xl overflow-hidden flex flex-col"
             initial={{ x: '100%', opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}

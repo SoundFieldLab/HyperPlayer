@@ -6,7 +6,6 @@ import type { MusicPlatform } from '../services/platforms'
 import { getLyrics, getNeteaseSongWiki, getQQSongPlaylist, getProxiedImageUrl, getQQListenAlso, getQQLikeAlso, getNeteaseSimiSong, getNeteaseRelatedPlaylist, getNeteaseSongBlog } from '../services/musicApi'
 import LyricModal from './LyricModal'
 import VideoPlayer from './VideoPlayer'
-import { useTvBack } from '../tv/tvCore'
 
 interface SongDetailModalProps {
   song: Song
@@ -44,11 +43,6 @@ const NETBASE_FEE_LABELS: Record<number, string> = {
 }
 
 function SongDetailModal({ song, onClose, onPlayNow, onOpenPlaylist, onOpenAlbum, onOpenArtist }: SongDetailModalProps) {
-  // TV 遥控器 BACK：关闭歌曲详情弹窗
-  useTvBack(() => {
-    onClose()
-    return true
-  }, [onClose])
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('accentColor') || '#3B82F6')
   const [extra, setExtra] = useState<{ publishTime?: number; mvId?: number; fee?: number; quality?: string; qualityLevels?: { key: string; label: string; br: number }[]; albumExtra?: { company?: string; subType?: string; type?: string }; publishDate?: string; bpm?: number; genreText?: string; languageText?: string; mvVid?: string } | null>(null)
   // MV 播放
@@ -263,7 +257,6 @@ function SongDetailModal({ song, onClose, onPlayNow, onOpenPlaylist, onOpenAlbum
 
   return (
     <motion.div
-      data-tv-scope
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}

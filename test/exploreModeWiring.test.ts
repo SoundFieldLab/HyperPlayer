@@ -29,7 +29,5 @@ describe('Explore mode wiring regressions', () => {
     expect(source).toContain('setPlaylistResults(data.playlists)')
     expect(source).not.toContain('data?.result?.playlists')
     expect(source).toContain("setSearchError(error instanceof Error ? error.message : '搜索失败，请稍后重试')")
-    expect(source).toContain('if (selectedAlbum)')
-    expect(source).toContain('else if (selectedArtist)')
   })
 })
