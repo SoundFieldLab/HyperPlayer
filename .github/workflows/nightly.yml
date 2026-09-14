@@ -173,6 +173,9 @@ jobs:
         run: npm run build:electron
         timeout-minutes: 40
 
+      - name: 校验 app.asar 体积与内容
+        run: node scripts/check-packaging.mjs
+
       - name: 列出构建产物
         shell: pwsh
         run: Get-ChildItem release -File | Select-Object Name, Length

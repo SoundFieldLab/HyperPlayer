@@ -12,6 +12,7 @@ npm run dev:electron     # Full dev: Vite (3210) + API server (3211) + Electron 
 npm run dev              # Vite dev server only (port 3210; Weather Lab: http://127.0.0.1:3210/weather-debug.html)
 npm run lint             # Typecheck: tsc --noEmit (covers src/ only; no ESLint in repo)
 npm run check:ports      # 端口一致性闸门（必须 3210/3211，禁止回退 3000–3002；已接入 CI checks）
+npm run check:packaging  # 打包体积闸门（前端库必须在 devDependencies；排除规则齐全；asar 体积/内容；已接入 ci/nightly/pre-release + 本地 build:electron:dir 前后 + electron-builder 的 beforePack）
 npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-09-13 实测：120 文件 = 119 过 + 1 跳过；1173 用例 = 1168 过 + 5 跳过 + 0 失败。跳过的 5 项是 v3 LGPL 可选依赖未装自动跳过)
 npm run build:v3-worklet # 重生成 v3 AudioWorklet 单文件 -> public/v3-worklet.js（predev/predev:electron/prebuild 已自动执行）
 npm run build            # vite build -> dist/（三入口：index.html / desktop-player.html / desktop-lyrics.html）
@@ -46,7 +47,27 @@ Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./D
 - **Weather Lab**: run the existing `npm run dev`, then open `http://127.0.0.1:3210/weather-debug.html`. Use it to compare all Apple weather scenes and desktop `full`/`simple` cards with local mock data. Do not add `weather-debug.html` to production Vite inputs（`vite.config.ts` 的 `rollupOptions.input` 已显式白名单为三个入口）。
 - **MV Decode Probe**: run the existing `npm run dev`, then open `http://127.0.0.1:3210/mv-decode-test.html`（可带 `?url=<音频直链>&rate=22050` 复现 app 检测采样率）。用于核对 B 站 MV / 音频的**音乐起点检测**：`decodeAudioData` → 单声道降采样 → `frameRms`/`onset` 包络 → `window.__decodeResult`，与 `autoMixAnalysisService.ts` / `mvAlignment.ts` 的包络互相对照。注意该页在 `public/` 下，Vite 会原样拷入 `dist/`（即随打包产物分发）。
 
-**打包规则（electron-builder）**：`build.files` 白名单 = `desktop/**/*`、`dist/**/*`、`server/**/*`、`shared/**/*`、`local-server.mjs`、`package.json`、`logo.png`、`build/**/*`（清单里还列了 `THIRD_PARTY_NOTICES.md`，但该文件当前不存在于仓库根，属悬空条目）。**已无 `asarUnpack`**——原先唯一的解包项是 Apple bridge 的 `.py`（Python 脚本不能从 asar 内执行），随音源移除后整块删除；现已无 Python 服务与离线 wheels，无需任何排除规则。**`scripts/verify-asar.cjs` 已接入 dir 构建链**（`build:electron:dir`：electron-builder 之后）：校验 asar 结构自洽（头部/条目越界/package.json 可解析）。**构建运行期间不要编辑任何会被打包的文件**——electron-builder 先按 stat 尺寸写头部、后拷贝内容，中途文件被改（哪怕只改注释）会静默产出 **Node 能读、Electron 拒载**的坏包（症状：启动停在 Electron 默认页/帮助文案），闸门就是拦这个的。
+**打包规则（electron-builder）**：`build.files` 白名单 = `desktop/**/*`、`dist/**/*`、`server/**/*`、`shared/**/*`、`local-server.mjs`、`package.json`、`logo.png`、`build/**/*`，外加四条**体积排除规则**（2026-09-14 加入，勿删）：`!build/ui/**`、`!build/ui-clone/**`（NSIS 安装器位图，仅安装器编译期读取——`installer.nsh` 里的 `File "${BUILD_RESOURCES_DIR}\ui\*.bmp"` 从**仓库源目录**取，运行期不读）、`!**/*.map`（sourcemap，生产包无用，曾占 120 MB）、`!node_modules/@neteasecloudmusicapienhanced/api/public/**`（该库自带的 HTML 文档页与截图，约 13 MB；其 `server.js` 里的 `express.static(public)` 只在 `constructServer()` 内，而本项目的 Express 应用从不调用它）。（清单里还列了 `THIRD_PARTY_NOTICES.md`，但该文件当前不存在于仓库根，属悬空条目）。**已无 `asarUnpack`**——原先唯一的解包项是 Apple bridge 的 `.py`（Python 脚本不能从 asar 内执行），随音源移除后整块删除；现已无 Python 服务与离线 wheels。**`scripts/verify-asar.cjs` 已接入 dir 构建链**（`build:electron:dir`：electron-builder 之后）：校验 asar 结构自洽（头部/条目越界/package.json 可解析）。**`build:electron:dir` 现在还会在打包前跑 `check-packaging --config-only`、打包后跑完整 `check-packaging`**（见下方「依赖分区约束」的拦截表）。**构建运行期间不要编辑任何会被打包的文件**——electron-builder 先按 stat 尺寸写头部、后拷贝内容，中途文件被改（哪怕只改注释）会静默产出 **Node 能读、Electron 拒载**的坏包（症状：启动停在 Electron 默认页/帮助文案），闸门就是拦这个的。
+
+**⚠️ 依赖分区约束（`dependencies` vs `devDependencies`，2026-09-14 立）**：electron-builder **只打包生产依赖**（`dependencies`），**不打包 `devDependencies`**。因此——
+
+- **纯前端库必须放 `devDependencies`**：`react` / `react-dom` / `three` / `@react-three/*` / `pixi.js` / `hls.js` / `lucide-react` / `framer-motion` / `leaflet` / `react-window` / `@tanstack/react-virtual` / `country-state-city` / `china-area-data` / `@svg-maps/world` / `qrcode.react` / `opencc-js` / `lamejs` / `@soundtouchjs/audio-worklet` 等。它们**已经被 Vite 打进 `dist/`**（渲染进程加载的是 dist，不是 node_modules），留在 `dependencies` 只会让同一份代码在安装包里存两遍——这正是 asar 曾膨胀到 **411 MB** 的根因（19 个前端库 + 110 个传递依赖 = 264 MB）。**实例**：`three-stdlib` / `@mediapipe/tasks-vision` / `stats-gl` / `@dimforge/rapier3d-compat` 等 110 个包并不直接被引用，只是上述前端库的传递依赖，随之一并消失。
+- **`dependencies` 只放「运行期模块树里真正被 require 到」的包**：当前 9 项 = `@jixun/qmweb-sign`、`@neteasecloudmusicapienhanced/api`、`adm-zip`、`axios`、`compression`、`dotenv`、`express`、`qq-music-api`、`qrcode`。
+- **⚠️ 判定不能只看入口的直接 import**：netease API 用 `readdirSync` **动态加载** `module/*.js`，其中 `login_qr_create.js` 需要 `qrcode`、`song_url_v1.js` 需要 `dotenv`——静态看入口看不到，但它们**确实是运行期依赖**，误移到 devDependencies 会让扫码登录 / 取歌链在打包版里挂掉。`axios` 同理（`local-server.mjs` 直接 import，原先竟未在 `dependencies` 声明，只靠 hoisting 侥幸可用——已补齐显式声明）。
+- **闸门**：`npm run check:packaging`（`scripts/check-packaging.mjs`）——从运行期入口（`local-server.mjs` + `desktop/*.cjs` + `server/` + `shared/`）算出可达闭包，扫闭包内**所有**文件确认每个 `dependencies` 条目真的被 require（因此能看到 netease 的动态加载），并校验四条排除规则仍在；若 `release/win-unpacked/resources/app.asar` 存在，还校验其体积（预算 130 MB）与内容（不得含前端库 / `.map` / 安装器位图，且 `package.json`、`local-server.mjs`、`logo.png`、`build/icon.ico`、`desktop/main.cjs`、`dist/index.html` 必须在）。`--config-only` 只查前两项（依赖分区 + 排除规则，1~2 秒），供构建前置使用。
+- **⚠️ 减负是「配置持久 + 多重拦截」，改依赖/打包配置前先看这张表**：体积约束的**真正事实源是 `package.json`**（依赖分区 + `build.files` 排除规则），它对本机、CI、任何机器都生效；闸门只是防回归。四个拦截点：
+
+  | 路径 | 拦截方式 |
+  |---|---|
+  | `npm run build:electron:dir` | 打包**前** `check-packaging --config-only`（早失败，不必等两分钟）+ 打包**后**完整 `check-packaging`（核对真实产物） |
+  | `npm run build:electron`（NSIS） | 首步即 `build:electron:dir` → 由上一条覆盖 |
+  | 手工 `npx electron-builder --win dir` | `build.beforePack` = `scripts/before-pack-check-packaging.cjs`（electron-builder 自身事件，与调用方式无关；抛错即中止打包） |
+  | CI | `ci.yml` checks 作业 + package-verify 作业、`nightly.yml`、`pre-release.yml` 各跑一次 |
+
+  **已知边界**：`--prepackaged` 时 `app-builder-lib` 的 `doPack()` 会提前 return，`beforePack` **不触发**——这是合理的，该路径打包的是**已经过闸门的** `release/win-unpacked`，不重新解析 node_modules，故无需重复校验。
+- **依赖分区不影响构建前提**：把前端库移到 `devDependencies` **不会**要求「生产安装」——`vite` / `electron` / `electron-builder` 本来就在 `devDependencies`，任何构建早已需要完整安装（工作流里也没有 `--omit=dev` / `NODE_ENV=production`，`npm ci` 默认装全套）。
+
+**打包体积基线（2026-09-14 实测）**：asar **411 MB → 80 MB**（载荷 387 MB → 74.7 MB，文件条目 20540 → 7457），其中 `dist/` 37.4 MB（前端产物，必须）+ 运行期 node_modules 约 32 MB + `desktop/` 2.2 MB + `build/` 仅 682 KB（只剩 `icon.ico` / `installer.nsh` / 几张安装器头图）。**安装版与便携版内容完全一致**——两者都由同一份 `release/win-unpacked/` 决定（NSIS 是 `--prepackaged release/win-unpacked` 打的），所以本次减重同时惠及两种分发形式。
 
 **发布策略（releases）**：**正式版（stable，打 `v*` tag）的 release 资产 = NSIS 安装包（`npm run build:electron` → `release/HyperPlayer-<version>-Setup.exe`）+ 热更新包 `hyperplayer-hot-<version>.zip`（app.asar + app.asar.unpacked，由 `node scripts/build-hot-update.mjs` 产出；非 npm script）；**nightly 渠道同样只发 NSIS 安装包**（2026-09-14 起不再发便携版 zip）。`release/win-unpacked/` 本身仍不入库、不随 releases 分发**（仅本地调试产物）。发布时：打 `v<version>` tag → push tag → `gh release create v<version> release/HyperPlayer-<version>-Setup.exe release/hyperplayer-hot-<version>.zip`（附 changelog；CI 里是 `artifacts/*` 全量上传）。安装版为每用户安装（`nsis.perMachine: false`），**不携带任何用户数据/配置**——用户配置生成于各机 `%APPDATA%\HyperPlayer\`，安装后自动适配当前用户。CI 见 `.github/workflows/ci.yml`（类型/单测/桌面与安装器测试/前端构建；tag 或手动触发时跑 `build:electron:dir` 做 Windows 打包验证）与 `nightly.yml`（每日 nightly）；**CI 已无 EVS secrets、也无 production streaming VMP 剩余天数门槛**——Electron 为官方 stock 构建，Widevine/VMP 签名链整体移除。
 
@@ -79,7 +100,7 @@ npm run version:dry     # 预览将要执行的操作（不落地）
 **版本标识唯一事实源**：`src/services/versionInfo.ts` 的 `VERSION_CHANNEL_LABEL`（当前为「预览版」）与 `getVersionLabel()`——关于页与文档都引用它，勿在别处写死标识文案。1.0 起代号统一为「澜 おおなみ」（`getVersionCodename`，`major >= 1`）。
 
 **打包三大约束（破坏任一条打包产物就会黑屏/缺资源）**：
-1. `vite.config.ts` 的 **`base` 必须保持 `'./'`**（顶层配置，不要移进 `build` 子对象）——打包版用 `loadFile()`（file://）加载 `dist/index.html`，若 base 是 `'/'`，资源以 `/assets/...` 绝对路径引用全部 404，React 不挂载 → 整窗黑屏（症状：启动日志 `Renderer resources: 0`）。
+1. `vite.config.ts` 的 **`base` 必须保持 `'./'`**（顶层配置，不要移进 `build` 子对象）——打包版用 `loadFile()`（file://）加载 `dist/index.html`，若 base 是 `'/'`，资源以 `/assets/...` 绝对路径引用全部 404，React 不挂载 → 整窗黑屏。**注意 `Renderer resources: 0` 不是可靠判据**（2026-09-14 实测）：该日志在 `did-finish-load` 瞬间取 `performance.getEntriesByType('resource')`，此时条目常尚未填充，正常包也会打 0；判断黑屏请看**后续实时查询**（正常包 +20s 报 40 个资源、`readyState: complete`）与画面本身，勿仅凭这一行误判 base 配置错误。
 2. `package.json` `build.files` 必须包含 **`logo.png` 与 `build/**/*`**——主窗口/登录窗口 icon 用 `../build/icon.ico`，`logo.png` 仍被主进程（`nativeImage` 窗口图标）使用；漏打包会导致窗口图标丢失。（启动页 `desktop/splash.html` 现已把 logo 内联为 data URI，不再依赖外部 `logo.png`。）
 3. `package.json` `build.electronDist` 保持 `node_modules/electron/dist`——本机网络无法下载 electron zip，electron-builder 离线构建全靠这个本地副本。**该运行时现为官方 stock `electron@42.8.0`**（castLabs `+wvcus` 分叉与 Widevine/VMP 链已移除）。**若要对 Electron 做性能改造（自编译 / 手改）**：做法就是**把自编译产物整个目录替换到 `node_modules/electron/dist`**——打包链与配置**无需任何改动**（`electronDist` 是打包时运行时的唯一来源）；替换后先跑一次 `npm run build:electron:dir` 验证，并注意别让 `npm install` / `npm ci` 把该目录重装回官方版。
 

@@ -176,6 +176,9 @@ jobs:
         run: npm run build:electron
         timeout-minutes: 50
 
+      - name: 校验 app.asar 体积与内容
+        run: node scripts/check-packaging.mjs
+
       - name: 生成热更新包（app.asar + app.asar.unpacked）
         run: node scripts/build-hot-update.mjs
 

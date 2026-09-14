@@ -59,6 +59,9 @@ jobs:
       - name: 端口一致性闸门（禁止回退到 WaveForge 占用的 3000–3002）
         run: node scripts/check-ports.mjs
 
+      - name: 打包体积闸门（前端库必须留在 devDependencies，禁止重复打包）
+        run: node scripts/check-packaging.mjs
+
       - name: 单元测试（vitest）
         run: npm run test
 
