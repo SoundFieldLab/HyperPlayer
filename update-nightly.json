@@ -1,13 +1,13 @@
 {
   "channel": "nightly",
-  "version": "1.0.1-nightly.20260926",
-  "notes": "# HyperPlayer Nightly 20260926\n\n**版本号：1.0.1-nightly.20260926（基础 1.0.0 + 构建日期，非正式发版，不自动升级版本号）**\n\n## 代码变动（自上次 Nightly 构建 nightly-20260925 起）\n\n- chore(nightly): 更新 update-nightly.json 至 1.0.1-nightly.20260925 (202d7cb)\n\n\n---\n**下载**\n\n- `HyperPlayer-*-Setup.exe` —— NSIS 安装包，双击安装（推荐普通用户）\n\n⚠️ 自动构建的每日测试版本，可能不稳定。仅供主动切换到「每日构建（Nightly）」渠道的用户，不影响正式版更新通道。",
+  "version": "1.0.1-nightly.20260927",
+  "notes": "# HyperPlayer Nightly 20260927\n\n**版本号：1.0.1-nightly.20260927（基础 1.0.0 + 构建日期，非正式发版，不自动升级版本号）**\n\n## 代码变动（自上次 Nightly 构建 nightly-20260926 起）\n\n- chore(nightly): 更新 update-nightly.json 至 1.0.1-nightly.20260926 (67c6d06)\n\n\n---\n**下载**\n\n- `HyperPlayer-*-Setup.exe` —— NSIS 安装包，双击安装（推荐普通用户）\n\n⚠️ 自动构建的每日测试版本，可能不稳定。仅供主动切换到「每日构建（Nightly）」渠道的用户，不影响正式版更新通道。",
   "artifacts": {
     "win-x64": {
       "urls": [
-        "https://github.com/SoundFieldLab/HyperPlayer/releases/download/nightly-20260926/HyperPlayer-1.0.1-nightly.20260926-Setup.exe"
+        "https://github.com/SoundFieldLab/HyperPlayer/releases/download/nightly-20260927/HyperPlayer-1.0.1-nightly.20260927-Setup.exe"
       ],
-      "sha256": "f0ae2cc5683bd41b01e351aa80ac737d9a4a77243e40567b9b3251d706e68e07"
+      "sha256": "d5bd241352d2e4c8714282ddba19cfbf3fe511aab9e189de83d07c775cd7df88"
     }
   }
 }
