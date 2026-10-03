@@ -36,10 +36,10 @@ export default defineConfig({
   },
   build: {
     // 三个入口（index / desktop-player / desktop-lyrics）都只被 Electron 的 Chromium 加载
-    // （electron 42.8.0 = Chromium 148），不存在更老的内核；显式抬高 target 可免去 Vite 默认值
+    // （electron 44.5.0 = Chromium 152），不存在更老的内核；显式抬高 target 可免去 Vite 默认值
     // 面向老浏览器的降级转换（产物更小、解析更快）。
     // ⚠️ 升级 Electron 后必须同步更新该值，否则新语法会被发给旧内核。
-    target: 'chrome148',
+    target: 'chrome152',
     outDir: 'dist',
     emptyOutDir: true,
     // 大块数据均已改为懒加载：最大的常规 chunk 约 500KB，最大的懒加载数据 chunk（城市数据）约 2MB。
