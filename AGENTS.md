@@ -13,7 +13,7 @@ npm run dev              # Vite dev server only (port 3210; Weather Lab: http://
 npm run lint             # Typecheck: tsc --noEmit (covers src/ only; no ESLint in repo)
 npm run check:ports      # 端口一致性闸门（必须 3210/3211，禁止回退 3000–3002；已接入 CI checks）
 npm run check:packaging  # 打包体积闸门（前端库必须在 devDependencies；排除规则齐全；asar 体积/内容；已接入 ci/nightly/pre-release + 本地 build:electron:dir 前后 + electron-builder 的 beforePack）
-npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-09-14 实测：120 文件 = 119 过 + 1 跳过；1172 用例 = 1167 过 + 5 跳过 + 0 失败。跳过的 5 项是 v3 LGPL 可选依赖未装自动跳过)
+npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-10-04 实测：121 文件 = 120 过 + 1 跳过；1174 用例 = 1169 过 + 5 跳过 + 0 失败。跳过的 5 项是 v3 LGPL 可选依赖未装自动跳过)
 npm run build:v3-worklet # 重生成 v3 AudioWorklet 单文件 -> public/v3-worklet.js（predev/predev:electron/prebuild 已自动执行）
 npm run build            # vite build -> dist/（三入口：index.html / desktop-player.html / desktop-lyrics.html）
 npm run build:electron   # 发布：build:electron:dir + 安装器美术 + electron-builder NSIS -> release/HyperPlayer-<version>-Setup.exe
@@ -102,7 +102,7 @@ npm run version:dry     # 预览将要执行的操作（不落地）
 **打包三大约束（破坏任一条打包产物就会黑屏/缺资源）**：
 1. `vite.config.ts` 的 **`base` 必须保持 `'./'`**（顶层配置，不要移进 `build` 子对象）——打包版用 `loadFile()`（file://）加载 `dist/index.html`，若 base 是 `'/'`，资源以 `/assets/...` 绝对路径引用全部 404，React 不挂载 → 整窗黑屏。**注意 `Renderer resources: 0` 不是可靠判据**（2026-09-14 实测）：该日志在 `did-finish-load` 瞬间取 `performance.getEntriesByType('resource')`，此时条目常尚未填充，正常包也会打 0；判断黑屏请看**后续实时查询**（正常包 +20s 报 40 个资源、`readyState: complete`）与画面本身，勿仅凭这一行误判 base 配置错误。
 2. `package.json` `build.files` 必须包含 **`logo.png` 与 `build/**/*`**——主窗口/登录窗口 icon 用 `../build/icon.ico`，`logo.png` 仍被主进程（`nativeImage` 窗口图标）使用；漏打包会导致窗口图标丢失。（启动页 `desktop/splash.html` 现已把 logo 内联为 data URI，不再依赖外部 `logo.png`。）
-3. `package.json` `build.electronDist` 保持 `node_modules/electron/dist`——本机网络无法下载 electron zip，electron-builder 离线构建全靠这个本地副本。**该运行时现为官方 stock `electron@42.8.0`**（castLabs `+wvcus` 分叉与 Widevine/VMP 链已移除）。**若要对 Electron 做性能改造（自编译 / 手改）**：做法就是**把自编译产物整个目录替换到 `node_modules/electron/dist`**——打包链与配置**无需任何改动**（`electronDist` 是打包时运行时的唯一来源）；替换后先跑一次 `npm run build:electron:dir` 验证，并注意别让 `npm install` / `npm ci` 把该目录重装回官方版。
+3. `package.json` `build.electronDist` 保持 `node_modules/electron/dist`——electron-builder 离线构建全靠这个本地副本。**该运行时现为官方 stock `electron@44.5.0`**（2026-10-04 从 42.8.0 升级：Chromium 152 / V8 15.2 / Node 24.18.1；castLabs `+wvcus` 分叉与 Widevine/VMP 链早已移除；44 官方自带 Node startup snapshot + preload/V8 code cache，无需自编译）。**升级 Electron 二进制**：`npm install --save-dev electron@<版本>` 换 spec 后本机 postinstall 不生效，需 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js` 手动下载（直连 npmmirror 可用）；**同步更新 `vite.config.ts` 的 `build.target: 'chrome<主版本>'`**，否则新语法会发给旧内核。**若要对 Electron 做源码级魔改（自编译 / 手改）**：做法就是**把自编译产物整个目录替换到 `node_modules/electron/dist`**——打包链与配置**无需任何改动**（`electronDist` 是打包时运行时的唯一来源）；替换后先跑一次 `npm run build:electron:dir` 验证，并注意别让 `npm install` / `npm ci` 把该目录重装回官方版。
 
 ## ⚠️ 设置镜像机制（往设置里加功能前必读）
 
@@ -191,4 +191,5 @@ HyperPlayer 由 WaveForge 改名而来，**两者的配置、登录态、缓存�
 - `docs/歌词对比-LyricsBlossom.md` — Apple Music 歌词逆向对比分析（**Apple 风格逐字动画的设计参考**；文档本身是逆向对比记录，与已移除的 Apple 音源无关）。
 - `src/services/HyperSoundEngine-v1/docs/` — HSE 融合/UI/算法文档（`FUSION_GUIDE.md` / `UI_GUIDE.md` / `音频算法技术文档.md` / `音频算法设计文档.md` / `FEATURES_VERIFICATION.md`）；`架构书.md` 位于模块根目录。
 - `docs/功能清单3.0.md` — 功能清单（12 个功能域 A–L，按代码实测，含统计、红线文件、已知限制、文档索引；与源码冲突时以源码为准）。
-- `docs/性能优化计划.md` — 性能优化计划（把 `temp/electron性能优化措施汇总.md` 的 9 大类清单逐条对照本仓现状，标注「已达标 / 可优化 / 不采纳」并附 file:line 证据、预期收益、风险、验收方式；另含**性能红线**、基线数字与「一项一提交」纪律）。**做任何性能相关改动前先读它**——已达标项别重复劳动，红线项碰不得。
+- `docs/性能优化计划.md` — 性能优化计划（把 `temp/electron性能优化措施汇总.md` 的 9 大类清单逐条对照本仓现状，标注「已达标 / 可优化 / 不采纳」并附 file:line 证据、预期收益、风险、验收方式；另含**性能红线**、基线数字与「一项一提交」纪律；2026-10-04 起阶段 0–5 已基本实施完毕，状态表以文内为准）。**做任何性能相关改动前先读它**——已达标项别重复劳动，红线项碰不得。
+- `docs/性能优化计划2.0.md` — Electron 44 升级 + 启动优化合并报告（⚠️ 内文内核版本号有误，**以文首勘误块为准**：44 = Chromium 152 / V8 15.2 / Node 24.18.1）。
