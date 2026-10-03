@@ -23,7 +23,7 @@ export type {
   EngineManifest,
   EngineAdapterOptions,
 } from './types'
-export { V3Adapter } from './V3Adapter'
+export { V3Adapter, warmV3EngineModule } from './V3Adapter'
 
 /**
  * 引擎注册表：按顺序排列。第一项是默认引擎（getAudioEngineVersion 无保存值时回退）。
