@@ -13,7 +13,7 @@ npm run dev              # Vite dev server only (port 3210; Weather Lab: http://
 npm run lint             # Typecheck: tsc --noEmit (covers src/ only; no ESLint in repo)
 npm run check:ports      # 端口一致性闸门（必须 3210/3211，禁止回退 3000–3002；已接入 CI checks）
 npm run check:packaging  # 打包体积闸门（前端库必须在 devDependencies；排除规则齐全；asar 体积/内容；已接入 ci/nightly/pre-release + 本地 build:electron:dir 前后 + electron-builder 的 beforePack）
-npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-09-13 实测：120 文件 = 119 过 + 1 跳过；1173 用例 = 1168 过 + 5 跳过 + 0 失败。跳过的 5 项是 v3 LGPL 可选依赖未装自动跳过)
+npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-09-14 实测：120 文件 = 119 过 + 1 跳过；1172 用例 = 1167 过 + 5 跳过 + 0 失败。跳过的 5 项是 v3 LGPL 可选依赖未装自动跳过)
 npm run build:v3-worklet # 重生成 v3 AudioWorklet 单文件 -> public/v3-worklet.js（predev/predev:electron/prebuild 已自动执行）
 npm run build            # vite build -> dist/（三入口：index.html / desktop-player.html / desktop-lyrics.html）
 npm run build:electron   # 发布：build:electron:dir + 安装器美术 + electron-builder NSIS -> release/HyperPlayer-<version>-Setup.exe
@@ -191,3 +191,4 @@ HyperPlayer 由 WaveForge 改名而来，**两者的配置、登录态、缓存�
 - `docs/歌词对比-LyricsBlossom.md` — Apple Music 歌词逆向对比分析（**Apple 风格逐字动画的设计参考**；文档本身是逆向对比记录，与已移除的 Apple 音源无关）。
 - `src/services/HyperSoundEngine-v1/docs/` — HSE 融合/UI/算法文档（`FUSION_GUIDE.md` / `UI_GUIDE.md` / `音频算法技术文档.md` / `音频算法设计文档.md` / `FEATURES_VERIFICATION.md`）；`架构书.md` 位于模块根目录。
 - `docs/功能清单3.0.md` — 功能清单（12 个功能域 A–L，按代码实测，含统计、红线文件、已知限制、文档索引；与源码冲突时以源码为准）。
+- `docs/性能优化计划.md` — 性能优化计划（把 `temp/electron性能优化措施汇总.md` 的 9 大类清单逐条对照本仓现状，标注「已达标 / 可优化 / 不采纳」并附 file:line 证据、预期收益、风险、验收方式；另含**性能红线**、基线数字与「一项一提交」纪律）。**做任何性能相关改动前先读它**——已达标项别重复劳动，红线项碰不得。
