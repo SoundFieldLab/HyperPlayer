@@ -1,7 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-// @ts-ignore: allow side-effect CSS import without module declaration
-import './assets/fonts/fonts.css'
+// 内置字体不再全局注册（§6.3 按需注入，见 utils/builtinFonts.ts）
 import './index.css'
 import App from './App'
 import { startMemoryWatchdog } from './utils/memoryWatchdog'
