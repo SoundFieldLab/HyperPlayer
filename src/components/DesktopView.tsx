@@ -30,6 +30,7 @@ import {
 import { getReadableDesktopAccentColor } from '../utils/desktopAccentColor'
 import { parseStoredBoolean } from '../utils/storage'
 import { preloadOnIdle } from '../utils/lazyPreload'
+import { debugLog } from '../utils/debugLog'
 import { createPlaybackTimeStore, type PlaybackTimeStore } from '../audio/playbackTimeStore'
 import type { PlaybackOrigin, SongSelectHandler } from '../types/playbackNavigation'
 import { addDesktopListeningSeconds, recordDesktopSongStart } from '../services/desktopMusicActivity'
@@ -1052,7 +1053,7 @@ function DesktopView({
         const data = await response.json()
         if (playlistLoadController.signal.aborted || playlistLoadControllerRef.current !== playlistLoadController) return
         if (data.songlist) {
-        console.log(`📝 [DesktopView] QQ音乐歌单包含 ${data.songlist.length} 首歌曲`)
+        debugLog(`📝 [DesktopView] QQ音乐歌单包含 ${data.songlist.length} 首歌曲`)
         const songs: Song[] = data.songlist.map((track: any) => ({
           id: track.songid || track.id,
           mid: track.songmid || track.mid,
@@ -1067,7 +1068,7 @@ function DesktopView({
           platform: 'qq',
           vip: track.pay?.payplay === 1 || false
         }))
-        console.log(`✅ [DesktopView] 设置了 ${songs.length} 首歌曲到 playlistSongs`)
+        debugLog(`✅ [DesktopView] 设置了 ${songs.length} 首歌曲到 playlistSongs`)
         setPlaylistSongs(songs)
         }
       }
@@ -1382,7 +1383,7 @@ function DesktopView({
                     setVideoUnsupported(true)
                     showToastNotification('该视频格式不受设备支持 (H.265)', 'warning')
                   } else {
-                    console.log('[DesktopView] 视频加载成功:', {
+                    debugLog('[DesktopView] 视频加载成功:', {
                       videoWidth: video.videoWidth,
                       videoHeight: video.videoHeight,
                       duration: video.duration

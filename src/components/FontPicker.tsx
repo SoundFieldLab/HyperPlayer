@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, RefreshCw, Search } from 'lucide-react'
+import { rafThrottle } from '../utils/rafThrottle'
 
 // queryLocalFonts 的类型尚未进入项目使用的 TS DOM lib，这里补声明
 interface LocalFontData { family: string; fullName: string; postscriptName: string; style: string }
@@ -127,7 +128,8 @@ export default function FontPicker({ value, onChange, dark, accent, buttonWidth,
       if (panelRef.current && event.target instanceof Node && panelRef.current.contains(event.target)) return
       place()
     }
-    const onResize = () => place()
+    // rect 决定面板四向翻转，仍是同一套定位逻辑，只是缩放时合并到一帧测一次
+    const onResize = rafThrottle(place)
     document.addEventListener('mousedown', onDown)
     window.addEventListener('keydown', onKey)
     window.addEventListener('resize', onResize)
@@ -140,6 +142,7 @@ export default function FontPicker({ value, onChange, dark, accent, buttonWidth,
       window.removeEventListener('resize', onResize)
       window.removeEventListener('scroll', onScroll, true)
       window.clearTimeout(timer)
+      onResize.cancel()
     }
   }, [open, place])
 

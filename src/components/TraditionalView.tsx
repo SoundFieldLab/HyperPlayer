@@ -33,6 +33,7 @@ import PlaylistContextMenu from './PlaylistContextMenu'
 import { MirroredGlobalSettings, PlatformOrderEditor, makeSkin } from './MirroredGlobalSettings'
 import { GLOBAL_SETTINGS_GROUPS, isEntryVisible, useGlobalSettings, type GlobalSettingsGroupId, type MirrorActionId } from '../services/globalSettingsRegistry'
 import { preloadOnIdle } from '../utils/lazyPreload'
+import { rafThrottle } from '../utils/rafThrottle'
 import type { PlaybackTimeStore } from '../audio/playbackTimeStore'
 import type { PlaybackOrigin, SongSelectHandler, ViewMode } from '../types/playbackNavigation'
 
@@ -462,8 +463,13 @@ const TraditionalVerticalLyrics = memo(function TraditionalVerticalLyrics({
       observer.observe(el)
       return () => observer.disconnect()
     }
-    window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
+    // 无 ResizeObserver 时的回退路径：resize 连发，合并到一帧测一次
+    const handleResize = rafThrottle(measure)
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      handleResize.cancel()
+    }
   }, [])
 
   let currentIndex = -1

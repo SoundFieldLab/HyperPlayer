@@ -23,6 +23,7 @@ import type { MusicPlatform } from '../services/platforms'
 import { getPlatformCapabilities, platformLabel } from '../services/platforms'
 import { getPlatformRemainingDays } from '../services/loginExpiry'
 import { detectQQMusicVip } from '../utils/musicEntitlements'
+import { debugLog } from '../utils/debugLog'
 
 interface Playlist {
   id: string | number
@@ -935,11 +936,11 @@ function ProfileView({
           setPlaylistSongs(songs)
         }
       } else if (platform === 'qq') {
-        console.log('📤 正在获取QQ音乐歌单详情，ID:', playlist.id)
+        debugLog('📤 正在获取QQ音乐歌单详情，ID:', playlist.id)
         response = await fetch(`http://localhost:3211/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`)
         data = await response.json()
         
-        console.log('📥 QQ音乐歌单详情:', data)
+        debugLog('📥 QQ音乐歌单详情:', data)
         if (data.playlist) {
           const keepCustomLikeAppearance = Boolean(playlist.isLike)
           const detailedPlaylist = {
@@ -972,7 +973,7 @@ function ProfileView({
             platform: 'qq'
           }))
           
-          console.log('✅ 解析到', songs.length, '首歌曲')
+          debugLog('✅ 解析到', songs.length, '首歌曲')
           setPlaylistSongs(songs)
         } else if (data.data && data.data.songlist) {
           // 备用：检查是否在data.songlist里
@@ -989,7 +990,7 @@ function ProfileView({
             platform: 'qq'
           }))
           
-          console.log('✅ 解析到', songs.length, '首歌曲')
+          debugLog('✅ 解析到', songs.length, '首歌曲')
           setPlaylistSongs(songs)
         } else {
           console.warn('⚠️ 未找到songlist字段')
@@ -1484,15 +1485,15 @@ function ProfileView({
         return
       }
       try {
-        console.log('📤 正在获取QQ音乐用户数据...')
+        debugLog('📤 正在获取QQ音乐用户数据...')
         
         // 获取用户详情（包含歌单）
         const detailRes = await fetch(`http://localhost:3211/api/qq/user/detail?id=${userId}&cookie=${encodeURIComponent(cookie)}`)
         const detailData = await detailRes.json()
         
-        console.log('📥 QQ音乐用户详情:', detailData)
-        console.log('📥 detailData.creator:', detailData.creator)
-        console.log('📥 detailData.mydiss:', detailData.mydiss)
+        debugLog('📥 QQ音乐用户详情:', detailData)
+        debugLog('📥 detailData.creator:', detailData.creator)
+        debugLog('📥 detailData.mydiss:', detailData.mydiss)
 
         // 用户详情只包含 mydiss（自建歌单）。收藏歌单必须通过
         // user/collect/songlist 单独读取，再按 isCollected 分栏。

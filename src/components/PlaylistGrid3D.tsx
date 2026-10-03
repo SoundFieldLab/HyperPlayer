@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { Play, Clock } from 'lucide-react'
 import { Song, resolveSongAlbumIdentifier, isSameSong } from '../services/musicApi'
 import { debugLog } from '../utils/debugLog'
+import { rafThrottle } from '../utils/rafThrottle'
 import ScrollToTop from './ScrollToTop'
 import ScrollToCurrentSong from './ScrollToCurrentSong'
 import SongContextMenu from './SongContextMenu'
@@ -236,11 +237,14 @@ export default function PlaylistGrid3D({
     
     const resizeObserver = new ResizeObserver(updateSize)
     resizeObserver.observe(containerElement)
-    window.addEventListener('resize', updateSize)
+    // 容器尺寸变化已有 ResizeObserver，window resize 只是兜底：连发时合并到一帧测一次
+    const handleResize = rafThrottle(updateSize)
+    window.addEventListener('resize', handleResize)
     
     return () => {
       resizeObserver.disconnect()
-      window.removeEventListener('resize', updateSize)
+      window.removeEventListener('resize', handleResize)
+      handleResize.cancel()
     }
   }, [containerElement])
 

@@ -10,6 +10,7 @@ import ModeSelectionPanel, { MODE_SELECTION_CLOSE_MS, MODE_SELECTION_PANEL_HEIGH
 import { getCachedUserPlaylists, getUserPlaylists, streamNeteasePlaylistTracks } from '../services/playlistService'
 import CachedImage from './CachedImage'
 import { imageCache } from '../utils/imageCache'
+import { debugLog } from '../utils/debugLog'
 import { wallpaperManager, WallpaperFile } from '../services/wallpaperManager'
 import SongContextMenu from './SongContextMenu'
 import { Plus, RefreshCw } from 'lucide-react'
@@ -482,9 +483,9 @@ function HomeView({
     const handleBlurAmountChange = (e: Event) => {
       const customEvent = e as CustomEvent
       const newAmount = customEvent.detail
-      console.log('[HomeView] 收到卡片模糊度变化事件:', newAmount)
+      debugLog('[HomeView] 收到卡片模糊度变化事件:', newAmount)
       if (typeof newAmount === 'number') {
-        console.log('[HomeView] 更新模糊度到:', newAmount)
+        debugLog('[HomeView] 更新模糊度到:', newAmount)
         setCardBlurAmount(newAmount)
       }
     }
@@ -782,7 +783,7 @@ function HomeView({
 
       for (let i = 0; i < maxRetries; i++) {
         try {
-          console.log(`[API request] attempt ${i + 1}/${maxRetries}`)
+          debugLog(`[API request] attempt ${i + 1}/${maxRetries}`)
           const response = await fetch(url, {
             signal: abortController.signal,
             cache: 'no-store',

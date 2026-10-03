@@ -13,6 +13,7 @@ import ScrollToCurrentSong from './ScrollToCurrentSong'
 import SongContextMenu from './SongContextMenu'
 import { getUserPlaylists } from '../services/playlistService'
 import { getReadableAccentColor } from '../utils/desktopAccentColor'
+import { debugLog } from '../utils/debugLog'
 
 type TabType = 'hotSongs' | 'allSongs' | 'albums' | 'videos' | 'similarArtists' | 'info'
 
@@ -608,19 +609,19 @@ export default function ArtistDetailModal({
         getArtistDetail(artistId, platform),
         getArtistTopSongs(artistId, platform)
       ])
-      console.log('🎵 [ArtistDetailModal] 加载艺人数据完成')
-      console.log('  艺人信息:', artistData)
-      console.log('  艺人粉丝数 artistData.fans:', artistData?.fans, typeof artistData?.fans)
-      console.log('  粉丝数检查条件:', {
+      debugLog('🎵 [ArtistDetailModal] 加载艺人数据完成')
+      debugLog('  艺人信息:', artistData)
+      debugLog('  艺人粉丝数 artistData.fans:', artistData?.fans, typeof artistData?.fans)
+      debugLog('  粉丝数检查条件:', {
         'fans !== undefined': artistData?.fans !== undefined,
         'fans > 0': artistData && (artistData.fans ?? 0) > 0,
         'fans值': artistData?.fans
       })
-      console.log('  热门歌曲数量:', songsData.length)
-      console.log('  热门歌曲前3首:', songsData.slice(0, 3))
+      debugLog('  热门歌曲数量:', songsData.length)
+      debugLog('  热门歌曲前3首:', songsData.slice(0, 3))
       setArtist(artistData)
       setHotSongs(songsData)
-      console.log('🎵 [ArtistDetailModal] State已更新, hotSongs.length:', songsData.length)
+      debugLog('🎵 [ArtistDetailModal] State已更新, hotSongs.length:', songsData.length)
     } catch (error) {
       console.error('加载艺人详情失败:', error)
       setHotSongsError('网络错误，请稍后重试')
@@ -651,7 +652,7 @@ export default function ArtistDetailModal({
       const offset = reset ? 0 : allSongsOffset
       const limit = 200 // 每次加载200首
       
-      console.log(`📀 [ArtistDetailModal] 加载全部歌曲, offset: ${offset}, limit: ${limit}, platform: ${platform}`)
+      debugLog(`📀 [ArtistDetailModal] 加载全部歌曲, offset: ${offset}, limit: ${limit}, platform: ${platform}`)
       
       let formattedSongs: Song[] = []
       let total = 0
@@ -674,8 +675,8 @@ export default function ArtistDetailModal({
         total = data.total || newSongs.length
         hasMore = data.more || false
         
-        console.log(`📀 [ArtistDetailModal] 网易云获取到 ${newSongs.length} 首歌曲, 总数: ${total}`)
-        console.log(`📀 [ArtistDetailModal] 前3首歌曲:`, newSongs.slice(0, 3).map((s: any) => ({
+        debugLog(`📀 [ArtistDetailModal] 网易云获取到 ${newSongs.length} 首歌曲, 总数: ${total}`)
+        debugLog(`📀 [ArtistDetailModal] 前3首歌曲:`, newSongs.slice(0, 3).map((s: any) => ({
           id: s.id,
           name: s.name,
           artists: s.ar?.map((a: any) => a.name).join(', ')
@@ -703,7 +704,7 @@ export default function ArtistDetailModal({
         const newSongs = data.songs || []
         total = data.total || 0
         
-        console.log(`📀 [ArtistDetailModal] QQ音乐获取到 ${newSongs.length} 首歌曲, 总数: ${total}`)
+        debugLog(`📀 [ArtistDetailModal] QQ音乐获取到 ${newSongs.length} 首歌曲, 总数: ${total}`)
         
         // 转换格式（后端已经返回标准化的格式）
         formattedSongs = newSongs.map((item: any) => ({
@@ -750,7 +751,7 @@ export default function ArtistDetailModal({
   const loadAlbums = async () => {
     setLoadingAlbums(true)
     try {
-      console.log('📀 [ArtistDetailModal] 加载专辑:', artistId, platform)
+      debugLog('📀 [ArtistDetailModal] 加载专辑:', artistId, platform)
 
       // 分页加载所有专辑
       let allAlbums: Album[] = []
@@ -760,7 +761,7 @@ export default function ArtistDetailModal({
       
       while (hasMore) {
         const albumsData = await getArtistAlbums(artistId, platform, pageSize, page * pageSize)
-        console.log(`📀 [ArtistDetailModal] 第${page + 1}页专辑数据:`, albumsData.length)
+        debugLog(`📀 [ArtistDetailModal] 第${page + 1}页专辑数据:`, albumsData.length)
         
         if (albumsData.length > 0) {
           allAlbums = [...allAlbums, ...albumsData]
@@ -780,7 +781,7 @@ export default function ArtistDetailModal({
         }
       }
       
-      console.log('📀 [ArtistDetailModal] 专辑总数:', allAlbums.length)
+      debugLog('📀 [ArtistDetailModal] 专辑总数:', allAlbums.length)
       setAlbums(allAlbums)
     } catch (error) {
       console.error('加载艺人专辑失败:', error)
@@ -792,7 +793,7 @@ export default function ArtistDetailModal({
   const loadMVs = async () => {
     setLoadingMVs(true)
     try {
-      console.log('🎬 [ArtistDetailModal] 加载MV:', artistId, platform)
+      debugLog('🎬 [ArtistDetailModal] 加载MV:', artistId, platform)
 
       // 分页加载所有MV
       let allMVs: any[] = []
@@ -802,7 +803,7 @@ export default function ArtistDetailModal({
       
       while (hasMore) {
         const mvsData = await getArtistMVs(artistId, platform, pageSize, page * pageSize)
-        console.log(`🎬 [ArtistDetailModal] 第${page + 1}页MV数据:`, mvsData.length)
+        debugLog(`🎬 [ArtistDetailModal] 第${page + 1}页MV数据:`, mvsData.length)
         
         if (mvsData.length > 0) {
           allMVs = [...allMVs, ...mvsData]
@@ -822,7 +823,7 @@ export default function ArtistDetailModal({
         }
       }
       
-      console.log('🎬 [ArtistDetailModal] MV总数:', allMVs.length)
+      debugLog('🎬 [ArtistDetailModal] MV总数:', allMVs.length)
       setMvs(allMVs)
     } catch (error) {
       console.error('加载艺人MV失败:', error)
@@ -842,7 +843,7 @@ export default function ArtistDetailModal({
     
     // 当滚动到距离底部200px时，加载更多
     if (scrollHeight - scrollTop - clientHeight < 200) {
-      console.log('📀 [ArtistDetailModal] 触发加载更多')
+      debugLog('📀 [ArtistDetailModal] 触发加载更多')
       loadAllSongs(false)
     }
   }
