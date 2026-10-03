@@ -21,6 +21,7 @@ import type { PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent }
 import type { HSETheme } from '../hse-theme'
 import type { SpeakerRoute, VirtualSpeakerCfg } from '../../src/spatial/types'
 import { Slider, InfoLine, Segmented } from './Primitives'
+import { rafThrottle } from '../../../../utils/rafThrottle'
 
 interface SpatialRingEditorProps {
   speakers: VirtualSpeakerCfg[]
@@ -334,10 +335,13 @@ export function SpatialRingEditor({
     }
     drawRef.current = draw
     resize()
-    window.addEventListener('resize', resize)
+    // resize 合并到帧节拍（性能优化计划 1.0 §4.5）：拖拽缩放时一帧内多次 resize 会反复强制同步布局
+    const onResize = rafThrottle(resize)
+    window.addEventListener('resize', onResize)
     return () => {
       drawRef.current = null
-      window.removeEventListener('resize', resize)
+      window.removeEventListener('resize', onResize)
+      onResize.cancel()
     }
     // 依赖仅主题：数据参数经 ref 读取（拖拽时不重挂 canvas 设置，见上方 ref 注释）
   }, [theme.accentFrom, theme.accentTo])

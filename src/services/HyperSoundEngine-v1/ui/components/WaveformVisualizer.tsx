@@ -8,6 +8,7 @@
 
 import { useEffect, useRef } from 'react'
 import type { HSETheme } from '../hse-theme'
+import { rafThrottle } from '../../../../utils/rafThrottle'
 
 const BAR_COUNT = 44
 
@@ -37,7 +38,9 @@ export function WaveformVisualizer({ theme, active }: { theme: HSETheme; active:
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     }
     resize()
-    window.addEventListener('resize', resize)
+    // resize 合并到帧节拍（性能优化计划 1.0 §4.5）：拖拽缩放时一帧内多次 resize 会反复强制同步布局
+    const onResize = rafThrottle(resize)
+    window.addEventListener('resize', onResize)
 
     const draw = () => {
       // 限 60fps：相位按帧固定步进（按 60fps 调参），高刷屏全速跑会让波形加速流动且白耗 GPU
@@ -160,7 +163,8 @@ export function WaveformVisualizer({ theme, active }: { theme: HSETheme; active:
     draw()
     return () => {
       cancelAnimationFrame(raf)
-      window.removeEventListener('resize', resize)
+      window.removeEventListener('resize', onResize)
+      onResize.cancel()
     }
   }, [theme.accentColor, active])
 

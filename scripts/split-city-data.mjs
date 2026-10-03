@@ -54,20 +54,33 @@ export function splitCityData() {
     return 0
   }
 
-  // 清理旧文件，避免数据更新后残留过期国家
+  // 逐文件「内容未变则跳过写入」：本脚本在每次 dev/build 都会跑，全量删除重写
+  // 192 个 JSON（约 14MB）只是无谓的写放大；mtime 不变对文件 watchers 与缓存也更友好。
+  // 仍保留过期文件清理：数据源更新后残留的旧国家文件按实际文件集差异删除。
   mkdirSync(OUT_DIR, { recursive: true })
-  for (const file of readdirSync(OUT_DIR)) {
-    if (file.endsWith('.json')) rmSync(join(OUT_DIR, file), { force: true })
-  }
-
-  let count = 0
+  const seenFiles = new Set()
+  let changed = 0
   for (const [countryCode, list] of byCountry) {
-    writeFileSync(join(OUT_DIR, `${countryCode}.json`), JSON.stringify(list), 'utf8')
-    count += 1
+    const fileName = `${countryCode}.json`
+    seenFiles.add(fileName)
+    const content = JSON.stringify(list)
+    const target = join(OUT_DIR, fileName)
+    try {
+      if (readFileSync(target, 'utf8') === content) continue
+    } catch { /* 文件不存在 → 正常写入 */ }
+    writeFileSync(target, content, 'utf8')
+    changed += 1
+  }
+  let removed = 0
+  for (const file of readdirSync(OUT_DIR)) {
+    if (file.endsWith('.json') && !seenFiles.has(file)) {
+      rmSync(join(OUT_DIR, file), { force: true })
+      removed += 1
+    }
   }
 
-  console.log(`[split-city-data] 已拆分 ${count} 个国家/地区的城市数据 -> ${OUT_DIR}`)
-  return count
+  console.log(`[split-city-data] 已拆分 ${byCountry.size} 个国家/地区 -> ${OUT_DIR}${changed === 0 ? '（内容未变，跳过写入）' : `（更新 ${changed} 个${removed ? `，清理过期 ${removed} 个` : ''}）`}`)
+  return byCountry.size
 }
 
 // 直接运行（node scripts/split-city-data.mjs）时执行拆分
