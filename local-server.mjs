@@ -1068,6 +1068,23 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '12mb' }))
 app.use(express.urlencoded({ extended: true, limit: '12mb' }))
+
+// 网易云路由就绪门：网易云 API 是惰性加载的（见下方 initNeteaseAPI / ensureNeteaseReady），
+// 各路由内的 `if (!NeteaseAPI || ...)` 守卫只负责兜「初始化失败」，正常路径必须复用同一份
+// 初始化 Promise 等加载完成——否则启动后头几秒的网易云请求会直接拿到「未初始化」的错误。
+// ⚠️ Express 按注册顺序匹配，本中间件必须早于下方任何网易云路由注册，否则对已注册路由不生效。
+app.use(['/api/netease', '/api/explore/netease'], async (req, res, next) => {
+  await ensureNeteaseReady()
+  next()
+})
+
+// /api/explore/radio 是 QQ / 网易云共用的电台路由，仅 platform=netease 时才依赖网易云 API，
+// 故按查询参数条件等待，避免 QQ 电台请求被网易云的加载拖住。
+app.use('/api/explore/radio', async (req, res, next) => {
+  if (String(req.query?.platform || '') === 'netease') await ensureNeteaseReady()
+  next()
+})
+
 registerHazardRoutes(app)
 registerLocationRoutes(app)
 registerBilibiliRoutes(app)
@@ -1682,8 +1699,22 @@ async function initNeteaseAPI() {
   }
 }
 
-// 初始化
-initNeteaseAPI()
+// 惰性初始化：网易云 API 不在模块加载期加载，改为「首次 /health 响应之后」再加载。
+// 原因：该库 19 MB，module/ 下的模块由 main.js 用 fs.readdirSync 同步逐个 require，
+// generateConfig() 里还有两次网络请求；这段开销若落在模块顶层，会正好占住主进程启动时
+// 每 150ms 一次的 /health 探活窗口，把「后端就绪」判定（启动页放行门控）推迟数秒。
+let neteaseInitPromise = null
+let neteaseInitScheduled = false
+
+/**
+ * 惰性启动网易云 API 初始化：返回记忆化 Promise，重复调用不会重复加载。
+ * initNeteaseAPI 内部已 try/catch，故该 Promise 永不 reject，等待方无需再兜异常。
+ */
+function ensureNeteaseReady() {
+  if (!neteaseInitPromise) neteaseInitPromise = initNeteaseAPI()
+  return neteaseInitPromise
+}
+
 registerNeteaseNativeExploreRoutes(app, { getNeteaseApi: () => NeteaseAPI })
 
 async function withTimeout(promise, timeoutMs, message = '请求超时') {
@@ -11129,6 +11160,13 @@ app.get('/health', (req, res) => {
     protocolVersion: LOCAL_API_PROTOCOL_VERSION,
     neteaseAPI: NeteaseAPI ? 'loaded' : 'not loaded'
   })
+  // 响应先写出去（探活只看 status/service/protocolVersion，不依赖网易云已加载），
+  // 再安排网易云 API 初始化：放在响应之后 + 500ms 延迟，确保主进程已拿到就绪信号、
+  // 加载不会与探活抢事件循环。
+  if (!neteaseInitScheduled) {
+    neteaseInitScheduled = true
+    setTimeout(ensureNeteaseReady, 500)
+  }
 })
 
 // 统一错误中间件：Express 4 不转发 async handler 的 rejection，凡是 async 路由
