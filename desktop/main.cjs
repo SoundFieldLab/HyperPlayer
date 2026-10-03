@@ -313,6 +313,22 @@ let qqSkillKeyWindow = null
 let analysisRuntime = null
 let mediaKeysEnabled = readMediaKeysEnabled()
 
+// ── backgroundThrottling 豁免策略（性能优化计划 1.0 §6.4）──
+// 主窗/桌面播放器/桌面歌词三个窗口创建时不再 backgroundThrottling:false（回到默认节流）。
+// 唯一例外是主窗口：Chroma/SignalRGB 的灯效帧由**主窗口渲染进程**产生，而灯效点亮的是
+// 物理 RGB 设备——窗口最小化/被遮挡时用户仍看得见灯，节流会让帧流冻结。故仅当存在
+// 激活的灯效消费者（Chroma active / SignalRGB effect 已应用）时对主窗口豁免，
+// 消费者关闭时显式恢复节流。桌面歌词/播放器窗保持默认：启用时本就是可见窗口
+// （可见窗口不节流），隐藏/完全遮挡时停渲染正是省 CPU 的目的。
+let chromaLightingActive = false
+let signalRgbLightingActive = false
+function updateLightingThrottleExemption() {
+  const exempt = chromaLightingActive || signalRgbLightingActive
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.setBackgroundThrottling(!exempt)
+  } catch { /* 窗口销毁竞态，忽略 */ }
+}
+
 const mediaKeyAccelerators = {
   MediaPlayPause: 'toggle',
   MediaNextTrack: 'next',
@@ -529,7 +545,8 @@ function createDesktopPlayerWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'desktop-player-preload.cjs'),
-      backgroundThrottling: false,
+      // backgroundThrottling 回到默认节流（§6.4）：本窗启用时是可见窗口（可见不节流），
+      // 隐藏/完全遮挡时停渲染正是目的
       cache: false,
     },
   })
@@ -720,7 +737,8 @@ function createDesktopLyricsWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'desktop-lyrics-preload.cjs'),
-      backgroundThrottling: false,
+      // backgroundThrottling 回到默认节流（§6.4）：本窗启用时是可见窗口（可见不节流），
+      // 隐藏/完全遮挡时停渲染正是目的
       cache: false,
     },
   })
@@ -2186,7 +2204,8 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
       paintWhenInitiallyHidden: true,  // 软件合成下隐藏时也持续绘制，避免显示时首帧空白
-      backgroundThrottling: false, // Chroma 后台联动；各可视化仍由订阅者/可见性自行门控
+      // backgroundThrottling 默认节流（§6.4）；灯效消费者激活时由
+      // updateLightingThrottleExemption() 运行时豁免
     },
   })
 
@@ -4080,6 +4099,8 @@ async function recreateMainWindow(transparent) {
     },
   })
   mainWindow = win
+  // 重建窗口的 webPreferences 回到默认节流，灯效消费者若仍激活需重放豁免（§6.4）
+  updateLightingThrottleExemption()
   if (wasAlwaysOnTop) win.setAlwaysOnTop(true)
   guardAgainstExternalNavigation(win)
   wireMainWindowEvents(win)
@@ -4606,12 +4627,43 @@ app.whenReady().then(async () => {
   // Razer Chroma：本地 REST 会话、设备探测与高频灯效帧。
   try {
     chromaControllerHandle = setupChromaIpc({ ipcMain, getMainWindow: () => mainWindow, repairBasePath: app.getPath('userData') })
+    // 跟踪灯效激活态（§6.4 节流豁免）：activate/deactivate 是 Chroma 消费者的开关；
+    // 重试/掉线不改变用户意图——active 期间保持豁免，重连后帧流自行恢复。
+    if (chromaControllerHandle?.service) {
+      const chromaService = chromaControllerHandle.service
+      for (const method of ['activate', 'deactivate']) {
+        const original = chromaService[method].bind(chromaService)
+        chromaService[method] = async (...args) => {
+          try {
+            return await original(...args)
+          } finally {
+            chromaLightingActive = chromaService.getStatus()?.active === true
+            updateLightingThrottleExemption()
+          }
+        }
+      }
+    }
   } catch (error) {
     console.error('[Chroma] 初始化失败:', error instanceof Error ? error.message : error)
   }
   // SignalRGB：Effect 安装、Local API 与 Canvas Event 桥。
   try {
     signalRgbControllerHandle = setupSignalRgbIpc({ ipcMain, getMainWindow: () => mainWindow, shell })
+    // 同上（§6.4）：apply/restore/uninstall 是 SignalRGB 灯效消费者的生命周期；
+    // 仅在调用成功后翻转状态，apply 失败不进入豁免
+    if (signalRgbControllerHandle?.manager) {
+      const rgbManager = signalRgbControllerHandle.manager
+      const lifecycle = [['applyEffect', true], ['restoreEffect', false], ['uninstallEffect', false]]
+      for (const [method, active] of lifecycle) {
+        const original = rgbManager[method].bind(rgbManager)
+        rgbManager[method] = async (...args) => {
+          const result = await original(...args)
+          signalRgbLightingActive = active
+          updateLightingThrottleExemption()
+          return result
+        }
+      }
+    }
   } catch (error) {
     console.error('[SignalRGB] 初始化失败:', error instanceof Error ? error.message : error)
   }
