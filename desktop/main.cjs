@@ -78,7 +78,10 @@ function logStartupTiming(message) {
 // 且在 userData 已定向之后（见上方 app.setPath）执行。
 // 目录放在 userData 内（与配置同域、用户级可写），并与后端子进程共用同一目录。
 // 失败绝不能影响启动：老 Node 无该 API、目录不可写等一律静默降级为「每次重新编译」。
-const v8CompileCacheDir = path.join(app.getPath('userData'), 'v8-compile-cache')
+// 目录按 Electron 大版本分段：V8 编译缓存与内核/V8 版本强相关，升级后旧缓存不串用
+// （node 自身也有版本失效逻辑，显式分段便于观察目录内容与手动清理）。
+// 与后端 utilityProcess 共用同一目录（见 startLocalBackend 的 NODE_COMPILE_CACHE env）。
+const v8CompileCacheDir = path.join(app.getPath('userData'), 'v8-compile-cache', `electron-${String(process.versions.electron || 'unknown').split('.')[0]}`)
 try {
   const nodeModule = require('node:module')
   if (typeof nodeModule.enableCompileCache === 'function') {
@@ -130,6 +133,14 @@ function writePerformanceSettings(settings) {
 }
 
 const performanceSettings = readPerformanceSettings()
+// 无副作用的启动裁剪（性能优化计划 2.0 §启动参数）：现代 Chromium 下三者接近 no-op，
+// 但能明确关闭组件更新/变体实验/后台探测等网络闲聊（disable-background-networking 是元开关），
+// 对常驻托盘的音乐播放器收益是「后台零杂音」。插件与扩展在 Electron 本就默认不可用，此处只是显式声明。
+try {
+  app.commandLine.appendSwitch('disable-plugins')
+  app.commandLine.appendSwitch('disable-extensions')
+  app.commandLine.appendSwitch('disable-background-networking')
+} catch { /* 忽略 */ }
 // 全局高刷：用户手动选了具体档位时，启动即用 --force-frame-rate 强制 Chromium 帧率
 // （比运行时 setFrameRate 更可靠；「跟随显示器最高」档在 app ready 后按显示器实时应用）
 if (performanceSettings.highRefreshRate === true && performanceSettings.highRefreshHz) {
@@ -2484,35 +2495,36 @@ function toMediaUrl(filePath) {
 }
 
 function registerMediaProtocol() {
-  protocol.registerFileProtocol('hyperplayer-media', (request, callback) => {
-    void (async () => {
-      try {
-        const url = new URL(request.url)
-        const encodedPath = url.pathname.replace(/^\/+/, '')
-        const filePath = path.resolve(decodeURIComponent(encodedPath))
+  // protocol.handle 是 Electron 25+ 取代 registerFileProtocol 的推荐 API（后者已 deprecated，
+  // Electron 44 仍兼容但会告警）。错误语义映射：registerFileProtocol 的 callback({error:-6})
+  //（ERR_FILE_NOT_FOUND）→ HTTP 404；-2（ERR_FAILED）→ HTTP 400。
+  // 消费方（autoMixAnalysisService.analyzeInBrowser 等）把本地解码整体包在 try/catch 且失败时
+  // 回退直抓 URL，fetch「reject」与「resolve 出 !ok 响应」两种形态都落进同一兜底，语义等价。
+  protocol.handle('hyperplayer-media', async (request) => {
+    try {
+      const url = new URL(request.url)
+      const encodedPath = url.pathname.replace(/^\/+/, '')
+      const filePath = path.resolve(decodeURIComponent(encodedPath))
 
-        // 白名单是内存判断，保持同步且最先执行：不在白名单的路径立刻拒绝，不落磁盘
-        if (!filePath || !allowedMediaFiles.has(filePath)) {
-          callback({ error: -6 })
-          return
-        }
-
-        // 文件校验改异步：该协议是渲染进程读取「已下载音频」做分析的通路（属热路径），
-        // 同步 existsSync/statSync 直接打在主进程事件循环上。
-        // stat 失败（不存在/无权限/已被删除）按「不存在」处理 → -6，与同步版 existsSync 分支一致；
-        // 只在 URL 解析等未预期异常时才走 -2（保持原有语义）。
-        const stats = await fs.promises.stat(filePath).catch(() => null)
-        if (!stats || !stats.isFile()) {
-          callback({ error: -6 })
-          return
-        }
-
-        callback({ path: filePath })
-      } catch (error) {
-        console.warn('[MediaProtocol] Failed to resolve media URL:', error.message)
-        callback({ error: -2 })
+      // 白名单是内存判断，保持同步且最先执行：不在白名单的路径立刻拒绝，不落磁盘
+      if (!filePath || !allowedMediaFiles.has(filePath)) {
+        return new Response(null, { status: 404 })
       }
-    })()
+
+      // 文件校验异步：该协议是渲染进程读取「已下载音频」做分析的通路（属热路径）。
+      // stat 失败（不存在/无权限/已被删除）按「不存在」处理 → 404，与旧 -6 分支一致；
+      // 只在 URL 解析等未预期异常时才走 400（保持原有 -2 语义）。
+      const stats = await fs.promises.stat(filePath).catch(() => null)
+      if (!stats || !stats.isFile()) {
+        return new Response(null, { status: 404 })
+      }
+
+      // net.fetch(file://) 由 Chromium 文件加载器供流（含 Range 支持），不整读进内存
+      return net.fetch(pathToFileURL(filePath).toString())
+    } catch (error) {
+      console.warn('[MediaProtocol] Failed to resolve media URL:', error.message)
+      return new Response(null, { status: 400 })
+    }
   })
 }
 
