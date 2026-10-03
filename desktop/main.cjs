@@ -73,6 +73,24 @@ function logStartupTiming(message) {
   }
 }
 
+// V8 编译缓存：把模块的编译产物落盘，第二次及以后的启动省去解析/编译。
+// 调用时机有硬约束——缓存只对**调用之后**加载的模块生效，故必须在任何重模块 require 之前、
+// 且在 userData 已定向之后（见上方 app.setPath）执行。
+// 目录放在 userData 内（与配置同域、用户级可写），并与后端子进程共用同一目录。
+// 失败绝不能影响启动：老 Node 无该 API、目录不可写等一律静默降级为「每次重新编译」。
+const v8CompileCacheDir = path.join(app.getPath('userData'), 'v8-compile-cache')
+try {
+  const nodeModule = require('node:module')
+  if (typeof nodeModule.enableCompileCache === 'function') {
+    const compileCacheResult = nodeModule.enableCompileCache(v8CompileCacheDir)
+    if (compileCacheResult?.status === nodeModule.constants?.compileCacheStatus?.FAILED) {
+      console.warn('[Startup] V8 compile cache disabled:', compileCacheResult.message || 'unknown reason')
+    }
+  }
+} catch (error) {
+  console.warn('[Startup] V8 compile cache unavailable:', error?.message || error)
+}
+
 const performanceSettingsPath = path.join(app.getPath('userData'), 'performance-settings.json')
 const shortcutSettingsPath = path.join(app.getPath('userData'), 'shortcut-settings.json')
 // 全局高刷：渲染帧率可选档位范围（跟随所在显示器刷新率，最高 360Hz）
@@ -2467,21 +2485,34 @@ function toMediaUrl(filePath) {
 
 function registerMediaProtocol() {
   protocol.registerFileProtocol('hyperplayer-media', (request, callback) => {
-    try {
-      const url = new URL(request.url)
-      const encodedPath = url.pathname.replace(/^\/+/, '')
-      const filePath = path.resolve(decodeURIComponent(encodedPath))
+    void (async () => {
+      try {
+        const url = new URL(request.url)
+        const encodedPath = url.pathname.replace(/^\/+/, '')
+        const filePath = path.resolve(decodeURIComponent(encodedPath))
 
-      if (!filePath || !allowedMediaFiles.has(filePath) || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-        callback({ error: -6 })
-        return
+        // 白名单是内存判断，保持同步且最先执行：不在白名单的路径立刻拒绝，不落磁盘
+        if (!filePath || !allowedMediaFiles.has(filePath)) {
+          callback({ error: -6 })
+          return
+        }
+
+        // 文件校验改异步：该协议是渲染进程读取「已下载音频」做分析的通路（属热路径），
+        // 同步 existsSync/statSync 直接打在主进程事件循环上。
+        // stat 失败（不存在/无权限/已被删除）按「不存在」处理 → -6，与同步版 existsSync 分支一致；
+        // 只在 URL 解析等未预期异常时才走 -2（保持原有语义）。
+        const stats = await fs.promises.stat(filePath).catch(() => null)
+        if (!stats || !stats.isFile()) {
+          callback({ error: -6 })
+          return
+        }
+
+        callback({ path: filePath })
+      } catch (error) {
+        console.warn('[MediaProtocol] Failed to resolve media URL:', error.message)
+        callback({ error: -2 })
       }
-
-      callback({ path: filePath })
-    } catch (error) {
-      console.warn('[MediaProtocol] Failed to resolve media URL:', error.message)
-      callback({ error: -2 })
-    }
+    })()
   })
 }
 
@@ -4290,9 +4321,45 @@ let localApiChild = null
 const { promisify } = require('util')
 const execFileAsync = promisify(execFile)
 const BACKEND_PORTS = [3211]
+// Node 的 net 必须别名引入：上方已从 electron 解构出同名 net（那是 HTTP 请求模块，无 connect）。
+const nodeNet = require('node:net')
+
+// 端口监听探测（清扫快路径用）：连得上 127.0.0.1:port 即有进程在监听，超时/出错即视为空闲。
+// socket 必须在**所有**分支 destroy()——残留 handle 会拖住事件循环、阻止进程退出。
+function probePortListening(port, timeoutMs = 250) {
+  return new Promise((resolve) => {
+    let settled = false
+    let timer = null
+    let socket = null
+    const finish = (listening) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      try { socket?.destroy() } catch { /* 忽略 */ }
+      resolve(listening)
+    }
+    try {
+      socket = nodeNet.connect({ host: '127.0.0.1', port })
+    } catch {
+      finish(false)
+      return
+    }
+    timer = setTimeout(() => finish(false), timeoutMs)
+    socket.once('connect', () => finish(true))
+    socket.once('error', () => finish(false))
+  })
+}
+
 async function sweepBackendOrphans(reason) {
   for (const port of BACKEND_PORTS) {
     try {
+      // 快路径：端口无人监听 ⇒ 不可能有「占住端口的孤儿后端」，直接跳过 PowerShell 与 taskkill。
+      // 省掉的是 PowerShell 冷启动 —— 原先它在启动路径上被 await 串行等待、在退出路径上拖慢退出。
+      // 端口**有**监听时行为完全不变（仍走下方原有判定与强杀），故不会漏杀真正的孤儿。
+      if (!(await probePortListening(port))) {
+        logStartupTiming(`Backend port ${port} free, orphan sweep skipped (reason=${reason})`)
+        continue
+      }
       const ps = [
         '$c = Get-NetTCPConnection -LocalPort ' + port + ' -State Listen -ErrorAction SilentlyContinue',
         'foreach ($x in $c) {',
@@ -4363,6 +4430,9 @@ async function startLocalBackend() {
         ...process.env,
         HYPERPLAYER_USERDATA: app.getPath('userData'),
         HYPERPLAYER_LOCAL_TOKEN: LOCAL_SERVICE_TOKEN,
+        // V8 编译缓存（与主进程同一目录）：后端 local-server.mjs 体量大且在主进程启动路径上被等待，
+        // 第二次起的启动省去该入口与其依赖链的解析/编译。
+        NODE_COMPILE_CACHE: v8CompileCacheDir,
       },
       stdio: 'pipe',
     })
@@ -4858,4 +4928,43 @@ app.on('before-quit', () => {
     wallpaperWatcher = null
   }
 })
+
+// ── 运行期性能指标（阶段 0 观测基建）──
+// 仅当 HYPERPLAYER_PERF=1 时启用：默认不建定时器、不打任何日志，零开销零行为变化。
+// 每 30s 汇总一行主进程 + 各子进程（渲染/GPU/后端 utilityProcess）的 CPU 与内存，
+// 用于判断「谁在吃 CPU/内存」，避免仅凭肉眼看任务管理器猜。
+const PERF_METRICS_INTERVAL_MS = 30_000
+if (process.env.HYPERPLAYER_PERF === '1') {
+  let perfMetricsTimer = null
+  const round1 = (value) => Math.round((Number(value) || 0) * 10) / 10
+  const logPerformanceMetrics = () => {
+    try {
+      // workingSetSize 单位为 KB（Electron ProcessMemoryInfo 约定）
+      const processes = app.getAppMetrics().map((metric) => ({
+        type: metric.type,
+        pid: metric.pid,
+        name: metric.name || metric.serviceName || '',
+        cpu: round1(metric.cpu?.percentCPUUsage),
+        workingSetMB: Math.round((metric.memory?.workingSetSize || 0) / 1024),
+      }))
+      const mainMemory = process.memoryUsage()
+      console.log(
+        `[perf] main rss=${Math.round(mainMemory.rss / 1048576)}MB`
+        + ` heapUsed=${Math.round(mainMemory.heapUsed / 1048576)}MB`
+        + ` | processes=${JSON.stringify(processes)}`,
+      )
+    } catch (error) {
+      console.warn('[perf] metrics unavailable:', error?.message || error)
+    }
+  }
+  perfMetricsTimer = setInterval(logPerformanceMetrics, PERF_METRICS_INTERVAL_MS)
+  // unref：观测用定时器绝不阻止应用退出
+  perfMetricsTimer.unref?.()
+  app.on('will-quit', () => {
+    if (perfMetricsTimer) {
+      clearInterval(perfMetricsTimer)
+      perfMetricsTimer = null
+    }
+  })
+}
 
