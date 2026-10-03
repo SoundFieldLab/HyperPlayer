@@ -14,6 +14,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, RefreshCw, Search } from 'lucide-react'
 import { rafThrottle } from '../utils/rafThrottle'
+import { ensureBuiltinFont } from '../utils/builtinFonts'
 
 // queryLocalFonts 的类型尚未进入项目使用的 TS DOM lib，这里补声明
 interface LocalFontData { family: string; fullName: string; postscriptName: string; style: string }
@@ -150,6 +151,13 @@ export default function FontPicker({ value, onChange, dark, accent, buttonWidth,
   useEffect(() => {
     if (open && deviceFonts.status === 'idle') void requestDeviceFonts()
   }, [open, deviceFonts.status, requestDeviceFonts])
+
+  // 内置字体按需注入（性能优化计划 1.0 §6.3）：下拉展开才加载 woff2，
+  // 预览行 fontStack() 才有字形可渲染；非内置族名在 ensure 内直接 resolve
+  useEffect(() => {
+    if (!open) return
+    for (const option of BUNDLED_FONTS) void ensureBuiltinFont(option.value)
+  }, [open])
 
   const closeAndPick = (family: string) => {
     onChange(family)

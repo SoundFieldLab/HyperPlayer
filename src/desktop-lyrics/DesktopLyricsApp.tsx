@@ -15,6 +15,7 @@ import {
   useDesktopRealtimeSnapshot,
 } from '../desktopRealtimeStore'
 import { prepareLyricWords } from '../utils/lyricWordTiming'
+import { ensureBuiltinFont, isBuiltinFontFamily } from '../utils/builtinFonts'
 import { rafThrottle } from '../utils/rafThrottle'
 
 const DEFAULT_STATE: DesktopPlayerSnapshot = {
@@ -281,6 +282,12 @@ export default function DesktopLyricsApp() {
   const [unlockVisible, setUnlockVisible] = useState(false)
   const mousePassthroughRef = useRef(false)
   const unlockHideTimerRef = useRef<number | null>(null)
+
+  // 内置字体按需注入（性能优化计划 1.0 §6.3）：本窗口是字体真正的应用端，
+  // 启动恢复（老用户已选霞鹜文楷/得意黑）与设置切换时都要先注入再渲染
+  useEffect(() => {
+    if (isBuiltinFontFamily(settings.fontFamily)) void ensureBuiltinFont(settings.fontFamily)
+  }, [settings.fontFamily])
 
   useEffect(() => {
     const api = bridge()
