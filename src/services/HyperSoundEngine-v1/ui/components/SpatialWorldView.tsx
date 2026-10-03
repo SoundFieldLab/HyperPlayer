@@ -58,6 +58,7 @@ import { DragControls, Html, Line, OrbitControls } from '@react-three/drei'
 import type { HSETheme } from '../hse-theme'
 import type { AudioObject, ListenerState, TrajectoryKeyframes } from '../../src/spatial/types'
 import { nextSourceIndex, sourceName } from './worldControl'
+import { rafThrottle } from '../../../../utils/rafThrottle'
 
 /** 房间尺寸（米）：x × y × z，中心在原点 */
 const ROOM = { x: 20, y: 6, z: 20 }
@@ -678,7 +679,9 @@ function MinimapOverlay({
       dirtyRef.current = true
     }
     resize()
-    window.addEventListener('resize', resize)
+    // resize 合并到帧节拍（性能优化计划 1.0 §4.5）：拖拽缩放时一帧内多次 resize 会反复强制同步布局
+    const onResize = rafThrottle(resize)
+    window.addEventListener('resize', onResize)
 
     const draw = () => {
       // 脏标记驱动：数据/主题/尺寸未变时跳过绘制（rAF 空转一次函数调用的成本，
@@ -765,7 +768,8 @@ function MinimapOverlay({
     draw()
     return () => {
       cancelAnimationFrame(raf)
-      window.removeEventListener('resize', resize)
+      window.removeEventListener('resize', onResize)
+      onResize.cancel()
     }
   }, [])
 

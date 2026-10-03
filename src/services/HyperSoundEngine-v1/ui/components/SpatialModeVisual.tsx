@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { HSETheme } from '../hse-theme'
+import { rafThrottle } from '../../../../utils/rafThrottle'
 
 interface SpatialModeVisualProps {
   /** 展开角度（度）20..120 */
@@ -192,7 +193,9 @@ export function SpatialModeVisual({ spreadDeg, amount, active, theme, transition
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     }
     resize()
-    window.addEventListener('resize', resize)
+    // resize 合并到帧节拍（性能优化计划 1.0 §4.5）：拖拽缩放时一帧内多次 resize 会反复强制同步布局
+    const onResize = rafThrottle(resize)
+    window.addEventListener('resize', onResize)
 
     const draw = (now: number) => {
       ctx.clearRect(0, 0, width, height)
@@ -390,7 +393,8 @@ export function SpatialModeVisual({ spreadDeg, amount, active, theme, transition
     draw(performance.now())
     return () => {
       cancelAnimationFrame(raf)
-      window.removeEventListener('resize', resize)
+      window.removeEventListener('resize', onResize)
+      onResize.cancel()
     }
     // 依赖主题 + active：spread/amount 等数据参数经 ref 读取（拖滑块时不重建 raf）；
     // active 需入依赖——关闭态停帧后，重新开启靠 effect 重跑来重启绘制循环
