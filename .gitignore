@@ -55,6 +55,9 @@ tv-license.json
 !/DEBUG_PAGES.md
 !/PRIVATE-LICENSE.md
 
+# 宣传视频素材目录（文案/截图/logo，本地交付物，不入库）
+promo/
+
 # v3 融合临时目录（用户待删，不入库）
 temp/
 
