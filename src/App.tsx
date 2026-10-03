@@ -42,6 +42,7 @@ import { Settings } from 'lucide-react'
 import { getDeterministicNextIndex, getUpcomingIndices } from './audio/PlaybackQueue'
 import type { TrackAnalysis, TransitionCommit, TransitionDebugInfo, TransitionState, TransitionStrategy } from './audio/types'
 import { createPlaybackTimeCommitGate, type PlaybackTimeStore } from './audio/playbackTimeStore'
+import { transitionProgressStore, useIsVisualTransitioning, useTransitionOverlayProgress, useTransitionProgress } from './audio/transitionProgressStore'
 import { createSongOwnedHandoff, readSongOwnedHandoff, type SongOwnedHandoff } from './services/watchHandoff'
 import { songKeyOf as bilibiliSongKeyOf } from './services/bilibiliApi'
 import type { PlaybackOrigin, ViewMode } from './types/playbackNavigation'
@@ -399,6 +400,113 @@ const PulsingCrossfadeBackground = memo(function PulsingCrossfadeBackground({
         }}
       />
     </div>
+  )
+})
+
+/**
+ * 过渡进度的订阅型包装：逐帧进度放在外部 store（见 transitionProgressStore.ts），
+ * App 渲染体不再持有任何逐帧数值——切歌过渡（8~12s、~30fps）期间只有真正读进度的
+ * 视觉组件重渲染，6k 行的 App 本体不再整树重渲染。
+ * 包装层不引入任何 DOM 节点，布局与层叠上下文与直接渲染被包组件完全一致。
+ */
+const TransitionAlbumCoverPlayer = memo(function TransitionAlbumCoverPlayer(
+  props: Omit<ComponentProps<typeof AlbumCoverPlayer>, 'transitionProgress'>,
+) {
+  const transitionProgress = useTransitionProgress()
+  return <AlbumCoverPlayer {...props} transitionProgress={transitionProgress} />
+})
+
+const TransitionPulsingCrossfadeBackground = memo(function TransitionPulsingCrossfadeBackground(
+  props: Omit<ComponentProps<typeof PulsingCrossfadeBackground>, 'transitionProgress'>,
+) {
+  const transitionProgress = useTransitionProgress()
+  return <PulsingCrossfadeBackground {...props} transitionProgress={transitionProgress} />
+})
+
+const TransitionBilibiliMvBackground = memo(function TransitionBilibiliMvBackground(
+  props: Omit<ComponentProps<typeof LazyBilibiliMvBackground>, 'transitionProgress'>,
+) {
+  const overlayProgress = useTransitionOverlayProgress()
+  return <LazyBilibiliMvBackground {...props} transitionProgress={overlayProgress} />
+})
+
+const TransitionLivePlayerControls = memo(function TransitionLivePlayerControls(
+  props: Omit<ComponentProps<typeof LivePlayerControls>, 'transitionProgress'>,
+) {
+  const overlayProgress = useTransitionOverlayProgress()
+  return <LivePlayerControls {...props} transitionProgress={overlayProgress} />
+})
+
+// 双层歌名的字号档位：完整 class 字面量写在这里，保证 Tailwind 扫描得到（两处调用分别对应
+// 沉浸布局的 4xl/xl 与传统/桌面布局的 3xl/lg，与抽离前逐字一致）。
+const TRANSITION_SONG_INFO_SIZE = {
+  large: { title: 'text-4xl font-bold', artist: 'text-xl' },
+  compact: { title: 'text-3xl font-bold', artist: 'text-lg' },
+} as const
+
+/**
+ * 过渡双层歌名（订阅 store 的逐帧进度，进度口径分两种）：
+ * - mode 'overlay'：叠加动画口径（过渡最后 ~4 秒推进），现代沉浸布局使用；
+ * - mode 'raw'：原始过渡进度口径，传统/桌面布局使用。
+ * 切换条件、DOM 结构、class 与抽离前完全一致，仅进度来源改为订阅值。
+ */
+const TransitionSongInfo = memo(function TransitionSongInfo({
+  mode,
+  size,
+  playerTheme,
+  fromTrack,
+  toTrack,
+  currentTitle,
+  currentArtist,
+}: {
+  mode: 'overlay' | 'raw'
+  size: keyof typeof TRANSITION_SONG_INFO_SIZE
+  playerTheme: string
+  fromTrack: { title: string; artist: string } | null
+  toTrack: { title: string; artist: string } | null
+  currentTitle: string
+  currentArtist: string
+}) {
+  const rawProgress = useTransitionProgress()
+  const overlayProgress = useTransitionOverlayProgress()
+  const isVisualTransitioning = useIsVisualTransitioning()
+  const progress = mode === 'overlay' ? overlayProgress : rawProgress
+  const sizeClass = TRANSITION_SONG_INFO_SIZE[size]
+  const themeTitle = playerTheme === 'dark' ? 'text-white drop-shadow-lg' : 'text-black/90'
+  const themeArtist = playerTheme === 'dark' ? 'text-white/80 drop-shadow-md' : 'text-black/60'
+  if (!(isVisualTransitioning && progress > 0 && fromTrack && toTrack)) {
+    return (
+      <div className="relative">
+        <h1 className={`${sizeClass.title} ${themeTitle}`}>
+          {currentTitle}
+        </h1>
+        <p className={`${sizeClass.artist} ${themeArtist}`}>
+          {currentArtist}
+        </p>
+      </div>
+    )
+  }
+  return (
+    <>
+      {/* 底层：旧歌曲信息 */}
+      <div className="absolute inset-0" style={{ opacity: 1 - progress }}>
+        <h1 className={`${sizeClass.title} ${themeTitle}`}>
+          {fromTrack.title}
+        </h1>
+        <p className={`${sizeClass.artist} ${themeArtist}`}>
+          {fromTrack.artist}
+        </p>
+      </div>
+      {/* 顶层：新歌曲信息 */}
+      <div className="relative" style={{ opacity: progress }}>
+        <h1 className={`${sizeClass.title} ${themeTitle}`}>
+          {toTrack.title}
+        </h1>
+        <p className={`${sizeClass.artist} ${themeArtist}`}>
+          {toTrack.artist}
+        </p>
+      </div>
+    </>
   )
 })
 
@@ -989,7 +1097,8 @@ function App() {
   transitionDebugRef.current = transitionDebug
   const [transitionFallbackReason, setTransitionFallbackReason] = useState<string | undefined>()
   const [isLyricsTransitioning, setIsLyricsTransitioning] = useState(false) // 歌词过渡状态（不影响UI）
-  const [transitionProgress, setTransitionProgress] = useState(0) // 过渡进度 0-1
+  // 过渡进度已移出 App state（见 transitionProgressStore.ts）：~30fps 的逐帧更新只重渲染
+  // 订阅它的视觉组件，不再拖动整棵 App 树。低频过渡状态仍在 App，并在渲染期镜像进 store。
   // 过渡缓冲时长（秒）：叠加动画窗口（最后 4 秒）按此映射 progress
   const [transitionDuration, setTransitionDuration] = useState(0)
   const transitionTargetTimeRef = useRef(Number.NaN)
@@ -1702,15 +1811,15 @@ function App() {
       setTransitionFallbackReason(state.fallbackReason)
     }
     
-    // 更新过渡进度
+    // 更新过渡进度（外部 store：上次值从快照读取，保持「committed 且新值为 0 且上一值 > 0
+    // 时维持上一帧」的原有行为——提交后最终帧要等到 React UI 追上才释放）
     if (state.transitionProgress !== undefined) {
-      setTransitionProgress(previousProgress => {
-        const shouldHoldCompletedFrame = state.transitioning === false
-          && state.transitionState === 'committed'
-          && state.transitionProgress === 0
-          && previousProgress > 0
-        return shouldHoldCompletedFrame ? previousProgress : state.transitionProgress!
-      })
+      const previousProgress = transitionProgressStore.getSnapshot().progress
+      const shouldHoldCompletedFrame = state.transitioning === false
+        && state.transitionState === 'committed'
+        && state.transitionProgress === 0
+        && previousProgress > 0
+      transitionProgressStore.publish({ progress: shouldHoldCompletedFrame ? previousProgress : state.transitionProgress! })
     }
     
     // 更新过渡轨道信息
@@ -1759,12 +1868,12 @@ function App() {
     // 过渡结束后清理
     if (state.transitionState === 'committed' && state.transitioning === false) {
       // Hold the final frame until the committed track has reached the React UI.
-      setTransitionProgress(1)
+      transitionProgressStore.publish({ progress: 1 })
     } else if (
       state.transitioning === false
       && (state.transitionState === 'cancelled' || state.transitionState === 'failed' || state.transitionState === 'idle')
     ) {
-      setTransitionProgress(0)
+      transitionProgressStore.publish({ progress: 0 })
       setTransitionFromTrack(null)
       setTransitionToTrack(null)
     }
@@ -1787,7 +1896,7 @@ function App() {
       // the same React batch as the canonical song switch so a completed AutoMix does not
       // keep the controls/background in their "transition" presentation indefinitely.
       setIsTransitioning(false)
-      setTransitionProgress(0)
+      transitionProgressStore.publish({ progress: 0 })
       setTransitionFromTrack(null)
       setTransitionToTrack(null)
       setTransitionFromAccentColor(null)
@@ -2472,7 +2581,7 @@ function App() {
       // automix 不得 prepare/启动→提交，否则已武装的过渡会在看歌中自动 commit。
       clearTransitionResetTimer()
       setIsTransitioning(false)
-      setTransitionProgress(0)
+      transitionProgressStore.publish({ progress: 0 })
       setTransitionFromTrack(null)
       setTransitionToTrack(null)
       setTransitionFromAccentColor(null)
@@ -2616,21 +2725,25 @@ function App() {
     : PLAYBACK_NEUTRAL_COLOR
   const dominantColor = playbackCoverColor
   dominantColorRef.current = playbackCoverColor
-  // 动画窗口：过渡动画（卡片/流光/交叉淡化）只在 currentTime 到达 transitionStartTime
-  // （=动画起点，最多提前 10s）后才开始。AI 长混音的音频过渡远早于动画点开始，
-  // 若不加门控，视觉会跟着 60s 混音全程走。transitionStartTime 为 null（普通交叉淡化/
-  // gapless）时视为始终在窗口内，保持 v1 行为不变。
-  const inAnimationWindow = transitionStartTime === null || currentTime >= transitionStartTime
-  // 叠加动画（封面/字/MV 渐变）只在过渡最后 ~4 秒完成（用户要求：叠加 4 秒足够，
-  // 太长拖沓）；倒计时/流光仍按动画窗口全程提前出现（isVisualTransitioning 第一个条件）。
-  const overlayProgress = (() => {
-    if (!inAnimationWindow) return 0
-    const dur = transitionDuration > 0 ? transitionDuration : 20
-    const span = Math.min(4, dur)
-    const start = 1 - span / dur
-    return Math.max(0, Math.min(1, (transitionProgress - start) / (span / dur)))
-  })()
-  const isVisualTransitioning = (isTransitioning && inAnimationWindow) || Boolean(transitionToTrack && overlayProgress > 0 && inAnimationWindow)
+  // 视觉过渡布尔改从外部 store 的标量选择器订阅：派生公式在 transitionProgressStore 内
+  // 集中计算（与原行内派生同源同值），App 只在布尔真的翻转（过渡开始/结束各一次）时重渲染；
+  // 逐帧的 overlayProgress 由各订阅包装组件自行获取，不再进入 App 渲染体。
+  // 动画窗口语义：过渡动画只在 currentTime 到达 transitionStartTime（=动画起点，最多提前
+  // 10s）后才开始；叠加动画（封面/字/MV 渐变）只在过渡最后 ~4 秒完成——两者都在 store 内实现。
+  const isVisualTransitioning = useIsVisualTransitioning()
+
+  // 低频过渡输入镜像进 store：进度是高频路径（~30fps 由各写入点直接 publish），
+  // 这里只补齐派生所需的低频字段。effect 晚一帧落地只影响过渡开始/结束时布尔翻转的
+  // 时机（视觉上等于多保持/多等一帧），逐帧进度与公式输出不受影响。
+  useEffect(() => {
+    transitionProgressStore.publish({
+      duration: transitionDuration,
+      startTime: transitionStartTime,
+      isTransitioning,
+      hasToTrack: transitionToTrack !== null,
+      currentTime,
+    })
+  }, [transitionDuration, transitionStartTime, isTransitioning, transitionToTrack, currentTime])
   const getMvPlaybackTimeSeconds = useCallback(() => {
     const renderedTransitionActive = transitionState === 'running-transition'
       && (transitionStrategy === 'smart-rendered' || transitionStrategy === 'smart-rendered-v2')
@@ -2694,7 +2807,7 @@ function App() {
     if (!targetUiReady) return
 
     const releaseTimer = window.setTimeout(() => {
-      setTransitionProgress(0)
+      transitionProgressStore.publish({ progress: 0 })
       setTransitionFromTrack(null)
       setTransitionToTrack(null)
       setTransitionFromAccentColor(null)
@@ -5554,19 +5667,18 @@ function App() {
            回退契约 onFallbackChange 就是回到这一层，不再露纯黑渐变） */}
       <div className="absolute inset-0">
         {currentSong && lyricDisplayMode !== 'video' && (
-          <PulsingCrossfadeBackground
+          <TransitionPulsingCrossfadeBackground
             coverUrl={displayCoverUrl}
             transitionFromUrl={transitionFromTrack?.coverUrl}
             transitionToUrl={transitionToTrack?.coverUrl}
             isTransitioning={isVisualTransitioning}
-            transitionProgress={transitionProgress}
             pulseStore={audioPulseStore}
             backgroundEffect={backgroundEffect}
             backgroundBlur={backgroundBlur}
           />
         )}
         {currentSong && (
-          <LazyBilibiliMvBackground
+          <TransitionBilibiliMvBackground
             songTitle={currentSong.name}
             songArtists={currentSongArtists}
             songDuration={(currentSong.duration || 0) / 1000}
@@ -5586,8 +5698,7 @@ function App() {
             blur={mvBackgroundBlur}
             transitionToTrack={transitionToTrack}
             // 封面过渡只在过渡动画窗口内叠加（用户要求：从过渡动画开始，不是 automix 介入），
-            // 且叠加只在最后 4 秒完成（不拖沓）
-            transitionProgress={overlayProgress}
+            // 且叠加只在最后 4 秒完成（不拖沓）——逐帧进度由包装层订阅 store 提供
             songTrackKey={currentSong ? getSongKey(currentSong) : ''}
             onFallbackChange={setMvBackgroundFallback}
             onPlayStateChange={(s: { songKey: string; bvid: string; cid: number; videoUrl: string; cacheKey: string; type?: string; currentTime: number } | null) => {
@@ -6055,13 +6166,12 @@ function App() {
                     transition={{ delay: 0.2 }}
                     className="flex w-full flex-col items-center gap-5 px-6"
                   >
-                    <AlbumCoverPlayer
+                    <TransitionAlbumCoverPlayer
                       coverUrl={displayCoverUrl}
                       isPlaying={isPlaying}
                       dominantColor={dominantColor}
                       trackId={currentSong.id || currentSong.mid}
                       isTransitioning={isVisualTransitioning}
-                      transitionProgress={transitionProgress}
                       transitionFromTrack={transitionFromTrack}
                       transitionToTrack={transitionToTrack}
                       pulseStore={audioPulseStore}
@@ -6069,39 +6179,15 @@ function App() {
 
                     {/* 歌曲信息 - 过渡时双层淡入淡出 */}
                     <div className="relative w-full max-w-4xl space-y-3 text-center">
-                      {isVisualTransitioning && overlayProgress > 0 && transitionFromTrack && transitionToTrack ? (
-                        // 过渡模式：双层叠加（叠加动画只持续最后 4 秒，不拖沓）
-                        <>
-                          {/* 底层：旧歌曲信息 */}
-                          <div className="absolute inset-0" style={{ opacity: 1 - overlayProgress }}>
-                            <h1 className={`text-4xl font-bold ${playerTheme === 'dark' ? 'text-white drop-shadow-lg' : 'text-black/90'}`}>
-                              {transitionFromTrack.title}
-                            </h1>
-                            <p className={`text-xl ${playerTheme === 'dark' ? 'text-white/80 drop-shadow-md' : 'text-black/60'}`}>
-                              {transitionFromTrack.artist}
-                            </p>
-                          </div>
-                          {/* 顶层：新歌曲信息 */}
-                          <div className="relative" style={{ opacity: overlayProgress }}>
-                            <h1 className={`text-4xl font-bold ${playerTheme === 'dark' ? 'text-white drop-shadow-lg' : 'text-black/90'}`}>
-                              {transitionToTrack.title}
-                            </h1>
-                            <p className={`text-xl ${playerTheme === 'dark' ? 'text-white/80 drop-shadow-md' : 'text-black/60'}`}>
-                              {transitionToTrack.artist}
-                            </p>
-                          </div>
-                        </>
-                      ) : (
-                        // 正常模式：单层信息
-                        <div className="relative">
-                          <h1 className={`text-4xl font-bold ${playerTheme === 'dark' ? 'text-white drop-shadow-lg' : 'text-black/90'}`}>
-                            {currentSong.name}
-                          </h1>
-                          <p className={`text-xl ${playerTheme === 'dark' ? 'text-white/80 drop-shadow-md' : 'text-black/60'}`}>
-                            {currentSong.artists.map((a: any) => a.name).join(', ')}
-                          </p>
-                        </div>
-                      )}
+                      <TransitionSongInfo
+                        mode="overlay"
+                        size="large"
+                        playerTheme={playerTheme}
+                        fromTrack={transitionFromTrack}
+                        toTrack={transitionToTrack}
+                        currentTitle={currentSong.name}
+                        currentArtist={currentSong.artists.map((a: any) => a.name).join(', ')}
+                      />
                     </div>
                 </motion.div>
                 </motion.div>
@@ -6189,13 +6275,12 @@ function App() {
                   <div className="w-full max-w-7xl h-[85vh] flex gap-12 items-center">
                   {/* 左侧：封面展示区 */}
                   <div className="flex-1 flex flex-col items-center justify-center gap-6">
-                    <AlbumCoverPlayer
+                    <TransitionAlbumCoverPlayer
                       coverUrl={displayCoverUrl}
                       isPlaying={isPlaying}
                       dominantColor={dominantColor}
                       trackId={currentSong.id || currentSong.mid}
                       isTransitioning={isVisualTransitioning}
-                      transitionProgress={transitionProgress}
                       transitionFromTrack={transitionFromTrack}
                       transitionToTrack={transitionToTrack}
                       pulseStore={audioPulseStore}
@@ -6203,39 +6288,15 @@ function App() {
 
                     {/* 歌曲信息 - 过渡时双层淡入淡出 */}
                     <div className="relative min-h-[5.25rem] w-full max-w-xl space-y-2 px-4 text-center">
-                      {isVisualTransitioning && transitionProgress > 0 && transitionFromTrack && transitionToTrack ? (
-                        // 过渡模式：双层叠加
-                        <>
-                          {/* 底层：旧歌曲信息 */}
-                          <div className="absolute inset-0" style={{ opacity: 1 - transitionProgress }}>
-                            <h1 className={`text-3xl font-bold ${playerTheme === 'dark' ? 'text-white drop-shadow-lg' : 'text-black/90'}`}>
-                              {transitionFromTrack.title}
-                            </h1>
-                            <p className={`text-lg ${playerTheme === 'dark' ? 'text-white/80 drop-shadow-md' : 'text-black/60'}`}>
-                              {transitionFromTrack.artist}
-                            </p>
-                          </div>
-                          {/* 顶层：新歌曲信息 */}
-                          <div className="relative" style={{ opacity: transitionProgress }}>
-                            <h1 className={`text-3xl font-bold ${playerTheme === 'dark' ? 'text-white drop-shadow-lg' : 'text-black/90'}`}>
-                              {transitionToTrack.title}
-                            </h1>
-                            <p className={`text-lg ${playerTheme === 'dark' ? 'text-white/80 drop-shadow-md' : 'text-black/60'}`}>
-                              {transitionToTrack.artist}
-                            </p>
-                          </div>
-                        </>
-                      ) : (
-                        // 正常模式：单层信息
-                        <div className="relative">
-                          <h1 className={`text-3xl font-bold ${playerTheme === 'dark' ? 'text-white drop-shadow-lg' : 'text-black/90'}`}>
-                            {currentSong.name}
-                          </h1>
-                          <p className={`text-lg ${playerTheme === 'dark' ? 'text-white/80 drop-shadow-md' : 'text-black/60'}`}>
-                            {currentSong.artists.map((a: any) => a.name).join(', ')}
-                          </p>
-                        </div>
-                      )}
+                      <TransitionSongInfo
+                        mode="raw"
+                        size="compact"
+                        playerTheme={playerTheme}
+                        fromTrack={transitionFromTrack}
+                        toTrack={transitionToTrack}
+                        currentTitle={currentSong.name}
+                        currentArtist={currentSong.artists.map((a: any) => a.name).join(', ')}
+                      />
                     </div>
                   </div>
 
@@ -6294,7 +6355,7 @@ function App() {
           {/* 全局播放器固定在底部；真正无视频/失败时通过 portal 恢复音频控制。 */}
           {currentSong && !showHome && (lyricDisplayMode !== 'video' || watchSearchFailed) && (
             <MaybePortal active={lyricDisplayMode === 'video'}>
-            <LivePlayerControls
+            <TransitionLivePlayerControls
                       playbackTimeStore={audioPlayer.playbackTimeStore}
               isPlaying={isPlaying}
               duration={duration}
@@ -6312,7 +6373,6 @@ function App() {
               accentColor={playbackCoverColor}
               transitionFromAccentColor={transitionFromAccentColor || transitionFromTrack?.dominantColor || undefined}
               transitionToAccentColor={transitionToAccentColor || undefined}
-              transitionProgress={overlayProgress}
               playerTheme={playerTheme}
               isTransitioning={isVisualTransitioning}
               transitionStartTime={transitionStartTime}
