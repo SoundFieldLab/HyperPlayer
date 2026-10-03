@@ -31,7 +31,7 @@ import { cacheManager } from './services/cacheManager'
 import { indexedDBCache } from './services/indexedDBCache'
 import { autoMixAnalysisService } from './services/autoMixAnalysisService'
 import { getAudioEngineVersion, setAudioEngineVersion, type AudioEngineVersion } from './services/audioEngineVersion'
-import { getEngineAdapter, getAvailableEngines, getAvailableEngineIds, type IAudioEngineAdapter } from './services/audio-engine'
+import { getEngineAdapter, getAvailableEngines, getAvailableEngineIds, warmV3EngineModule, type IAudioEngineAdapter } from './services/audio-engine'
 import { sequenceTracksHam2, type SequencingEntry } from './services/playlistSequencing'
 import { likeSong, addSongToPlaylist, getUserPlaylists, updateCachedUserPlaylists, getPlaylistDetail } from './services/playlistService'
 import { fetchExploreRecommendationBatch } from './services/exploreApi'
@@ -743,6 +743,8 @@ function App() {
 
     return preloadOnIdle([
       currentViewLoader,
+      // HSE 引擎模块（§6.2 出首包后此 chunk 变懒加载）：首播前必须就绪，排第二位预热
+      warmV3EngineModule,
       loadSearchPanel,
       loadUpNextNotification,
       loadSettingsPanel,
