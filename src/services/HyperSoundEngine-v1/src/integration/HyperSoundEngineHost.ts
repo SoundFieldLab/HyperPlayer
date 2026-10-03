@@ -1,5 +1,5 @@
 /**
- * EngineV3Host —— v3 引擎宿主接线模块（供 HyperPlayer 引擎切换逻辑使用）
+ * HyperSoundEngineHost —— v3 引擎宿主接线模块（供 HyperPlayer 引擎切换逻辑使用）
  *
  * 定位：v2 与 v3 是**完全独立的两个引擎**，本模块不做任何 API 兼容层；
  * 只保证一件事：**切换时能正常切到 v3 进行处理**。
@@ -13,19 +13,19 @@
  *  - 'worklet'：AudioWorklet 处理器（`worklet/AudioEffectsProcessor.ts`，需先打包单文件）——
  *    参数经 `port.postMessage({type:'params'})` 下发，`stats` 周期回传；
  *  - 'script'：ScriptProcessorNode 兜底（已废弃但 Electron/Chromium 可用），
- *    onaudioprocess 内直接调 EngineV3.process（同一纯 TS 内核，无需打包）；
+ *    onaudioprocess 内直接调 HyperSoundEngine.process（同一纯 TS 内核，无需打包）；
  *  - 'auto'：优先 worklet，失败自动回退 script（默认）。
  *
  * 确定性/测试：AudioNode 均为鸭子类型（最小接口），Node 测试环境可 stub 验证接线语义。
  */
 
-import { EngineV3 } from '../engine/EngineV3'
-import type { V3EngineParams, EngineStats, EngineAnalysis } from '../types'
+import { HyperSoundEngine } from '../engine/HyperSoundEngine'
+import type { HSEEngineParams, EngineStats, EngineAnalysis } from '../types'
 
-export type V3HostMode = 'worklet' | 'script' | 'auto'
+export type HSEHostMode = 'worklet' | 'script' | 'auto'
 
 /** 最小 AudioNode 接口（鸭子类型；Node 测试环境可用 stub 实现） */
-export interface V3AudioNodeLike {
+export interface HSEAudioNodeLike {
   connect?(dest: unknown): unknown
   disconnect?(): unknown
   port?: {
@@ -38,53 +38,53 @@ export interface V3AudioNodeLike {
   }) => void
 }
 
-export interface V3AudioContextLike {
+export interface HSEAudioContextLike {
   sampleRate: number
   audioWorklet?: { addModule(url: string): Promise<void> }
-  createScriptProcessor?(bufferSize: number, inCh: number, outCh: number): V3AudioNodeLike
+  createScriptProcessor?(bufferSize: number, inCh: number, outCh: number): HSEAudioNodeLike
 }
 
-export interface V3HostHandle {
-  audioContext: V3AudioContextLike
-  masterGain: V3AudioNodeLike
-  analyser: V3AudioNodeLike
+export interface HSEHostHandle {
+  audioContext: HSEAudioContextLike
+  masterGain: HSEAudioNodeLike
+  analyser: HSEAudioNodeLike
 }
 
-export interface V3HostOptions {
+export interface HSEHostOptions {
   /** 接入模式，默认 'auto'（worklet 优先，失败回退 script） */
-  mode?: V3HostMode
+  mode?: HSEHostMode
   /** worklet 打包产物 URL（worklet 模式必需） */
   workletUrl?: string
-  /** worklet 处理器注册名，默认 'hyperplayer-v3-effects' */
+  /** worklet 处理器注册名，默认 'hyperplayer-hse-effects' */
   processorName?: string
   /** script 兜底模式的块长，默认 4096 */
   blockSize?: number
   /** 注入引擎实例（测试/离线复用，采样率由调用方保证与上下文一致）；缺省时宿主按上下文采样率自建 */
-  engine?: EngineV3
+  engine?: HyperSoundEngine
 }
 
-export class EngineV3Host {
-  private engineRef: EngineV3 | null
+export class HyperSoundEngineHost {
+  private engineRef: HyperSoundEngine | null
   private readonly engineInjected: boolean
-  private readonly defaultMode: V3HostMode
+  private readonly defaultMode: HSEHostMode
   private readonly workletUrl: string | undefined
   private readonly processorName: string
   private readonly blockSize: number
 
-  private handle: V3HostHandle | null = null
-  private node: V3AudioNodeLike | null = null
+  private handle: HSEHostHandle | null = null
+  private node: HSEAudioNodeLike | null = null
   private activeMode: 'worklet' | 'script' | null = null
-  private lastParams: V3EngineParams | null = null
+  private lastParams: HSEEngineParams | null = null
   private lastStats: EngineStats | null = null
   private lastAnalysis: EngineAnalysis | null = null
   private hostFs = 0
   private attachSeq = 0
   private disposed = false
 
-  constructor(opts?: V3HostOptions) {
+  constructor(opts?: HSEHostOptions) {
     this.defaultMode = opts?.mode ?? 'auto'
     this.workletUrl = opts?.workletUrl
-    this.processorName = opts?.processorName ?? 'hyperplayer-v3-effects'
+    this.processorName = opts?.processorName ?? 'hyperplayer-hse-effects'
     this.blockSize = opts?.blockSize ?? 4096
     this.engineInjected = opts?.engine != null
     this.engineRef = opts?.engine ?? null
@@ -92,8 +92,8 @@ export class EngineV3Host {
   }
 
   /** 引擎实例（惰性创建：attach 时按上下文采样率自建，或返回注入实例） */
-  get engine(): EngineV3 {
-    if (!this.engineRef) this.engineRef = new EngineV3(this.hostFs > 0 ? this.hostFs : 48000, 2)
+  get engine(): HyperSoundEngine {
+    if (!this.engineRef) this.engineRef = new HyperSoundEngine(this.hostFs > 0 ? this.hostFs : 48000, 2)
     return this.engineRef
   }
 
@@ -101,7 +101,7 @@ export class EngineV3Host {
    * 把 v3 引擎接入音频图（幂等：同一 handle 重复调用直接 return）。
    * 语义：masterGain 全断 → 接 v3 处理节点 → 连 analyser；防新旧双链并联。
    */
-async attach(handle: V3HostHandle, params?: V3EngineParams): Promise<void> {
+async attach(handle: HSEHostHandle, params?: HSEEngineParams): Promise<void> {
     if (this.handle === handle) {
       if (params) this.setParams(params)
       return
@@ -113,7 +113,7 @@ async attach(handle: V3HostHandle, params?: V3EngineParams): Promise<void> {
     // 采样率校准（仅自建引擎；注入引擎由调用方保证一致）
     if (!this.engineInjected) {
       if (this.engineRef === null || Math.abs(this.hostFs - ctx.sampleRate) > 1) {
-        this.engineRef = new EngineV3(ctx.sampleRate, 2)
+        this.engineRef = new HyperSoundEngine(ctx.sampleRate, 2)
         this.hostFs = ctx.sampleRate
         if (this.lastParams) this.engineRef.setParams(this.lastParams)
       }
@@ -130,12 +130,12 @@ async attach(handle: V3HostHandle, params?: V3EngineParams): Promise<void> {
       /* noop */
     }
 
-    let node: V3AudioNodeLike | null = null
+    let node: HSEAudioNodeLike | null = null
     let mode: 'worklet' | 'script' | null = null
 
     // worklet 路径
     if (this.defaultMode === 'auto' || this.defaultMode === 'worklet') {
-      const AWNode = (globalThis as { AudioWorkletNode?: new (ctx: unknown, name: string, opts: unknown) => V3AudioNodeLike })
+      const AWNode = (globalThis as { AudioWorkletNode?: new (ctx: unknown, name: string, opts: unknown) => HSEAudioNodeLike })
         .AudioWorkletNode
       if (ctx.audioWorklet?.addModule && AWNode && this.workletUrl) {
         try {
@@ -200,7 +200,7 @@ async attach(handle: V3HostHandle, params?: V3EngineParams): Promise<void> {
   }
 
   /** 下发参数：主线程引擎与 worklet 处理器同步更新 */
-  setParams(p: V3EngineParams): void {
+  setParams(p: HSEEngineParams): void {
     this.lastParams = p
     this.engine.setParams(p)
     if (this.node?.port) this.node.port.postMessage({ type: 'params', params: p })
@@ -254,7 +254,7 @@ async attach(handle: V3HostHandle, params?: V3EngineParams): Promise<void> {
 
   /** 当前 v3 处理节点（未接入返回 null）。供融合层在 masterGain 与处理节点之间
    *  插入前置节点（如 SoundTouch 变速变调），接线方负责断开重连语义。 */
-  getAudioNode(): V3AudioNodeLike | null {
+  getAudioNode(): HSEAudioNodeLike | null {
     return this.node
   }
 }

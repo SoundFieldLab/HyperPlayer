@@ -13,11 +13,11 @@
  *  - 手动编辑参数同样可以：只改 overrides 里对应场景的字段即可，保持结构完整。
  */
 
-import type { V3EngineParams } from '../types'
+import type { HSEEngineParams } from '../types'
 
 export interface BuiltinSceneSeed {
   revision: number
-  overrides: Record<string, V3EngineParams>
+  overrides: Record<string, HSEEngineParams>
 }
 
 export const BUILTIN_SCENE_SEED: BuiltinSceneSeed = {

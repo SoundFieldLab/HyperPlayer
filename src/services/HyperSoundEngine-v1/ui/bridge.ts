@@ -1,8 +1,8 @@
 /**
- * HyperPlayer v3 调音室 UI —— 引擎桥（V3UiBridge）
+ * HyperPlayer v3 调音室 UI —— 引擎桥（HSEUiBridge）
  *
  * UI 只依赖本文件的桥接口（不直接 import HyperSoundEngine），融合时把桥接实现换到
- * HyperPlayer 侧（引擎实例来自 EngineV3Host.engine 或直接 new EngineV3）即可。
+ * HyperPlayer 侧（引擎实例来自 HyperSoundEngineHost.engine 或直接 new HyperSoundEngine）即可。
  *
  * 桥职责：
  *  - 参数快照读写（setParams 每次收完整快照）；
@@ -12,9 +12,9 @@
  *  - 听力测试状态机（HearingTest 封装）。
  */
 
-import type { EngineAnalysis, EngineStats, ScenePreset, V3EngineParams } from '../src/types'
+import type { EngineAnalysis, EngineStats, ScenePreset, HSEEngineParams } from '../src/types'
 import { createDefaultParams } from '../src/types'
-import { EngineV3 } from '../src/engine/EngineV3'
+import { HyperSoundEngine } from '../src/engine/HyperSoundEngine'
 import {
   mergeBuiltinScenes,
   saveBuiltinSceneOverride,
@@ -27,11 +27,13 @@ import { encodeShareCode, decodeShareCode } from '../src/engine/ShareCodec'
 import { HearingTest, type AudiogramPoint } from '../src/analysis/HearingTest'
 
 /** 我的场景存储键（v3 独立命名空间，与 v2 区分） */
-const MY_SCENES_KEY = 'hyperplayer:v3-my-scenes'
+const MY_SCENES_KEY = 'hyperplayer:hse-my-scenes'
+/** V3→HSE 命名统一前的历史键：loadMyScenes 时一次性迁移后移除 */
+const LEGACY_MY_SCENES_KEY = 'hyperplayer:v3-my-scenes'
 /** 我的场景上限（v3 独立命名空间，较 v2 的 8 提升至 20） */
 export const MAX_MY_SCENES = 20
 
-export interface V3HearingSession {
+export interface HSEHearingSession {
   /** 当前待测步骤；null=未开始或已完成 */
   step: { freqHz: number; levelDb: number } | null
   /** 进度：当前频点序号（0-6）/ 频点内轮数（0-4），共 7 频点 × 5 轮 */
@@ -41,11 +43,11 @@ export interface V3HearingSession {
   audiogram: AudiogramPoint[]
 }
 
-export interface V3UiBridge {
+export interface HSEUiBridge {
   /** 当前参数快照（深拷贝，防止外部突变） */
-  getParams(): V3EngineParams
+  getParams(): HSEEngineParams
   /** 设置完整快照（引擎 setParams；UI 侧始终传 getParams 深拷贝修改后的版本） */
-  setParams(p: V3EngineParams): void
+  setParams(p: HSEEngineParams): void
   getStats(): EngineStats
   getAnalysis(): EngineAnalysis
   getLatencySamples(): number
@@ -56,7 +58,7 @@ export interface V3UiBridge {
   saveMyScene(name: string): boolean
   deleteMyScene(id: string): void
   /** 开发者模式：把完整参数快照存为某内置场景的微调覆盖（localStorage 持久化） */
-  updateBuiltinScene(id: string, p: V3EngineParams): boolean
+  updateBuiltinScene(id: string, p: HSEEngineParams): boolean
   /** 开发者模式：还原内置场景为代码默认值（删除覆盖层） */
   resetBuiltinScene(id: string): void
   /** 导出场景库 JSON（内置覆盖 + 我的场景），备份/迁移用 */
@@ -66,26 +68,35 @@ export interface V3UiBridge {
   /** 导出「发布种子」TS 源码文本：替换 builtinSceneSeed.ts 后 commit/push 即全员生效 */
   exportPublishSeed(): string
   /** 导出分享串（完整参数快照，含版本+校验） */
-  encodeShare(p: V3EngineParams): string
+  encodeShare(p: HSEEngineParams): string
   /** 解析分享串；非法输入抛 Error */
-  decodeShare(code: string): V3EngineParams
+  decodeShare(code: string): HSEEngineParams
   /** 听力测试 */
   beginHearing(): void
-  hearingStep(): V3HearingSession
-  answerHearing(heard: boolean): V3HearingSession
+  hearingStep(): HSEHearingSession
+  answerHearing(heard: boolean): HSEHearingSession
   resetHearing(): void
 }
 
 /** 快照入库前去除不可序列化数据（卷积 IR 数组 → irName 引用语义） */
-function sanitizeForStorage(p: V3EngineParams): V3EngineParams {
-  const clone = JSON.parse(JSON.stringify(p)) as V3EngineParams
+function sanitizeForStorage(p: HSEEngineParams): HSEEngineParams {
+  const clone = JSON.parse(JSON.stringify(p)) as HSEEngineParams
   clone.reverb.convolution.ir = null
   return clone
 }
 
 function loadMyScenes(): ScenePreset[] {
   try {
-    const raw = localStorage.getItem(MY_SCENES_KEY)
+    // 历史键迁移（V3→HSE 命名统一）：旧键一次性搬到新键，我的场景不丢
+    let raw = localStorage.getItem(MY_SCENES_KEY)
+    if (raw === null) {
+      const legacy = localStorage.getItem(LEGACY_MY_SCENES_KEY)
+      if (legacy !== null) {
+        localStorage.setItem(MY_SCENES_KEY, legacy)
+        localStorage.removeItem(LEGACY_MY_SCENES_KEY)
+        raw = legacy
+      }
+    }
     if (!raw) return []
     const list = JSON.parse(raw) as ScenePreset[]
     return Array.isArray(list) ? list.filter((s) => s && typeof s.id === 'string') : []
@@ -103,12 +114,12 @@ function saveMyScenes(list: ScenePreset[]): void {
 }
 
 /** 把 HyperSoundEngine 包装成 UI 桥（融合时在 HyperPlayer 侧调用） */
-export function createV3UiBridge(engine: EngineV3, sampleRate: number): V3UiBridge {
+export function createHSEUiBridge(engine: HyperSoundEngine, sampleRate: number): HSEUiBridge {
   const hearing = new HearingTest(sampleRate)
-  let current: V3EngineParams = createDefaultParams(sampleRate)
+  let current: HSEEngineParams = createDefaultParams(sampleRate)
   engine.setParams(current)
 
-  const readHearing = (): V3HearingSession => {
+  const readHearing = (): HSEHearingSession => {
     const step = hearing.nextStep()
     return {
       step,
@@ -119,10 +130,10 @@ export function createV3UiBridge(engine: EngineV3, sampleRate: number): V3UiBrid
     }
   }
 
-  const impl: V3UiBridge = {
-    getParams: () => JSON.parse(JSON.stringify(current)) as V3EngineParams,
-    setParams: (p: V3EngineParams) => {
-      current = JSON.parse(JSON.stringify(p)) as V3EngineParams
+  const impl: HSEUiBridge = {
+    getParams: () => JSON.parse(JSON.stringify(current)) as HSEEngineParams,
+    setParams: (p: HSEEngineParams) => {
+      current = JSON.parse(JSON.stringify(p)) as HSEEngineParams
       engine.setParams(current)
     },
     getStats: () => engine.getStats(),
@@ -158,14 +169,14 @@ export function createV3UiBridge(engine: EngineV3, sampleRate: number): V3UiBrid
     deleteMyScene: (id: string) => {
       saveMyScenes(loadMyScenes().filter((s) => s.id !== id))
     },
-    updateBuiltinScene: (id: string, p: V3EngineParams): boolean => saveBuiltinSceneOverride(id, p),
+    updateBuiltinScene: (id: string, p: HSEEngineParams): boolean => saveBuiltinSceneOverride(id, p),
     resetBuiltinScene: (id: string) => {
       resetBuiltinSceneOverride(id)
     },
     exportSceneLibrary: () => exportSceneLibraryJson(loadMyScenes()),
     importSceneLibrary: (json: string) => importSceneLibraryJson(json, (list) => saveMyScenes(list)),
     exportPublishSeed: () => exportPublishSeedTs(),
-    encodeShare: (p: V3EngineParams) => encodeShareCode(p),
+    encodeShare: (p: HSEEngineParams) => encodeShareCode(p),
     decodeShare: (code: string) => decodeShareCode(code),
     beginHearing: () => hearing.begin(),
     hearingStep: () => readHearing(),

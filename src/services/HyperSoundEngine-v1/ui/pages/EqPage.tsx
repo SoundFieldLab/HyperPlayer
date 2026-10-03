@@ -7,13 +7,13 @@ import { SlidersHorizontal } from 'lucide-react'
 import { EqPanel as BaseEqPanel } from '../eqPanel'
 import { toLegacyTheme } from '../hse-theme'
 import type { HSETheme } from '../hse-theme'
-import type { V3UiBridge } from '../bridge'
-import type { V3ParamsController } from '../hooks'
+import type { HSEUiBridge } from '../bridge'
+import type { HSEParamsController } from '../hooks'
 import { PRO_EQ_DEFAULT_BANDS } from '../../src/types'
 
 interface EqPageProps {
-  bridge: V3UiBridge
-  controller: V3ParamsController
+  bridge: HSEUiBridge
+  controller: HSEParamsController
   theme: HSETheme
   onOpenEffect: (key: string) => void
 }

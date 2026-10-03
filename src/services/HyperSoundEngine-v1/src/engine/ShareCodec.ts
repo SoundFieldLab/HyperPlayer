@@ -17,7 +17,7 @@
  * 纯 TS、零运行时依赖：仅使用平台全局（TextEncoder/TextDecoder/Math.imul）。
  */
 
-import type { V3EngineParams, EqBand, SpatialSettings } from '../types'
+import type { HSEEngineParams, EqBand, SpatialSettings } from '../types'
 import { createDefaultSpatialSettings } from '../types'
 
 /** 当前分享串格式版本；变更不兼容格式时递增 */
@@ -245,7 +245,7 @@ function decodeSpatial(raw: unknown): SpatialSettings {
 }
 
 /** 白名单重建：只读取已知字段，未知字段（含 __proto__ 等注入键）一律丢弃 */
-function sanitizeParams(raw: unknown): V3EngineParams {
+function sanitizeParams(raw: unknown): HSEEngineParams {
   if (!isObj(raw)) throw new Error('invalid share code payload')
   const sampleRate = Math.round(num(raw.sampleRate, 8000, 192000, 48000))
 
@@ -422,7 +422,7 @@ function sanitizeParams(raw: unknown): V3EngineParams {
 // ---------------------------------------------------------------------------
 // 编码：固定字段顺序构造可序列化快照（去 IR 数组 → 仅 irName）
 // ---------------------------------------------------------------------------
-function toShareObject(p: V3EngineParams): unknown {
+function toShareObject(p: HSEEngineParams): unknown {
   return {
     sampleRate: p.sampleRate,
     eq: {
@@ -551,14 +551,14 @@ function toShareObject(p: V3EngineParams): unknown {
 // ---------------------------------------------------------------------------
 
 /** 序列化：版本 + JSON(去 IR 数组→irName) + FNV-1a 校验 → base64url */
-export function encodeShareCode(p: V3EngineParams): string {
+export function encodeShareCode(p: HSEEngineParams): string {
   const json = JSON.stringify(toShareObject(p))
   const payload = SHARE_CODEC_VERSION + ':' + checksumOf(SHARE_CODEC_VERSION, json) + ':' + json
   return bytesToBase64Url(utf8Encode(payload))
 }
 
 /** 反序列化：版本/校验和验证 + 白名单字段 + 数值 clamp；非法输入抛 Error */
-export function decodeShareCode(s: string): V3EngineParams {
+export function decodeShareCode(s: string): HSEEngineParams {
   if (typeof s !== 'string' || s.length === 0) {
     throw new Error('invalid share code: empty input')
   }

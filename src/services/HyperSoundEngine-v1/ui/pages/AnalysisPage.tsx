@@ -6,14 +6,14 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Activity, Ear, Play, RotateCcw, Check, X } from 'lucide-react'
 import { GlassCard, RangeStyle } from '../components/Primitives'
 import type { HSETheme } from '../hse-theme'
-import type { V3UiBridge } from '../bridge'
-import type { V3HearingSession } from '../bridge'
-import type { V3ParamsController } from '../hooks'
+import type { HSEUiBridge } from '../bridge'
+import type { HSEHearingSession } from '../bridge'
+import type { HSEParamsController } from '../hooks'
 import type { EngineStats, EngineAnalysis } from '../../src/types'
 
 interface AnalysisPageProps {
-  bridge: V3UiBridge
-  controller: V3ParamsController
+  bridge: HSEUiBridge
+  controller: HSEParamsController
   theme: HSETheme
   onOpenEffect: (key: string) => void
 }
@@ -25,7 +25,7 @@ const SPECTRUM_MIN_HZ = 20
 export default function AnalysisPage({ bridge, theme }: AnalysisPageProps) {
   const [stats, setStats] = useState<EngineStats>(() => bridge.getStats())
   const [analysis, setAnalysis] = useState<EngineAnalysis>(() => bridge.getAnalysis())
-  const [hearing, setHearing] = useState<V3HearingSession | null>(null)
+  const [hearing, setHearing] = useState<HSEHearingSession | null>(null)
   const timerRef = useRef<number | null>(null)
   // 频谱条 EMA 平滑（防 10fps 更新跳变，观感接近连续）
   const smoothedRef = useRef<number[] | null>(null)
@@ -43,7 +43,7 @@ export default function AnalysisPage({ bridge, theme }: AnalysisPageProps) {
   }, [bridge])
 
   const playStep = useCallback((freqHz: number, levelDb: number) => {
-    window.dispatchEvent(new CustomEvent('v3HearingPlay', { detail: { freqHz, levelDb } }))
+    window.dispatchEvent(new CustomEvent('hseHearingPlay', { detail: { freqHz, levelDb } }))
   }, [])
 
   const answerHearing = useCallback((heard: boolean) => {

@@ -9,10 +9,10 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { EngineV3 } from '../src/engine/EngineV3'
+import { HyperSoundEngine } from '../src/engine/HyperSoundEngine'
 import { SCENE_PRESETS } from '../src/engine/ScenePresets'
 import { createDefaultParams, PRO_EQ_DEFAULT_BANDS } from '../src/types'
-import type { V3EngineParams } from '../src/types'
+import type { HSEEngineParams } from '../src/types'
 
 /** 确定性伪随机序列（LCG，避免 Math.random） */
 function lcg(seed: number, n: number): Float32Array {
@@ -25,9 +25,9 @@ function lcg(seed: number, n: number): Float32Array {
   return out
 }
 
-describe('EngineV3 链确定性', () => {
+describe('HyperSoundEngine 链确定性', () => {
   it('零输入产生零输出', () => {
-    const engine = new EngineV3(48000)
+    const engine = new HyperSoundEngine(48000)
     const z1 = new Float32Array(128)
     const z2 = new Float32Array(128)
     const o1 = new Float32Array(128)
@@ -42,8 +42,8 @@ describe('EngineV3 链确定性', () => {
   it('同输入同参数两次处理结果逐样本一致', () => {
     const fs = 44100
     const n = 1024
-    const e1 = new EngineV3(fs)
-    const e2 = new EngineV3(fs)
+    const e1 = new HyperSoundEngine(fs)
+    const e2 = new HyperSoundEngine(fs)
     const noise = lcg(12345, n)
     const L1 = new Float32Array(n)
     const R1 = new Float32Array(n)
@@ -66,7 +66,7 @@ describe('EngineV3 链确定性', () => {
   })
 
   it('reset 后可继续处理且无异常', () => {
-    const engine = new EngineV3(48000)
+    const engine = new HyperSoundEngine(48000)
     const n = 128
     const L = new Float32Array(n)
     const R = new Float32Array(n)
@@ -81,9 +81,9 @@ describe('EngineV3 链确定性', () => {
   })
 })
 
-describe('EngineV3 参数鲁棒性', () => {
+describe('HyperSoundEngine 参数鲁棒性', () => {
   it('场景/极端参数切换不产生 NaN/Infinity', () => {
-    const engine = new EngineV3(48000)
+    const engine = new HyperSoundEngine(48000)
     const n = 512
     const noise = lcg(99, n)
     const L = new Float32Array(n)
@@ -96,7 +96,7 @@ describe('EngineV3 参数鲁棒性', () => {
     const o2 = new Float32Array(n)
 
     // 全部 11 个场景快照
-    const paramsList: V3EngineParams[] = SCENE_PRESETS.map((sc) => sc.params)
+    const paramsList: HSEEngineParams[] = SCENE_PRESETS.map((sc) => sc.params)
 
     // 极端参数：全模块开启 + 极限值（仍在契约允许范围内）
     const extreme = createDefaultParams(48000)
@@ -181,7 +181,7 @@ describe('EngineV3 参数鲁棒性', () => {
 
   it('应用场景快照不修改传入参数，处理输出有效', () => {
     for (const sc of SCENE_PRESETS) {
-      const engine = new EngineV3(48000)
+      const engine = new HyperSoundEngine(48000)
       const before = JSON.stringify(sc.params)
       engine.setParams(sc.params)
       const after = JSON.stringify(sc.params)
@@ -205,9 +205,9 @@ describe('EngineV3 参数鲁棒性', () => {
   })
 })
 
-describe('EngineV3 限幅与统计', () => {
+describe('HyperSoundEngine 限幅与统计', () => {
   it('0dBFS 正弦输出峰值不超过 -1dBFS 阈值 + 0.1dB', () => {
-    const engine = new EngineV3(48000)
+    const engine = new HyperSoundEngine(48000)
     const n = 48000 // 1s，足够越过限幅器 attack
     const L = new Float32Array(n)
     const R = new Float32Array(n)
@@ -234,7 +234,7 @@ describe('EngineV3 限幅与统计', () => {
   })
 
   it('stats 更新：处理 2s 音频后响度/峰值统计为有限值，限幅衰减 <= 0', () => {
-    const engine = new EngineV3(48000)
+    const engine = new HyperSoundEngine(48000)
     const n = 48000 * 2
     const L = new Float32Array(n)
     const R = new Float32Array(n)
@@ -260,7 +260,7 @@ describe('EngineV3 限幅与统计', () => {
   })
 
   it('latency 计算：默认 ≥ 限幅器前瞻样本；禁用限幅器+无混响 = 0', () => {
-    const engine = new EngineV3(48000)
+    const engine = new HyperSoundEngine(48000)
     const lat = engine.getLatencySamples()
     expect(lat).toBeGreaterThanOrEqual(Math.round(48000 * 0.005) - 1)
     const p = createDefaultParams(48000)
@@ -271,9 +271,9 @@ describe('EngineV3 限幅与统计', () => {
   })
 })
 
-describe('EngineV3 分析', () => {
+describe('HyperSoundEngine 分析', () => {
   it('getAnalysis：处理足够音频后返回 1025 bin 频谱与特征', () => {
-    const engine = new EngineV3(48000)
+    const engine = new HyperSoundEngine(48000)
     const n = 48000 // 1s
     const L = new Float32Array(n)
     const R = new Float32Array(n)
@@ -301,16 +301,16 @@ describe('EngineV3 分析', () => {
   })
 
   it('getAnalysis：未处理任何音频时返回 null', () => {
-    const engine = new EngineV3(48000)
+    const engine = new HyperSoundEngine(48000)
     const a = engine.getAnalysis()
     expect(a.spectrum).toBeNull()
     expect(a.features).toBeNull()
   })
 })
 
-describe('EngineV3 辅助', () => {
+describe('HyperSoundEngine 辅助', () => {
   it('getStretch 返回变速/变调处理器', () => {
-    const engine = new EngineV3(48000)
+    const engine = new HyperSoundEngine(48000)
     const st = engine.getStretch()
     expect(st).toBeDefined()
     expect(typeof st.setParams).toBe('function')
@@ -319,7 +319,7 @@ describe('EngineV3 辅助', () => {
   })
 
   it('单声道通道数（channelCount=1）处理不抛异常且输出有限', () => {
-    const engine = new EngineV3(48000, 1)
+    const engine = new HyperSoundEngine(48000, 1)
     const n = 256
     const noise = lcg(5, n)
     const L = new Float32Array(n)

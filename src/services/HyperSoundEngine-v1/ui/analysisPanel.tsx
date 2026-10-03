@@ -8,18 +8,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Activity, Ear, Play, RotateCcw, Check, X } from 'lucide-react'
 import type { EngineAnalysis, EngineStats } from '../src/types'
-import type { V3Theme } from './theme'
-import type { V3UiBridge, V3HearingSession } from './bridge'
+import type { HSETheme } from './theme'
+import type { HSEUiBridge, HSEHearingSession } from './bridge'
 import { ActionButton, GlassCard, GlassRangeStyle, InfoLine, SectionTitle } from './primitives'
-import type { V3ParamsController } from './hooks'
+import type { HSEParamsController } from './hooks'
 
 /** 轮询刷新（实时读数；播放时才需要，融合侧可改由事件驱动） */
 const POLL_MS = 300
 
-export function AnalysisPanel({ bridge, theme, controller }: { bridge: V3UiBridge; theme: V3Theme; controller: V3ParamsController }) {
+export function AnalysisPanel({ bridge, theme, controller }: { bridge: HSEUiBridge; theme: HSETheme; controller: HSEParamsController }) {
   const [stats, setStats] = useState<EngineStats>(() => bridge.getStats())
   const [analysis, setAnalysis] = useState<EngineAnalysis>(() => bridge.getAnalysis())
-  const [hearing, setHearing] = useState<V3HearingSession | null>(null)
+  const [hearing, setHearing] = useState<HSEHearingSession | null>(null)
   const timerRef = useRef<number | null>(null)
 
   // 轮询引擎读数
@@ -41,7 +41,7 @@ export function AnalysisPanel({ bridge, theme, controller }: { bridge: V3UiBridg
 
   const playStep = useCallback((freqHz: number, levelDb: number) => {
     // 实际发声由融合侧监听 showToast 事件或替换本实现；这里派发宿主事件
-    window.dispatchEvent(new CustomEvent('v3HearingPlay', { detail: { freqHz, levelDb } }))
+    window.dispatchEvent(new CustomEvent('hseHearingPlay', { detail: { freqHz, levelDb } }))
   }, [])
 
   const answerHearing = useCallback((heard: boolean) => {
@@ -209,7 +209,7 @@ export function AnalysisPanel({ bridge, theme, controller }: { bridge: V3UiBridg
             </ActionButton>
           </div>
         )}
-        <InfoLine theme={theme}>播放由融合侧监听 `v3HearingPlay` 事件合成纯音（正弦，电平按 dBFS 换算）；本页为状态机与流程 UI。</InfoLine>
+        <InfoLine theme={theme}>播放由融合侧监听 `hseHearingPlay` 事件合成纯音（正弦，电平按 dBFS 换算）；本页为状态机与流程 UI。</InfoLine>
       </GlassCard>
     </div>
   )

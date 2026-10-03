@@ -9,9 +9,9 @@
  * 原"⑦ 已知异常行为快照"（锁定缺陷行为）已随缺陷修复移除。
  */
 import { describe, it, expect } from 'vitest'
-import { EngineV3 } from '../src/engine/EngineV3'
+import { HyperSoundEngine } from '../src/engine/HyperSoundEngine'
 import { SCENE_PRESETS } from '../src/engine/ScenePresets'
-import { createDefaultParams, type V3EngineParams } from '../src/types'
+import { createDefaultParams, type HSEEngineParams } from '../src/types'
 
 const FS = 48000
 
@@ -29,7 +29,7 @@ function maxAbs(x: Float32Array): number {
   return m
 }
 /** 全效果关闭的基础参数（旁路基座） */
-function allOffParams(): V3EngineParams {
+function allOffParams(): HSEEngineParams {
   const p = createDefaultParams(FS)
   p.eq.enabled = false
   p.deesser.enabled = false
@@ -45,7 +45,7 @@ function allOffParams(): V3EngineParams {
   p.pitch.enabled = false
   return p
 }
-function runChain(engine: EngineV3, l: Float32Array, r: Float32Array, blocks = 1): { outL: Float32Array; outR: Float32Array } {
+function runChain(engine: HyperSoundEngine, l: Float32Array, r: Float32Array, blocks = 1): { outL: Float32Array; outR: Float32Array } {
   const B = l.length
   const outL = new Float32Array(B * blocks)
   const outR = new Float32Array(B * blocks)
@@ -57,7 +57,7 @@ function runChain(engine: EngineV3, l: Float32Array, r: Float32Array, blocks = 1
 
 describe('① 默认参数全链直通（基准）', () => {
   it('默认参数：1kHz 0.5 正弦增益差 <0.3dB；默认 limiter(-1dBFS) 不压 0.5 信号', () => {
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(createDefaultParams(FS))
     const B = 4800
     const l = sine(B, 1000, 0.5, FS)
@@ -75,7 +75,7 @@ describe('① 默认参数全链直通（基准）', () => {
   })
 
   it('全效果关闭后输出与输入逐样本一致（≤1e-12，浮点容差）', () => {
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(allOffParams())
     const B = 4800
     const l = sine(B, 330, 0.5, FS)
@@ -89,7 +89,7 @@ describe('① 默认参数全链直通（基准）', () => {
   })
 
   it('默认冲激延迟 = getLatencySamples() = 240（限幅器 lookahead 5ms）', () => {
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(createDefaultParams(FS))
     expect(e.getLatencySamples()).toBe(240)
   })
@@ -97,7 +97,7 @@ describe('① 默认参数全链直通（基准）', () => {
 
 describe('② 逐效果 enabled=false 真正旁路', () => {
   it('eq(无档案)/deesser/compressor/nightMode/reverb/bass/loudnessComp/ieq/surround3d/limiter/loudNorm 全部直通（diff ≤1e-9）', () => {
-    const cases: Array<[string, (p: V3EngineParams) => void]> = [
+    const cases: Array<[string, (p: HSEEngineParams) => void]> = [
       ['eq.enabled=false(无档案)', (p) => { p.eq.enabled = false }],
       ['deesser.enabled=false', (p) => { p.deesser.enabled = false }],
       ['compressor.enabled=false', (p) => { p.compressor.enabled = false }],
@@ -116,7 +116,7 @@ describe('② 逐效果 enabled=false 真正旁路', () => {
     for (const [name, fn] of cases) {
       const p = allOffParams()
       fn(p)
-      const e = new EngineV3(FS, 2)
+      const e = new HyperSoundEngine(FS, 2)
       e.setParams(p)
       const l0 = l.slice()
       const r0 = r.slice()
@@ -131,7 +131,7 @@ describe('② 逐效果 enabled=false 真正旁路', () => {
     const p = allOffParams()
     p.reverb.enabled = true
     p.reverb.mode = 'off'
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(p)
     const B = 4800
     const l = sine(B, 440, 0.5, FS)
@@ -147,7 +147,7 @@ describe('② 逐效果 enabled=false 真正旁路', () => {
     const p = allOffParams()
     p.eq.enabled = false
     p.eq.proBands = [{ frequency: 1000, gain: 12, q: 1 }] // 用户 EQ 有 +12dB
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(p)
     const B = 4800
     const l = sine(B, 1000, 0.4, FS)
@@ -163,7 +163,7 @@ describe('② 逐效果 enabled=false 真正旁路', () => {
     const p = allOffParams()
     p.pitch.enabled = false
     p.pitch.voiceBalance = 1 // 若生效会去除侧信号
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(p)
     const B = 4800
     const l = sine(B, 440, 0.5, FS)
@@ -179,7 +179,7 @@ describe('② 逐效果 enabled=false 真正旁路', () => {
 
 describe('③ 零值参数直通（enabled=true 但语义应为直通）', () => {
   it('mix=0 / gain=0 / width=1 / strength=0 / volumePercent=100 / amount=0 / wet=0 / ratio=1 / extGain=0 全部直通（≤1e-8）', () => {
-    const cases: Array<[string, (p: V3EngineParams) => void]> = [
+    const cases: Array<[string, (p: HSEEngineParams) => void]> = [
       ['bass mix=0', (p) => { p.bassEnhancer.enabled = true; p.bassEnhancer.mix = 0; p.bassEnhancer.harmonicGain = 1; p.bassEnhancer.levelDb = 6 }],
       ['bass harmonicGain=0', (p) => { p.bassEnhancer.enabled = true; p.bassEnhancer.harmonicGain = 0; p.bassEnhancer.mix = 1 }],
       ['loudComp auto vol=100', (p) => { p.loudnessCompensation.enabled = true; p.loudnessCompensation.mode = 'auto'; p.loudnessCompensation.volumePercent = 100; p.loudnessCompensation.maxBoostDb = 12 }],
@@ -195,7 +195,7 @@ describe('③ 零值参数直通（enabled=true 但语义应为直通）', () =>
     for (const [name, fn] of cases) {
       const p = allOffParams()
       fn(p)
-      const e = new EngineV3(FS, 2)
+      const e = new HyperSoundEngine(FS, 2)
       e.setParams(p)
       const l0 = l.slice()
       const r0 = r.slice()
@@ -209,7 +209,7 @@ describe('③ 零值参数直通（enabled=true 但语义应为直通）', () =>
 
 describe('⑤ 尾块/自激检查（输入停止后有界、衰减、非自激）', () => {
   it('引擎默认链：长时间零输入无自激/DC 泄漏（<1e-9）', () => {
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(createDefaultParams(FS))
     const B = 480
     const sig = sine(B, 440, 0.7, FS)
@@ -236,7 +236,7 @@ describe('⑤ 尾块/自激检查（输入停止后有界、衰减、非自激�
     p.reverb.algorithmic.damping = 0.5
     p.reverb.algorithmic.wet = 0.3
     p.reverb.algorithmic.dry = 0.7
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(p)
     const B = 480
     const sig = sine(B, 440, 0.7, FS)
@@ -270,7 +270,7 @@ describe('⑤ 尾块/自激检查（输入停止后有界、衰减、非自激�
     for (let i = 0; i < M; i++) ir[i] = Math.exp(-i / (0.1 * FS))
     p.reverb.convolution.ir = ir
     p.reverb.convolution.mix = 0.3
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(p)
     const B = 128 // AudioWorklet 典型块长
     const l = sine(B, 220, 0.5, FS)
@@ -295,7 +295,7 @@ describe('⑥ 场景与组合链路', () => {
     const l = sine(B, 330, 0.5, FS)
     const r = zeros(B)
     for (const sc of SCENE_PRESETS) {
-      const e = new EngineV3(FS, 2)
+      const e = new HyperSoundEngine(FS, 2)
       e.setParams(sc.params)
       const out = new Float32Array(B)
       let peak = 0
@@ -311,7 +311,7 @@ describe('⑥ 场景与组合链路', () => {
   })
 
   it('场景 A→B→A 热切换无 NaN、无爆音（边界跳变 << 稳态）', () => {
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     const B = 128
     const l = sine(B, 440, 0.4, FS)
     const r = zeros(B)
@@ -340,7 +340,7 @@ describe('⑦ 响度归一化：启动不膨胀', () => {
     p.loudnessNormalization.useRealtimeMeter = true
     p.loudnessNormalization.targetLufs = -14
     p.loudnessNormalization.maxGainDb = 9
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(p)
     const B = 480
     const l = sine(B, 440, 0.5, FS)
@@ -360,7 +360,7 @@ describe('⑦ 响度归一化：启动不膨胀', () => {
     p.loudnessNormalization.enabled = true
     p.loudnessNormalization.useRealtimeMeter = false
     p.loudnessNormalization.externalGainDb = 0
-    const e = new EngineV3(FS, 2)
+    const e = new HyperSoundEngine(FS, 2)
     e.setParams(p)
     const B = 480
     const l = sine(B, 440, 0.5, FS)

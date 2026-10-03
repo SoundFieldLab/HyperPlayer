@@ -7,16 +7,16 @@
 
 import { useState } from 'react'
 import { Copy, ClipboardPaste, FileAudio, Cpu, Info } from 'lucide-react'
-import type { V3Theme } from './theme'
-import type { V3UiBridge } from './bridge'
+import type { HSETheme } from './theme'
+import type { HSEUiBridge } from './bridge'
 import { ActionButton, GlassCard, InfoLine, SectionTitle } from './primitives'
-import type { V3ParamsController } from './hooks'
+import type { HSEParamsController } from './hooks'
 
 export interface SharePanelProps {
-  controller: V3ParamsController
-  bridge: V3UiBridge
-  theme: V3Theme
-  /** 离线导出（融合侧实现：解码 → EngineV3.process → lamejs MP3） */
+  controller: HSEParamsController
+  bridge: HSEUiBridge
+  theme: HSETheme
+  /** 离线导出（融合侧实现：解码 → HyperSoundEngine.process → lamejs MP3） */
   exportMp3?: (() => Promise<void>) | null
   /** 导出进行中状态由父级管理 */
   exporting?: boolean

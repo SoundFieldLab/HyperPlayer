@@ -7,9 +7,9 @@
 
 import { useRef } from 'react'
 import { Activity, Mic2, Moon, Shield, Sparkles, Music, Columns2 } from 'lucide-react'
-import type { V3Theme } from './theme'
+import type { HSETheme } from './theme'
 import { InfoLine, Modal, Segmented, Slider, Toggle } from './primitives'
-import type { V3ParamsController } from './hooks'
+import type { HSEParamsController } from './hooks'
 
 /* ─────────────────────────── X-Y 触控板（声场拟物化） ─────────────────────────── */
 
@@ -24,7 +24,7 @@ function XYPad({ x, y, xMin, xMax, yMin, yMax, xCenter, yCenter, onChange, theme
   xCenter: number
   yCenter: number
   onChange: (x: number, y: number) => void
-  theme: V3Theme
+  theme: HSETheme
   xLabels: { pos: number; label: string }[]
   yLabels: { pos: number; label: string }[]
 }) {
@@ -96,7 +96,7 @@ function CompressorCurve({ thresholdDb, ratio, kneeDb, makeupDb, theme }: {
   ratio: number
   kneeDb: number
   makeupDb: number
-  theme: V3Theme
+  theme: HSETheme
 }) {
   const xMin = -60, xMax = 0
   const xPx = (db: number) => 10 + ((db - xMin) / (xMax - xMin)) * 95
@@ -146,7 +146,7 @@ function CompressorCurve({ thresholdDb, ratio, kneeDb, makeupDb, theme }: {
 
 /* ─────────────────────────── 动态压缩 ─────────────────────────── */
 
-export function CompressorModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function CompressorModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const c = params.compressor
   return (
@@ -170,7 +170,7 @@ export function CompressorModal({ controller, theme, onClose }: { controller: V3
 
 /* ─────────────────────────── 齿音抑制 ─────────────────────────── */
 
-export function DeesserModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function DeesserModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const d = params.deesser
   return (
@@ -202,7 +202,7 @@ export function DeesserModal({ controller, theme, onClose }: { controller: V3Par
 
 /* ─────────────────────────── 夜间模式 ─────────────────────────── */
 
-export function NightModeModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function NightModeModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const n = params.nightMode
   return (
@@ -220,7 +220,7 @@ export function NightModeModal({ controller, theme, onClose }: { controller: V3P
 
 /* ─────────────────────────── 限幅器 ─────────────────────────── */
 
-export function LimiterModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function LimiterModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const l = params.limiter
   return (
@@ -252,7 +252,7 @@ export const IEQ_CURVES: { value: 'flat' | 'warm' | 'bright' | 'vocal'; label: s
   { value: 'vocal', label: '人声', hint: '突出人声频段' },
 ]
 
-export function IeqModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function IeqModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const ieq = params.ieq
   return (
@@ -284,7 +284,7 @@ export function IeqModal({ controller, theme, onClose }: { controller: V3ParamsC
 
 /* ─────────────────────────── 变速变调 ─────────────────────────── */
 
-export function PitchModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function PitchModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const pitch = params.pitch
   return (
@@ -303,7 +303,7 @@ export function PitchModal({ controller, theme, onClose }: { controller: V3Param
 
 /* ─────────────────────────── 立体声宽度 ─────────────────────────── */
 
-export function StereoWidthModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function StereoWidthModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const p = params
   const vb = p.pitch.voiceBalance
@@ -336,7 +336,7 @@ export function StereoWidthModal({ controller, theme, onClose }: { controller: V
 }
 
 /* 聚合导出：动态/调音类弹窗按 key 分发 */
-export function DynamicsModal({ effectKey: key, controller, theme, onClose }: { effectKey: 'compressor' | 'deesser' | 'nightMode' | 'limiter' | 'ieq' | 'pitch' | 'stereoWidth'; controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function DynamicsModal({ effectKey: key, controller, theme, onClose }: { effectKey: 'compressor' | 'deesser' | 'nightMode' | 'limiter' | 'ieq' | 'pitch' | 'stereoWidth'; controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   if (key === 'compressor') return <CompressorModal controller={controller} theme={theme} onClose={onClose} />
   if (key === 'deesser') return <DeesserModal controller={controller} theme={theme} onClose={onClose} />
   if (key === 'nightMode') return <NightModeModal controller={controller} theme={theme} onClose={onClose} />

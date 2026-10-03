@@ -9,9 +9,9 @@ import { Sparkles, Save, RotateCcw, Trash2, Volume2, Gauge, PencilRuler, FileDow
 import { GlassCard, Toggle, RangeStyle } from '../components/Primitives'
 import DevSceneEditor from '../components/DevSceneEditor'
 import type { HSETheme } from '../hse-theme'
-import { MAX_MY_SCENES, type V3UiBridge } from '../bridge'
+import { MAX_MY_SCENES, type HSEUiBridge } from '../bridge'
 import { isDevMode, HSE_DEV_MODE_EVENT } from '../sceneStore'
-import type { V3ParamsController } from '../hooks'
+import type { HSEParamsController } from '../hooks'
 import {
   EFFECT_META, effectEnabled, patchEffectEnabled,
 } from '../effectsPanel'
@@ -20,8 +20,8 @@ import type { ScenePreset } from '../../src/types'
 import { createDefaultParams } from '../../src/types'
 
 interface ScenesPageProps {
-  bridge: V3UiBridge
-  controller: V3ParamsController
+  bridge: HSEUiBridge
+  controller: HSEParamsController
   theme: HSETheme
   onOpenEffect: (key: string) => void
 }

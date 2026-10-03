@@ -24,12 +24,12 @@
  *    经四轮参数调平后回到契约界内（实测 -22.4dB），特性化断言已反转。
  */
 import { describe, it, expect } from 'vitest'
-import { EngineV3 } from '../src/engine/EngineV3'
+import { HyperSoundEngine } from '../src/engine/HyperSoundEngine'
 import { SCENE_PRESETS, SCENE_IDS } from '../src/engine/ScenePresets'
 import { encodeShareCode, decodeShareCode, SHARE_CODEC_VERSION } from '../src/engine/ShareCodec'
 import { createDefaultParams } from '../src/types'
 import { fft, hannWindow, magnitudeSpectrum, frequencyBins } from '../src/dsp/fft'
-import type { V3EngineParams } from '../src/types'
+import type { HSEEngineParams } from '../src/types'
 
 const FS = 48000
 /** 频响测量频带（倍频程，避开直流 bin 与 Nyquist） */
@@ -118,8 +118,8 @@ function makeNoisePair(n: number, amp = 0.25, seed = 1234): { L: Float32Array; R
 }
 
 /** 用参数 p 处理立体声输入，返回输出与单声道下混 */
-function runEngine(p: V3EngineParams, L: Float32Array, R: Float32Array, engine?: EngineV3): { oL: Float32Array; oR: Float32Array; mono: Float32Array; engine: EngineV3 } {
-  const e = engine ?? new EngineV3(FS)
+function runEngine(p: HSEEngineParams, L: Float32Array, R: Float32Array, engine?: HyperSoundEngine): { oL: Float32Array; oR: Float32Array; mono: Float32Array; engine: HyperSoundEngine } {
+  const e = engine ?? new HyperSoundEngine(FS)
   e.setParams(p)
   const oL = new Float32Array(L.length)
   const oR = new Float32Array(R.length)
@@ -141,7 +141,7 @@ function peakOf(x: Float32Array): number {
   return p
 }
 
-function getScene(id: string): V3EngineParams {
+function getScene(id: string): HSEEngineParams {
   for (const sc of SCENE_PRESETS) if (sc.id === id) return sc.params
   throw new Error('unknown scene ' + id)
 }
@@ -177,7 +177,7 @@ function makeRawShare(paramsJson: string, version: number = SHARE_CODEC_VERSION)
 }
 
 /** 解码并应用后做链路健康断言（无 NaN、峰值有界、能量不异常） */
-function assertApplySafe(p: V3EngineParams, label: string): void {
+function assertApplySafe(p: HSEEngineParams, label: string): void {
   const { L, R } = makeNoisePair(32768, 0.25, 999)
   const { oL, oR } = runEngine(p, L, R)
   expect(countNaN(oL), label + ' L 无 NaN').toBe(0)
@@ -250,7 +250,7 @@ describe('B. 场景热切换 A→B→A（参数热切换，状态不重置）', 
     }
     const BLOCK = 1024
     const seq: string[] = [...SCENE_IDS, 'pop'] // A→B→…→A
-    const e = new EngineV3(FS)
+    const e = new HyperSoundEngine(FS)
     e.setParams(getScene(seq[0]))
     const oL = new Float32Array(N)
     const oR = new Float32Array(N)
@@ -303,7 +303,7 @@ describe('B. 场景热切换 A→B→A（参数热切换，状态不重置）', 
       R[i] = 0.3 * Math.sin((2 * Math.PI * 1200 * i) / FS) + 0.08 * Math.sin((2 * Math.PI * 330 * i) / FS)
     }
     const BLOCK = 1024
-    const e = new EngineV3(FS)
+    const e = new HyperSoundEngine(FS)
     e.setParams(pA)
     const oL = new Float32Array(N)
     const oR = new Float32Array(N)
@@ -451,9 +451,9 @@ describe('D. 双路径一致性（热切换连续性 + stats）', () => {
     p.reverb.enabled = true
     p.reverb.mode = 'algorithmic'
     p.loudnessCompensation.enabled = true
-    const e1 = new EngineV3(FS)
+    const e1 = new HyperSoundEngine(FS)
     e1.setParams(p)
-    const e2 = new EngineV3(FS)
+    const e2 = new HyperSoundEngine(FS)
     e2.setParams(p)
     e2.setParams(p) // 额外重复一次相同参数
     const o1 = new Float32Array(N)
@@ -470,7 +470,7 @@ describe('D. 双路径一致性（热切换连续性 + stats）', () => {
   })
 
   it('stats 数值合理：LUFS∈(-70,0)、limiterReductionDb≤0、latency≥0、peakDb≤0', () => {
-    const e = new EngineV3(FS)
+    const e = new HyperSoundEngine(FS)
     const N = FS * 2 // 2s
     const L = new Float32Array(N)
     const R = new Float32Array(N)
@@ -499,7 +499,7 @@ describe('D. 双路径一致性（热切换连续性 + stats）', () => {
   })
 
   it('场景热切换后分析路径（getAnalysis）仍返回有限频谱与特征', () => {
-    const e = new EngineV3(FS)
+    const e = new HyperSoundEngine(FS)
     const N = FS // 1s
     const { L, R } = makeNoisePair(N, 0.3, 555)
     // 依次应用 3 个场景，最后取分析
@@ -531,7 +531,7 @@ describe('E. EQ Q 补偿 + LoudnessComp 组合', () => {
   const { L, R, mono: inMono } = makeNoisePair(N, 0.25, 777)
   const inSpec = avgSpectrumDb(inMono)
 
-  function comboParams(lcMode: 'preset' | 'auto', lcPreset: string): V3EngineParams {
+  function comboParams(lcMode: 'preset' | 'auto', lcPreset: string): HSEEngineParams {
     const p = createDefaultParams(FS)
     p.eq.enabled = true
     p.eq.qCompensation = true
@@ -571,7 +571,7 @@ describe('E. EQ Q 补偿 + LoudnessComp 组合', () => {
 
   it('组合处理 1s 噪声后切静音：2s 内输出衰减至 <1e-3（无自激/DC 累计）', () => {
     const p = comboParams('auto', 'flat')
-    const e = new EngineV3(FS)
+    const e = new HyperSoundEngine(FS)
     const n1 = FS
     const { L, R } = makeNoisePair(n1, 0.3, 321)
     const O = new Float32Array(n1)
@@ -601,7 +601,7 @@ describe('F. 场景处理后静音衰减（无自激/DC 累计）', () => {
     const Z = new Float32Array(n1)
     const O = new Float32Array(n1)
     for (const sc of SCENE_PRESETS) {
-      const e = new EngineV3(FS)
+      const e = new HyperSoundEngine(FS)
       e.setParams(sc.params)
       e.process([L, R], [O, O])
       let last = Infinity

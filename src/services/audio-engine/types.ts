@@ -24,7 +24,7 @@ import type { PlaybackTimeStore } from '../../audio/playbackTimeStore'
  * import 列表里加一行，不需要改 switch-case 或写死版本列表。
  */
 export interface EngineManifest {
-  /** 引擎唯一标识（如 'v1'/'v2'/'v3'，未来 'v4'...），用作 localStorage key 和切换按钮 key */
+  /** 引擎唯一标识（如 'hse'，未来新引擎加新 id...），用作 localStorage key 和切换按钮 key */
   readonly id: string
   /** 引擎显示名（切换按钮 tooltip / 适配层日志用），由引擎自己声明 */
   readonly displayName: string

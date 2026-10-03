@@ -10,15 +10,15 @@
 import React from 'react'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { render, fireEvent, screen, cleanup } from '@testing-library/react'
-import { EngineV3 } from '../src/engine/EngineV3'
-import { createV3UiBridge } from './bridge'
-import V3MixingStudio from './V3MixingStudio'
+import { HyperSoundEngine } from '../src/engine/HyperSoundEngine'
+import { createHSEUiBridge } from './bridge'
+import HSEMixingStudio from './HSEMixingStudio'
 import { encodeShareCode, decodeShareCode } from '../src/engine/ShareCodec'
 
 function makeUi() {
-  const engine = new EngineV3(48000, 2)
-  const bridge = createV3UiBridge(engine, 48000)
-  const view = render(<V3MixingStudio bridge={bridge} playerTheme="dark" onClose={() => undefined} />)
+  const engine = new HyperSoundEngine(48000, 2)
+  const bridge = createHSEUiBridge(engine, 48000)
+  const view = render(<HSEMixingStudio bridge={bridge} playerTheme="dark" onClose={() => undefined} />)
   return { engine, bridge, view }
 }
 
@@ -27,7 +27,7 @@ function clickNav(label: string) {
   fireEvent.click(screen.getAllByText(label)[0])
 }
 
-describe('V3 调音室 UI 冒烟', () => {
+describe('HSE 调音室 UI 冒烟', () => {
   beforeEach(() => cleanup())
 
   it('主面板渲染：标题 + 8 导航项 + 默认主页', () => {

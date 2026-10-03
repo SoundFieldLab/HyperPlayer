@@ -2,22 +2,22 @@
  * v3 引擎接线（HyperPlayer 融合层，依据模块 docs/FUSION_GUIDE.md 步骤 2b/4/5 与 docs/UI_GUIDE.md §4）
  *
  * 职责：
- *  - EngineV3Host 单例管理（worklet 优先 / script 兜底，masterGain 全断重连防双链并联）；
- *  - 参数快照持久化（localStorage 'hyperplayer:v3-params'，卷积 IR 数组不入库）；
+ *  - HyperSoundEngineHost 单例管理（worklet 优先 / script 兜底，masterGain 全断重连防双链并联）；
+ *  - 参数快照持久化（localStorage 'hyperplayer:hse-params'，卷积 IR 数组不入库）；
  *  - UI 桥包装：worklet 模式下参数需同时下发主线程引擎与 worklet 处理器（host.setParams），
  *    统计优先取 worklet 周期回传值；script 模式下两者同源；
  *  - 系统音量 → 等响度补偿（loudnessCompensation.volumePercent）；
- *  - 听力测试纯音播放（监听 UI 的 'v3HearingPlay' 事件，用音频图上下文合成正弦）；
- *  - 离线 MP3 导出（解码 PCM → EngineV3.process 分块 → Float32→Int16 → lamejs MP3 128kbps 下载）。
+ *  - 听力测试纯音播放（监听 UI 的 'hseHearingPlay' 事件，用音频图上下文合成正弦）；
+ *  - 离线 MP3 导出（解码 PCM → HyperSoundEngine.process 分块 → Float32→Int16 → lamejs MP3 128kbps 下载）。
  *
  * 与 v1/v2 完全独立：不做参数迁移；切换只保证音频正常切到 v3 处理。
  */
 
-import { EngineV3Host, createDefaultParams } from './src/index'
-import { EngineV3 } from './src/engine/EngineV3'
-import type { V3EngineParams } from './src/types'
-import { createV3UiBridge, deepMerge } from './ui'
-import type { V3UiBridge, DeepPartial } from './ui'
+import { HyperSoundEngineHost, createDefaultParams } from './src/index'
+import { HyperSoundEngine } from './src/engine/HyperSoundEngine'
+import type { HSEEngineParams } from './src/types'
+import { createHSEUiBridge, deepMerge } from './ui'
+import type { HSEUiBridge, DeepPartial } from './ui'
 // 变速变调：v3 引擎链内 Stretch 为离线语义（不内联实时主链），实时变速变调
 // 复用 HyperPlayer 既有 SoundTouch AudioWorklet 方案（与 v1/v2 同款），串接在
 // masterGain 与 v3 处理节点之间（masterGain → SoundTouch → v3 → analyser）。
@@ -66,34 +66,36 @@ export async function ensureLameEncoder(): Promise<LameMp3EncoderCtor> {
 }
 
 /** 参数持久化键（v3 独立命名空间） */
-const PARAMS_KEY = 'hyperplayer:v3-params'
+const PARAMS_KEY = 'hyperplayer:hse-params'
+/** V3→HSE 命名统一前的历史键：restoreParams 时一次性迁移后移除 */
+const LEGACY_PARAMS_KEY = 'hyperplayer:v3-params'
 /** 听力测试纯音时长（UI_GUIDE §4：约 0.6s） */
 const HEARING_TONE_SECONDS = 0.6
 
-/** 音频图句柄（与 src/hooks/useAudioPlayer.ts 的 AudioGraphHandle 结构一致；鸭子类型传入 EngineV3Host） */
-export interface V3GraphHandle {
+/** 音频图句柄（与 src/hooks/useAudioPlayer.ts 的 AudioGraphHandle 结构一致；鸭子类型传入 HyperSoundEngineHost） */
+export interface HSEGraphHandle {
   audioContext: AudioContext
   masterGain: GainNode
   analyser: AnalyserNode
 }
 
-let host: EngineV3Host | null = null
-let wrappedBridge: V3UiBridge | null = null
-let bridgedEngine: EngineV3 | null = null
-let currentParams: V3EngineParams | null = null
-let lastHandle: V3GraphHandle | null = null
+let host: HyperSoundEngineHost | null = null
+let wrappedBridge: HSEUiBridge | null = null
+let bridgedEngine: HyperSoundEngine | null = null
+let currentParams: HSEEngineParams | null = null
+let lastHandle: HSEGraphHandle | null = null
 let hearingTone: { osc: OscillatorNode; gain: GainNode } | null = null
 let onHearingPlay: ((e: Event) => void) | null = null
 let persistTimer: number | null = null
 
 /** 快照入库前去除不可序列化数据（卷积 IR 数组 → 仅保留 irName 引用，与 ui/bridge.ts 语义一致） */
-function sanitizeForStorage(p: V3EngineParams): V3EngineParams {
-  const clone = JSON.parse(JSON.stringify(p)) as V3EngineParams
+function sanitizeForStorage(p: HSEEngineParams): HSEEngineParams {
+  const clone = JSON.parse(JSON.stringify(p)) as HSEEngineParams
   if (clone.reverb?.convolution) clone.reverb.convolution.ir = null
   return clone
 }
 
-function persistParams(p: V3EngineParams): void {
+function persistParams(p: HSEEngineParams): void {
   if (persistTimer !== null) window.clearTimeout(persistTimer)
   persistTimer = window.setTimeout(() => {
     persistTimer = null
@@ -106,12 +108,21 @@ function persistParams(p: V3EngineParams): void {
 }
 
 /** 恢复持久化参数：结构与默认值深合并（容错坏数据/旧版本缺字段），失败回默认 */
-function restoreParams(sampleRate: number): V3EngineParams {
+function restoreParams(sampleRate: number): HSEEngineParams {
   const base = createDefaultParams(sampleRate)
   try {
-    const raw = localStorage.getItem(PARAMS_KEY)
+    // 历史键迁移（V3→HSE 命名统一）：旧 hyperplayer:v3-params 一次性搬到新键，用户参数不丢
+    let raw = localStorage.getItem(PARAMS_KEY)
+    if (!raw) {
+      const legacy = localStorage.getItem(LEGACY_PARAMS_KEY)
+      if (legacy) {
+        localStorage.setItem(PARAMS_KEY, legacy)
+        localStorage.removeItem(LEGACY_PARAMS_KEY)
+        raw = legacy
+      }
+    }
     if (!raw) return base
-    const saved = JSON.parse(raw) as DeepPartial<V3EngineParams>
+    const saved = JSON.parse(raw) as DeepPartial<HSEEngineParams>
     if (!saved || typeof saved !== 'object') return base
     // 深合并（saved 覆盖 base），保证新增字段有默认值；采样率以当前上下文为准
     const merged = deepMerge(base, saved)
@@ -166,13 +177,13 @@ let soundtouchCtx: AudioContext | null = null
 let pitchSeq = 0
 
 /** 变速变调是否处于激活状态（开关开启且 semitones/rate 非默认） */
-function pitchActive(p: V3EngineParams | null): boolean {
+function pitchActive(p: HSEEngineParams | null): boolean {
   if (!p || !p.pitch?.enabled) return false
   return Math.abs(p.pitch.semitones) > 1e-9 || Math.abs(p.pitch.rate - 1) > 1e-9
 }
 
 /** 把 pitch 参数写到 SoundTouch 节点（AudioParam 平滑过渡，与 v2 applyPitchSettings 一致） */
-function applySoundTouchParams(node: SoundTouchNode, ctx: AudioContext, pitch: V3EngineParams['pitch']): void {
+function applySoundTouchParams(node: SoundTouchNode, ctx: AudioContext, pitch: HSEEngineParams['pitch']): void {
   try {
     const t = ctx.currentTime
     node.pitchSemitones.setTargetAtTime(pitch.semitones, t, 0.02)
@@ -259,8 +270,8 @@ async function syncPitchChain(): Promise<void> {
  * 把 v3 引擎接入音频图（幂等：同一 handle 重复调用直接复用）。
  * 语义与 v1/v2 attach 一致：masterGain 全断 → v3 处理节点 → analyser。
  */
-export async function attachV3Engine(handle: V3GraphHandle): Promise<void> {
-  if (!host) host = new EngineV3Host({ mode: 'auto', workletUrl: './v3-worklet.js' })
+export async function attachHSE(handle: HSEGraphHandle): Promise<void> {
+  if (!host) host = new HyperSoundEngineHost({ mode: 'auto', workletUrl: './hse-worklet.js' })
   lastHandle = handle
   const fs = handle.audioContext.sampleRate
 
@@ -284,22 +295,22 @@ export async function attachV3Engine(handle: V3GraphHandle): Promise<void> {
       if (!detail || typeof detail.freqHz !== 'number') return
       if (lastHandle) startHearingTone(lastHandle.audioContext, detail.freqHz, detail.levelDb ?? -20)
     }
-    window.addEventListener('v3HearingPlay', onHearingPlay)
+    window.addEventListener('hseHearingPlay', onHearingPlay)
   }
 }
 
 /** 构建或复用 UI 桥（包装 worklet 模式下参数/统计的同步下发与回传） */
-function ensureBridge(fs: number): V3UiBridge {
-  if (!host) host = new EngineV3Host({ mode: 'auto', workletUrl: './v3-worklet.js' })
+function ensureBridge(fs: number): HSEUiBridge {
+  if (!host) host = new HyperSoundEngineHost({ mode: 'auto', workletUrl: './hse-worklet.js' })
   if (wrappedBridge === null || bridgedEngine !== host.engine) {
-    const raw = createV3UiBridge(host.engine, fs)
+    const raw = createHSEUiBridge(host.engine, fs)
     // setParams 值相等短路：拖拽/滑块高频路径每次 patch 的真实代价是 3 次整参数
     // JSON 深拷贝 + 双 setParams（15 级链全量重配）+ worklet postMessage + 全页重渲染；
     // 值未变化时（球形拖拽静止帧、React 双调用等）一次 stringify 对比即可全跳过
     let lastParamsKey = ''
     wrappedBridge = {
       ...raw,
-      setParams: (p: V3EngineParams) => {
+      setParams: (p: HSEEngineParams) => {
         const key = JSON.stringify(p)
         if (key === lastParamsKey) return
         lastParamsKey = key
@@ -314,17 +325,17 @@ function ensureBridge(fs: number): V3UiBridge {
     }
     bridgedEngine = host.engine
     if (!currentParams) currentParams = restoreParams(fs)
-    // createV3UiBridge 构造时会重置为默认参数，这里立即同步为当前快照
+    // createHSEUiBridge 构造时会重置为默认参数，这里立即同步为当前快照
     wrappedBridge.setParams(currentParams)
   }
   return wrappedBridge
 }
 
 /** 切走/关闭：恢复 masterGain→analyser 直连（与 v2 dispose 同款语义） */
-export function detachV3Engine(): void {
+export function detachHSE(): void {
   stopHearingTone()
   if (onHearingPlay) {
-    window.removeEventListener('v3HearingPlay', onHearingPlay)
+    window.removeEventListener('hseHearingPlay', onHearingPlay)
     onHearingPlay = null
   }
   // 变速变调前置链先摘除（masterGain 的断开重连交给 host.dispose）
@@ -341,12 +352,12 @@ export function detachV3Engine(): void {
  * 音频图未接入时以默认引擎实例兜底创建（fs 按宿主惯例取 48000）；
  * 真实接入后若采样率不同，host 会重建引擎实例，桥随之重建并回放当前参数快照。
  */
-export function getV3Bridge(): V3UiBridge {
+export function getHSEBridge(): HSEUiBridge {
   return ensureBridge(48000)
 }
 
 /** 是否已接入音频图 */
-export function isV3Attached(): boolean {
+export function isHSEAttached(): boolean {
   return host !== null && host.getMode() !== null
 }
 
@@ -354,11 +365,11 @@ export function isV3Attached(): boolean {
  * 系统音量 → 等响度补偿（0-100）：LoudnessComp auto 模式按音量提升低/高频。
  * 无音量源时引擎默认 80；此函数仅更新 volumePercent 字段，是否生效由 mode 决定。
  */
-export function setV3SystemVolume(volumePercent: number): void {
+export function setHSESystemVolume(volumePercent: number): void {
   if (!wrappedBridge || !currentParams) return
   const v = Math.max(0, Math.min(100, Math.round(volumePercent)))
   if (currentParams.loudnessCompensation?.volumePercent === v) return
-  const next = JSON.parse(JSON.stringify(currentParams)) as V3EngineParams
+  const next = JSON.parse(JSON.stringify(currentParams)) as HSEEngineParams
   next.loudnessCompensation.volumePercent = v
   wrappedBridge.setParams(next)
 }
@@ -400,7 +411,7 @@ async function encodeMp3(channels: Float32Array[], sampleRate: number): Promise<
   return new Blob(chunks as BlobPart[], { type: 'audio/mpeg' })
 }
 
-export interface V3ExportOptions {
+export interface HSEExportOptions {
   /** 导出文件名基名（默认 HyperPlayer-HSE）；保存时自动追加 -Modified 后缀 */
   fileName?: string
 }
@@ -416,7 +427,7 @@ function sanitizeFileName(name: string): string {
  * 保存：Electron 下经 IPC 直写桌面（<歌曲名>-Modified.mp3，重名自动 (2) 序号）；
  * 非 Electron（网页/TV）退化为浏览器下载。
  */
-export async function exportV3Mp3(sourceUrl: string, durationSeconds: number, options?: V3ExportOptions): Promise<void> {
+export async function exportHSEMp3(sourceUrl: string, durationSeconds: number, options?: HSEExportOptions): Promise<void> {
   const ctx = lastHandle?.audioContext
   if (!ctx) throw new Error('音频引擎尚未就绪')
   if (!currentParams) currentParams = restoreParams(ctx.sampleRate)
@@ -430,7 +441,7 @@ export async function exportV3Mp3(sourceUrl: string, durationSeconds: number, op
   const minLen = Math.min(fs, decoded.length)
   const totalFrames = Math.max(minLen, Math.min(Math.floor(durationSeconds * fs), decoded.length))
 
-  const engine = new EngineV3(fs, 2)
+  const engine = new HyperSoundEngine(fs, 2)
   engine.setParams(currentParams)
 
   // 快照导出开始时的参数，处理期间参数变化不影响本次导出。

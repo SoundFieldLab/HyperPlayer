@@ -13,7 +13,7 @@
  */
 
 import { createDefaultParams, PRO_EQ_DEFAULT_BANDS } from '../types'
-import type { ScenePreset, V3EngineParams } from '../types'
+import type { ScenePreset, HSEEngineParams } from '../types'
 
 /** 11 个场景 id（顺序固定，与 SCENE_PRESETS 一一对应） */
 export const SCENE_IDS = [
@@ -34,13 +34,13 @@ export const SCENE_IDS = [
 const SNAPSHOT_FS = 48000
 
 /** 由默认参数派生一个场景基础快照 */
-function base(): V3EngineParams {
+function base(): HSEEngineParams {
   const p = createDefaultParams(SNAPSHOT_FS)
   return p
 }
 
 /** 用 10 段增益（对应 PRO_EQ_DEFAULT_BANDS 频率）覆盖专业 EQ 曲线 */
-function applyEqCurve(p: V3EngineParams, gains: number[]): void {
+function applyEqCurve(p: HSEEngineParams, gains: number[]): void {
   const list = PRO_EQ_DEFAULT_BANDS.map((f, i) => ({
     frequency: f,
     gain: gains[i] ?? 0,
@@ -53,7 +53,7 @@ function applyEqCurve(p: V3EngineParams, gains: number[]): void {
 }
 
 /** 便捷函数：开启算法混响并设定参数（仅空间类场景使用——混响是空间语义，非空间场景保持干声） */
-function setReverb(p: V3EngineParams, opts: {
+function setReverb(p: HSEEngineParams, opts: {
   type: 'hall' | 'room' | 'plate' | 'spring' | 'stage'
   roomSize: number
   damping: number
@@ -78,12 +78,12 @@ function setReverb(p: V3EngineParams, opts: {
  *  引擎继续直通（路由条件是 enabled && mode !== 'off'），看起来"开不动"，
  *  用户得进二级选项卡手动切到 algorithmic 才有声。mode='off' 只应由用户在
  *  二级选项卡里手动选"关闭"时设。 */
-function disableReverb(p: V3EngineParams): void {
+function disableReverb(p: HSEEngineParams): void {
   p.reverb.enabled = false
   p.reverb.mode = 'algorithmic'
 }
 
-function setCompressor(p: V3EngineParams, opts: {
+function setCompressor(p: HSEEngineParams, opts: {
   thresholdDb: number
   ratio: number
   kneeDb?: number
@@ -100,7 +100,7 @@ function setCompressor(p: V3EngineParams, opts: {
   p.compressor.makeupDb = opts.makeupDb ?? 0
 }
 
-function setBass(p: V3EngineParams, opts: {
+function setBass(p: HSEEngineParams, opts: {
   cutoffHz?: number
   q?: number
   harmonicType?: 'odd' | 'even' | 'atan' | 'soft'
@@ -119,7 +119,7 @@ function setBass(p: V3EngineParams, opts: {
   p.bassEnhancer.lowBoostDb = opts.lowBoostDb ?? 0
 }
 
-function setDeesser(p: V3EngineParams, opts: {
+function setDeesser(p: HSEEngineParams, opts: {
   centerHz?: number
   q?: number
   thresholdDb?: number
@@ -136,7 +136,7 @@ function setDeesser(p: V3EngineParams, opts: {
   p.deesser.mix = opts.mix ?? 1
 }
 
-function finish(p: V3EngineParams, id: string): ScenePreset {
+function finish(p: HSEEngineParams, id: string): ScenePreset {
   p.sceneId = id
   p.customized = false
   return { id, name: '', builtin: true, params: p }

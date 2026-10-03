@@ -10,14 +10,14 @@ import { Volume2, Power, Music2, Zap, AudioLines } from 'lucide-react'
 import { GlassCard, Toggle, Slider, RangeStyle } from '../components/Primitives'
 import { WaveformVisualizer } from '../components/WaveformVisualizer'
 import type { HSETheme } from '../hse-theme'
-import type { V3UiBridge } from '../bridge'
-import type { V3ParamsController } from '../hooks'
+import type { HSEUiBridge } from '../bridge'
+import type { HSEParamsController } from '../hooks'
 import type { EngineStats } from '../../src/types'
 import { createDefaultParams } from '../../src/types'
 
 interface HomePageProps {
-  bridge: V3UiBridge
-  controller: V3ParamsController
+  bridge: HSEUiBridge
+  controller: HSEParamsController
   theme: HSETheme
   onOpenEffect: (key: string) => void
   /** 跳转到指定页面（如场景预设页） */
@@ -42,7 +42,7 @@ const AMBIENCE_OPTIONS = [
 ] as const
 
 /** 是否任一「音效类」模块启用（系统音效总开关状态；EQ/限幅为默认开启的保护项，不计入） */
-function anyEffectOn(p: ReturnType<V3UiBridge['getParams']>): boolean {
+function anyEffectOn(p: ReturnType<HSEUiBridge['getParams']>): boolean {
   return p.reverb.enabled || p.surround3d.enabled || p.bassEnhancer.enabled ||
     p.compressor.enabled || p.nightMode.enabled || p.deesser.enabled ||
     p.ieq.enabled || p.pitch.enabled ||

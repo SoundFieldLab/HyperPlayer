@@ -27,16 +27,16 @@
     "lint": "tsc --noEmit",
     "check:ports": "node scripts/check-ports.mjs",
     "check:packaging": "node scripts/check-packaging.mjs",
-    "prebuild": "node scripts/build-v3-worklet.mjs",
+    "prebuild": "node scripts/build-hse-worklet.mjs",
     "test:installer": "node scripts/generate-installer-ui.mjs && node --test test/installer.test.cjs",
     "version:patch": "node scripts/bump-version.mjs patch",
     "version:minor": "node scripts/bump-version.mjs minor",
     "version:major": "node scripts/bump-version.mjs major",
     "version:pre": "node scripts/bump-version.mjs pre",
     "version:dry": "node scripts/bump-version.mjs --dry-run",
-    "build:v3-worklet": "node scripts/build-v3-worklet.mjs",
-    "predev": "node scripts/build-v3-worklet.mjs",
-    "predev:electron": "node scripts/build-v3-worklet.mjs"
+    "build:hse-worklet": "node scripts/build-hse-worklet.mjs",
+    "predev": "node scripts/build-hse-worklet.mjs",
+    "predev:electron": "node scripts/build-hse-worklet.mjs"
   },
   "build": {
     "appId": "com.hyperplayer.desktop",

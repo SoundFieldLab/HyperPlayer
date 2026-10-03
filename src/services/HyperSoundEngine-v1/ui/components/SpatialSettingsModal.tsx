@@ -239,14 +239,14 @@ export default function SpatialSettingsModal({ open, onClose, theme, spatial, on
             </button>
           </div>
 
-          {/* 输出模式：空间级内联 EngineV3（第 15 级，双耳渲染后立体声写出）——
+          {/* 输出模式：空间级内联 HyperSoundEngine（第 15 级，双耳渲染后立体声写出）——
               渲染管线固定为双耳输出；旧「立体声下混/多声道」按钮写的 output 字段
               引擎侧不存在（点击无效果），改为如实静态展示 */}
           <SectionTitle theme={theme} first>输出模式</SectionTitle>
           <InfoRow label="当前输出" value="双耳 Binaural" theme={theme} />
           <p className={`${theme.textMuted} text-[10px] mb-2`}>空间音频经 HRTF 双耳渲染后以立体声写出；立体声下混与多声道输出待后续版本接入。</p>
 
-          {/* 输出设备：空间音频已内联 EngineV3，原 fusion 层 enumerateDevices/setSinkId 已移除；
+          {/* 输出设备：空间音频已内联 HyperSoundEngine，原 fusion 层 enumerateDevices/setSinkId 已移除；
               标注「开发中」，后续 wave 接主播放器 AudioContext.setSinkId */}
           <SectionTitle theme={theme}>输出设备</SectionTitle>
           <div
@@ -260,7 +260,7 @@ export default function SpatialSettingsModal({ open, onClose, theme, spatial, on
             输出设备切换后续 wave 接入主播放器 AudioContext.setSinkId。
           </p>
 
-          {/* HRTF 数据集：空间音频由 EngineV3 的 analyticHrtf 提供合成解析 HRTF。 */}
+          {/* HRTF 数据集：空间音频由 HyperSoundEngine 的 analyticHrtf 提供合成解析 HRTF。 */}
           <SectionTitle theme={theme}>HRTF 数据集</SectionTitle>
           <div className="flex items-center justify-between py-1">
             <span className={`${theme.textTertiary} text-[11px]`}>当前数据集</span>

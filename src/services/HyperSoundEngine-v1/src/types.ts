@@ -6,7 +6,7 @@
  *  - research/docs/MIT套用与自研决策表.md（可套用/自研边界）
  *  - HyperPlayer v2（src/services/audio-effects-v2）参数命名与语义兼容（便于融合）
  *
- * 约定：所有参数为不可变快照语义；EngineV3.setParams 每次接收完整 V3EngineParams。
+ * 约定：所有参数为不可变快照语义；HyperSoundEngine.setParams 每次接收完整 HSEEngineParams。
  */
 
 import type {
@@ -230,7 +230,7 @@ export interface HearingSettings {
  * 空间音频设置（HyperSoundEngine 第 15 级内联；纯 TS——由 src/spatial/TsConvolverBackend 实现）。
  *
  * 设计：原独立 worklet/WASM 空间音频节点重写为纯 TS，作为 HyperSoundEngine 处理链第 15 级
- * （Limiter 之后、写输出之前）。参数并入 V3EngineParams，mode='off' 时旁路（逐位回归）。
+ * （Limiter 之后、写输出之前）。参数并入 HSEEngineParams，mode='off' 时旁路（逐位回归）。
  *
  * 本接口是 SpatialParams（src/spatial/types.ts）的精简版：去除 UI/全局字段
  * （output/perfMode/sinkId/keymap/multichannelChannels），perfMode 由直接的 hrtfInterp 表达。
@@ -325,11 +325,11 @@ export interface ScenePreset {
   description?: string
   builtin: boolean
   /** 完整引擎参数快照（不含 IR 数据，卷积 IR 用 irName 引用） */
-  params: V3EngineParams
+  params: HSEEngineParams
 }
 
 /** 引擎总参数（一次性快照） */
-export interface V3EngineParams {
+export interface HSEEngineParams {
   sampleRate: number
   eq: EqSettings
   deesser: DeesserSettings
@@ -359,7 +359,7 @@ export interface V3EngineParams {
 }
 
 /** 生成默认参数快照 */
-export function createDefaultParams(sampleRate: number): V3EngineParams {
+export function createDefaultParams(sampleRate: number): HSEEngineParams {
   return {
     sampleRate,
     eq: {

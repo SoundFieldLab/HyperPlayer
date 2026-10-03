@@ -7,13 +7,13 @@
  *  - 三级文本层级 textPrimary / textSecondary / textTertiary（暗/亮双主题）；
  *  - wf-glass-range 滑块（白色圆点 thumb + accent 光晕）与渐变填充轨道。
  *
- * 使用：`const ui = useV3Theme(playerTheme)` 后取 `ui.glassPanel` 等变量。
+ * 使用：`const ui = useHSETheme(playerTheme)` 后取 `ui.glassPanel` 等变量。
  * 本文件无第三方依赖（纯常量 + React hook），供 ui/ 下所有组件复用。
  */
 
 import { useEffect, useState } from 'react'
 
-export interface V3Theme {
+export interface HSETheme {
   dark: boolean
   accentColor: string
   /** 电光青→深邃紫线性渐变（激活态按钮背景，§A 主色） */
@@ -58,7 +58,7 @@ function useAccentColor(): string {
 }
 
 /** 构造 v3 UI 设计语言变量（每次渲染调用一次即可） */
-export function useV3Theme(playerTheme: 'dark' | 'light'): V3Theme {
+export function useHSETheme(playerTheme: 'dark' | 'light'): HSETheme {
   const dark = playerTheme === 'dark'
   const accentColor = useAccentColor()
   // §A 主色：电光青→深邃紫渐变（激活态按钮 + 滑块轨道，默认启用）
