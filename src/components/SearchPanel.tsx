@@ -113,11 +113,6 @@ export default function SearchPanel({
   onCopyInfo,
   onRestoreConsumed
 }: SearchPanelProps) {
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-  console.log('🔍 SearchPanel 渲染')
-  console.log('  playerTheme:', playerTheme)
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-  
   // 根据主题生成颜色类名
   const textPrimary = playerTheme === 'dark' ? 'text-white' : 'text-black'
   const textSecondary = playerTheme === 'dark' ? 'text-white/60' : 'text-black/60'

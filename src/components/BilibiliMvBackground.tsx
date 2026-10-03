@@ -45,6 +45,7 @@ import {
 import type { BilibiliVideo, CandidateSignals } from '../services/bilibiliApi'
 import type { LyricLine } from '../services/musicApi'
 import { clampMvBlur, resolveMvBackgroundQuality } from '../services/playbackPerformancePolicy'
+import { debugLog } from '../utils/debugLog'
 
 type MvBackgroundStatus = 'idle' | 'searching' | 'loading' | 'playing' | 'confirm' | 'none' | 'error'
 
@@ -219,7 +220,7 @@ async function findFallbackMvUrl(ctx: { songTitle: string; artists: string[]; so
     if (!mvResp.ok) return null
     const mvJson = await mvResp.json()
     const url = mvJson?.data?.url || mvJson?.url || ''
-    if (url) console.log('[MvBackground] 兜底命中 网易云 MV:', match.name, '→', url.slice(0, 60) + '…')
+    if (url) debugLog('[MvBackground] 兜底命中 网易云 MV:', match.name, '→', url.slice(0, 60) + '…')
     return url || null
   } catch (error) {
     console.warn('[MvBackground] 兜底搜索失败:', error)
@@ -521,7 +522,7 @@ export default function BilibiliMvBackground({
           if (playInfo.code !== 0 || !playInfo.cacheKey) throw new Error(playInfo.error || '获取播放地址失败')
           // 异步期间歌曲或同类请求已变化：丢弃旧结果。
           if (!isCurrentRequest()) {
-            console.log('[MvBackground] loadVideo 弃结果：请求已过期', expectedSongKey, '→', songKeyRef.current)
+            debugLog('[MvBackground] loadVideo 弃结果：请求已过期', expectedSongKey, '→', songKeyRef.current)
             return
           }
           const newVideoUrl = bilibiliStreamUrl(playInfo.cacheKey, 'video')
@@ -844,9 +845,9 @@ export default function BilibiliMvBackground({
     }
     // 无预载（普通切歌/预载失败）：旧 MV 立即隐藏，等新 MV 搜索加载好后淡入
     if (!preload) {
-      console.log('[MvBackground] commit 时无预载（未触发/已消费）→ 重新搜索', songTrackKey)
+      debugLog('[MvBackground] commit 时无预载（未触发/已消费）→ 重新搜索', songTrackKey)
     } else {
-      console.log('[MvBackground] commit 预载不可用（failed 或目标不匹配）', preload.trackKey, '≠', songTrackKey)
+      debugLog('[MvBackground] commit 预载不可用（failed 或目标不匹配）', preload.trackKey, '≠', songTrackKey)
     }
     searchAndLoad()
 
@@ -923,7 +924,7 @@ export default function BilibiliMvBackground({
       && transitionPreloadRef.current?.trackKey === target.trackKey
     // 标记预载进行中：commit 时主路径据此直接接管，跳过重新搜索/拉流（避免旧 MV 回显 1s）
     transitionPreloadRef.current = { trackKey: target.trackKey, failed: false }
-    console.log('[MvBackground] 过渡预载开始 →', target.trackKey, '| 当前歌:', songTrackKey)
+    debugLog('[MvBackground] 过渡预载开始 →', target.trackKey, '| 当前歌:', songTrackKey)
     const markFailed = () => {
       if (transitionPreloadRef.current?.trackKey === target.trackKey) {
         transitionPreloadRef.current = { trackKey: target.trackKey, failed: true }
@@ -945,7 +946,7 @@ export default function BilibiliMvBackground({
         const result = await findBestBilibiliMv(ctx, { signal: controller.signal })
         if (!isCurrentTransition()) return
         if (result.status === 'auto' && result.best) {
-          console.log('[MvBackground] 过渡预载命中 →', result.best.video.title || result.best.video.bvid, '| 开始拉流（仅缓冲，不切换）')
+          debugLog('[MvBackground] 过渡预载命中 →', result.best.video.title || result.best.video.bvid, '| 开始拉流（仅缓冲，不切换）')
           // 目标歌 fallback 仅在提交后成为当前歌时安装；预载不能覆盖当前歌的失败链。
           if (isCurrentTransition()) {
             transitionPreloadRef.current = {
@@ -982,7 +983,7 @@ export default function BilibiliMvBackground({
           )
         } else {
           // confirm/none/error 静默：标记失败，让主路径在提交后用完整上下文重新匹配（结果按歌缓存 24h）
-          console.log('[MvBackground] 过渡预载未命中（confirm/none/error）', result.status)
+          debugLog('[MvBackground] 过渡预载未命中（confirm/none/error）', result.status)
           markFailed()
         }
       } catch {
@@ -996,7 +997,7 @@ export default function BilibiliMvBackground({
       // 重新搜索 → 封面背景重载数秒（用户反复反馈的问题）。
       const currentTarget = transitionTargetRef.current
       if (currentTarget?.trackKey && currentTarget.trackKey !== target.trackKey) {
-        console.log('[MvBackground] 过渡目标被替换，清理旧预载', target.trackKey, '→', currentTarget.trackKey)
+        debugLog('[MvBackground] 过渡目标被替换，清理旧预载', target.trackKey, '→', currentTarget.trackKey)
         transitionPreloadRef.current = null
         if (transitionPreloadControllerRef.current === controller) transitionPreloadControllerRef.current = null
         controller.abort()
@@ -1014,7 +1015,7 @@ export default function BilibiliMvBackground({
           else setSlotBUrl(null)
         }
       } else if (currentTarget === null || currentTarget?.trackKey === undefined) {
-        console.log('[MvBackground] commit 后目标清空，保留预载给主路径接管', target.trackKey)
+        debugLog('[MvBackground] commit 后目标清空，保留预载给主路径接管', target.trackKey)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

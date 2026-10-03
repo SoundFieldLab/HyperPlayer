@@ -35,6 +35,7 @@ const WeatherDetailsModal = lazy(() => import('./WeatherDetailsModal'))
 const AppleWeatherCompactScene = lazy(() => import('./weatherScene/AppleWeatherCompactScene'))
 import DesktopTimeCenter from './DesktopTimeCenter'
 import { getCalendarFestivals } from '../utils/calendarFestivals'
+import { rafThrottle } from '../utils/rafThrottle'
 import { CountdownWidget, HabitsWidget, MemoWidget, NotesWidget } from './DesktopProductivityWidgets'
 import DesktopExtraWidget, { type DesktopMusicWidgetContext } from './DesktopExtraWidgets'
 import {
@@ -602,11 +603,14 @@ function DesktopWidgetZone({ side, settings, cardBlurAmount, accentColor, onOver
     const frame = window.requestAnimationFrame(updateScrollFades)
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateScrollFades) : null
     if (zoneRef.current) observer?.observe(zoneRef.current)
-    window.addEventListener('resize', updateScrollFades)
+    // 缩放时 resize 会连发，合并到一帧一次；滚动淡出只需读 scrollTop/clientHeight，无需每次事件都测
+    const handleResize = rafThrottle(updateScrollFades)
+    window.addEventListener('resize', handleResize)
     return () => {
       window.cancelAnimationFrame(frame)
       observer?.disconnect()
-      window.removeEventListener('resize', updateScrollFades)
+      window.removeEventListener('resize', handleResize)
+      handleResize.cancel()
     }
   }, [updateScrollFades, widgets])
 

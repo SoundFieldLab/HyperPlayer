@@ -6,6 +6,7 @@ import type { MusicPlatform } from '../services/platforms'
 import { useEffect, useLayoutEffect, useState, useRef } from 'react'
 
 import CachedImage from './CachedImage'
+import { rafThrottle } from '../utils/rafThrottle'
 import {
   applyFavoriteMutation,
   getFavoriteSongIdentifiers,
@@ -211,11 +212,14 @@ export default function SongContextMenu({
     }
 
     const animationFrame = window.requestAnimationFrame(updateSubmenuLayout)
-    window.addEventListener('resize', updateSubmenuLayout)
+    // 子菜单四向翻转要读三处 rect，缩放连发时合并到一帧算一次
+    const handleResize = rafThrottle(updateSubmenuLayout)
+    window.addEventListener('resize', handleResize)
 
     return () => {
       window.cancelAnimationFrame(animationFrame)
-      window.removeEventListener('resize', updateSubmenuLayout)
+      window.removeEventListener('resize', handleResize)
+      handleResize.cancel()
     }
   }, [showPlaylistSubmenu, userPlaylists.length, adjustedPosition.x, adjustedPosition.y])
 

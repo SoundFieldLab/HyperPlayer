@@ -15,6 +15,7 @@ import {
   useDesktopRealtimeSnapshot,
 } from '../desktopRealtimeStore'
 import { prepareLyricWords } from '../utils/lyricWordTiming'
+import { rafThrottle } from '../utils/rafThrottle'
 
 const DEFAULT_STATE: DesktopPlayerSnapshot = {
   song: null, lyric: null, playing: false, live: false, spectrum: [0, 0, 0, 0, 0], enabled: false,
@@ -195,10 +196,13 @@ function LyricText({ text, words, playing, lineStart, lineDuration, color, fille
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
     if (observer && viewportRef.current) observer.observe(viewportRef.current)
     if (observer && trackRef.current) observer.observe(trackRef.current)
-    window.addEventListener('resize', measure)
+    // 溢出宽度测量依赖 scrollWidth/clientWidth，缩放连发时合并到一帧测一次
+    const handleResize = rafThrottle(measure)
+    window.addEventListener('resize', handleResize)
     return () => {
       observer?.disconnect()
-      window.removeEventListener('resize', measure)
+      window.removeEventListener('resize', handleResize)
+      handleResize.cancel()
     }
   }, [convertedText, normalizedWords.length, traditional, vertical, lineStart, lineDuration])
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import type { DesktopPlayerSnapshot, DesktopPlayerControlAction, DesktopPlayerBridgeAPI } from '../electron'
 import { reconcileBoundaryParentheses } from '../utils/lyricBoundaryParentheses'
+import { rafThrottle } from '../utils/rafThrottle'
 import {
   getInterpolatedDesktopProgress,
   publishDesktopRealtime,
@@ -231,10 +232,13 @@ function LyricMarquee({ progress, lineStart, lineDuration, playing, contentKey, 
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
     if (observer && viewportRef.current) observer.observe(viewportRef.current)
     if (observer && trackRef.current) observer.observe(trackRef.current)
-    window.addEventListener('resize', measure)
+    // 跑马灯溢出宽度依赖 scrollWidth/clientWidth，缩放连发时合并到一帧测一次
+    const handleResize = rafThrottle(measure)
+    window.addEventListener('resize', handleResize)
     return () => {
       observer?.disconnect()
-      window.removeEventListener('resize', measure)
+      window.removeEventListener('resize', handleResize)
+      handleResize.cancel()
     }
   }, [contentKey])
 
@@ -472,9 +476,13 @@ export default function DesktopPlayerApp() {
   }, [])
 
   useEffect(() => {
-    const updateViewportHeight = () => setViewportHeight(window.innerHeight)
+    // 视口高度只参与布局钳制，缩放连发时合并到一帧取一次
+    const updateViewportHeight = rafThrottle(() => setViewportHeight(window.innerHeight))
     window.addEventListener('resize', updateViewportHeight)
-    return () => window.removeEventListener('resize', updateViewportHeight)
+    return () => {
+      window.removeEventListener('resize', updateViewportHeight)
+      updateViewportHeight.cancel()
+    }
   }, [])
 
 

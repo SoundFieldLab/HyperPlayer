@@ -16,6 +16,14 @@ interface CacheItem {
   lastAccess?: number // 最后访问时间
 }
 
+/**
+ * 访问统计的内存累计项（自上次 flush 以来的增量）
+ */
+interface PendingAccess {
+  increments: number // 累计命中次数，flush 时叠加到记录上
+  lastAccess: number // 最近一次命中时间
+}
+
 interface CacheStats {
   coverCount: number
   coverSize: number
@@ -45,7 +53,18 @@ class CacheManager {
   private readonly AUTO_CLEAR_SETTINGS_KEY = 'autoClearSettings'
   private readonly LAST_CLEAR_TIME_KEY = 'lastClearTime'
   private readonly PENDING_CLOSE_CLEAR_KEY = 'pendingCloseCacheClear'
-  
+  // 访问统计落盘周期；pending 上限：统计只影响 LRU 排序，不影响数据本体，
+  // 超限时丢弃最冷的一条即可（丢弃代价远小于在渲染线程上一次性落盘数百条含 base64 的记录）
+  private readonly ACCESS_FLUSH_INTERVAL = 30 * 1000
+  private readonly MAX_PENDING_ACCESS = 256
+
+  // 命中缓存的访问统计只在此累计（键为 localStorage 键，当前只有 cover_* 会被累计），
+  // 不再每次命中都同步 JSON.stringify + setItem：封面 item 内含 base64 数据（单图上限 10MB），
+  // 歌单滚动/反复切歌时逐次写盘是实打实的渲染线程阻塞。
+  private pendingAccess = new Map<string, PendingAccess>()
+  private accessFlushTimer: number | null = null
+  private accessFlushBound = false
+
   constructor() {
     // 默认缓存目录
     this.cacheDir = localStorage.getItem('cacheDirectory') || this.getDefaultCacheDir()
@@ -175,6 +194,9 @@ class CacheManager {
       accessCount: 1,
       lastAccess: Date.now()
     }
+
+    // 新记录自带最新统计，丢弃该 key 的 pending 以免旧增量叠加到新记录上
+    this.dropPendingAccess(key)
     
     try {
       localStorage.setItem(key, JSON.stringify(cacheItem))
@@ -216,20 +238,95 @@ class CacheManager {
         return null
       }
       
-      // 更新访问统计（LRU）
-      cacheItem.accessCount = (cacheItem.accessCount || 0) + 1
-      cacheItem.lastAccess = Date.now()
-      try {
-        localStorage.setItem(key, JSON.stringify(cacheItem))
-      } catch {
-        // 忽略更新失败
-      }
-      
+      // 更新访问统计（LRU）：只累计到内存 pending，不再每次命中都同步写盘
+      this.trackAccess(key)
+
       return cacheItem.data
     } catch (error) {
       console.error('解析封面缓存失败:', error)
       return null
     }
+  }
+
+  /**
+   * 累计一次命中的访问统计（仅内存，不落盘）
+   */
+  private trackAccess(key: string): void {
+    const pending = this.pendingAccess.get(key)
+    // 重新插入以维持 Map 的「最久未命中在前」顺序，超限时优先丢弃最冷的一条
+    if (pending) this.pendingAccess.delete(key)
+    this.pendingAccess.set(key, {
+      increments: (pending?.increments || 0) + 1,
+      lastAccess: Date.now(),
+    })
+    if (this.pendingAccess.size > this.MAX_PENDING_ACCESS) {
+      const coldest = this.pendingAccess.keys().next().value
+      if (typeof coldest === 'string') this.pendingAccess.delete(coldest)
+    }
+    this.scheduleAccessFlush()
+  }
+
+  /**
+   * 启动统计落盘：pending 非空时才持有定时器，排空后立即清除，避免单例常驻定时器；
+   * 隐藏/卸载监听只绑一次（定时器会反复建立，若跟着重绑会不断累积监听器）。
+   * 页面隐藏/卸载时也会立即 flush——Electron 窗口不会正常卸载，故 pagehide 只是额外保险，
+   * 定时 flush 必须能独立工作（页面隐藏被节流时最差约一个周期一次）。
+   */
+  private scheduleAccessFlush(): void {
+    if (!this.accessFlushBound && typeof window !== 'undefined' && typeof document !== 'undefined') {
+      this.accessFlushBound = true
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') this.flushAccessStats()
+      })
+      window.addEventListener('pagehide', () => { this.flushAccessStats() })
+    }
+    if (this.accessFlushTimer !== null) return
+    if (typeof window === 'undefined') return
+    this.accessFlushTimer = window.setInterval(() => { this.flushAccessStats() }, this.ACCESS_FLUSH_INTERVAL)
+  }
+
+  private clearAccessFlushTimer(): void {
+    if (this.accessFlushTimer === null) return
+    window.clearInterval(this.accessFlushTimer)
+    this.accessFlushTimer = null
+  }
+
+  /**
+   * 把 pending 的访问统计合并写回 localStorage。
+   * 记录已被清理（LRU/过期/清空）时直接丢弃该条，不回补已删除的数据；
+   * 单条写失败（配额不足等）也一并丢弃——统计只影响 LRU 排序，不值得重试放大开销。
+   */
+  private flushAccessStats(): void {
+    if (this.pendingAccess.size === 0) {
+      this.clearAccessFlushTimer()
+      return
+    }
+    for (const [key, pending] of this.pendingAccess) {
+      const cached = localStorage.getItem(key)
+      if (!cached) continue
+      try {
+        const cacheItem: CacheItem = JSON.parse(cached)
+        const next: CacheItem = {
+          ...cacheItem,
+          accessCount: (cacheItem.accessCount || 0) + pending.increments,
+          lastAccess: Math.max(cacheItem.lastAccess || 0, pending.lastAccess),
+        }
+        localStorage.setItem(key, JSON.stringify(next))
+      } catch {
+        // 忽略写入失败
+      }
+    }
+    this.pendingAccess.clear()
+    this.clearAccessFlushTimer()
+  }
+
+  /**
+   * 丢弃 pending 统计：记录被清空或被新写入覆盖时，旧增量不再有意义
+   */
+  private dropPendingAccess(key?: string): void {
+    if (key === undefined) this.pendingAccess.clear()
+    else this.pendingAccess.delete(key)
+    if (this.pendingAccess.size === 0) this.clearAccessFlushTimer()
   }
   
   /**
@@ -339,6 +436,8 @@ class CacheManager {
     }
     
     keys.forEach(key => localStorage.removeItem(key))
+    // 记录已清空，对应 pending 统计不再有意义
+    this.dropPendingAccess()
     console.log(`✅ 已清理 ${keys.length} 个封面缓存`)
   }
   
@@ -405,6 +504,8 @@ class CacheManager {
   /**
    * 使用 LRU 策略清理封面缓存
    * 基于访问频率和最后访问时间
+   * 取舍：访问统计按 flush 周期（30 秒）批量落盘，故此处读到的 accessCount/lastAccess
+   * 最多滞后一个周期——这是「命中不再逐次写盘」的必然代价，只影响淘汰顺序的精度。
    */
   private cleanLRUCovers(count: number) {
     const covers: Array<{ 
@@ -423,6 +524,9 @@ class CacheManager {
       
       try {
         const cacheItem: CacheItem = JSON.parse(value)
+        // 刚被读取（统计仍在 pending）的记录不参与淘汰：其 lastAccess 尚未落盘，
+        // 按持久值评分会被误判为最冷而删掉
+        if (this.pendingAccess.has(key)) continue
         const accessCount = cacheItem.accessCount || 1
         const lastAccess = cacheItem.lastAccess || cacheItem.timestamp
         const daysSinceAccess = (now - lastAccess) / (1000 * 60 * 60 * 24)
