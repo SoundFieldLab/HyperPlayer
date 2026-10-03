@@ -1,0 +1,329 @@
+# Release 发版（手动）—— 自填版本号 + 可选版本说明，一键 bump / 构建 / 打 tag / 发布。
+#
+# 与其他工作流的关系（避免撞车）：
+#   - 本工作流是**版本发版的唯一入口**：填版本号 → bump package.json（含 lock 两处）
+#     → 提交并推送 main → 构建 NSIS 安装包 + 热更新包 → 在构建成功后打 v<version> tag
+#     → 创建 GitHub Pre-release（含产物）→ 纯语义版本号额外回写 update.json。
+#   - tag 用 github.token 推送：GitHub 的防递归机制使 **pre-release.yml 的 v* tag 触发
+#     不会级联**，因此不会出现双发布。pre-release.yml 保留给「人工本地打 tag 推送」的
+#     旧路径，两条通道互不干扰。
+#
+# 输入：
+#   version —— 版本号（必填）。纯语义版本（1.2.3）回写 update.json（推给全体用户）；
+#              带预发布后缀（1.2.3-beta.1）只发 GitHub 预发布，不动更新通道。
+#              必须与当前 package.json 版本不同（相同则跳过 bump 直接复用当前版本构建）。
+#   notes   —— 版本说明（可选，支持多行）。填写时置于 Release 正文开头；留空则只含
+#              自动生成的提交变更列表。
+#   prerelease —— 是否以 Pre-release 形式发布（默认是；项目约定发版一律 Pre-release）。
+#
+# 产物：
+#   1) HyperPlayer-<version>-Setup.exe   完整 NSIS 安装包
+#   2) hyperplayer-hot-<version>.zip     热更新包（app.asar + app.asar.unpacked）
+#
+# 时序保证：tag 与 release 在**构建成功之后**才创建/推送——构建失败不会污染 tag 列表。
+# 注意：写入 update.json 需要默认分支允许 Actions 推送（分支保护需放行，或用 PAT）。
+
+name: Release 发版
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（如 1.0.1 或 1.0.1-beta.1，可带 v 前缀；须与当前版本不同）'
+        required: true
+        type: string
+      notes:
+        description: '版本说明（可选，多行；随版本号附在 Release 正文开头）'
+        required: false
+        default: ''
+        type: textarea
+      prerelease:
+        description: '以 Pre-release 形式发布（项目约定恒为是）'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: release
+  cancel-in-progress: false   # 发版不可并行：串行排队，避免 update.json/tag 竞态
+
+permissions:
+  contents: write   # bump 提交推送 / 推 tag / 创建 release / 提交 update.json
+
+jobs:
+  # ---------- 校验版本号 + bump 提交并推送 main ----------
+  bump:
+    name: 校验版本并 bump（提交推送 main）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      is_stable: ${{ steps.bump.outputs.is_stable }}
+      sha: ${{ steps.bump.outputs.sha }}
+    steps:
+      - name: 拉取代码（完整历史，保证推送安全）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 校验并 bump 版本
+        id: bump
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # 容错：去首尾空白、去 v/V 前缀
+          VERSION="$(printf '%s' "$INPUT_VERSION" | tr -d '[:space:]')"
+          VERSION="${VERSION#v}"; VERSION="${VERSION#V}"
+
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::版本号不合法：'$VERSION'（期望 1.2.3 或 1.2.3-beta.1）"
+            exit 1
+          fi
+
+          # 纯语义版本号（无 -beta/-rc 等后缀）才回写 update.json（推给全体用户）
+          if printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            IS_STABLE=true
+          else
+            IS_STABLE=false
+          fi
+
+          # tag 已存在则拒绝（发版不可覆盖既有 tag；覆盖场景走 pre-release.yml 的 force）
+          if git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "::error::tag v${VERSION} 已存在，拒绝重复发版"
+            exit 1
+          fi
+
+          CURRENT=$(node -p "require('./package.json').version")
+          SHA="$(git rev-parse HEAD)"
+          if [ "$CURRENT" = "$VERSION" ]; then
+            echo "版本号已是 ${VERSION}，跳过 bump 提交（复用当前 HEAD 构建）"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            # 只改版本文件并提交（lockfile 两处版本由脚本同步）；tag/推送由本工作流后续步骤负责
+            node scripts/bump-version.mjs "$VERSION" --no-tag --no-push
+            git push origin HEAD:main
+            SHA="$(git rev-parse HEAD)"
+            echo "已提交并推送版本 bump：chore: bump version to v${VERSION}"
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "is_stable=${IS_STABLE}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "已解析：version=${VERSION} is_stable=${IS_STABLE} sha=${SHA}"
+
+  # ---------- Windows 构建：安装包 + 热更新包 ----------
+  build-windows:
+    name: Windows 构建（安装包 + 热更新包）
+    needs: bump
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - name: 拉取 bump 后的提交
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.sha }}
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # --ignore-scripts：跳过第三方 postinstall（useragent-ng 的 ./bin/build.js 在 Windows cmd 下失败）。
+      # Electron 二进制由下面单独的步骤显式下载。
+      - name: 安装依赖
+        run: npm ci --ignore-scripts
+
+      - name: 下载 Electron 运行时（npm ci 跳过其安装脚本）
+        run: node node_modules/electron/install.js
+
+      - name: 校验版本号与输入一致
+        shell: bash
+        env:
+          EXPECTED: ${{ needs.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          ACTUAL=$(node -p "require('./package.json').version")
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::package.json 版本($ACTUAL)与发版版本($EXPECTED)不一致"
+            exit 1
+          fi
+          echo "版本一致：$ACTUAL"
+
+      - name: 构建 NSIS 安装包
+        run: npm run build:electron
+        timeout-minutes: 50
+
+      - name: 校验 app.asar 体积与内容
+        run: node scripts/check-packaging.mjs
+
+      - name: 生成热更新包（app.asar + app.asar.unpacked）
+        run: node scripts/build-hot-update.mjs
+
+      - name: 列出构建产物
+        shell: pwsh
+        run: Get-ChildItem release -File | Select-Object Name, Length
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-installer
+          path: release/*.exe
+
+      - name: 上传热更新包
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-hot
+          path: release/*.zip
+
+  # ---------- 发布：打 tag → 创建 Pre-release →（纯语义版本号）回写 update.json ----------
+  publish:
+    name: 打 tag 并发布 Pre-release
+    needs: [bump, build-windows]
+    if: needs.build-windows.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: 拉取代码（完整历史 + tags，生成变更列表并打 tag）
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.sha }}
+          fetch-depth: 0
+
+      - name: 下载安装包与热更新包
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: 组装 Release 正文（用户说明在前 + 自动变更列表）并打 tag 推送
+        env:
+          VERSION: ${{ needs.bump.outputs.version }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+
+          TAG="v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 自动变更列表：自上一个 v* tag 起的提交（排除本 tag）
+          PREV=$(git tag -l 'v*' --sort=-creatordate | head -1 || true)
+          {
+            if [ -n "${NOTES//[[:space:]]/}" ]; then
+              echo "## 版本说明"
+              echo ""
+              printf '%s\n' "$NOTES" | tr -d '\r'
+              echo ""
+              echo "---"
+              echo ""
+            fi
+            echo "# HyperPlayer ${VERSION}"
+            echo ""
+            if [ -n "${PREV:-}" ]; then
+              echo "## 更新内容（自 ${PREV} 起）"
+              echo ""
+              git log "${PREV}..HEAD" --no-merges --pretty=format:"- %s (%h)" || true
+            else
+              echo "## 更新内容（无更早的版本 tag，列出最近 30 条提交）"
+              echo ""
+              git log HEAD -30 --no-merges --pretty=format:"- %s (%h)" || true
+            fi
+            echo ""
+          } > release-notes.md
+
+          echo "::group::Release 正文预览"
+          cat release-notes.md
+          echo "::endgroup::"
+
+          # 打附注 tag 并推送（github.token 推送不会级联触发 pre-release.yml，无双发布）
+          git tag -a "$TAG" -m "HyperPlayer v${VERSION}"
+          git push origin "refs/tags/$TAG"
+          echo "已推送 tag：$TAG"
+
+      - name: 创建 GitHub Pre-release（含两个产物）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.bump.outputs.version }}
+          VERSION: ${{ needs.bump.outputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          ls -la artifacts
+          ARGS=(--title "HyperPlayer ${VERSION}" --notes-file release-notes.md --verify-tag)
+          if [ "$PRERELEASE" = "true" ]; then
+            ARGS+=(--prerelease)
+          fi
+          gh release create "$TAG" "${ARGS[@]}" artifacts/*
+          echo "已发布：${TAG}（prerelease=${PRERELEASE}）"
+
+      - name: 生成并回写 update.json（仅纯语义版本号）
+        if: needs.bump.outputs.is_stable == 'true'
+        env:
+          TAG: v${{ needs.bump.outputs.version }}
+          VERSION: ${{ needs.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          cat > gen-manifest.cjs <<'JS'
+          const fs = require('fs')
+          const crypto = require('crypto')
+          const path = require('path')
+
+          const repo = process.env.GITHUB_REPOSITORY
+          const tag = process.env.TAG
+          const version = process.env.VERSION
+          const dir = 'artifacts'
+          const base = `https://github.com/${repo}/releases/download/${tag}`
+
+          const files = fs.readdirSync(dir)
+          const installer = files.find(f => /-Setup\.exe$/i.test(f))
+          const hot = files.find(f => /^hyperplayer-hot-.*\.zip$/i.test(f))
+          if (!installer) throw new Error('未找到 NSIS 安装包（*-Setup.exe）')
+
+          const sha256 = (f) => crypto.createHash('sha256')
+            .update(fs.readFileSync(path.join(dir, f)))
+            .digest('hex')
+
+          const manifest = {
+            channel: 'stable',
+            version,
+            notes: fs.readFileSync('release-notes.md', 'utf8').trim(),
+            artifacts: {
+              'win-x64': { urls: [`${base}/${installer}`], sha256: sha256(installer) },
+            },
+          }
+          if (hot) {
+            manifest.artifacts['win-x64-hot'] = { urls: [`${base}/${hot}`], sha256: sha256(hot) }
+          }
+
+          fs.writeFileSync('update.json', JSON.stringify(manifest, null, 2) + '\n')
+          console.log('已生成 update.json：')
+          console.log(JSON.stringify(manifest, null, 2))
+          JS
+          node gen-manifest.cjs
+
+      - name: 提交 update.json 到默认分支
+        if: needs.bump.outputs.is_stable == 'true'
+        env:
+          VERSION: ${{ needs.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add update.json
+          if git diff --cached --quiet; then
+            echo "update.json 无变化，跳过提交"
+          else
+            git commit -m "chore(release): 更新 update.json 至 v${VERSION}"
+            git push origin HEAD:main
+            echo "已推送 update.json（用户「检查更新」即可收到 v${VERSION}）"
+          fi
