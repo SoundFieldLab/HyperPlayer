@@ -9,12 +9,12 @@
 import { AudioLines, Headphones, Music2, Activity, Moon, Mic2, Sparkles, Shield, Music, Columns2, Volume2, Gauge, RotateCcw, Save, Info, Trash2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useState } from 'react'
-import type { V3EngineParams } from '../src/types'
+import type { HSEEngineParams } from '../src/types'
 import { createDefaultParams } from '../src/types'
-import { MAX_MY_SCENES, type V3UiBridge } from './bridge'
-import type { V3Theme } from './theme'
+import { MAX_MY_SCENES, type HSEUiBridge } from './bridge'
+import type { HSETheme } from './theme'
 import { ActionButton, Chip, GlassCard, GlassRangeStyle, InfoLine, SectionTitle, TextInput, Toggle } from './primitives'
-import type { DeepPartial, V3ParamsController } from './hooks'
+import type { DeepPartial, HSEParamsController } from './hooks'
 
 /** 可配置效果卡片 id（含响度类，响度类以独立行呈现但共用弹窗） */
 export type EffectUiKey =
@@ -66,15 +66,15 @@ const GRID_KEYS: EffectUiKey[] = ['reverb', 'surround3d', 'bassEnhancer', 'compr
 const ROW_KEYS: EffectUiKey[] = ['loudnessCompensation', 'loudnessNormalization']
 
 export interface EffectsPanelProps {
-  controller: V3ParamsController
-  bridge: V3UiBridge
-  theme: V3Theme
+  controller: HSEParamsController
+  bridge: HSEUiBridge
+  theme: HSETheme
   /** 打开效果配置弹窗（弹窗内容在 modals 文件中） */
   onOpenEffect: (key: EffectUiKey) => void
 }
 
 /** 由参数快照判定某个效果的启用态（响度类走独立字段） */
-export function effectEnabled(p: V3EngineParams, key: EffectUiKey): boolean {
+export function effectEnabled(p: HSEEngineParams, key: EffectUiKey): boolean {
   switch (key) {
     case 'reverb': return p.reverb.enabled && p.reverb.mode !== 'off'
     case 'surround3d': return p.surround3d.enabled
@@ -92,7 +92,7 @@ export function effectEnabled(p: V3EngineParams, key: EffectUiKey): boolean {
 }
 
 /** 切换效果的 enabled（响度类独立字段；pitch 开启时同时视为变速变调启用） */
-export function patchEffectEnabled(patch: (partial: DeepPartial<V3EngineParams>) => void, p: V3EngineParams, key: EffectUiKey, on: boolean): void {
+export function patchEffectEnabled(patch: (partial: DeepPartial<HSEEngineParams>) => void, p: HSEEngineParams, key: EffectUiKey, on: boolean): void {
   switch (key) {
     case 'reverb': patch({ reverb: { ...p.reverb, enabled: on } }); return
     case 'surround3d': patch({ surround3d: { ...p.surround3d, enabled: on } }); return

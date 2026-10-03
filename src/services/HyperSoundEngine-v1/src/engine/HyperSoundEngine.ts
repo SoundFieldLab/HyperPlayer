@@ -1,5 +1,5 @@
 /**
- * HyperPlayer 音频引擎 HyperSoundEngine —— 引擎总成（代码标识符保留 v3 / EngineV3）
+ * HyperPlayer 音频引擎 HyperSoundEngine —— 引擎总成（代码标识符保留 v3 / HyperSoundEngine）
  *
  * 出处/许可：
  *  - 链式架构与参数模型：本项目《音频算法设计文档.md》§2 总体架构（自研）；
@@ -26,7 +26,7 @@
  */
 
 import type {
-  V3EngineParams,
+  HSEEngineParams,
   EngineStats,
   EngineAnalysis,
   EqBand,
@@ -88,7 +88,7 @@ const NORM_SMOOTH_SEC = 3.0
 const MANUAL_GAIN_SMOOTH_SEC = 0.08
 
 /** 深拷贝参数快照：数组逐元素复制，避免外部可变对象影响引擎；引擎本身不修改传入参数。 */
-function cloneParams(p: V3EngineParams): V3EngineParams {
+function cloneParams(p: HSEEngineParams): HSEEngineParams {
   return {
     ...p,
     eq: {
@@ -266,10 +266,10 @@ function spatialConfigFromSettings(s: SpatialSettings): SpatialRenderConfig {
   }
 }
 
-export class EngineV3 {
+export class HyperSoundEngine {
   private readonly _fs: number
   private readonly _channels: number
-  private _params: V3EngineParams
+  private _params: HSEEngineParams
 
   // —— 链上 DSP 模块（构造时固定采样率，setParams 只重算系数） ——
   private readonly _eqChain: EqChain
@@ -395,7 +395,7 @@ export class EngineV3 {
   }
 
   /** 参数更新：重算所有模块系数（即时生效）。不修改传入的 p。 */
-  setParams(p: V3EngineParams): void {
+  setParams(p: HSEEngineParams): void {
     this._params = cloneParams(p)
     const p2 = this._params
 
@@ -703,7 +703,7 @@ export class EngineV3 {
   }
 
   /** 收集用户 EQ（simple/pro）bands，上限 20 段。 */
-  private buildPreEqBands(p: V3EngineParams): EqBand[] {
+  private buildPreEqBands(p: HSEEngineParams): EqBand[] {
     const out: EqBand[] = []
     // 用户 EQ 仅在 eq.enabled 时并入（eq 关闭时不得泄漏——审计修复）；
     // 机型补偿已移除（由 LoudnessComp 音量曲线承担）

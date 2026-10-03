@@ -7,7 +7,7 @@
  */
 
 import { useRef, useState } from 'react'
-import type { V3Theme } from './theme'
+import type { HSETheme } from './theme'
 
 export interface EqPoint {
   frequency: number
@@ -16,7 +16,7 @@ export interface EqPoint {
 
 export interface EqCurveEditorProps {
   points: EqPoint[]
-  theme: V3Theme
+  theme: HSETheme
   onChange?: (index: number, gain: number) => void
   /** 只读模式（锁定态/预览态） */
   readonly?: boolean

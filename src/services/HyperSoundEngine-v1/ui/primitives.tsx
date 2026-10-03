@@ -10,14 +10,14 @@
 
 import { useEffect, type ReactNode, type CSSProperties } from 'react'
 import { Info, X } from 'lucide-react'
-import type { V3Theme } from './theme'
+import type { HSETheme } from './theme'
 
 /* ─────────────────────────── 胶囊开关 ─────────────────────────── */
 
 export function Toggle({ checked, onChange, theme }: {
   checked: boolean
   onChange: (v: boolean) => void
-  theme: V3Theme
+  theme: HSETheme
 }) {
   return (
     <button
@@ -45,7 +45,7 @@ export function Slider({ label, value, min, max, step, onChange, display, theme,
   step: number
   onChange: (v: number) => void
   display?: string
-  theme: V3Theme
+  theme: HSETheme
   disabled?: boolean
 }) {
   return (
@@ -72,7 +72,7 @@ export function Slider({ label, value, min, max, step, onChange, display, theme,
 
 export function GlassCard({ children, theme, className, style }: {
   children: ReactNode
-  theme: V3Theme
+  theme: HSETheme
   className?: string
   style?: CSSProperties
 }) {
@@ -107,7 +107,7 @@ export function Modal({ title, icon, onClose, theme, children, maxWidth = 'max-w
   title: string
   icon?: ReactNode
   onClose: () => void
-  theme: V3Theme
+  theme: HSETheme
   children: ReactNode
   maxWidth?: string
 }) {
@@ -169,7 +169,7 @@ export function Segmented<T extends string | boolean>({ options, value, onChange
   options: { value: T; label: string }[]
   value: T
   onChange: (v: T) => void
-  theme: V3Theme
+  theme: HSETheme
   small?: boolean
 }) {
   return (
@@ -198,7 +198,7 @@ export function Chip({ active, onClick, children, theme, title, deleteButton }: 
   active?: boolean
   onClick: () => void
   children: ReactNode
-  theme: V3Theme
+  theme: HSETheme
   title?: string
   deleteButton?: ReactNode
 }) {
@@ -230,7 +230,7 @@ export function TextInput({ value, onChange, placeholder, theme, className }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
-  theme: V3Theme
+  theme: HSETheme
   className?: string
 }) {
   return (
@@ -249,7 +249,7 @@ export function TextInput({ value, onChange, placeholder, theme, className }: {
 export function ActionButton({ onClick, children, theme, disabled, title, ghost }: {
   onClick: () => void
   children: ReactNode
-  theme: V3Theme
+  theme: HSETheme
   disabled?: boolean
   title?: string
   /** 幽灵样式：透明底 + 描边（次要操作） */
@@ -288,7 +288,7 @@ export function ActionButton({ onClick, children, theme, disabled, title, ghost 
 export function SectionTitle({ icon, children, theme, hint }: {
   icon?: ReactNode
   children: ReactNode
-  theme: V3Theme
+  theme: HSETheme
   hint?: ReactNode
 }) {
   return (
@@ -306,7 +306,7 @@ export function SectionTitle({ icon, children, theme, hint }: {
 
 /* ─────────────────────────── 信息提示行 ─────────────────────────── */
 
-export function InfoLine({ children, theme }: { children: ReactNode; theme: V3Theme }) {
+export function InfoLine({ children, theme }: { children: ReactNode; theme: HSETheme }) {
   return (
     <div className={`${theme.textTertiary} text-[11px] mt-2 flex items-center gap-1`}>
       <Info className="w-3 h-3 shrink-0" />
@@ -316,7 +316,7 @@ export function InfoLine({ children, theme }: { children: ReactNode; theme: V3Th
 }
 
 /** wf-glass-range 滑块 thumb 全局样式（注入一次，双主题） */
-export function GlassRangeStyle({ theme }: { theme: V3Theme }) {
+export function GlassRangeStyle({ theme }: { theme: HSETheme }) {
   return (
     <style>
       {`

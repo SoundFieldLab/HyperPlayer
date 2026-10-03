@@ -4,7 +4,7 @@
  * 空间音频是处理链的**第 15 级**，纯 TS 内联在 HyperSoundEngine 内（不是 v3 之后的兄弟节点）：
  *   masterGain → [soundtouch?] → v3 节点（内含第 15 级空间音频） → analyser
  *
- * 参数是 V3EngineParams.spatial 的一部分，随 `hyperplayer:v3-params` 快照持久化
+ * 参数是 HSEEngineParams.spatial 的一部分，随 `hyperplayer:hse-params` 快照持久化
  * （没有独立的 localStorage 键）。角度单位：度；距离单位：米。
  */
 
@@ -131,7 +131,7 @@ export interface StageSettings {
   customSources: AudioObject[]
 }
 
-/** 空间音频参数快照（全局设置，独立于 V3EngineParams，不可变替换语义） */
+/** 空间音频参数快照（全局设置，独立于 HSEEngineParams，不可变替换语义） */
 export interface SpatialParams {
   mode: SpatialMode
   /** 输出模式（默认 'binaural'；stereo=立体声下混干声直通，multichannel 本轮同 binaural 处理） */

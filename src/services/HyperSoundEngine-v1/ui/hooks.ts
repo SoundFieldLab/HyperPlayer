@@ -1,7 +1,7 @@
 /**
  * HyperPlayer v3 调音室 UI —— 参数快照 hooks
  *
- * 参数语义（v3 引擎约定）：完整快照（V3EngineParams），setParams 每次替换整包。
+ * 参数语义（v3 引擎约定）：完整快照（HSEEngineParams），setParams 每次替换整包。
  * 本 hook 提供：
  *  - params：当前快照（深拷贝展示值）
  *  - patch(partial)：深合并后提交（UI 局部修改的惯用入口）
@@ -9,8 +9,8 @@
  */
 
 import { useCallback, useState } from 'react'
-import type { V3EngineParams } from '../src/types'
-import type { V3UiBridge } from './bridge'
+import type { HSEEngineParams } from '../src/types'
+import type { HSEUiBridge } from './bridge'
 
 /** 递归可选（数组与 Float32Array 整体替换，不做成员递归） */
 export type DeepPartial<T> = {
@@ -34,30 +34,30 @@ export function deepMerge<T>(base: T, patch: DeepPartial<T>): T {
   return out as T
 }
 
-export interface V3ParamsController {
-  params: V3EngineParams
+export interface HSEParamsController {
+  params: HSEEngineParams
   /** 深合并局部修改并提交引擎（完整快照语义） */
-  patch: (partial: DeepPartial<V3EngineParams>) => void
+  patch: (partial: DeepPartial<HSEEngineParams>) => void
   /** 整包替换（场景/分享串/恢复默认） */
-  replace: (next: V3EngineParams) => void
+  replace: (next: HSEEngineParams) => void
 }
 
-export function useV3Params(bridge: V3UiBridge): V3ParamsController {
-  const [params, setParams] = useState<V3EngineParams>(() => bridge.getParams())
+export function useHSEParams(bridge: HSEUiBridge): HSEParamsController {
+  const [params, setParams] = useState<HSEEngineParams>(() => bridge.getParams())
 
-  const commit = useCallback((next: V3EngineParams) => {
+  const commit = useCallback((next: HSEEngineParams) => {
     bridge.setParams(next)
     setParams(bridge.getParams())
   }, [bridge])
 
-  const patch = useCallback((partial: DeepPartial<V3EngineParams>) => {
+  const patch = useCallback((partial: DeepPartial<HSEEngineParams>) => {
     const merged = deepMerge(bridge.getParams(), partial)
     // 手动调整参数后视为脱离场景快照（场景名显示「自定义」，模式卡不再高亮）
     merged.customized = true
     commit(merged)
   }, [bridge, commit])
 
-  const replace = useCallback((next: V3EngineParams) => {
+  const replace = useCallback((next: HSEEngineParams) => {
     commit(next)
   }, [commit])
 

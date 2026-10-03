@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest'
 import { SCENE_PRESETS, getSceneById, SCENE_IDS } from '../src/engine/ScenePresets'
 import { createDefaultParams } from '../src/types'
-import type { ScenePreset, V3EngineParams } from '../src/types'
+import type { ScenePreset, HSEEngineParams } from '../src/types'
 
 const EXPECTED_IDS = [
   'pop',
@@ -33,7 +33,7 @@ function isFiniteNumber(x: number): boolean {
 }
 
 /** 校验一个场景快照的全部数值参数范围与有限性 */
-function expectValidParams(p: V3EngineParams, id: string): void {
+function expectValidParams(p: HSEEngineParams, id: string): void {
   // EQ
   expect(p.eq.simpleBands.length).toBe(5)
   for (const g of p.eq.simpleBands) expect(isFiniteNumber(g)).toBe(true)

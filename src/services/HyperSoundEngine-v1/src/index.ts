@@ -14,12 +14,12 @@
  */
 
 /** AudioWorklet 处理器注册名（与 worklet/AudioEffectsProcessor.ts 中常量一致） */
-export const WORKLET_PROCESSOR_NAME = 'hyperplayer-v3-effects'
+export const WORKLET_PROCESSOR_NAME = 'hyperplayer-hse-effects'
 
 export * from './types'
-export { EngineV3 } from './engine/EngineV3'
-export { EngineV3Host } from './integration/EngineV3Host'
-export type { V3HostHandle, V3HostMode, V3HostOptions, V3AudioContextLike, V3AudioNodeLike } from './integration/EngineV3Host'
+export { HyperSoundEngine } from './engine/HyperSoundEngine'
+export { HyperSoundEngineHost } from './integration/HyperSoundEngineHost'
+export type { HSEHostHandle, HSEHostMode, HSEHostOptions, HSEAudioContextLike, HSEAudioNodeLike } from './integration/HyperSoundEngineHost'
 export { SCENE_PRESETS, getSceneById, SCENE_IDS } from './engine/ScenePresets'
 export { encodeShareCode, decodeShareCode, SHARE_CODEC_VERSION } from './engine/ShareCodec'
 export { SpectrumAnalyzer } from './analysis/Spectrum'

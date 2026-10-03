@@ -8,13 +8,15 @@
 import { useCallback, useState } from 'react'
 import { SlidersHorizontal, Save, Trash2, RotateCcw, Lock, LockOpen } from 'lucide-react'
 import { PRO_EQ_DEFAULT_BANDS, PRO_EQ_20_BANDS } from '../src/types'
-import type { EqBand, EqMode, V3EngineParams } from '../src/types'
-import type { V3Theme } from './theme'
+import type { EqBand, EqMode, HSEEngineParams } from '../src/types'
+import type { HSETheme } from './theme'
 import { ActionButton, GlassCard, GlassRangeStyle, InfoLine, SectionTitle, TextInput, Toggle } from './primitives'
 import { EqCurveEditor, type EqPoint } from './eqCurveEditor'
-import type { DeepPartial, V3ParamsController } from './hooks'
+import type { DeepPartial, HSEParamsController } from './hooks'
 
-const PRESETS_KEY = 'hyperplayer:v3-eq-presets'
+const PRESETS_KEY = 'hyperplayer:hse-eq-presets'
+/** V3→HSE 命名统一前的历史键：loadPresets 时一次性迁移后移除 */
+const LEGACY_PRESETS_KEY = 'hyperplayer:v3-eq-presets'
 
 interface EqPreset {
   id: string
@@ -26,7 +28,16 @@ interface EqPreset {
 
 function loadPresets(): EqPreset[] {
   try {
-    const raw = localStorage.getItem(PRESETS_KEY)
+    // 历史键迁移（V3→HSE 命名统一）：旧键一次性搬到新键，EQ 预设不丢
+    let raw = localStorage.getItem(PRESETS_KEY)
+    if (raw === null) {
+      const legacy = localStorage.getItem(LEGACY_PRESETS_KEY)
+      if (legacy !== null) {
+        localStorage.setItem(PRESETS_KEY, legacy)
+        localStorage.removeItem(LEGACY_PRESETS_KEY)
+        raw = legacy
+      }
+    }
     return raw ? (JSON.parse(raw) as EqPreset[]) : []
   } catch {
     return []
@@ -49,13 +60,13 @@ export const SIMPLE_EQ_BANDS = [
   { frequency: 12000, label: '高音', hint: '12kHz，影响空气感与高频光泽' },
 ]
 
-export function EqPanel({ controller, theme }: { controller: V3ParamsController; theme: V3Theme }) {
+export function EqPanel({ controller, theme }: { controller: HSEParamsController; theme: HSETheme }) {
   const { params, patch } = controller
   const eq = params.eq
   const [presets, setPresets] = useState<EqPreset[]>(loadPresets)
   const [presetName, setPresetName] = useState('')
 
-  const patchEq = useCallback((p: DeepPartial<V3EngineParams['eq']>) => {
+  const patchEq = useCallback((p: DeepPartial<HSEEngineParams['eq']>) => {
     patch({ eq: { ...eq, ...p } })
   }, [patch, eq])
 

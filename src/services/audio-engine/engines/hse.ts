@@ -7,11 +7,11 @@
  */
 
 import type { EngineManifest } from '../types'
-import { V3Adapter } from '../V3Adapter'
+import { HSEAdapter } from '../HSEAdapter'
 
-export const v3Manifest: EngineManifest = {
-  id: 'v3',
+export const hseManifest: EngineManifest = {
+  id: 'hse',
   displayName: 'HSE',
   description: 'HyperSoundEngine DSP 内核（14 级链 + 11 场景 + 分享串）',
-  createAdapter: () => new V3Adapter(),
+  createAdapter: () => new HSEAdapter(),
 }

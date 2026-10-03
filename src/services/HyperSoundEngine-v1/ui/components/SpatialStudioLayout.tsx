@@ -353,7 +353,7 @@ export default function SpatialStudioLayout({
           <span className={theme.textMuted}>后端</span>
           <span className={theme.textSecondary}>TS</span>
         </div>
-        {/* 帧率（rAF 测量）：CPU 占用的直观代理（空间音频内联 EngineV3，无独立统计） */}
+        {/* 帧率（rAF 测量）：CPU 占用的直观代理（空间音频内联 HyperSoundEngine，无独立统计） */}
         <div className="flex items-center gap-1.5">
           <span className={theme.textMuted}>帧率</span>
           <span className={theme.textSecondary}>

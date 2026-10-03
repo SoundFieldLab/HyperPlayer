@@ -118,8 +118,8 @@ export function useHSETheme(): HSETheme {
 }
 
 /**
- * 把 HSE 主题转换为旧 V3Theme 接口（供既有弹窗/面板组件复用）
- * 用于 modals 系列 / eqPanel 等仍依赖 V3Theme 玻璃拟态接口的组件。
+ * 把 HSE 主题转换为旧 HSETheme 接口（供既有弹窗/面板组件复用）
+ * 用于 modals 系列 / eqPanel 等仍依赖 HSETheme 玻璃拟态接口的组件。
  */
 export function toLegacyTheme(t: HSETheme): {
   dark: true

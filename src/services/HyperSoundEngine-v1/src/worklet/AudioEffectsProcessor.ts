@@ -10,16 +10,16 @@
  *
  * 线程模型：
  *   - 构造：以全局 sampleRate 创建 HyperSoundEngine（2 声道）；
- *   - port.onmessage：接收主线程 {type:'params', params: V3EngineParams} 与
+ *   - port.onmessage：接收主线程 {type:'params', params: HSEEngineParams} 与
  *     {type:'reset'} 消息，参数快照语义（setParams 整体替换）；
  *   - 每 STATS_INTERVAL_CALLBACKS 次 process 回调（约 30×128 帧 ≈ 80ms @48kHz）
  *     向主线程回传一次 {type:'stats', stats: EngineStats}。
  */
 
-import { EngineV3 } from '../engine/EngineV3'
-import type { V3EngineParams } from '../types'
+import { HyperSoundEngine } from '../engine/HyperSoundEngine'
+import type { HSEEngineParams } from '../types'
 
-export const WORKLET_PROCESSOR_NAME = 'hyperplayer-v3-effects'
+export const WORKLET_PROCESSOR_NAME = 'hyperplayer-hse-effects'
 
 /** AudioWorklet 全局作用域环境声明（lib.dom 未内置这些全局符号，故本地声明） */
 declare class AudioWorkletProcessor {
@@ -46,7 +46,7 @@ declare function registerProcessor(name: string, ctor: new (options?: AudioWorkl
 const STATS_INTERVAL_CALLBACKS = 30
 
 export class AudioEffectsProcessor extends AudioWorkletProcessor {
-  private readonly engine: EngineV3
+  private readonly engine: HyperSoundEngine
   private callbackCount = 0
   private scratch: Float32Array = new Float32Array(0)
   private silence: Float32Array = new Float32Array(0)
@@ -54,9 +54,9 @@ export class AudioEffectsProcessor extends AudioWorkletProcessor {
   constructor() {
     super()
     // 全局 sampleRate 在 AudioWorklet 全局作用域恒存在（48kHz/44.1kHz 等）
-    this.engine = new EngineV3(sampleRate, 2)
+    this.engine = new HyperSoundEngine(sampleRate, 2)
     this.port.onmessage = (event: MessageEvent) => {
-      const msg = event.data as { type?: string; params?: V3EngineParams }
+      const msg = event.data as { type?: string; params?: HSEEngineParams }
       if (msg === null || typeof msg !== 'object') return
       if (msg.type === 'params' && msg.params) {
         this.engine.setParams(msg.params)

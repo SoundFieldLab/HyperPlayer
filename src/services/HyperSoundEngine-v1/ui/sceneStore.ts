@@ -3,19 +3,21 @@
  *
  * 职责：
  *  - 内置 11 场景的「开发者微调」持久化：编辑后的完整参数快照存 localStorage
- *    （hyperplayer:v3-scene-overrides），读取时覆盖 SCENE_PRESETS 的代码默认值；
+ *    （hyperplayer:hse-scene-overrides），读取时覆盖 SCENE_PRESETS 的代码默认值；
  *  - 入库前清洗：剥离实时音量通道（loudnessNormalization，快照不得固化用户音量）、
  *    清空卷积 IR 数据（irName 引用语义）；
  *  - 场景库整体导出/导入 JSON（内置覆盖 + 我的场景），便于备份迁移。
  */
 
-import type { ScenePreset, V3EngineParams } from '../src/types'
+import type { ScenePreset, HSEEngineParams } from '../src/types'
 import { createDefaultParams } from '../src/types'
 import { SCENE_PRESETS } from '../src/engine/ScenePresets'
 import { BUILTIN_SCENE_SEED, type BuiltinSceneSeed } from '../src/engine/builtinSceneSeed'
 
 /** 内置场景覆盖存储键 */
-const SCENE_OVERRIDES_KEY = 'hyperplayer:v3-scene-overrides'
+const SCENE_OVERRIDES_KEY = 'hyperplayer:hse-scene-overrides'
+/** V3→HSE 命名统一前的历史键：读取时一次性迁移后移除 */
+const LEGACY_SCENE_OVERRIDES_KEY = 'hyperplayer:v3-scene-overrides'
 /** 开发者模式开关存储键 */
 export const HSE_DEV_MODE_KEY = 'hyperplayer:hse-dev-mode'
 /** 开发者模式变化事件（跨页面同步 UI 状态用） */
@@ -51,8 +53,8 @@ export function setDevMode(on: boolean): void {
 // ---------------------------------------------------------------------------
 
 /** 入库清洗：去 IR、还原实时音量通道为出厂默认、固定场景归属标记 */
-function sanitizeOverrideSnapshot(id: string, p: V3EngineParams): V3EngineParams {
-  const clone = JSON.parse(JSON.stringify(p)) as V3EngineParams
+function sanitizeOverrideSnapshot(id: string, p: HSEEngineParams): HSEEngineParams {
+  const clone = JSON.parse(JSON.stringify(p)) as HSEEngineParams
   clone.reverb.convolution.ir = null
   // 音量控制是实时控制（externalGainDb 滑杆走此通道），不得写进预设；
   // 整段响度归一化恢复出厂默认，与 ScenePresets 里 base() 的语义一致
@@ -63,28 +65,37 @@ function sanitizeOverrideSnapshot(id: string, p: V3EngineParams): V3EngineParams
   return clone
 }
 
-function loadOverridesRaw(): Record<string, V3EngineParams> {
+function loadOverridesRaw(): Record<string, HSEEngineParams> {
   return effectiveOverrideMap()
 }
 
 /** 本地存储束（含基线 revision；兼容首版无 rev 的扁平结构，视为 rev 0 永远让位官方） */
 interface StoredBundle {
   rev: number
-  overrides: Record<string, V3EngineParams>
+  overrides: Record<string, HSEEngineParams>
 }
 
 function readStoredBundle(): StoredBundle | null {
   try {
-    const raw = localStorage.getItem(SCENE_OVERRIDES_KEY)
+    // 历史键迁移（V3→HSE 命名统一）：旧键一次性搬到新键，场景微调不丢
+    let raw = localStorage.getItem(SCENE_OVERRIDES_KEY)
+    if (raw === null) {
+      const legacy = localStorage.getItem(LEGACY_SCENE_OVERRIDES_KEY)
+      if (legacy !== null) {
+        localStorage.setItem(SCENE_OVERRIDES_KEY, legacy)
+        localStorage.removeItem(LEGACY_SCENE_OVERRIDES_KEY)
+        raw = legacy
+      }
+    }
     if (!raw) return null
     const parsed = JSON.parse(raw) as { overrides?: unknown; rev?: unknown } & Record<string, unknown>
     if (!parsed || typeof parsed !== 'object') return null
     if ('overrides' in parsed && parsed.overrides && typeof parsed.overrides === 'object') {
       const rev = typeof parsed.rev === 'number' && Number.isFinite(parsed.rev) ? parsed.rev : 0
-      return { rev, overrides: parsed.overrides as Record<string, V3EngineParams> }
+      return { rev, overrides: parsed.overrides as Record<string, HSEEngineParams> }
     }
     // 首版扁平结构（id → params）：当 rev 0 处理
-    return { rev: 0, overrides: parsed as Record<string, V3EngineParams> }
+    return { rev: 0, overrides: parsed as Record<string, HSEEngineParams> }
   } catch {
     return null
   }
@@ -109,7 +120,7 @@ export function resolveRevisionAdoption(stored: StoredBundle | null, seed: Built
 }
 
 /** 有效覆盖层 = 发布种子（committed 随包分发）⊕ 本地微调（revision 规则裁决） */
-function effectiveOverrideMap(): Record<string, V3EngineParams> {
+function effectiveOverrideMap(): Record<string, HSEEngineParams> {
   const adopted = resolveRevisionAdoption(readStoredBundle(), sanitizeSeed(BUILTIN_SCENE_SEED))
   return filterPresetIds(adopted.overrides)
 }
@@ -122,18 +133,18 @@ function sanitizeSeed(seed: BuiltinSceneSeed): BuiltinSceneSeed {
   }
 }
 
-function filterPresetIds(map: Record<string, unknown>): Record<string, V3EngineParams> {
-  const out: Record<string, V3EngineParams> = {}
+function filterPresetIds(map: Record<string, unknown>): Record<string, HSEEngineParams> {
+  const out: Record<string, HSEEngineParams> = {}
   for (const [id, v] of Object.entries(map)) {
     if (typeof id !== 'string' || !SCENE_PRESETS.some((s) => s.id === id)) continue
     if (!v || typeof v !== 'object') continue
-    out[id] = sanitizeOverrideSnapshot(id, v as V3EngineParams)
+    out[id] = sanitizeOverrideSnapshot(id, v as HSEEngineParams)
   }
   return out
 }
 
 /** 写入本地微调束（rev 记录当前种子基线，供官方更新采纳规则裁决） */
-function writeLocalOverrides(map: Record<string, V3EngineParams>): void {
+function writeLocalOverrides(map: Record<string, HSEEngineParams>): void {
   const seedRev = sanitizeSeed(BUILTIN_SCENE_SEED).revision
   const bundle: StoredBundle = { rev: seedRev, overrides: map }
   try {
@@ -144,16 +155,16 @@ function writeLocalOverrides(map: Record<string, V3EngineParams>): void {
 }
 
 /** 全部覆盖（id → 参数快照） */
-export function loadSceneOverrides(): Record<string, V3EngineParams> {
+export function loadSceneOverrides(): Record<string, HSEEngineParams> {
   return loadOverridesRaw()
 }
 
-export function getSceneOverride(id: string): V3EngineParams | null {
+export function getSceneOverride(id: string): HSEEngineParams | null {
   return loadOverridesRaw()[id] ?? null
 }
 
 /** 保存内置场景微调（存的是清洗后的完整快照；落盘即生效，重启/开关开发者模式后仍在） */
-export function saveBuiltinSceneOverride(id: string, params: V3EngineParams): boolean {
+export function saveBuiltinSceneOverride(id: string, params: HSEEngineParams): boolean {
   if (!SCENE_PRESETS.some((s) => s.id === id)) return false
   const map = loadOverridesRaw()
   map[id] = sanitizeOverrideSnapshot(id, params)
@@ -193,7 +204,7 @@ export function mergeBuiltinScenes(): (ScenePreset & { overridden?: boolean })[]
 interface LibraryFile {
   version: number
   exportedAt: string
-  builtinOverrides: Record<string, V3EngineParams>
+  builtinOverrides: Record<string, HSEEngineParams>
   myScenes: ScenePreset[]
 }
 
@@ -231,10 +242,10 @@ export function importSceneLibraryJson(
     throw new Error('缺少场景库必需字段（builtinOverrides/myScenes）')
   }
   const validIds = new Set(SCENE_PRESETS.map((s) => s.id))
-  const overrides: Record<string, V3EngineParams> = {}
+  const overrides: Record<string, HSEEngineParams> = {}
   for (const [id, v] of Object.entries(file.builtinOverrides)) {
     if (validIds.has(id) && v && typeof v === 'object') {
-      overrides[id] = sanitizeOverrideSnapshot(id, v as V3EngineParams)
+      overrides[id] = sanitizeOverrideSnapshot(id, v as HSEEngineParams)
     }
   }
   const myScenes = file.myScenes.filter((s) => s && typeof s.id === 'string' && typeof s.name === 'string' && s.params)

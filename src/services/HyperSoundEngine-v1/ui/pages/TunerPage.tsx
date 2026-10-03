@@ -6,12 +6,12 @@ import { useState } from 'react'
 import { Copy, ClipboardPaste, FileAudio, Cpu, Share2 } from 'lucide-react'
 import { GlassCard, RangeStyle } from '../components/Primitives'
 import type { HSETheme } from '../hse-theme'
-import type { V3UiBridge } from '../bridge'
-import type { V3ParamsController } from '../hooks'
+import type { HSEUiBridge } from '../bridge'
+import type { HSEParamsController } from '../hooks'
 
 interface TunerPageProps {
-  bridge: V3UiBridge
-  controller: V3ParamsController
+  bridge: HSEUiBridge
+  controller: HSEParamsController
   theme: HSETheme
   onOpenEffect: (key: string) => void
   exportMp3?: (() => Promise<void>) | null

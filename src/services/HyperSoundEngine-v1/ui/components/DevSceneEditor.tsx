@@ -10,17 +10,17 @@ import { useEffect, useMemo, useState } from 'react'
 import { X, RotateCcw, Save, PencilRuler, Volume2 } from 'lucide-react'
 import { Toggle, Slider, Segmented, RangeStyle } from './Primitives'
 import type { HSETheme } from '../hse-theme'
-import type { V3UiBridge } from '../bridge'
-import type { V3ParamsController } from '../hooks'
+import type { HSEUiBridge } from '../bridge'
+import type { HSEParamsController } from '../hooks'
 import { getSceneById } from '../../src/engine/ScenePresets'
 import { PRO_EQ_DEFAULT_BANDS } from '../../src/types'
-import type { ScenePreset, V3EngineParams, HarmonicType, ReverbType } from '../../src/types'
+import type { ScenePreset, HSEEngineParams, HarmonicType, ReverbType } from '../../src/types'
 
 interface DevSceneEditorProps {
   scene: ScenePreset & { overridden?: boolean }
   theme: HSETheme
-  bridge: V3UiBridge
-  controller: V3ParamsController
+  bridge: HSEUiBridge
+  controller: HSEParamsController
   onClose: () => void
   /** 保存/还原成功后回调（父级刷新场景列表） */
   onSaved: () => void
@@ -28,14 +28,14 @@ interface DevSceneEditorProps {
 
 const EQ_LABELS = ['31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k']
 
-function deepCopy(p: V3EngineParams): V3EngineParams {
-  return JSON.parse(JSON.stringify(p)) as V3EngineParams
+function deepCopy(p: HSEEngineParams): HSEEngineParams {
+  return JSON.parse(JSON.stringify(p)) as HSEEngineParams
 }
 
 const fmtDb = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1).replace(/\.0$/, '')}dB`
 
 export default function DevSceneEditor({ scene, theme, bridge, controller, onClose, onSaved }: DevSceneEditorProps) {
-  const [draft, setDraft] = useState<V3EngineParams>(() => deepCopy(scene.params))
+  const [draft, setDraft] = useState<HSEEngineParams>(() => deepCopy(scene.params))
   const [preview, setPreview] = useState(true)
 
   // Esc 关闭（不保存）
@@ -48,12 +48,12 @@ export default function DevSceneEditor({ scene, theme, bridge, controller, onClo
   }, [onClose])
 
   // 试听必须保留实时音量通道：预设快照不得固化用户音量（与 sceneStore 入库清洗同一约束）
-  const pushPreview = (next: V3EngineParams) => {
+  const pushPreview = (next: HSEEngineParams) => {
     if (!preview) return
     controller.replace({ ...deepCopy(next), loudnessNormalization: controller.params.loudnessNormalization })
   }
 
-  const update = (mut: (d: V3EngineParams) => void) => {
+  const update = (mut: (d: HSEEngineParams) => void) => {
     const next = deepCopy(draft)
     mut(next)
     setDraft(next)

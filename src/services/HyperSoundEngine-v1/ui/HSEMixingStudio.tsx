@@ -19,9 +19,9 @@ import { HiResBadge, DtsXBadge, DolbyAtmosBadge } from './components/Badges'
 import { RangeStyle } from './components/Primitives'
 
 // 复用现有 v3 UI 的桥接与参数管理
-import { MAX_MY_SCENES, type V3UiBridge } from './bridge'
-import { useV3Params } from './hooks'
-import type { V3ParamsController } from './hooks'
+import { MAX_MY_SCENES, type HSEUiBridge } from './bridge'
+import { useHSEParams } from './hooks'
+import type { HSEParamsController } from './hooks'
 import type { EngineStats } from '../src/types'
 import type { PlaybackTimeStore } from '../../../audio/playbackTimeStore'
 import { createDefaultParams } from '../src/types'
@@ -43,8 +43,8 @@ import AnalysisPage from './pages/AnalysisPage'
 import TunerPage from './pages/TunerPage'
 import AboutPage from './pages/AboutPage'
 
-export interface V3MixingStudioProps {
-  bridge: V3UiBridge
+export interface HSEMixingStudioProps {
+  bridge: HSEUiBridge
   onClose: () => void
   playerTheme: 'dark' | 'light'
   anchorRect?: { x: number; y: number; width: number; height: number } | null
@@ -91,13 +91,13 @@ const PANEL_IN = `
 }
 `
 
-export default function V3MixingStudio({
+export default function HSEMixingStudio({
   bridge, onClose, playerTheme, anchorRect,
-  engineVersion = 'v3', onSwitchEngine, availableEngines,
+  engineVersion = 'hse', onSwitchEngine, availableEngines,
   exportMp3 = null, exporting = false, playbackTimeStore,
-}: V3MixingStudioProps) {
+}: HSEMixingStudioProps) {
   const theme = useHSETheme()
-  const controller = useV3Params(bridge)
+  const controller = useHSEParams(bridge)
   const [activePage, setActivePage] = useState<PageKey>('home')
   const [effectModal, setEffectModal] = useState<string | null>(null)
   const [stats, setStats] = useState<EngineStats>(() => bridge.getStats())
@@ -286,7 +286,7 @@ export default function V3MixingStudio({
                 {activePage === 'scenes' && <ScenesPage {...commonProps} />}
                 {activePage === 'eq' && <EqPage {...commonProps} />}
                 {/* 空间音效：顶级独立选项卡，直接渲染 SpatialPage
-                    （混响 / 3D 环绕 / 立体声宽度——V3EngineParams 效果，非空间音频） */}
+                    （混响 / 3D 环绕 / 立体声宽度——HSEEngineParams 效果，非空间音频） */}
                 {activePage === 'spatial' && <SpatialPage {...commonProps} />}
                 {/* 空间音频：独立顶级选项卡（Power 按钮 + 模式选择器 + 四模式面板，
                     与「空间音效」区分——双耳渲染 4 档模式 instant/headLocked/world/stage） */}

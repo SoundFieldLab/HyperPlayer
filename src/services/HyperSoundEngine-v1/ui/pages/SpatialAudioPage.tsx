@@ -2,9 +2,9 @@
  * 空间音频页 —— Power 按钮 + 模式选择器 + 四模式面板（独立顶级选项卡）
  *
  * 从 SpatialPage 拆分而来（SpatialPage 现仅保留混响/3D环绕/立体声宽度等
- * V3EngineParams 效果卡）。本页只承载空间音频（Spatial Audio）：双耳渲染的
+ * HSEEngineParams 效果卡）。本页只承载空间音频（Spatial Audio）：双耳渲染的
  * 4 档模式（instant/headLocked/world/stage）+ 标准/专业视图切换 +
- * 设置弹窗入口。状态走 V3EngineParams.spatial（HyperSoundEngine 第 15 级内联）。
+ * 设置弹窗入口。状态走 HSEEngineParams.spatial（HyperSoundEngine 第 15 级内联）。
  *
  * 视图模式：标准视图（卡片流，默认）/ 专业视图（四象限工作室布局，窄窗
  * < 900px 自动回退标准视图 useProViewEligible）。
@@ -25,8 +25,8 @@ import SpatialSettingsModal from '../components/SpatialSettingsModal'
 import { moveListener, rotateListener } from '../../src/spatial/controller'
 import { stageSpeakers } from '../../src/spatial/scenes'
 import type { HSETheme } from '../hse-theme'
-import type { V3UiBridge } from '../bridge'
-import type { V3ParamsController } from '../hooks'
+import type { HSEUiBridge } from '../bridge'
+import type { HSEParamsController } from '../hooks'
 import type { SpatialMode, DeepPartial, HeadLockedSettings, SpeakerRoute, VirtualSpeakerCfg } from '../../src/spatial/types'
 import type { PlaybackTimeStore } from '../../../../audio/playbackTimeStore'
 import { createDefaultSpatialParams } from '../../src/spatial/types'
@@ -37,9 +37,9 @@ import { createLayoutSpeakers, headLockedSpeakers } from '../../src/spatial/layo
 import { HEAD_LOCKED_LAYOUTS, SPATIAL_ROOM_OPTIONS } from '../components/spatialConstants'
 
 interface SpatialAudioPageProps {
-  bridge: V3UiBridge
-  /** V3 引擎参数控制器：空间音频参数在 V3EngineParams.spatial（HyperSoundEngine 第 15 级内联）。 */
-  controller: V3ParamsController
+  bridge: HSEUiBridge
+  /** HSE 引擎参数控制器：空间音频参数在 HSEEngineParams.spatial（HyperSoundEngine 第 15 级内联）。 */
+  controller: HSEParamsController
   theme: HSETheme
   onOpenEffect: (key: string) => void
   /** 播放时钟 store（可选）：透传给 WorldPanel「随曲目播放」；缺省 = 独立运行无播放器 */
@@ -72,7 +72,7 @@ const HEAD_LOCKED_EDITOR_VIEWS: { value: 'ring' | 'sphere'; label: string }[] = 
 ]
 
 export default function SpatialAudioPage({ bridge, controller, theme, playbackTimeStore }: SpatialAudioPageProps) {
-  /* ── 空间音频（V3EngineParams.spatial，HyperSoundEngine 第 15 级内联） ── */
+  /* ── 空间音频（HSEEngineParams.spatial，HyperSoundEngine 第 15 级内联） ── */
   const { params, patch } = controller
   const spatial: SpatialSettings = params.spatial ?? createDefaultSpatialSettings()
 
@@ -96,7 +96,7 @@ export default function SpatialAudioPage({ bridge, controller, theme, playbackTi
   const worldActive = spatial.mode === 'world'
   const stageActive = spatial.mode === 'stage'
 
-  /** 深合并写入空间参数（V3EngineParams.spatial，HyperSoundEngine 第 15 级内联） */
+  /** 深合并写入空间参数（HSEEngineParams.spatial，HyperSoundEngine 第 15 级内联） */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const patchSpatial = (p: any): void => {
     patch({ spatial: { ...spatial, ...p } })
@@ -154,7 +154,7 @@ export default function SpatialAudioPage({ bridge, controller, theme, playbackTi
     const statsTimer = window.setInterval(() => {
       const stats = bridge.getStats()
       const lat = stats?.engineLatencySamples
-      const fs = 48000 // EngineV3 构造采样率（AudioContext 标准采样率；仅用于样本→毫秒换算）
+      const fs = 48000 // HyperSoundEngine 构造采样率（AudioContext 标准采样率；仅用于样本→毫秒换算）
       setStatusInfo({
         latencyMs: Number.isFinite(lat) && lat > 0 ? Math.round((lat / fs) * 1000) : 0,
         fps,

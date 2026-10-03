@@ -23,8 +23,8 @@ import { BUILTIN_SCENE_SEED } from '../src/engine/builtinSceneSeed'
 import { SCENE_PRESETS } from '../src/engine/ScenePresets'
 import { createDefaultParams } from '../src/types'
 
-const OVERRIDES_KEY = 'hyperplayer:v3-scene-overrides'
-const MY_SCENES_KEY = 'hyperplayer:v3-my-scenes'
+const OVERRIDES_KEY = 'hyperplayer:hse-scene-overrides'
+const MY_SCENES_KEY = 'hyperplayer:hse-my-scenes'
 
 function tweak(id: string): ReturnType<typeof createDefaultParams> {
   const p = createDefaultParams(48000)

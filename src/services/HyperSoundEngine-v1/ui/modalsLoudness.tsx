@@ -6,9 +6,9 @@
  */
 
 import { Volume2, Gauge } from 'lucide-react'
-import type { V3Theme } from './theme'
+import type { HSETheme } from './theme'
 import { InfoLine, Modal, Segmented, Slider, Toggle } from './primitives'
-import type { V3ParamsController } from './hooks'
+import type { HSEParamsController } from './hooks'
 
 /** v3 preset 模式预设（v2 兼容：flat/bass/vocal/warm/bright/night） */
 export const COMP_PRESETS: { id: string; name: string; hint: string }[] = [
@@ -33,7 +33,7 @@ export function autoBoostAtVolume(volumePercent: number): { lowDb: number; highD
 
 /* ─────────────────────────── 音量自适应补偿 ─────────────────────────── */
 
-export function LoudnessCompModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function LoudnessCompModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const comp = params.loudnessCompensation
   const mode = comp.mode
@@ -140,7 +140,7 @@ export function LoudnessCompModal({ controller, theme, onClose }: { controller: 
 
 /* ─────────────────────────── 响度归一化 ─────────────────────────── */
 
-export function LoudnessNormModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function LoudnessNormModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const ln = params.loudnessNormalization
   return (
@@ -172,7 +172,7 @@ export function LoudnessNormModal({ controller, theme, onClose }: { controller: 
 }
 
 /* 聚合导出 */
-export function LoudnessModal({ effectKey: key, controller, theme, onClose }: { effectKey: 'loudnessCompensation' | 'loudnessNormalization'; controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function LoudnessModal({ effectKey: key, controller, theme, onClose }: { effectKey: 'loudnessCompensation' | 'loudnessNormalization'; controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   if (key === 'loudnessCompensation') return <LoudnessCompModal controller={controller} theme={theme} onClose={onClose} />
   return <LoudnessNormModal controller={controller} theme={theme} onClose={onClose} />
 }

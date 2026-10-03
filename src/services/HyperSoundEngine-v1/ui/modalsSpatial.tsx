@@ -7,9 +7,9 @@
 
 import { useRef } from 'react'
 import { AudioLines, Headphones, Music2 } from 'lucide-react'
-import type { V3Theme } from './theme'
+import type { HSETheme } from './theme'
 import { InfoLine, Modal, Segmented, Slider, Toggle } from './primitives'
-import type { V3ParamsController } from './hooks'
+import type { HSEParamsController } from './hooks'
 
 export const REVERB_TYPES: { value: 'hall' | 'room' | 'plate' | 'spring' | 'stage'; label: string; hint: string }[] = [
   { value: 'hall', label: '大厅', hint: '开阔空间，长混响' },
@@ -28,7 +28,7 @@ export const HARMONIC_TYPES: { value: 'odd' | 'even' | 'atan' | 'soft'; label: s
 
 /* ─────────────────────────── 混响 ─────────────────────────── */
 
-export function ReverbModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function ReverbModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const rv = params.reverb
   const fileRef = useRef<HTMLInputElement>(null)
@@ -126,7 +126,7 @@ export function ReverbModal({ controller, theme, onClose }: { controller: V3Para
 
 /* ─────────────────────────── 3D 环绕 ─────────────────────────── */
 
-export function Surround3dModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function Surround3dModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const s3 = params.surround3d
   const angleRad = (s3.angle * Math.PI) / 180
@@ -184,7 +184,7 @@ export function Surround3dModal({ controller, theme, onClose }: { controller: V3
 
 /* ─────────────────────────── 低音增强 ─────────────────────────── */
 
-export function BassEnhancerModal({ controller, theme, onClose }: { controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function BassEnhancerModal({ controller, theme, onClose }: { controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   const { params, patch } = controller
   const bass = params.bassEnhancer
   return (
@@ -218,7 +218,7 @@ export function BassEnhancerModal({ controller, theme, onClose }: { controller: 
 }
 
 /* 聚合导出：空间/染色类弹窗按 key 分发 */
-export function SpatialModal({ effectKey: key, controller, theme, onClose }: { effectKey: 'reverb' | 'surround3d' | 'bassEnhancer'; controller: V3ParamsController; theme: V3Theme; onClose: () => void }) {
+export function SpatialModal({ effectKey: key, controller, theme, onClose }: { effectKey: 'reverb' | 'surround3d' | 'bassEnhancer'; controller: HSEParamsController; theme: HSETheme; onClose: () => void }) {
   if (key === 'reverb') return <ReverbModal controller={controller} theme={theme} onClose={onClose} />
   if (key === 'surround3d') return <Surround3dModal controller={controller} theme={theme} onClose={onClose} />
   return <BassEnhancerModal controller={controller} theme={theme} onClose={onClose} />
