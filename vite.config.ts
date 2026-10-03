@@ -35,6 +35,11 @@ export default defineConfig({
     },
   },
   build: {
+    // 三个入口（index / desktop-player / desktop-lyrics）都只被 Electron 的 Chromium 加载
+    // （electron 42.8.0 = Chromium 148），不存在更老的内核；显式抬高 target 可免去 Vite 默认值
+    // 面向老浏览器的降级转换（产物更小、解析更快）。
+    // ⚠️ 升级 Electron 后必须同步更新该值，否则新语法会被发给旧内核。
+    target: 'chrome148',
     outDir: 'dist',
     emptyOutDir: true,
     // 大块数据均已改为懒加载：最大的常规 chunk 约 500KB，最大的懒加载数据 chunk（城市数据）约 2MB。
@@ -58,6 +63,12 @@ export default defineConfig({
           if (id.includes('leaflet')) return 'vendor-leaflet'
           if (id.includes('framer-motion') || id.includes('/motion-dom/') || id.includes('/motion-utils/')) return 'vendor-motion'
           if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-is/') || id.includes('/scheduler/')) return 'vendor-react'
+          // 大体量 3D/视频依赖目前只被懒加载路径引用（HSE 空间音频 UI / PV 歌词 / B 站 MV），
+          // 固定 chunk 归属便于缓存命中与并行加载；匹配只针对裸包路径（'/three/' 不会命中
+          // '/@react-three/'，后者与 drei 一起留在自动分块里，懒加载边界不变）。
+          if (id.includes('/three/') || id.includes('three-stdlib')) return 'vendor-three'
+          if (id.includes('/pixi.js/') || id.includes('/@pixi/')) return 'vendor-pixi'
+          if (id.includes('/hls.js/')) return 'vendor-hls'
         },
       },
     },
