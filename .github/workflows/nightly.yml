@@ -12,7 +12,10 @@
 #     便携版 zip（`release/win-unpacked/` 始终只是本地调试产物，不随 releases 分发）。
 #   - 生成并提交 `update-nightly.json`（nightly 渠道的更新清单）——供客户端
 #     「更新渠道 = 每日构建（Nightly）」时拉取；正式版清单 `update.json` 不受影响。
-#   - 无新增提交时自动跳过（手动触发时可用 force=true 强制构建）。
+#   - 无新增提交时自动跳过（手动触发时可用 force=true 强制构建）。判定会**排除本工作流
+#     与 release.yml 回写的更新清单文件**（update-nightly.json / update.json）——否则每日
+#     回写提交让 HEAD 永远领先于上次 nightly tag，判定失效，nightly 每天空转
+#     （2026-09-14~10-04 曾因此连发 21 次无代码变更的 nightly，2026-10-04 修复）。
 
 name: Nightly Build 每日构建
 
@@ -88,11 +91,14 @@ jobs:
             RANGE="${LAST_STABLE:+${LAST_STABLE}..HEAD}"
           fi
 
-          # 无新增提交判定：与「上一个 nightly tag」比较，相同则跳过（force=true 时强制构建）
-          # 当天 tag 已存在（重复构建）时，仍与上一个 nightly tag 比较，确保有新提交才发。
+          # 无新增提交判定：与「上一个 nightly tag」比较（force=true 时强制构建）。
+          # 用**排除清单回写文件的树 diff** 而非「tag/HEAD SHA 相等」：
+          # 本工作流每次发布都会向 main 回写一条 update-nightly.json 提交（release.yml 亦回写
+          # update.json），若不做排除，HEAD 永远领先于上次 nightly tag，判定永远为「有变更」，
+          # nightly 会每天空转构建（2026-09-14~10-04 曾连发 21 次无代码变更的 nightly）。
           HAS_CHANGES="true"
           if [ "$FORCE" != "true" ] && [ -n "$LAST_NIGHTLY" ]; then
-            if [ "$(git rev-parse "$LAST_NIGHTLY")" = "$(git rev-parse HEAD)" ]; then
+            if git diff --quiet "$LAST_NIGHTLY" HEAD -- . ':(exclude)update-nightly.json' ':(exclude)update.json'; then
               HAS_CHANGES="false"
             fi
           fi
@@ -105,12 +111,12 @@ jobs:
             if [ -n "$RANGE" ]; then
               echo "## 代码变动（自上次 Nightly 构建 ${RANGE%%..*} 起）"
               echo ""
-              LOG=$(git log $RANGE --no-merges --pretty=format:"- %s (%h)" 2>/dev/null)
+              LOG=$(git log $RANGE --no-merges --pretty=format:"- %s (%h)" -- . ':(exclude)update-nightly.json' ':(exclude)update.json' 2>/dev/null)
               if [ -z "$LOG" ]; then echo "- 无新增提交"; else echo "$LOG"; fi
             else
               echo "## 代码变动（暂无 nightly / 正式版 tag，最近 50 条提交）"
               echo ""
-              git log -50 --no-merges --pretty=format:"- %s (%h)"
+              git log -50 --no-merges --pretty=format:"- %s (%h)" -- . ':(exclude)update-nightly.json' ':(exclude)update.json'
             fi
             echo ""
             echo ""
