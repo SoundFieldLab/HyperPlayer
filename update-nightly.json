@@ -1,13 +1,13 @@
 {
   "channel": "nightly",
-  "version": "1.0.1-nightly.20261004",
-  "notes": "# HyperPlayer Nightly 20261004\n\n**版本号：1.0.1-nightly.20261004（基础 1.0.0 + 构建日期，非正式发版，不自动升级版本号）**\n\n## 代码变动（自上次 Nightly 构建 nightly-20261003 起）\n\n- chore(nightly): 更新 update-nightly.json 至 1.0.1-nightly.20261003 (415bbfc)\n\n\n---\n**下载**\n\n- `HyperPlayer-*-Setup.exe` —— NSIS 安装包，双击安装（推荐普通用户）\n\n⚠️ 自动构建的每日测试版本，可能不稳定。仅供主动切换到「每日构建（Nightly）」渠道的用户，不影响正式版更新通道。",
+  "version": "1.0.1-nightly.20261005",
+  "notes": "# HyperPlayer Nightly 20261005\n\n**版本号：1.0.1-nightly.20261005（基础 1.0.0 + 构建日期，非正式发版，不自动升级版本号）**\n\n## 代码变动（自上次 Nightly 构建 nightly-20261004 起）\n\n- docs(release): nightly 旧 tag/release 已清理，仅保留最新 nightly-20261004 (40ef0c9)\n- ci(nightly)!: 修复「无新提交」判定失效导致的每日空转构建 (91d8346)\n- ci(release): 新增手动发版工作流 release.yml（自填版本号 + 可选版本说明） (155ba22)\n- refactor(hse)!: V3 历史命名强制统一为 HSE（用户拍板覆盖旧「标识符保持不动」约定） (5d7a986)\n- docs(perf): 同步升级与优化实施状态（阶段E） (3f02f69)\n- perf(build+ui): splitCityData 跳过未变写入 + HSE 剩余 4 处 resize 接 rafThrottle（§6.5/§4.5 收尾） (8b0d63d)\n- perf(player): AutoMix 全曲 DSP 搬入 Web Worker（性能计划 1.0 §6.1b；§6.1a 以结构化方式达成） (6f6fe3f)\n- perf(electron): backgroundThrottling 默认节流 + 灯效消费者运行时豁免（性能计划 1.0 §6.4） (ded0d58)\n- perf(player): 内置字体按需注入（性能计划 1.0 §6.3，dist 体积预期修正见正文） (5a94837)\n- perf(player): HSE 引擎模块出首包（性能计划 1.0 §6.2） (f23df39)\n- perf(electron): protocol.handle 迁移 + V8 编译缓存按大版本分段 + 启动裁剪开关（升级后阶段 B6/C） (e7be2ad)\n- perf(electron)!: Electron 42.8.0 -> 44.5.0（Chromium 148→152 / V8 14.8→15.2 / Node 24.18→24.18.1） (37d3cd2)\n- chore: gitignore promo/ 宣传视频素材目录（文案/截图/logo，本地交付物） (d31c402)\n- docs(perf): 性能优化计划 1.0（九大类逐项对照）+ 2.0（Electron 44 升级报告）并登记 AGENTS.md (b0f4ea9)\n- perf(build): vite 显式 target chrome148 + vendor-three/pixi/hls 手动分块（性能计划 1.0 §6.5 部分） (62e2d25)\n- perf(player): 过渡进度外移至外部 store，过渡期不再全树重渲染（性能计划 1.0 §5.1） (ed315b2)\n- perf(render): 渲染侧稳态优化（性能计划 1.0 §4.2/4.4/4.5） (6698f12)\n- perf(core): 启动链路与主进程稳态优化（性能计划 1.0 阶段 0/1 + 4.1/4.4） (6946875)\n\n\n---\n**下载**\n\n- `HyperPlayer-*-Setup.exe` —— NSIS 安装包，双击安装（推荐普通用户）\n\n⚠️ 自动构建的每日测试版本，可能不稳定。仅供主动切换到「每日构建（Nightly）」渠道的用户，不影响正式版更新通道。",
   "artifacts": {
     "win-x64": {
       "urls": [
-        "https://github.com/SoundFieldLab/HyperPlayer/releases/download/nightly-20261004/HyperPlayer-1.0.1-nightly.20261004-Setup.exe"
+        "https://github.com/SoundFieldLab/HyperPlayer/releases/download/nightly-20261005/HyperPlayer-1.0.1-nightly.20261005-Setup.exe"
       ],
-      "sha256": "c424e1b4d73432bdfac3ae7406995b04ee738083519e2334d783566e01edf24b"
+      "sha256": "ef2aa3c3524d93bcd647c7295adc93a0edd6ede79e33c596b31a3ca5b35214fb"
     }
   }
 }
