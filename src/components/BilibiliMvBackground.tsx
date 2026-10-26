@@ -44,7 +44,7 @@ import {
 } from '../services/mvAlignment'
 import type { BilibiliVideo, CandidateSignals } from '../services/bilibiliApi'
 import type { LyricLine } from '../services/musicApi'
-import { clampMvBlur, resolveMvBackgroundQuality } from '../services/playbackPerformancePolicy'
+import { clampMvBlur, resolveMvBackgroundQuality, resolveMvBackgroundStartupQuality } from '../services/playbackPerformancePolicy'
 import { debugLog } from '../utils/debugLog'
 
 type MvBackgroundStatus = 'idle' | 'searching' | 'loading' | 'playing' | 'confirm' | 'none' | 'error'
@@ -178,7 +178,8 @@ async function resolveAndPrewarmAlignment(
       if (!cid) cid = view.data.cid
     }
     if (!cid) return
-    const qn = resolveMvBackgroundQuality()
+    // 预载对齐只用音频流（与视频画质无关），但与 loadVideo 同用起步档保持一致
+    const qn = resolveMvBackgroundStartupQuality()
     const playInfo = await getBilibiliPlayUrl(candidate.video.bvid, cid, qn, signal)
     if (playInfo.code !== 0 || !playInfo.cacheKey) return
     await prewarmMvBeatAnalysis({
@@ -291,6 +292,17 @@ export default function BilibiliMvBackground({
   songRef.current = { songTitle, songArtists, songDuration, platform, songId }
 
   const [status, setStatus] = useState<MvBackgroundStatus>('idle')
+  const statusRef = useRef<MvBackgroundStatus>(status)
+  statusRef.current = status
+  // —— 带宽保障升档（低清起步 → 音频缓冲健康后升清）状态 ——
+  /** 最近一次成功 playurl 的画质协商结果（升档判断的事实源；含过渡预载，归属经 songKey 校验） */
+  const lastPlayInfoRef = useRef<{ songKey: string; bvid: string; cid: number; qn: number; acceptQuality: number[] } | null>(null)
+  /** 升档在途控制器：新 loadVideo / 切歌 / 卸载时中止，防止旧请求把流灌进已被占用的槽 */
+  const upgradeCtrlRef = useRef<AbortController | null>(null)
+  /** 本曲升档已失败（playurl 报错/流报错）的标记 key（`${songKey}::${bvid}::${qn}`）：避免每 1.5s 白打一次接口 */
+  const upgradeSettledKeyRef = useRef('')
+  /** 升档视频所在槽（canplay 时先 seek 到对齐位置再淡入——升档是同曲换清晰度，不是从 0 开始的新歌） */
+  const upgradeStagedSlotRef = useRef<'A' | 'B' | null>(null)
   const searchedSongKeyRef = useRef('')
   // A/B 双视频槽位：切歌时旧视频继续播放，新视频在另一槽位缓冲好后盖在旧视频上渐入（封面式过渡，无黑屏）
   const [slotAUrl, setSlotAUrl] = useState<string | null>(null)
@@ -493,6 +505,10 @@ export default function BilibiliMvBackground({
         loadControllerRef.current?.abort()
         loadControllerRef.current = controller
       }
+      // 新的加载（换视频/换清晰度）让在途升档作废：升档槽位会被本次加载占用
+      upgradeCtrlRef.current?.abort()
+      upgradeCtrlRef.current = null
+      upgradeStagedSlotRef.current = null
       const isCurrentRequest = () => {
         const currentController = stagedOnly ? bgPreloadCtrlRef.current : loadControllerRef.current
         if (controller.signal.aborted || currentController !== controller || loadGenerationRef.current[generationKind] !== generation) return false
@@ -516,7 +532,10 @@ export default function BilibiliMvBackground({
             if (!cid) cid = view.data.cid
           }
           const settings = getBilibiliWatchSettings()
-          const qn = resolveMvBackgroundQuality()
+          // 带宽保障：低清起步（480P），音频缓冲健康后由升档 watcher 无感切高清。
+          // 用户在看歌设置里手动选了画质则不超过它。
+          const ceiling = settings.targetQuality === 'auto' ? resolveMvBackgroundQuality() : settings.targetQuality
+          const qn = Math.min(resolveMvBackgroundStartupQuality(), ceiling)
           const playInfo = await getBilibiliPlayUrl(candidate.video.bvid, cid, qn, controller.signal)
           if (playInfo.code === -404) throw new Error('视频已失效或删除')
           if (playInfo.code !== 0 || !playInfo.cacheKey) throw new Error(playInfo.error || '获取播放地址失败')
@@ -524,6 +543,15 @@ export default function BilibiliMvBackground({
           if (!isCurrentRequest()) {
             debugLog('[MvBackground] loadVideo 弃结果：请求已过期', expectedSongKey, '→', songKeyRef.current)
             return
+          }
+          // 记录画质协商结果（升档 watcher 的事实源）：实际命中的 qn + 账号可接受档位。
+          // staged 预载记录的是目标歌的 key，commit 接管后 songKey 对上即生效。
+          lastPlayInfoRef.current = {
+            songKey: expectedSongKey,
+            bvid: candidate.video.bvid,
+            cid,
+            qn: Number(playInfo.quality) || qn,
+            acceptQuality: Array.isArray(playInfo.acceptQuality) ? playInfo.acceptQuality : [],
           }
           const newVideoUrl = bilibiliStreamUrl(playInfo.cacheKey, 'video')
           const playState = { bvid: candidate.video.bvid, cid, videoUrl: newVideoUrl, cacheKey: playInfo.cacheKey, type: candidate.type }
@@ -682,6 +710,9 @@ export default function BilibiliMvBackground({
       // 切歌：清空**两个**槽（旧的视频彻底释放，不留残留），并标记下个 loadVideo
       // 直接进 active 槽替换（不等交叉淡化——淡入被快速切歌打断会一直空白）
       songSwitchedRef.current = true
+      upgradeCtrlRef.current?.abort()
+      upgradeCtrlRef.current = null
+      upgradeStagedSlotRef.current = null
       setSlotAUrl(null)
       setSlotBUrl(null)
       slotBvidRef.current.A = ''
@@ -1189,6 +1220,101 @@ export default function BilibiliMvBackground({
     }
   }, [enabled, hidden, songKey])
 
+  // —— 带宽保障升档：歌曲音频优先 ——
+  // 起步用低档（480P，见 loadVideo）让出切歌头几秒的下行给歌曲音频；等音频缓冲健康
+  // （开播 ≥10s 且向前缓冲 ≥12s——快网更早满足、慢网一直等到真正安全，比固定延时更能防卡顿）
+  // 且距歌曲结尾 >30s（尾声升档没有意义，还挤占下一首的起步窗口）时，重拉高清流放入
+  // 非活跃槽缓冲，canplay 后 seek 到对齐位置并交叉淡化替换（用户无感）。升档失败/到顶
+  // 只标记本曲，不影响播放；看歌设置手动选过画质（targetQuality）则作为升档上限。
+  useEffect(() => {
+    if (!enabled || hidden) return
+    const UPGRADE_MIN_POSITION_SEC = 10
+    const UPGRADE_MIN_AUDIO_BUFFER_SEC = 12
+    const UPGRADE_SKIP_TAIL_SEC = 30
+    const TICK_MS = 1500
+    const bufferedAhead = (media: HTMLMediaElement) => {
+      const at = media.currentTime
+      const ranges = media.buffered
+      for (let index = 0; index < ranges.length; index += 1) {
+        if (ranges.start(index) <= at && at <= ranges.end(index)) return ranges.end(index) - at
+      }
+      return 0
+    }
+    const interval = window.setInterval(() => {
+      if (!isPlayingRef.current || statusRef.current !== 'playing') return
+      // 槽位必须安静：过渡/预载/晋升/另一次升档进行中一律让位主流程
+      if (transitionActiveRef.current || transitionPreloadRef.current) return
+      if (stagedSlotRef.current || incomingSlotRef.current || pendingPromotionRef.current) return
+      if (bgPreloadCtrlRef.current || upgradeCtrlRef.current) return
+      const info = lastPlayInfoRef.current
+      const activeState = slotPlayStateRef.current[activeSlotRef.current]
+      if (!info || !activeState) return
+      if (info.songKey !== songKeyRef.current || info.bvid !== activeState.bvid) return
+      const settledKey = `${info.songKey}::${info.bvid}::${info.qn}`
+      if (upgradeSettledKeyRef.current === settledKey) return
+      const settings = getBilibiliWatchSettings()
+      const ceiling = settings.targetQuality === 'auto' ? resolveMvBackgroundQuality() : settings.targetQuality
+      const maxAccept = info.acceptQuality.length ? Math.max(...info.acceptQuality) : info.qn
+      const targetQn = Math.min(ceiling, maxAccept)
+      if (targetQn <= info.qn) {
+        // 账号可用档位/手动上限没有比当前更高的：本曲到顶，不再尝试
+        upgradeSettledKeyRef.current = settledKey
+        return
+      }
+      const audio = getAudioRef.current?.()
+      if (!audio) return
+      const position = audio.currentTime
+      if (position < UPGRADE_MIN_POSITION_SEC) return
+      if (Number.isFinite(songRef.current.songDuration) && songRef.current.songDuration > 0
+        && position > songRef.current.songDuration - UPGRADE_SKIP_TAIL_SEC) return
+      const ahead = bufferedAhead(audio)
+      if (ahead < UPGRADE_MIN_AUDIO_BUFFER_SEC) return
+      // 条件齐备：拉高清流 → 非活跃槽缓冲 → canplay 时对齐 + 交叉淡化
+      const controller = new AbortController()
+      upgradeCtrlRef.current = controller
+      void window.electron?.automixLog?.('MvAlign', `[背景] 升档 ${info.bvid} qn=${info.qn}→${targetQn}（音频已缓冲 ${ahead.toFixed(0)}s）`)?.catch?.(() => undefined)
+      void (async () => {
+        try {
+          const playInfo = await getBilibiliPlayUrl(activeState.bvid, info.cid, targetQn, controller.signal)
+          if (controller.signal.aborted || upgradeCtrlRef.current !== controller) return
+          if (playInfo.code !== 0 || !playInfo.cacheKey) {
+            upgradeSettledKeyRef.current = settledKey
+            return
+          }
+          const negotiatedQn = Number(playInfo.quality) || info.qn
+          if (negotiatedQn <= info.qn) {
+            // 服务器实际协商不出更高档（受限/匿名）：按实际档位记账，后续 tick 自然判定到顶
+            lastPlayInfoRef.current = { ...info, qn: negotiatedQn }
+            return
+          }
+          // playurl 期间状态被占（切歌/预载/晋升开始）：放弃本次让位主流程，不标记失败
+          if (songKeyRef.current !== info.songKey || transitionActiveRef.current || transitionPreloadRef.current
+            || stagedSlotRef.current || incomingSlotRef.current || pendingPromotionRef.current || bgPreloadCtrlRef.current) return
+          const newUrl = bilibiliStreamUrl(playInfo.cacheKey, 'video')
+          const playState = { bvid: activeState.bvid, cid: info.cid, videoUrl: newUrl, cacheKey: playInfo.cacheKey, type: activeState.type }
+          lastPlayInfoRef.current = { ...info, qn: negotiatedQn, acceptQuality: Array.isArray(playInfo.acceptQuality) ? playInfo.acceptQuality : info.acceptQuality }
+          lastPlayStateRef.current = playState // 看歌接管/对齐读取最新流
+          const stage = otherSlot(activeSlotRef.current)
+          stagedSlotRef.current = stage
+          upgradeStagedSlotRef.current = stage
+          if (stage === 'A') { setSlotAUrl(newUrl); slotBvidRef.current.A = playState.bvid; slotPlayStateRef.current.A = playState; slotOwnerRef.current.A = info.songKey }
+          else { setSlotBUrl(newUrl); slotBvidRef.current.B = playState.bvid; slotPlayStateRef.current.B = playState; slotOwnerRef.current.B = info.songKey }
+          void window.electron?.automixLog?.('MvAlign', `[背景] 升档落槽 槽${stage} qn=${negotiatedQn} url=${newUrl.slice(-36)}（canplay 后对齐并交叉淡化）`)?.catch?.(() => undefined)
+        } catch {
+          // 网络失败等：本曲标记已试过，避免每 1.5s 重打接口
+          if (!controller.signal.aborted) upgradeSettledKeyRef.current = settledKey
+        } finally {
+          if (upgradeCtrlRef.current === controller) upgradeCtrlRef.current = null
+        }
+      })()
+    }, TICK_MS)
+    return () => {
+      window.clearInterval(interval)
+      upgradeCtrlRef.current?.abort()
+      upgradeCtrlRef.current = null
+    }
+  }, [enabled, hidden])
+
   // MV↔歌曲对齐检测入口：视频进入 playing 后触发；歌词到达、从看歌切回、开关重开等
   // 时机补触发。ensureMvAlignment 内部负责成功缓存、在途去重和短期失败缓存。
   // 过渡预载进行中且目标 ≠ 当前歌时跳过：此时 lastPlayState 是目标 MV，用旧歌 songKey
@@ -1344,6 +1470,7 @@ export default function BilibiliMvBackground({
       bgPreloadCtrlRef.current?.abort()
       upcomingPreloadControllerRef.current?.abort()
       alignmentControllerRef.current?.abort()
+      upgradeCtrlRef.current?.abort()
       for (const ref of [slotARef, slotBRef]) releaseMediaElement(ref.current)
       if (crossfadeTimerRef.current) window.clearTimeout(crossfadeTimerRef.current)
       if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current)
@@ -1370,6 +1497,20 @@ export default function BilibiliMvBackground({
       // （beginCrossfade），否则 active 提前切走/旧槽被清，commit 时无槽可接管 → MV 残留。
       const preloading = Boolean(transitionPreloadRef.current && !transitionPreloadRef.current.failed)
       if (transitionActive || preloading) return
+      // 升档槽（同曲换清晰度）：淡入前先 seek 到当前对齐位置——它不是从 0 开始的
+      // 新歌视频，不 seek 会在 1s 淡入期间跳回片头画面
+      if (upgradeStagedSlotRef.current === slot) {
+        upgradeStagedSlotRef.current = null
+        const audio = getAudioRef.current?.()
+        const video = slotEl(slot)
+        const bvid = slotBvidRef.current[slot]
+        if (audio && video && !Number.isNaN(video.duration)) {
+          const alignment = getMvAlignmentFor(songKeyRef.current, bvid, alignmentOwnerFor(bvid))
+          const offset = alignment && alignment.confidence >= MIN_ALIGNMENT_CONFIDENCE ? alignment.offsetSeconds : 0
+          const target = computeMvSyncTarget(playbackTime(audio) + offset, video.duration)
+          if (target !== null && Math.abs(video.currentTime - target) > 0.5) video.currentTime = target
+        }
+      }
       beginCrossfade(slot)
       return
     }
@@ -1383,6 +1524,12 @@ export default function BilibiliMvBackground({
   const handleVideoError = (slot: 'A' | 'B') => {
     if (stagedSlotRef.current === slot) stagedSlotRef.current = null
     if (pendingPromotionRef.current === slot) pendingPromotionRef.current = null
+    // 升档流加载失败：清升档标记并本曲不再重试（否则每 1.5s 重拉 → 反复 error）
+    if (upgradeStagedSlotRef.current === slot) {
+      upgradeStagedSlotRef.current = null
+      const info = lastPlayInfoRef.current
+      if (info) upgradeSettledKeyRef.current = `${info.songKey}::${info.bvid}::${info.qn}`
+    }
     const failedBvid = slotBvidRef.current[slot]
     if (failedBvid) failedBvidsRef.current.add(failedBvid)
     slotBvidRef.current[slot] = ''

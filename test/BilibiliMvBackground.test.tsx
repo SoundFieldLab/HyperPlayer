@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import BilibiliMvBackground from '../src/components/BilibiliMvBackground'
 import * as bili from '../src/services/bilibiliApi'
 import * as alignment from '../src/services/mvAlignment'
+import { MV_BACKGROUND_STARTUP_QUALITY } from '../src/services/playbackPerformancePolicy'
 
 let mockWatchSettings = { targetQuality: 'auto', showLowConfidenceCandidates: false }
 
@@ -197,7 +198,7 @@ describe('BilibiliMvBackground regressions', () => {
       />,
     )
 
-    await waitFor(() => expect(bili.getBilibiliPlayUrl).toHaveBeenCalledWith('target-bvid', 1, 112, expect.any(AbortSignal)))
+    await waitFor(() => expect(bili.getBilibiliPlayUrl).toHaveBeenCalledWith('target-bvid', 1, MV_BACKGROUND_STARTUP_QUALITY, expect.any(AbortSignal)))
     resolveCurrent({ status: 'confirm', best: null, candidates: [], fallbackChain: [] })
   })
 
@@ -383,4 +384,52 @@ describe('BilibiliMvBackground regressions', () => {
     await act(async () => { vi.advanceTimersByTime(1500) })
     expect(video.currentTime).toBe(61)
   })
+
+  it('upgrades the background MV tier once the song audio buffer is healthy', async () => {
+    const audio = new Audio()
+    audio.currentTime = 20
+    Object.defineProperty(audio, 'buffered', { configurable: true, value: { length: 1, start: () => 0, end: () => 45 } })
+    vi.mocked(bili.getBilibiliPlayUrl)
+      .mockImplementationOnce(async () => ({ code: 0, quality: 32, acceptQuality: [32, 80, 112], cacheKey: 'low' } as any))
+      .mockImplementationOnce(async () => ({ code: 0, quality: 112, acceptQuality: [32, 80, 112], cacheKey: 'hi' } as any))
+    // mock 历史跨用例累积（afterEach 只 restore 不清史）：本用例自己清零计数
+    vi.mocked(bili.getBilibiliPlayUrl).mockClear()
+    vi.mocked(bili.findBestBilibiliMv).mockResolvedValue(autoResult('current-bvid'))
+
+    const { container } = render(
+      <BilibiliMvBackground {...baseProps(audio)} isPlaying />,
+    )
+    const videos = [...container.querySelectorAll('video')]
+    // 低档起步：首次拉流用 480P 起步档（带宽让路给歌曲音频）
+    await waitFor(() => expect(videos[0].getAttribute('src')).toBe('http://stream/low/video'))
+    expect(bili.getBilibiliPlayUrl).toHaveBeenLastCalledWith('current-bvid', 1, MV_BACKGROUND_STARTUP_QUALITY, expect.any(AbortSignal))
+
+    // 升档 watcher（1.5s 一拍）：歌曲位置 ≥10s 且音频向前缓冲 ≥12s → 拉 112 高清流进非活跃槽
+    await waitFor(() => expect(bili.getBilibiliPlayUrl).toHaveBeenCalledTimes(2), { timeout: 6000 })
+    expect(bili.getBilibiliPlayUrl).toHaveBeenLastCalledWith('current-bvid', 1, 112, expect.any(AbortSignal))
+    const upgraded = videos.find((video) => video !== videos[0])!
+    await waitFor(() => expect(upgraded.getAttribute('src')).toBe('http://stream/hi/video'))
+
+    // canplay：升档槽先 seek 到音频对齐位置（同曲换清晰度，不是从 0 开始的新歌），再交叉淡化上位
+    setMediaState(upgraded, { readyState: 4, duration: 180, currentTime: 0 })
+    fireEvent.canPlay(upgraded)
+    expect(upgraded.currentTime).toBe(20)
+    await waitFor(() => expect(upgraded.style.opacity).toBe('1'), { timeout: 3000 })
+    // 1s 交叉淡化完成：旧低清槽清空释放
+    await waitFor(() => expect(videos[0].getAttribute('src')).toBeNull(), { timeout: 3000 })
+  }, 20000)
+
+  it('settles without upgrading when the account offers no higher tier', async () => {
+    const audio = new Audio()
+    audio.currentTime = 20
+    Object.defineProperty(audio, 'buffered', { configurable: true, value: { length: 1, start: () => 0, end: () => 45 } })
+    vi.mocked(bili.getBilibiliPlayUrl).mockResolvedValue({ code: 0, quality: 32, acceptQuality: [16, 32], cacheKey: 'low' } as any)
+    vi.mocked(bili.getBilibiliPlayUrl).mockClear()
+    vi.mocked(bili.findBestBilibiliMv).mockResolvedValue(autoResult('current-bvid'))
+
+    const { container } = render(<BilibiliMvBackground {...baseProps(audio)} isPlaying />)
+    await waitFor(() => expect(container.querySelector('video')?.getAttribute('src')).toBe('http://stream/low/video'))
+    await new Promise((resolve) => setTimeout(resolve, 3300)) // 覆盖多个升档节拍
+    expect(bili.getBilibiliPlayUrl).toHaveBeenCalledTimes(1)
+  }, 15000)
 })
