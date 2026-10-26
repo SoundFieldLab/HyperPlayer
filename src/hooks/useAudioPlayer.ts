@@ -8,6 +8,8 @@ import { createSeamlessJoinController, type SeamlessJoinController } from '../se
 import { runGaplessDeckFade } from '../services/gapless/gaplessTransition'
 import { GAPLESS_SEAMLESS_WARMUP_SECONDS } from '../services/gapless/gaplessConstants'
 import { getProxiedAudioUrl } from '../services/musicApi'
+import { SpatialPlaybackInput, type SpatialPlaybackInputOptions } from '../audio/spatialPlaybackInput'
+import type { EnginePlaybackSource } from '../services/audio-engine/types'
 import type { GaplessSettings } from '../services/gapless/gaplessConstants'
 import type {
   PlaybackEngineState,
@@ -52,6 +54,13 @@ export interface AudioGraphHandle {
   /** 最终输出增益节点（analyser 之后、destination 之前）：用于整体静音/输出控制，
    *  不影响 masterGain（效果链采集点在其之前）。 */
   outputGain?: GainNode
+  /** 左右声道波形探针（HSE 用）：效果链输出 → channelSplitter → 左右各一个 AnalyserNode，
+   *  纯探针不接 destination。效果引擎接入时把处理节点连到 channelSplitterNode。 */
+  channelSplitterNode?: ChannelSplitterNode
+  leftAnalyserNode?: AnalyserNode
+  rightAnalyserNode?: AnalyserNode
+  /** HSE 接管输入时保留离散声道；切走后恢复浏览器扬声器混音。 */
+  configureDiscreteInput?(enabled: boolean, options?: SpatialPlaybackInputOptions): void
 }
 
 interface DeckMetadata extends PreloadTrack {
@@ -227,7 +236,8 @@ export function useAudioPlayer(
     enableBeatMatching: true,
     skipSilence: true,
   },
-  onAudioGraphReady?: (handle: AudioGraphHandle) => void
+  onAudioGraphReady?: (handle: AudioGraphHandle) => void,
+  onPlaybackSourceChange?: (source: EnginePlaybackSource | null) => void
 ) {
   const primaryRef = useRef<HTMLAudioElement | null>(null)
   const secondaryRef = useRef<HTMLAudioElement | null>(null)
@@ -238,6 +248,17 @@ export function useAudioPlayer(
   const gaplessRef = useRef(gaplessSettings)
   const autoMixRef = useRef(autoMixSettings)
   const onAudioGraphReadyRef = useRef(onAudioGraphReady)
+  const onPlaybackSourceChangeRef = useRef(onPlaybackSourceChange)
+  onPlaybackSourceChangeRef.current = onPlaybackSourceChange
+  /** 引擎播放源通知：正式当前源变化（提交/接管/清空）时推送；预加载不推。 */
+  const notifyPlaybackSource = (metadata: DeckMetadata | null) => {
+    onPlaybackSourceChangeRef.current?.(metadata ? {
+      trackKey: metadata.trackKey ?? metadata.url, url: metadata.url,
+      isLive: isLiveRef.current, replayGainTags: metadata.replayGainTags,
+    } : null)
+    const index = activePrimaryRef.current ? 0 : 1
+    spatialInputsRef.current[index]?.notify()
+  }
   const volumeRef = useRef(DEFAULT_VOLUME)
   const transitionStateRef = useRef<TransitionState>('idle')
   /** 看歌挂起（App 进出看歌时置位）：挂起期间引擎不准备/不启动任何自动过渡，
@@ -272,6 +293,10 @@ export function useAudioPlayer(
   const isLoadingRef = useRef(false)
   const currentLoadRevisionRef = useRef(0)
   const currentMetadataRef = useRef<DeckMetadata | null>(null)
+  /** MediaElementAudioSourceNode 必须持有引用：无 JS 引用可能被 GC 回收，元素随即脱离音频图。 */
+  const mediaSourcesRef = useRef<[MediaElementAudioSourceNode | null, MediaElementAudioSourceNode | null]>([null, null])
+  /** HSE 多声道输入接管（双 deck 各一）：WAV 源解码为受控 PCM，元素只承担时钟。 */
+  const spatialInputsRef = useRef<[SpatialPlaybackInput | null, SpatialPlaybackInput | null]>([null, null])
   const nextMetadataRef = useRef<DeckMetadata | null>(null)
   /** 当前曲是否为直播流：无直播音源时恒为 false（UI 直播态显示用） */
   const isLiveRef = useRef(false)
@@ -359,11 +384,47 @@ export function useAudioPlayer(
       analyser.minDecibels = -90
       analyser.maxDecibels = -8
       analyser.smoothingTimeConstant = 0.58
+      // 左右声道波形探针（纯探针不接 destination）：效果引擎（HSE）把处理节点连到
+      // splitter 即可采集效果链后的左右波形；引擎未接入时 splitter 无源，波形为空。
+      const channelSplitter = context.createChannelSplitter(2)
+      const leftAnalyser = context.createAnalyser()
+      const rightAnalyser = context.createAnalyser()
+      leftAnalyser.fftSize = 2048
+      rightAnalyser.fftSize = 2048
+      channelSplitter.connect(leftAnalyser, 0, 0)
+      channelSplitter.connect(rightAnalyser, 1, 0)
       // 最终输出增益节点：整体输出控制（analyser 之后、destination 之前）
       const outputGain = context.createGain()
       outputGain.gain.value = 1
-      context.createMediaElementSource(first).connect(firstGain).connect(master)
-      context.createMediaElementSource(second).connect(secondGain).connect(master)
+      const firstSource = context.createMediaElementSource(first)
+      firstSource.connect(firstGain).connect(master)
+      const secondSource = context.createMediaElementSource(second)
+      secondSource.connect(secondGain).connect(master)
+      // 必须持有引用：MediaElementAudioSourceNode 无 JS 引用时可能被回收，元素随即脱离
+      // 音频图（gain 淡化/静音全部失效，且元素以 volume=1 直出）。
+      mediaSourcesRef.current = [firstSource, secondSource]
+      spatialInputsRef.current = [
+        new SpatialPlaybackInput(context, first, firstSource, firstGain),
+        new SpatialPlaybackInput(context, second, secondSource, secondGain),
+      ]
+      // HSE 多声道接管输入时保留离散声道；切走后恢复浏览器扬声器混音。
+      // 只作用于 HSE 所需路径（deck/master 增益节点），不碰其他支路。
+      const configureDiscreteInput = (enabled: boolean, options: SpatialPlaybackInputOptions = {}) => {
+        for (const node of [firstGain, secondGain, master]) {
+          node.channelCountMode = 'max'
+          node.channelInterpretation = enabled ? 'discrete' : 'speakers'
+        }
+        spatialInputsRef.current.forEach((input, index) => input?.configure(enabled, {
+          ...options,
+          onSourceDecoded: source => {
+            if ((activePrimaryRef.current ? 0 : 1) === index) options.onSourceDecoded?.(source)
+          },
+          onSourceError: error => {
+            console.error('[HSE] 多声道源解码失败', error)
+            if ((activePrimaryRef.current ? 0 : 1) === index) options.onSourceError?.(error)
+          },
+        }))
+      }
       master.connect(analyser).connect(outputGain).connect(context.destination)
       master.gain.value = volumeRef.current
       firstGain.gain.value = activePrimaryRef.current ? 1 : 0
@@ -387,8 +448,8 @@ export function useAudioPlayer(
       }
       
       // 通知外部音效引擎：音频图已就绪（在 masterGain 与 analyser 之间插入效果链）
-      onAudioGraphReadyRef.current?.({ audioContext: context, masterGain: master, analyser, outputGain })
-      
+      onAudioGraphReadyRef.current?.({ audioContext: context, masterGain: master, analyser, outputGain, channelSplitterNode: channelSplitter, leftAnalyserNode: leftAnalyser, rightAnalyserNode: rightAnalyser, configureDiscreteInput })
+
       if (context.state === 'suspended') await context.resume().catch(() => undefined)
     } catch (error) {
       console.warn('[PlaybackEngine] Web Audio gain graph unavailable, using media volume fallback', error)
@@ -398,6 +459,9 @@ export function useAudioPlayer(
       masterGainRef.current = null
       analyserNodeRef.current = null
       setAnalyserNode(null)
+      mediaSourcesRef.current = [null, null]
+      spatialInputsRef.current.forEach(input => input?.dispose())
+      spatialInputsRef.current = [null, null]
     }
   }, [])
 
@@ -534,6 +598,7 @@ export function useAudioPlayer(
     setDeckGain(getStandbyGain(), target, 1)
     activePrimaryRef.current = !activePrimaryRef.current
     currentMetadataRef.current = targetMetadata
+    notifyPlaybackSource(targetMetadata)
     nextMetadataRef.current = null
     transitionPlanRef.current = null
     setAudioElement(target)
@@ -1491,7 +1556,7 @@ export function useAudioPlayer(
     setTransitionState,
   ])
 
-  const preloadNext = useCallback((input: string | PreloadTrack) => {
+  const preloadNext = useCallback(async (input: string | PreloadTrack) => {
     const track = asPreloadTrack(input)
     debugLog('📥 [Preload] preloadNext 被调用')
     debugLog('   下一首歌曲:', track)
@@ -1583,7 +1648,17 @@ export function useAudioPlayer(
     }
     preloadReadyCleanupRef.current?.()
     preloadReadyCleanupRef.current = cleanupReady
-    standby.src = getProxiedAudioUrl(track.url)
+    // HSE 多声道输入：预载 deck 先经 SpatialPlaybackInput.prepare（非 WAV/立体声原样返回 url）。
+    // prepare 自身安全回落，但调用方 fire-and-forget：任何异常都就地回落原始 url，不留 unhandled rejection。
+    const standbyInput = spatialInputsRef.current[standby === primaryRef.current ? 0 : 1]
+    const proxiedUrl = getProxiedAudioUrl(track.url)
+    let preparedUrl = proxiedUrl
+    if (standbyInput) {
+      try { preparedUrl = await standbyInput.prepare(proxiedUrl) } catch { preparedUrl = proxiedUrl }
+    }
+    // prepare 有网络等待：期间切歌（预载被替换/取消）后不得覆盖新预载的 deck
+    if (!isCurrentPreload()) return
+    standby.src = preparedUrl
     standby.preload = 'auto'
     standby.addEventListener('canplay', ready, { once: true })
     standby.addEventListener('error', failed, { once: true })
@@ -1633,6 +1708,7 @@ export function useAudioPlayer(
       isLiveRef.current = false
       active.playbackRate = 1 // post-settle 残留防护：新歌一律原速
       currentMetadataRef.current = { url, ...track }
+      notifyPlaybackSource(currentMetadataRef.current)
       setAudioElement(active)
       await ensureAudioGraph()
       if (masterGainRef.current && audioContextRef.current) {
@@ -1641,7 +1717,9 @@ export function useAudioPlayer(
       setDeckGain(getActiveGain(), active, 1)
       setDeckGain(getStandbyGain(), standby, 0)
       debugLog('⏳ [LoadAndPlay] 加载音频文件...')
-      active.src = url
+      // HSE 多声道输入：当前 deck 先 prepare（WAV 多声道接管 / 其余原样返回 url）
+      const activeInput = spatialInputsRef.current[active === primaryRef.current ? 0 : 1]
+      active.src = activeInput ? await activeInput.prepare(url) : url
       active.preload = 'auto'
       await new Promise<void>((resolve, reject) => {
         let settled = false
@@ -1863,8 +1941,10 @@ export function useAudioPlayer(
       if (masterGainRef.current && audioContextRef.current) {
         masterGainRef.current.gain.setValueAtTime(volumeRef.current, audioContextRef.current.currentTime)
       }
-      if (target.src !== metadata.url) {
-        target.src = metadata.url
+      // HSE 多声道输入：目标 deck 已被接管时 src 是静音时钟 WAV，按原始 URL 判断是否需要重载
+      const targetInput = spatialInputsRef.current[target === primaryRef.current ? 0 : 1]
+      if (target.src !== metadata.url && !targetInput?.matches(metadata.url)) {
+        target.src = targetInput ? await targetInput.prepare(metadata.url) : metadata.url
         target.preload = 'auto'
         target.load()
         await new Promise<void>((resolve, reject) => {
@@ -1950,6 +2030,7 @@ export function useAudioPlayer(
       active.load()
       activePrimaryRef.current = !activePrimaryRef.current
       currentMetadataRef.current = { ...metadata }
+      notifyPlaybackSource(currentMetadataRef.current)
       nextMetadataRef.current = null
       setAudioElement(target)
 
@@ -1983,6 +2064,11 @@ export function useAudioPlayer(
 
   return {
     loadAndPlay,
+    getPlaybackSource: (): EnginePlaybackSource | null => {
+      const metadata = currentMetadataRef.current
+      return metadata ? { trackKey: metadata.trackKey ?? metadata.url, url: metadata.url,
+        isLive: isLiveRef.current, replayGainTags: metadata.replayGainTags } : null
+    },
     togglePlay,
     seek,
     setVolume,

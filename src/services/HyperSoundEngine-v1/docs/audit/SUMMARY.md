@@ -77,5 +77,5 @@
 
 ## 追加（2026-08-18）：融合后计数更新
 
-- **现状**：模块已融合进 HyperPlayer（`src/services/HyperSoundEngine-v1/`，经 `attachV3Engine.ts` + 统一适配层接入）；调音室 UI 为 HSE 风格 8 页导航。
+- **现状**：模块已融合进 HyperPlayer（`src/services/HyperSoundEngine-v1/`，经 `attachHSE.ts` + 统一适配层接入）；调音室 UI 为 HSE 风格 8 页导航。
 - **测试基线**：29 文件 / **324 用例（319 过 + 5 LGPL 跳过）**、tsc 0 错误；2026-08-18 新增 BassEnhancer `lowBoostDb` 电平提升/越界钳制 2 用例、UI 冒烟 +1（场景保留音量断言，10 项）。

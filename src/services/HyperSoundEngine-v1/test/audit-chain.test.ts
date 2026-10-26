@@ -260,8 +260,7 @@ describe('⑤ 尾块/自激检查（输入停止后有界、衰减、非自激�
     expect(tails[tails.length - 1]).toBeLessThan(1e-3)
   })
 
-  // 128 样本块长流卷积混响，单跑约 1.1s；并发下会突破默认 5s。
-  it('卷积混响（引擎级）：128 样本块长流无 NaN（修复 H-1）', { timeout: 30000 }, () => {
+  it('卷积混响（引擎级）：128 样本块长流无 NaN（修复 H-1）', () => {
     const p = createDefaultParams(FS)
     p.reverb.enabled = true
     p.reverb.mode = 'convolution'
@@ -276,21 +275,27 @@ describe('⑤ 尾块/自激检查（输入停止后有界、衰减、非自激�
     const l = sine(B, 220, 0.5, FS)
     const r = zeros(B)
     const out = new Float32Array(B)
+    // 逐样本 expect 本身就要几秒（600×128 = 76800 次断言，实测占本用例 2.9s 中的绝大部分，
+    // 并行跑全量时直接把 5s 默认超时吃满）→ 改为循环内只计数、循环外一次性断言，覆盖不变。
     let peak = 0
+    let nonFinite = 0
     for (let b = 0; b < 600; b++) {
       e.process([l, r], [out, out])
       for (let i = 0; i < B; i++) {
-        expect(Number.isFinite(out[i])).toBe(true)
-        peak = Math.max(peak, Math.abs(out[i]))
+        const sample = out[i]
+        if (!Number.isFinite(sample)) { nonFinite += 1; continue }
+        peak = Math.max(peak, Math.abs(sample))
       }
     }
+    expect(nonFinite).toBe(0)
     expect(peak).toBeLessThan(3)
   })
 })
 
 describe('⑥ 场景与组合链路', () => {
-  // 11 个场景各跑 2s 音频（128 样本块），单跑约 15s，必须显式放宽超时。
-  it('全部 11 个场景：128 样本块长跑 2s 无 NaN、输出有界（≤3）', { timeout: 60000 }, () => {
+  it('全部 11 个场景：128 样本块长跑 2s 无 NaN、输出有界（≤3）', () => {
+    // 逐样本 expect 曾让本用例达到 24s（11×750×128 ≈ 105.6 万次断言）；
+    // 改为按场景计数 + 一次性断言后约 1~2s，同步长测试的默认 5s 超时也不会再被吃满。
     const B = 128
     const l = sine(B, 330, 0.5, FS)
     const r = zeros(B)
@@ -299,16 +304,19 @@ describe('⑥ 场景与组合链路', () => {
       e.setParams(sc.params)
       const out = new Float32Array(B)
       let peak = 0
+      let nonFinite = 0
       for (let b = 0; b < 750; b++) {
         e.process([l, r], [out, out])
         for (let i = 0; i < B; i++) {
-          expect(Number.isFinite(out[i]), sc.id).toBe(true)
-          peak = Math.max(peak, Math.abs(out[i]))
+          const sample = out[i]
+          if (!Number.isFinite(sample)) { nonFinite += 1; continue }
+          peak = Math.max(peak, Math.abs(sample))
         }
       }
+      expect(nonFinite, `${sc.id} 出现非有限样本`).toBe(0)
       expect(peak, sc.id).toBeLessThan(3)
     }
-  })
+  }, 30_000)
 
   it('场景 A→B→A 热切换无 NaN、无爆音（边界跳变 << 稳态）', () => {
     const e = new HyperSoundEngine(FS, 2)
@@ -318,17 +326,20 @@ describe('⑥ 场景与组合链路', () => {
     const out = new Float32Array(B)
     let prev = 0
     let maxJump = 0
+    let nonFinite = 0
     for (let round = 0; round < 3; round++) {
       for (const sc of SCENE_PRESETS) {
         e.setParams(sc.params)
         e.process([l, r], [out, out])
         for (let i = 0; i < B; i++) {
-          expect(Number.isFinite(out[i])).toBe(true)
-          maxJump = Math.max(maxJump, Math.abs(out[i] - prev))
-          prev = out[i]
+          const sample = out[i]
+          if (!Number.isFinite(sample)) { nonFinite += 1; continue }
+          maxJump = Math.max(maxJump, Math.abs(sample - prev))
+          prev = sample
         }
       }
     }
+    expect(nonFinite).toBe(0)
     expect(maxJump).toBeLessThan(1.0)
   })
 })

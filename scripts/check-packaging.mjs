@@ -57,7 +57,7 @@ const notes = []
 /** 运行期自有入口文件（后端 + Electron 主进程/preload + 路由模块） */
 function runtimeOwnFiles() {
   const out = [path.join(ROOT, 'local-server.mjs')].filter((f) => fs.existsSync(f))
-  for (const dir of ['desktop', 'server', 'shared']) {
+  for (const dir of ['desktop', 'server', 'shared', 'scripts/lib']) {
     const full = path.join(ROOT, dir)
     if (!fs.existsSync(full)) continue
     for (const f of fs.readdirSync(full)) {

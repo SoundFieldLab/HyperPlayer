@@ -8,7 +8,7 @@
  * 交互（仅自定义布局 editable=true）：
  *  - 拖拽点沿圆周改变方位角（pointer 捕获 + atan2 换算，取整到度）；
  *  - 单击选中 → 下方属性区 Slider 微调（方位角/仰角/距离/增益）；
- *  - 双击删除（调用方保证至少保留 1 只）；「添加扬声器」上限 16 只；
+ *  - 双击选中；删除走右键菜单（调用方保证至少保留 1 只）；「添加扬声器」上限 16 只；
  *  - 右键扬声器弹出菜单（复制/删除/静音/Solo——菜单在 editable 且 muted/
  *    onToggleMuted/onDuplicateSpeaker 全部提供时启用，向后兼容缺省不渲染）。
  * 预设布局（editable=false）只读灰调展示，不可交互。
@@ -21,7 +21,6 @@ import type { PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent }
 import type { HSETheme } from '../hse-theme'
 import type { SpeakerRoute, VirtualSpeakerCfg } from '../../src/spatial/types'
 import { Slider, InfoLine, Segmented } from './Primitives'
-import { rafThrottle } from '../../../../utils/rafThrottle'
 
 interface SpatialRingEditorProps {
   speakers: VirtualSpeakerCfg[]
@@ -89,8 +88,7 @@ function MenuItem({ label, onClick, disabled, theme }: {
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="block w-full text-left px-3 py-1.5 text-xs transition-colors hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent"
-      style={{ color: theme.textSecondary }}
+      className={`hse-glass-choice block w-full rounded-md text-left px-3 py-1.5 text-xs disabled:opacity-40 ${theme.textSecondary}`}
     >
       {label}
     </button>
@@ -200,7 +198,6 @@ export function SpatialRingEditor({
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
     let width = 0
     let height = 0
 
@@ -234,7 +231,7 @@ export function SpatialRingEditor({
         ctx.arc(g.cx, g.cy, r, 0, Math.PI * 2)
         ctx.strokeStyle = 'rgba(255,255,255,0.07)'
         ctx.stroke()
-        ctx.fillStyle = 'rgba(255,255,255,0.22)'
+        ctx.fillStyle = '#536b66'
         ctx.fillText(`${d}m`, g.cx + r + 4, g.cy)
       }
 
@@ -252,7 +249,7 @@ export function SpatialRingEditor({
 
       // 方位标注（前/后/左/右）
       ctx.font = '10px "PingFang SC", "Microsoft YaHei", sans-serif'
-      ctx.fillStyle = 'rgba(255,255,255,0.35)'
+      ctx.fillStyle = '#536b66'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'bottom'
       ctx.fillText('前', g.cx, g.cy - g.radius - 2)
@@ -288,7 +285,7 @@ export function SpatialRingEditor({
         ctx.globalAlpha = speakerDim
         if (editable) {
           ctx.shadowColor = color
-          ctx.shadowBlur = isSel ? 18 : 12
+          ctx.shadowBlur = 0
         }
         ctx.fillStyle = color
         ctx.beginPath()
@@ -325,6 +322,9 @@ export function SpatialRingEditor({
     }
 
     const resize = () => {
+      // dpr 必须在每次重设画布尺寸时重读：窗口移到不同缩放比例的显示器后，
+      // 缓存的 dpr 会让后备存储分辨率与新屏不匹配（高 DPI 上发糊）。
+      const dpr = Math.min(2, window.devicePixelRatio || 1)
       const rect = canvas.getBoundingClientRect()
       width = Math.max(1, rect.width)
       height = Math.max(1, rect.height)
@@ -335,13 +335,10 @@ export function SpatialRingEditor({
     }
     drawRef.current = draw
     resize()
-    // resize 合并到帧节拍（性能优化计划 1.0 §4.5）：拖拽缩放时一帧内多次 resize 会反复强制同步布局
-    const onResize = rafThrottle(resize)
-    window.addEventListener('resize', onResize)
+    window.addEventListener('resize', resize)
     return () => {
       drawRef.current = null
-      window.removeEventListener('resize', onResize)
-      onResize.cancel()
+      window.removeEventListener('resize', resize)
     }
     // 依赖仅主题：数据参数经 ref 读取（拖拽时不重挂 canvas 设置，见上方 ref 注释）
   }, [theme.accentFrom, theme.accentTo])
@@ -466,7 +463,8 @@ export function SpatialRingEditor({
   const menuMuted = menu !== null ? muted?.[menu.index] === true : false
 
   return (
-    <div>
+    <div className="@container">
+      <div className={`grid items-start gap-4 ${editable && sel ? '@min-[46rem]:grid-cols-[minmax(0,360px)_minmax(0,1fr)]' : ''}`}>
       <div className="relative w-full" style={{ height: 240, maxWidth: 360, margin: '0 auto' }}>
         <canvas
           ref={canvasRef}
@@ -490,19 +488,19 @@ export function SpatialRingEditor({
             冒泡，避免 document 监听先关菜单导致按钮 click 丢失） */}
         {menuEnabled && menu && menuSpeaker && (
           <div
-            className="absolute z-50 rounded-lg py-1 shadow-xl"
+            className="absolute z-50 rounded-lg py-1 "
             style={{
               left: menu.x,
               top: menu.y,
               backgroundColor: theme.panelBg,
               border: `1px solid ${theme.cardBorder}`,
-              backdropFilter: theme.glassBlur,
-              WebkitBackdropFilter: theme.glassBlur,
+              backdropFilter: 'none',
+              WebkitBackdropFilter: 'none',
             }}
             onPointerDown={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
           >
-            <div className="px-3 py-1 text-[10px] hse-mono" style={{ color: theme.textTertiary }}>
+            <div className={`px-3 py-1 text-[10px] hse-mono ${theme.textTertiary}`}>
               #{menu.index + 1}
             </div>
             <MenuItem label="复制" theme={theme} onClick={() => { onDuplicateSpeaker!(menu.index); closeMenu() }} />
@@ -524,7 +522,7 @@ export function SpatialRingEditor({
 
       {/* 选中点属性区 */}
       {editable && selected !== null && sel && (
-        <div className="mt-3">
+        <div className="min-w-0 mt-3 @min-[46rem]:mt-0">
           <div className={`${theme.textSecondary} text-xs mb-1`}>扬声器 {selected + 1} 属性</div>
           <Slider
             label="方位角" value={Math.round(sel.azimuthDeg)} min={-180} max={180} step={1}
@@ -570,20 +568,16 @@ export function SpatialRingEditor({
           )}
         </div>
       )}
+      </div>
 
       {/* 添加扬声器（仅自定义布局，上限 16） */}
       {editable && (
-        <div className="flex items-center justify-between">
+        <div className="mt-3 flex items-center justify-between">
           <button
             type="button"
             disabled={speakers.length >= MAX_SPEAKERS}
             onClick={onAddSpeaker}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs transition-all hover:brightness-110 disabled:opacity-40"
-            style={{
-              backgroundColor: theme.inputBg,
-              border: `1px solid ${theme.cardBorder}`,
-              color: theme.textSecondary,
-            }}
+            className={`hse-glass-button flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs disabled:opacity-40 ${theme.textSecondary}`}
           >
             + 添加扬声器
           </button>
@@ -595,7 +589,7 @@ export function SpatialRingEditor({
 
       {editable && (
         <InfoLine theme={theme}>
-          拖拽点沿圆周调整方位角；双击删除（至少保留 1 只）；仰角 ≠ 0 显示外圈标记（顶置/底部层）。
+          拖拽点沿圆周调整方位角；双击可选中，删除请使用右键菜单（至少保留 1 只）；仰角 ≠ 0 显示外圈标记（顶置/底部层）。
           {menuEnabled && ' 右键扬声器弹出菜单（复制/删除/静音/Solo）。'}
           {onChangeRoute && ' 选中扬声器可指定输入路由（左源/右源/左右混合）。'}
         </InfoLine>

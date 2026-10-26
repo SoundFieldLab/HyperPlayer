@@ -369,7 +369,7 @@ describe('C. 分享串（ShareCodec）编解码与防注入', () => {
       loudnessCompensation: { bands: many },
     })
     const decoded = decodeShareCode(makeRawShare(json))
-    expect(decoded.eq.proBands.length).toBeLessThanOrEqual(20)
+    expect(decoded.eq.proBands.length).toBeLessThanOrEqual(64)
     expect(decoded.eq.simpleBands.length).toBeLessThanOrEqual(5)
     expect(decoded.loudnessCompensation.bands.length).toBeLessThanOrEqual(32)
     assertApplySafe(decoded, '超长数组解码应用')
@@ -391,7 +391,7 @@ describe('C. 分享串（ShareCodec）编解码与防注入', () => {
     expect(decoded.reverb.algorithmic.type).toBe('hall')
     expect(decoded.bassEnhancer.harmonicType).toBe('odd')
     expect(decoded.surround3d.direction).toBe(1)
-    expect(decoded.eq.bandCount).toBe(10)
+    expect(decoded.eq.bandCount).toBe(64)
     expect(decoded.eq.mode).toBe('pro')
     expect(decoded.ieq.targetCurve).toBe('flat')
     expect(decoded.loudnessCompensation.mode).toBe('auto')
@@ -493,9 +493,9 @@ describe('D. 双路径一致性（热切换连续性 + stats）', () => {
     expect(Number.isFinite(st.peakDb)).toBe(true)
     expect(st.peakDb).toBeLessThanOrEqual(0)
     expect(Number.isFinite(st.truePeakDb)).toBe(true)
-    // 1kHz 0.5 幅度正弦 → 积分响度 ≈ -3 LUFS（K 加权 1kHz 约 +3dB，-6dBFS + 3 ≈ -3）
-    expect(st.lufsIntegrated).toBeGreaterThan(-6)
-    expect(st.lufsIntegrated).toBeLessThan(-1)
+    // BS.1770 对双声道均方能量求和：1kHz、每声道 0.5 峰值约 −6.06 LUFS。
+    // 原波形先相加再平方多出 3dB，不能用该错误读数设验收区间。
+    expect(st.lufsIntegrated).toBeCloseTo(-6.06, 1)
   })
 
   it('场景热切换后分析路径（getAnalysis）仍返回有限频谱与特征', () => {

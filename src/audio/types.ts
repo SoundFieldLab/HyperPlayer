@@ -164,6 +164,8 @@ export interface PreloadTrack {
   duration?: number
   albumId?: string
   albumCover?: string
+  /** 服务端 ReplayGain 标签（ID3v2/FLAC loudgain 输出）；有则直传 HSE，无则由引擎自扫描 */
+  replayGainTags?: Record<string, unknown> | null
   /** 预载管线完成通知；用于瞬时失败后由队列层决定是否重试。 */
   onPreloadSettled?: (success: boolean) => void
 }

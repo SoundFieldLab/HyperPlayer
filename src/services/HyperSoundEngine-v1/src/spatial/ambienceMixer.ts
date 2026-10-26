@@ -1,5 +1,5 @@
 /**
- * ambienceMixer —— 环境声混合器纯函数/常量（HSE v3 空间音频，FOA 编解码渲染路径）
+ * ambienceMixer —— 环境声混合器纯函数/常量（HSE HSE 空间音频，FOA 编解码渲染路径）
  *
  * 规划书 Phase 4「环境声/混响 send 用」完整版：多声道输入上混 → encodeSource →
  * decodeFoaToSpeakers 驱动环境扬声器增益。本模块是环境混合器的纯函数层——处理器

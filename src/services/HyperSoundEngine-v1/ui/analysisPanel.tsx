@@ -1,5 +1,5 @@
 /**
- * HyperPlayer v3 调音室 UI —— 分析页
+ * HyperPlayer HSE 调音室 UI —— 分析页
  *
  * 实时读数：LUFS/LRA/峰值/真峰值 + 频谱条形图 + 频谱特征（质心/滚降/平坦度等）；
  * 听力测试流程（7 频点 × 5 轮二分逼近听阈），播放/合成由融合侧按 nextStep 电平执行。
@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Activity, Ear, Play, RotateCcw, Check, X } from 'lucide-react'
 import type { EngineAnalysis, EngineStats } from '../src/types'
-import type { HSETheme } from './theme'
+import type { HSELegacyTheme } from './theme'
 import type { HSEUiBridge, HSEHearingSession } from './bridge'
 import { ActionButton, GlassCard, GlassRangeStyle, InfoLine, SectionTitle } from './primitives'
 import type { HSEParamsController } from './hooks'
@@ -16,7 +16,7 @@ import type { HSEParamsController } from './hooks'
 /** 轮询刷新（实时读数；播放时才需要，融合侧可改由事件驱动） */
 const POLL_MS = 300
 
-export function AnalysisPanel({ bridge, theme, controller }: { bridge: HSEUiBridge; theme: HSETheme; controller: HSEParamsController }) {
+export function AnalysisPanel({ bridge, theme, controller }: { bridge: HSEUiBridge; theme: HSELegacyTheme; controller: HSEParamsController }) {
   const [stats, setStats] = useState<EngineStats>(() => bridge.getStats())
   const [analysis, setAnalysis] = useState<EngineAnalysis>(() => bridge.getAnalysis())
   const [hearing, setHearing] = useState<HSEHearingSession | null>(null)

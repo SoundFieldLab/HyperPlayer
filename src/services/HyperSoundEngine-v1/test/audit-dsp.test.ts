@@ -1012,7 +1012,9 @@ describe('audit LufsMeter（BS.1770 响度）', () => {
       expect(v).toBeGreaterThan(-30)
       expect(v).toBeLessThan(10)
     }
-  })
+    // 192kHz × 4s = 76.8 万样本过 4 倍过采样 K 加权：实测约 2.4s（无多余断言开销，是真实计算量），
+    // 并行跑全量时会被拉长到 5s 以上，显式放宽而不是削掉采样率/时长覆盖。
+  }, 30_000)
 
   it('10s 长跑：读数稳定、无 NaN 膨胀', () => {
     const m = new LufsMeter(48000)

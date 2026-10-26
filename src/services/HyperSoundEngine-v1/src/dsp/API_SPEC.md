@@ -1,4 +1,4 @@
-# v3 DSP 模块 API 契约（子代理实现规范）
+# HSE DSP 模块 API 契约（子代理实现规范）
 
 > 本文件是 HyperSoundEngine-v1 各 DSP 模块的**唯一实现契约**。所有子代理严格按此签名实现，
 > 不得自行改签名；类型一律从 `../types` 导入（`import type { ... } from '../types'`）。
@@ -64,7 +64,7 @@ export class Biquad {
 
 ---
 
-## 模块 3：src/dsp/EqChain.ts —— 多段 EQ 级联 + Q 补偿（20 段，v3 核心，技术文档 §1.3）
+## 模块 3：src/dsp/EqChain.ts —— 多段 EQ 级联 + Q 补偿（20 段，HSE 核心，技术文档 §1.3）
 
 ```ts
 export interface EqBandParam { frequency: number; gain: number; q: number }
@@ -93,9 +93,10 @@ Q 补偿算法（自研）：① 用当前 bands 在各自中心频率处测级�
 
 ```ts
 export class MidSide {
-  constructor()
+  constructor(fs?: number)
   /** width 0..2（1=原始），voiceBalance -1..1（-1=仅伴奏(侧信号) / +1=仅人声(中信号)） */
-  setParams(width: number, voiceBalance: number): void
+  /** 兼容可选低频单声道参数：截止 40..250Hz，收窄量 0..1，20ms 平滑 */
+  setParams(width: number, voiceBalance: number, lowMonoCutoffHz?: number, lowMonoAmount?: number): void
   /** 就地编解码：输入立体声，输出处理后的立体声（M/S 域处理 → 反变换） */
   processStereo(l: Float32Array, r: Float32Array): void
   reset(): void
@@ -105,7 +106,12 @@ export class MidSide {
 实现：M=(L+R)*0.5, S=(L-R)*0.5；逆变换 L'=M·midGain+S·sideGain、R'=M·midGain−S·sideGain。
 人声比例（对称衰减语义，审计修复 M-2）：midGain = 1+min(0,vb)、sideGain = width·(1−max(0,vb))——
 vb=+1 → 仅人声（侧信号 0）；vb=−1 → 仅伴奏（中信号 0）；vb=0,width=1 恒等（逐样本一致 ±1e-7）。
+低频单声道管理以二阶高通滤波 Side，并按 20ms 平滑量与原 Side 混合；默认量 0，旧参数快照保持恒等。
 测试要点：pass-through 恒等；width=0 → L==R；vb=+1 → S 分量≈0（L≈R 输入时）。
+
+附加模块：`src/dsp/LowFrequency.ts` —— 次声高通
+
+`SubsonicHighpass(fs)` 提供 10..40Hz 二阶 Butterworth 高通，输出混合量以 20ms 平滑；HyperSoundEngine 固定在空间渲染与扩展节点之后、最终 Limiter 之前，默认旁路。
 
 ---
 
@@ -142,7 +148,9 @@ export class Compressor {
 ```
 
 实现：立体声联合包络（max(|L|,|R|)）→ 平滑（attack/release，一阶或双时间常数）→ dB 域软拐点曲线 →
-makeup 补偿 → outputGain。测试：恒定 0dBFS 正弦、threshold -20dB ratio 4 → 稳态输出 ≈ -20dBFS 之上
+makeup 补偿 → outputGain。`transientPreserve` 0..1 把检测 gain reduction 的 attack 时间常数按 1..5 倍延长，
+在不改变稳态曲线、共享声道检测与 release 的情况下让起音短暂穿过压缩；默认为 0，旧快照保持原行为，三段压缩共享此量。
+测试：恒定 0dBFS 正弦、threshold -20dB ratio 4 → 稳态输出 ≈ -20dBFS 之上
 每 +4dB 输入只 +1dB 输出；attack/release 时域平滑无跳变。
 
 ---
@@ -174,6 +182,8 @@ enabled=false 通过；突然方波无过冲超阈值（lookahead 生效）。
 export class BassEnhancer {
   constructor(fs: number)
   setParams(p: BassEnhancerSettings): void
+  /** 接收最终 true-peak limiter 阈值余量；1=旁路低音增益收敛 */
+  setHeadroomCeiling(linear: number): void
   processStereo(l: Float32Array, r: Float32Array): void
   reset(): void
 }
@@ -181,6 +191,7 @@ export class BassEnhancer {
 
 实现：LPF(cutoffHz,q) 提取低频 → 非线性（odd: x³ / even: 全波整流 / atan: atan(√|x|)·sign / soft: tanh(g·x)）→
 HPF(≥150Hz 或 cutoffHz*1.5，取较大) 整形 → harmonicGain×mix 混回。
+lowBoostDb -6..+12dB 另把低通频带按电平增益混回；启用 true-peak limiter 时，HyperSoundEngine 给 BassEnhancer 传入低于 limiter 阈值 0.5dB 的余量，增益以 1ms attack / 120ms release 立体声联动收敛。启动/复位从零提升渐入，最终 Limiter 继续保护后续处理产生的峰值。
 测试要点：60Hz 正弦 + 小音箱场景 → 输出含 120/180Hz 谐波分量（FFT 验证峰值存在）；
 无输入无输出；enabled=false 恒等。
 
@@ -190,10 +201,15 @@ HPF(≥150Hz 或 cutoffHz*1.5，取较大) 整形 → harmonicGain×mix 混回�
 
 ```ts
 export interface ConvolverOptions { partitionSize?: number; dePeriodize?: boolean }
+export interface PreparedConvolverIR { /* IR 频谱 + Worklet 独占流状态 TypedArray */ }
 export class Convolver {
   constructor(fs: number, opts?: ConvolverOptions)
   /** 载入单声道 IR；dePeriodize=true 时先做去周期化（尾部指数衰减窗）；空/非法 IR 抛错 */
   loadIR(ir: Float32Array, irName?: string): void
+  /** 控制线程生成分区频谱与零状态 Worklet scratch 的 Transferable 快照 */
+  createPreparedIRTransfer(): PreparedConvolverIR | null
+  /** Worklet 校验并接管预计算状态；不匹配返回 false，由 HyperSoundEngine 回退 loadIR */
+  loadPreparedIR(prepared: PreparedConvolverIR): boolean
   setMix(mix: number): void
   setPreDelayMs(ms: number): void
   /** wet+preDelay 处理单声道，返回新数组或就地？——返回新 Float32Array（长度=input 长度+IR 尾） */
@@ -206,6 +222,7 @@ export class Convolver {
 
 实现：均匀分区卷积（分区长默认 512）：IR 分成 P 块，每块 FFT 预计算；输入分块与各分区频域相乘、
 按分区索引延迟累加、overlap-add。FFT 用自研 fft.ts（N=nextPow2(2*partitionSize)）。
+Worklet 宿主对超过 4 个分区的 IR 在控制线程预计算频谱和零状态 scratch，以 Transferable 一次发送；接收线程校验后直接接管，普通参数更新仍复用已载入 IR。
 去周期化：从 IR 能量包络峰值后 -60dB 点开始乘 exp 衰减（τ≈50ms），保证循环无周期伪影。
 测试要点：IR=[1] → 输出≈输入（+preDelay 延迟）；IR=delta 延迟 D → 输出为延迟 D 的输入；
 指数衰减 IR 的湿输出能量随时间单调衰减（无周期回升）。
@@ -319,7 +336,9 @@ export class Stretch {
 ```
 
 实现（自研）：STFT（Hann，N=2048，hop 512）→ 相位声码器（相位差→瞬时频率→按 rate 累积相位）→
-ISTFT overlap-add；semitones 通过频谱频率搬移（或与 rate 组合：pitchScale=2^(semitones/12)，
+谱通量触发瞬态相位重置并映射窗内瞬态位置，平稳段按谱峰做 identity phase-locking，→ ISTFT overlap-add；
+neutral (rate=1/semitones=0) 直接复制输入以免无效 STFT 重合成。semitones 通过频谱频率搬移
+（或与 rate 组合：pitchScale=2^(semitones/12)，
 时间伸缩=rate，频率缩放=pitchScale*rate?——按标准相位声码器语义：时间伸缩=rate，
 频率伸缩=2^(semitones/12)，两者独立）。
 测试要点：rate=2 时输出长度≈2×输入（±3%）；440Hz 正弦 rate=1, semitones=+12 → 输出 ≈880Hz（±1%）；
@@ -360,13 +379,13 @@ centroid≈音高频率；zcr 白噪声 > 正弦。
 
 ## 辅助模块契约（engine / worklet / analysis / device / offline / codec）
 
-### A. src/engine/EngineV3.ts —— 引擎总成（F1 负责）
+### A. src/engine/HyperSoundEngine.ts —— 引擎总成（F1 负责）
 ```ts
-import type { V3EngineParams, EngineStats, EngineAnalysis } from '../types'
+import type { HSEEngineParams, EngineStats, EngineAnalysis } from '../types'
 import { Stretch } from '../dsp/Stretch'
-export class EngineV3 {
+export class HyperSoundEngine {
   constructor(sampleRate: number, channelCount?: number) // 默认 2
-  setParams(p: V3EngineParams): void
+  setParams(p: HSEEngineParams): void
   /** 就地处理：outputs[i] 写入处理结果（长度=inputs[i].length） */
   process(inputs: Float32Array[], outputs: Float32Array[]): void
   getStats(): EngineStats
@@ -377,7 +396,7 @@ export class EngineV3 {
   reset(): void
 }
 ```
-链顺序（设计文档 §2）：输入 → 响度归一化增益 → M/S(voiceBalance+width) → **Pre-EQ**(EqChain) → Deesser → Compressor → NightMode → 混响(convolution|algorithmic|off) → BassEnhancer → LoudnessComp → IEQ(Post) → Limiter → 输出；LUFS 计在 Limiter 之前取样。
+链顺序（设计文档 §2）：输入 → 响度归一化增益 → 3D 旋转 → M/S(voiceBalance+width+低频收窄) → **Pre-EQ**(EqChain) → Deesser → Compressor → NightMode → 混响(convolution|algorithmic|off) → BassEnhancer → LoudnessComp → IEQ(Post) → LUFS 采样 → 空间渲染 → Crossfeed → 扩展节点 → 次声高通 → Limiter → 输出。
 实现要点：所有系数在 setParams 中预计算；process 内零分配；NightMode=压缩增强(ratio×1.5,threshold-6dB)+6kHz 高频 shelf 衰减(amount×1.5dB)。
 
 ### B. src/engine/ScenePresets.ts —— 11 个组合场景（F1 负责）
@@ -392,20 +411,20 @@ export const SCENE_IDS: string[] // 11 个 id：pop/rock/jazz/dance/classical/li
 
 ### C. src/engine/ShareCodec.ts —— 分享串（F2 负责）
 ```ts
-import type { V3EngineParams } from '../types'
+import type { HSEEngineParams } from '../types'
 export const SHARE_CODEC_VERSION = 1
 /** 序列化：版本 + JSON(去 IR 数组→irName) + FNV-1a 校验 → base64url */
-export function encodeShareCode(p: V3EngineParams): string
+export function encodeShareCode(p: HSEEngineParams): string
 /** 反序列化：校验 + 白名单字段 + 数值 clamp；非法输入抛 Error */
-export function decodeShareCode(s: string): V3EngineParams
+export function decodeShareCode(s: string): HSEEngineParams
 ```
 
 ### D. src/worklet/AudioEffectsProcessor.ts —— AudioWorklet 处理器（F2 负责）
 ```ts
-import { EngineV3 } from '../engine/EngineV3'
-export const WORKLET_PROCESSOR_NAME = 'hyperplayer-v3-effects'
+import { HyperSoundEngine } from '../engine/HyperSoundEngine'
+export const WORKLET_PROCESSOR_NAME = 'hyperplayer-hse-effects'
 export class AudioEffectsProcessor extends AudioWorkletProcessor {
-  constructor() // 用全局 sampleRate 创建 EngineV3；port.onmessage 接 {type:'params'|'reset'}
+  constructor() // 用全局 sampleRate 创建 HyperSoundEngine；port.onmessage 接 {type:'params'|'reset'}
   process(inputs: Float32Array[][], outputs: Float32Array[][], parameters: Record<string, Float32Array>): boolean
 }
 // 文件末尾：typeof registerProcessor !== 'undefined' && registerProcessor(WORKLET_PROCESSOR_NAME, AudioEffectsProcessor)
@@ -445,7 +464,7 @@ export class HearingTest {
 > **2026-08 需求变更：机型频响补偿不再使用真实设备档案**，改为**按音量大小实施补偿的通用曲线**——
 > 由 `dsp/LoudnessComp.ts` 的 `auto` 模式承担（音量越低 → 低频 0-12dB / 高频 0-6dB 提升，
 > 120Hz/12kHz shelf，v2 兼容公式 0.35/0.15）。原 `src/device/DeviceProfile.ts`（6 示例档案 +
-> fitParametricEq 拟合）与 `V3EngineParams.deviceProfile` 字段已整体删除（编号不回填，后续模块保持原编号）。
+> fitParametricEq 拟合）与 `HSEEngineParams.deviceProfile` 字段已整体删除（编号不回填，后续模块保持原编号）。
 
 ### H. src/offline/Separator.ts —— 声源分离任务队列（F2 负责，spleeter/demucs 适配层）
 ```ts

@@ -1,6 +1,6 @@
 # 链路与注入审计报告（任务 A：chain-audit）
 
-> 审计对象：`HyperSoundEngine-v1/src/engine/EngineV3.ts` 全处理链（含链上 DSP 模块）
+> 审计对象：`HyperSoundEngine-v1/src/engine/HyperSoundEngine.ts` 全处理链（含链上 DSP 模块）
 > 审计测试：`test/audit-chain.test.ts`（15 项，全部通过）
 > 审计日期：本报告随审计完成时生成；测试运行命令：`npx vitest run test/audit-chain.test.ts`
 
@@ -10,7 +10,7 @@
 
 | 文件 | 角色 |
 |---|---|
-| `src/engine/EngineV3.ts` | 引擎总成：链顺序、级开关路由、响度归一化、3D 环绕、M/S、Pre-EQ、Deesser、Compressor、NightMode、混响路由、BassEnhancer、LoudnessComp、IEQ(Post)、LUFS 采样、Limiter |
+| `src/engine/HyperSoundEngine.ts` | 引擎总成：链顺序、级开关路由、响度归一化、3D 环绕、M/S、Pre-EQ、Deesser、Compressor、NightMode、混响路由、BassEnhancer、LoudnessComp、IEQ(Post)、LUFS 采样、Limiter |
 | `src/dsp/Convolver.ts` | 分区卷积混响（流式 `processStereo` 路径） |
 | `src/dsp/ReverbSimple.ts` | 算法混响（Freeverb 类） |
 | `src/dsp/Limiter.ts` | 前瞻限幅器 |
@@ -32,7 +32,7 @@
 - **位置**：`src/dsp/Convolver.ts` `processStereo()` / `processWetBlock()` 的 pending 队列记账（`pendingPos`/`pendingLen`/约束 `totalWetOut < totalIn - L`）。
 - **现象**：
   - 直接使用 Convolver：`processStereo` 持续输入（512 样本块）→ 第 4 块（样本 2048）起输出 NaN；128 样本块同样在样本 2048 起 NaN。
-  - 经 EngineV3（`reverb.mode='convolution'` + IR + 128 样本块）→ 样本 3584（约 75ms）输出 NaN（NaN 传播到整条链输出）。
+  - 经 HyperSoundEngine（`reverb.mode='convolution'` + IR + 128 样本块）→ 样本 3584（约 75ms）输出 NaN（NaN 传播到整条链输出）。
   - 在 NaN 出现前，`writeAt = pendingPos + pendingLen` 已超出 `pendingWetL` 容量（`(P+2)·L`），越界写被 JS 静默丢弃 → 湿路尾部同时被截断。
 - **复现测试**：`audit-chain.test.ts` ⑦「缺陷快照#1a / #1b」（锁定当前缺陷行为，修复后应反转）。
 - **根因推测**：`pendingPos` 只在 `pendingLen === 0` 时归零；流式输入下 `pendingLen` 几乎不会归零（128 样本块时每 4 块产出 L=512、每块只排空 128 → 稳态 `pendingLen≈512` 永不归零），于是 `pendingPos` 单调递增，越过缓冲容量后 `pendingWetL[pendingPos]` 读到 `undefined` → `undefined` 参与运算 → NaN。队列没有做环形（取模）寻址，是流式记账的根本缺陷。
@@ -40,7 +40,7 @@
 
 ### 异常 2 【中】混响 `mode='off'` 路由失效：`enabled=true` 时仍走算法混响
 
-- **位置**：`src/engine/EngineV3.ts` `configureReverb()` 与 `process()` 第 8 级；`ReverbMode` 类型含 `'off'`。
+- **位置**：`src/engine/HyperSoundEngine.ts` `configureReverb()` 与 `process()` 第 8 级；`ReverbMode` 类型含 `'off'`。
 - **现象**：`reverb.enabled=true` + `mode='off'` + `wet=1,dry=0` → 冲激输出峰值 1.498（混响尾），本应为 0（off=静音）。同时 `getLatencySamples()` 对 `mode='off'` 返回 0，而实际混响处理仍在进行（含 `preDelayMs` 引入的延迟）——延迟口径与实际处理不一致。
 - **复现测试**：⑦「缺陷快照#2」。
 - **根因推测**：`configureReverb` 只对 `mode==='convolution'` 特殊处理；`'algorithmic'` 与 `'off'` 都落到 `_reverbSimple`。`process()` 的开关只查 `reverb.enabled`。默认参数 `enabled=false` 掩盖了该问题，但任何 UI 组合（`enabled=true` 且路由 `off`）都会意外出声。
@@ -48,7 +48,7 @@
 
 ### 异常 3 【中】`eq.enabled=false` 旁路不彻底：设备档案激活时用户 EQ 曲线泄漏；无效档案无回退
 
-- **位置**：`EngineV3.ts` `setParams()`：`this._preEqActive = p2.eq.enabled || p2.deviceProfile.profileId !== null`；`buildPreEqBands()` 无条件合并用户 `simpleBands/proBands` 与档案 bands。
+- **位置**：`HyperSoundEngine.ts` `setParams()`：`this._preEqActive = p2.eq.enabled || p2.deviceProfile.profileId !== null`；`buildPreEqBands()` 无条件合并用户 `simpleBands/proBands` 与档案 bands。
 - **现象**：
   - `eq.enabled=false` + `deviceProfile.profileId='no-such-profile'`（无效 id）→ EQ 链激活且用户 bands（+12dB@1kHz）被施加（1kHz 0.5 正弦 maxDiff≈0.56）。
   - `eq.enabled=false` + 有效档案（example-headphone-a）→ 用户 bands 同样被施加（maxDiff≈0.37）——即"关 EQ"后设备档案场景下用户 EQ 曲线仍然生效。
@@ -58,10 +58,10 @@
 
 ### 异常 4 【中】`pitch.enabled` 语义失效：`voiceBalance` 无视开关被 M/S 级无条件应用；`semitones/rate` 在主链完全无效果
 
-- **位置**：`EngineV3.ts` `process()` 第 3 级：`this._midSide.setParams(this._params.stereoWidth, this._params.pitch.voiceBalance)` 无条件执行；`pitch` 的 `semitones/rate` 仅通过 `getStretch()` 暴露（不内联进主链）。
+- **位置**：`HyperSoundEngine.ts` `process()` 第 3 级：`this._midSide.setParams(this._params.stereoWidth, this._params.pitch.voiceBalance)` 无条件执行；`pitch` 的 `semitones/rate` 仅通过 `getStretch()` 暴露（不内联进主链）。
 - **现象**：`pitch.enabled=false` + `voiceBalance=0.8` → 输出与输入 maxDiff≈0.4（人声/伴奏比例仍作用）；反之 `pitch.enabled=true` + `semitones=+12` 在主链输出完全不变。
 - **复现测试**：⑦「缺陷快照#4」；另见 `audit-chain.test.ts` ②（voiceBalance 被排除在旁路清单外，因它不由 pitch.enabled 控制）。
-- **根因推测**：参数分组把 `voiceBalance` 放在 `PitchSettings` 下，但引擎把它并入 M/S 级且不检查 `pitch.enabled`；而 Stretch 按设计（API_SPEC/EngineV3 头注释）不内联主链。结果是 pitch 组参数语义自相矛盾：唯一的"生效参数"不受开关控制，受开关控制的参数不生效。
+- **根因推测**：参数分组把 `voiceBalance` 放在 `PitchSettings` 下，但引擎把它并入 M/S 级且不检查 `pitch.enabled`；而 Stretch 按设计（API_SPEC/HyperSoundEngine 头注释）不内联主链。结果是 pitch 组参数语义自相矛盾：唯一的"生效参数"不受开关控制，受开关控制的参数不生效。
 - **影响**：UI 层 `pitch.enabled` 开关对 `voiceBalance` 无效（用户关闭 pitch 仍被人声比例改变音色）。
 
 ### 异常 5 【低】`voiceBalance=-1` 语义与"仅伴奏"字面不符（中信号保留，仅增强侧信号）
@@ -80,7 +80,7 @@
 
 ### 异常 7 【低】响度归一化（实时表）无测量期按 +maxGainDb 提升，启动 3s 响度膨胀
 
-- **位置**：`EngineV3.ts` `process()` 第 1 级：`ref = Number.isFinite(measured) ? measured : -70`。
+- **位置**：`HyperSoundEngine.ts` `process()` 第 1 级：`ref = Number.isFinite(measured) ? measured : -70`。
 - **现象**：`loudnessNormalization.enabled=true` + `useRealtimeMeter=true` 时，首个 400ms 块之前（`getIntegratedLufs()`/`getMomentaryLufs()` 均为 NaN）`ref=-70` → `gainDb=+maxGainDb(9dB)`，并以 3s 时间常数缓慢爬升；若输入实际很响（如 -6dBFS），会出现数秒的 +9dB 响度膨胀再回落（限幅器会参与压限 → 抽吸感）。静音输入无听感影响（0×增益）。
 - **复现测试**：⑦「缺陷快照#5」（3s 内输出峰值仍 > 输入峰值 0.5）。
 - **根因推测**：无测量时把响度假定为 -70 LUFS（静音）→ 目标增益取最大。更稳妥的回退是首测前保持 0dB。
@@ -88,19 +88,19 @@
 
 ### 异常 8 【低】链顺序与设计文档 §2 偏差（文档级，听感影响极小）
 
-- **位置**：`EngineV3.ts` 链顺序 vs `research/docs/音频算法设计文档.md` §2。
+- **位置**：`HyperSoundEngine.ts` 链顺序 vs `research/docs/音频算法设计文档.md` §2。
 - **现象/差异**：
   1. 设计 §2：… → 低频增强 → **Post-EQ → 等响度/响度** → 限幅器；实际（含 API_SPEC 辅助模块 A）：… → BassEnhancer → **LoudnessComp(等响度) → IEQ(Post)** → [LUFS] → Limiter。即"等响度"与"Post-EQ(IEQ)"顺序互换（两者均为线性滤波器，交换听感差异极小）。
-  2. 实际链在 M/S 前插入 **3D 环绕** 级（API_SPEC 模块 A 未列出；EngineV3 头注释有说明）——契约漂移。
+  2. 实际链在 M/S 前插入 **3D 环绕** 级（API_SPEC 模块 A 未列出；HyperSoundEngine 头注释有说明）——契约漂移。
   3. 设计 §2 的"M/S 解码 … → M/S 编码"在引擎中折叠为单级 M/S（解码-处理-编码一次完成），链主体运行在 L/R 域而非 M/S 域——功能等价。
-  4. 响度归一化增益（输入级）与 NightMode 为设计 §2 未明确列出的级（EngineV3 注释为 v2 兼容语义）。
+  4. 响度归一化增益（输入级）与 NightMode 为设计 §2 未明确列出的级（HyperSoundEngine 注释为 v2 兼容语义）。
 - **复现测试**：代码审查（无失败测试；链顺序正确性由 `process()` 逐级比对 API_SPEC 模块 A 确认——除 3D 环绕外与 API_SPEC 完全一致）。
 - **根因推测**：设计文档 §2 为粗粒度示意图，实际以 API_SPEC 模块 A 为契约；`3D 环绕` 为后加功能未回写契约。
 - **影响**：文档与实现不一致；对听感影响极小（LTI 顺序交换）。
 
 ### 异常 9 【低】死参数：`ReverbSettings.convolution.dePeriodize` 从未生效
 
-- **位置**：`EngineV3.ts configureReverb()` 构造 `new Convolver(sampleRate)` 未传 `ConvolverOptions`；`Convolver` 恒 `dePeriodize=true`。
+- **位置**：`HyperSoundEngine.ts configureReverb()` 构造 `new Convolver(sampleRate)` 未传 `ConvolverOptions`；`Convolver` 恒 `dePeriodize=true`。
 - **现象**：类型中 `dePeriodize: boolean` 参数被忽略——用户无法关闭 IR 去周期化（对自然长尾 IR 会强制施加指数衰减窗）。
 - **复现测试**：代码审查。
 - **影响**：参数与行为不符（低）。
@@ -155,7 +155,7 @@
 
 > 按用户新需求（"不用加真实设备档案，机型频响补偿改为按音量实施补偿的通用曲线"），
 > `src/device/DeviceProfile.ts`（含 getProfileById / 6 示例档案 / fitParametricEq）与
-> `V3EngineParams.deviceProfile` 字段已**整体删除**。本审计的「异常 3：eq 旁路不彻底（档案场景）」
+> `HSEEngineParams.deviceProfile` 字段已**整体删除**。本审计的「异常 3：eq 旁路不彻底（档案场景）」
 > 所依赖的档案机制已不存在，该缺陷以"代码移除"方式彻底消除；
 > `audit-chain.test.ts` 对应用例已改为纯 `eq.enabled=false` 旁路断言（+12dB 用户 EQ 不泄漏）。
 > 机型频响补偿由 `dsp/LoudnessComp.ts` auto 模式承担（按音量通用曲线，测试 loudnesscomp 覆盖）。

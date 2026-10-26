@@ -21,6 +21,7 @@ import type {
   EngineCapabilities,
   RenderStudioProps,
   IAudioEngineUiBridge,
+  EnginePlaybackSource,
 } from './types'
 
 type AttachHSEModule = typeof import('../HyperSoundEngine-v1/attachHSE')
@@ -71,6 +72,8 @@ export class HSEAdapter implements IAudioEngineAdapter {
   private exportingCallbacks = new Set<(exporting: boolean) => void>()
   /** 模块就绪前收到的最近一次系统音量，attach 完成后重放，避免丢设定 */
   private lastSystemVolume: number | null = null
+  private playbackSource: EnginePlaybackSource | null = null
+  private scanController: AbortController | null = null
 
   readonly version: AudioEngineVersion = 'hse'
   readonly capabilities: EngineCapabilities = {
@@ -88,6 +91,10 @@ export class HSEAdapter implements IAudioEngineAdapter {
 
   dispose(): void {
     // 模块未加载 ⇒ 引擎从未 attach，无需 detach
+    this.scanController?.abort()
+    this.scanController = null
+    this.playbackSource = null
+    engineModule?.setHSETrackReplayGainTags(null)
     engineModule?.detachHSE()
   }
 
@@ -100,6 +107,34 @@ export class HSEAdapter implements IAudioEngineAdapter {
     engineModule?.setHSESystemVolume(volume)
   }
 
+  /**
+   * 播放源通知（useAudioPlayer 在正式提交/接管/清空时经 App 推送）：
+   * 身份（trackKey）与 URL 分开判重，避免同 URL 换曲目被吞；先清旧增益，
+   * 任何失败、直播和取消路径都不会沿用上一首。已有标签直传，否则按 url 扫描。
+   * 模块未就绪时链式等待加载后转发（attach 前 HSE 模块内部安全 no-op）。
+   */
+  setPlaybackSource(source: EnginePlaybackSource | null): void {
+    const previous = this.playbackSource
+    if (source && previous && source.trackKey === previous.trackKey && source.url === previous.url
+      && source.isLive === previous.isLive && source.replayGainTags === previous.replayGainTags) return
+    this.scanController?.abort()
+    this.scanController = null
+    this.playbackSource = source
+    void loadEngineModule()
+      .then((m) => {
+        m.setHSETrackReplayGainTags(null)
+        if (!source || source.isLive || !source.url) return
+        if (source.replayGainTags !== undefined) {
+          m.setHSETrackReplayGainTags(source.replayGainTags)
+          return
+        }
+        const controller = new AbortController()
+        this.scanController = controller
+        return m.scanHSETrackReplayGain(source.url, controller.signal)
+      })
+      .catch(() => { /* 模块加载失败：引擎不可用，跳过注入 */ })
+  }
+
   applyLoudnessNormalization(): void {
     // v3 响度归一化在引擎内实时实现（LufsMeter DSP 模块），无需外部服务调用，no-op
   }
@@ -109,10 +144,21 @@ export class HSEAdapter implements IAudioEngineAdapter {
   }
 
   async exportMp3(sourceUrl: string, durationSeconds: number, options?: { fileName?: string }): Promise<void> {
+    return this.exportAudio('mp3', sourceUrl, durationSeconds, options)
+  }
+
+  /** 离线 WAV 导出（16-bit PCM，量化模式默认 TPDF）；与 MP3 共用同一段 HSE PCM 渲染链 */
+  async exportWav(sourceUrl: string, durationSeconds: number, options?: { fileName?: string }): Promise<void> {
+    return this.exportAudio('wav', sourceUrl, durationSeconds, options)
+  }
+
+  private async exportAudio(format: 'mp3' | 'wav', sourceUrl: string, durationSeconds: number, options?: { fileName?: string }): Promise<void> {
+    if (this.exporting) throw new Error('已有音频正在导出，请稍候')
+    if (!sourceUrl) throw new Error('请先播放要导出的歌曲')
     this.setExporting(true)
     try {
       const m = await loadEngineModule()
-      await m.exportHSEMp3(sourceUrl, durationSeconds, options)
+      await (format === 'wav' ? m.exportHSEWav : m.exportHSEMp3)(sourceUrl, durationSeconds, options)
     } finally {
       this.setExporting(false)
     }
@@ -120,22 +166,25 @@ export class HSEAdapter implements IAudioEngineAdapter {
 
   renderStudio(props: RenderStudioProps): React.ReactNode {
     const { sourceUrl, sourceDuration, exportFileName, ...commonProps } = props
-    // v3 调音室需要 bridge + exportMp3 闭包 + exporting 状态
-    // exportMp3 闭包：包装 adapter.exportMp3，错误时弹 toast
-    const exportMp3 = sourceUrl
-      ? async () => {
-          try {
-            await this.exportMp3(sourceUrl, sourceDuration || 0, { fileName: exportFileName })
-          } catch (err) {
-            window.dispatchEvent(new CustomEvent('showToast', {
-              detail: { message: `导出失败：${err instanceof Error ? err.message : String(err)}`, type: 'error' },
-            }))
-          }
-        }
-      : null
+    // v3 调音室需要 bridge + 导出闭包（MP3/WAV 共用 exporting 状态，由 exportMp3/exportWav 内部管理）+ exporting 状态
+    // 导出闭包：包装 adapter 导出方法，错误时弹 toast
+    const runExport = async (format: 'mp3' | 'wav') => {
+      if (!sourceUrl) return
+      try {
+        if (format === 'mp3') await this.exportMp3(sourceUrl, sourceDuration || 0, { fileName: exportFileName })
+        else await this.exportWav(sourceUrl, sourceDuration || 0, { fileName: exportFileName })
+      } catch (err) {
+        window.dispatchEvent(new CustomEvent('showToast', {
+          detail: { message: `导出失败：${err instanceof Error ? err.message : String(err)}`, type: 'error' },
+        }))
+      }
+    }
+    const exportMp3 = sourceUrl ? () => runExport('mp3') : null
+    const exportWav = sourceUrl ? () => runExport('wav') : null
     return (
       <HSEStudioWithEngine
         exportMp3={exportMp3}
+        exportWav={exportWav}
         exporting={this.exporting}
         {...commonProps}
       />

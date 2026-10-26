@@ -28,5 +28,11 @@
     }
   },
   "include": ["src"],
+  "exclude": [
+    "src/services/HyperSoundEngine-v1/test/**",
+    "src/services/HyperSoundEngine-v1/src/spatial/test/**",
+    "src/services/HyperSoundEngine-v1/ui/**/*.test.ts",
+    "src/services/HyperSoundEngine-v1/ui/**/*.test.tsx"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

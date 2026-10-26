@@ -15,6 +15,7 @@
 
 import type { AudioEngineVersion } from '../audioEngineVersion'
 import type { PlaybackTimeStore } from '../../audio/playbackTimeStore'
+import type { SpatialPlaybackInputOptions } from '../../audio/spatialPlaybackInput'
 
 // ==================== 引擎清单（每个引擎用独立文件声明自己） ====================
 
@@ -50,6 +51,14 @@ export interface AudioGraphHandle {
   audioContext: AudioContext
   masterGain: GainNode
   analyser: AnalyserNode
+  /** 最终输出增益节点（analyser 之后、destination 之前）：整体静音/输出控制 */
+  outputGain?: GainNode
+  /** 左右声道波形探针（HSE 用）：效果链输出 → splitter → 左右各一 AnalyserNode，纯探针不接 destination */
+  channelSplitterNode?: ChannelSplitterNode
+  leftAnalyserNode?: AnalyserNode
+  rightAnalyserNode?: AnalyserNode
+  /** HSE 接管输入时保留离散声道；切走后恢复浏览器扬声器混音。 */
+  configureDiscreteInput?(enabled: boolean, options?: SpatialPlaybackInputOptions): void
 }
 
 // ==================== 调音室公共 Props ====================
@@ -162,6 +171,11 @@ export interface IAudioEngineAdapter {
   /** 系统音量（0-100）告知引擎；v1 no-op，v2/v3 据此调整频响补偿 */
   setSystemVolume(volume: number): void
 
+  // —— 播放源通知（可选能力，HSE 用作 ReplayGain 曲目生命周期） ——
+
+  /** 只通知正式当前源；预加载与视觉提前切换不得调用。 */
+  setPlaybackSource?(source: EnginePlaybackSource | null): void
+
   // —— 响度归一化（per-song LUFS 对齐） ——
 
   /** 按曲目施加响度归一化（v1/v3 no-op；v2 调外部 Python 服务测量+施加增益） */
@@ -194,4 +208,12 @@ export interface IAudioEngineAdapter {
   isExporting(): boolean
   /** 订阅导出状态变化；返回取消订阅函数 */
   onExportingChange?(cb: (exporting: boolean) => void): () => void
+}
+
+/** 播放器提交给引擎的当前源，身份与 URL 分开，避免复用 URL 吞掉切歌。 */
+export interface EnginePlaybackSource {
+  trackKey: string
+  url: string
+  isLive?: boolean
+  replayGainTags?: Record<string, unknown> | null
 }

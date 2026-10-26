@@ -11,12 +11,15 @@ export default defineConfig({
     include: [
       'test/**/*.test.ts',
       'test/**/*.test.tsx',
-      // 音频引擎 v3（src/services/HyperSoundEngine-v1/，自 test/ 与 ui/ 原位迁入）
+      // 音频引擎 HSE（src/services/HyperSoundEngine-v1/，自 test/ 与 ui/ 原位迁入）
       'src/services/HyperSoundEngine-v1/test/**/*.test.ts',
+      'src/services/HyperSoundEngine-v1/ui/**/*.test.ts',
       'src/services/HyperSoundEngine-v1/ui/**/*.test.tsx',
       // 空间音频（v3 模块树内联 src/spatial/）
       'src/services/HyperSoundEngine-v1/src/spatial/test/**/*.test.ts',
     ],
     setupFiles: ['test/setup.ts'],
+    // HSE 模块的持久化/时序测试对 CPU 负载敏感（1200ms 级用例），与快照同款限流防偶发超时
+    maxWorkers: 2,
   },
 })

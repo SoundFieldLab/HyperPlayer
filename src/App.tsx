@@ -1967,7 +1967,9 @@ function App() {
     { enabled: effectiveCrossfadeEnabled, duration: crossfadeDuration },
     { enabled: effectiveGaplessEnabled, albumGapless: albumGaplessEnabled },
     undefined,
-    handleAudioGraphReady
+    handleAudioGraphReady,
+    // HSE ReplayGain 曲目生命周期：播放器在正式提交/接管/清空时推送当前源
+    source => engineAdapterRef.current.setPlaybackSource?.(source),
   )
   audioPlayerCacheControlRef.current = audioPlayer
   // 保持最新 audioPlayer 引用的 ref，供 useCallback 处理器读取，避免处理器身份随渲染变化
@@ -2012,9 +2014,11 @@ function App() {
       const trackKey = activeTrackKeyRef.current
       if (trackKey) {
         const cached = preloadCacheRef.current.get(trackKey)
-        const url = cached?.url || ''
+        const url = cached?.url ?? null
         if (url) newAdapter.applyLoudnessNormalization(trackKey, url)
       }
+      // 引擎热切换后当前曲目的重新注入（ReplayGain 曲目生命周期）
+      newAdapter.setPlaybackSource?.(audioPlayerRef.current?.getPlaybackSource() ?? null)
       // 恢复播放（热切换成功路径）：恢复同一个活跃 deck
       if (wasPlaying && activeAudio) {
         window.setTimeout(() => { void activeAudio?.play().catch(() => { /* 用户暂停等场景忽略 */ }) }, 80)

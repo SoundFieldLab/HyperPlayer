@@ -6,7 +6,7 @@
 > `src/hooks/useAudioPlayer.ts`（AudioGraphHandle）、`src/components/MixingStudioV2.tsx`（1429 行 UI）、
 > `python-beat-service/compensation_server.py`（3004）、`python-beat-service/loudness_server.py`（3003）、
 > `HyperPlayer/test/audioEffects.test.ts`、`HyperPlayer/test/compensation.test.ts`。
-> 结论对应 v3 目标契约：`HyperSoundEngine-v1/src/dsp/API_SPEC.md` 与 `research/docs/音频算法设计文档.md`。
+> 结论对应 HSE 目标契约：`HyperSoundEngine-v1/src/dsp/API_SPEC.md` 与 `research/docs/音频算法设计文档.md`。
 
 ---
 
@@ -275,35 +275,35 @@ input
 
 1. **SoundTouch 本体是 LGPL-2.1**：`@soundtouchjs/*` 是围绕它的 TS 封装；Electron 渲染进程内以 worklet 处理器形式分发，商业闭源分发需评估 LGPL 合规（提供可重新链接的对象文件/动态链接，或放弃）。
 2. research 设计已给出替代：`Stretch.ts`（API_SPEC 模块 14）用 **signalsmith-stretch（MIT，WASM）** 作首选实现，自研相位声码器回退，彻底规避 LGPL 连带。
-3. v3 集成建议：变调/变速不应内联进主链（API_SPEC EngineV3.getStretch() 供 gapless/过渡场景调用），与 v2 的"插在链首"定位不同——这是语义层面的迁移差异。
+3. HSE 集成建议：变调/变速不应内联进主链（API_SPEC HyperSoundEngine.getStretch() 供 gapless/过渡场景调用），与 v2 的"插在链首"定位不同——这是语义层面的迁移差异。
 4. 移植建议：保留 `semitones`/`rate` 参数名与范围（-10~+10 / 0.25~3.0），pitchScale=2^(semitones/12) 与 rate 独立（API_SPEC §9 语义）。
 ---
 
-## 8. v2→v3 移植建议
+## 8. v2→HSE 移植建议
 
 ### 8.1 应保留兼容的 API / 参数命名（UI 数据迁移成本最低）
 
-1. **顶层设置结构**：`effects / eq / pitch / activeScene / customized / normalizationEnabled` 六字段组织方式值得沿用（V3EngineParams 可扩展现有字段而非推倒）。
+1. **顶层设置结构**：`effects / eq / pitch / activeScene / customized / normalizationEnabled` 六字段组织方式值得沿用（HSEEngineParams 可扩展现有字段而非推倒）。
 2. **参数命名与范围**：`pitch.semitones(-10~+10)`、`pitch.rate(0.25~3.0)`、`pitch.voiceBalance(-1~+1)`（M/S 语义：-1 仅伴奏 / +1 仅人声）、`bassBoost.depth/intensity`、`vocalBoost.intensity`、`compressor.threshold/ratio/attack/release/outputGain`、`nightMode.amount(0-10)`、`hall.type/preDelay/decay`（5 种 ReverbType 名称 hall/room/plate/spring/stage 直接复用）。
-3. **响度归一化语义**：目标 -14 LUFS、增益 clamp ±9dB、失败回退 0dB 原声——v3 的 LufsMeter 与归一化逻辑应保持同一目标值与回退语义。
-4. **频响补偿参数**：auto 模式公式（低频系数 0.35 / 高频 0.15、上限 12/6dB、120Hz+12kHz Q0.707 shelf 结构）已被 v3 LoudnessComp 采用（API_SPEC 模块 12 明确"v2 兼容"）；`mode/preset/bands` 三段式与 6 预设 id（flat/bass/vocal/warm/bright/night）可直接映射。
-5. **互斥语义（ADR-0002）**：频响补偿与 EQ 二选一、与响度归一化互斥——设计文档 §4.7 仍要求"设备档案与手动 EQ 互斥+锁定"，说明互斥思想在 v3 延续（只是对象换为设备档案）。
+3. **响度归一化语义**：目标 -14 LUFS、增益 clamp ±9dB、失败回退 0dB 原声——HSE 的 LufsMeter 与归一化逻辑应保持同一目标值与回退语义。
+4. **频响补偿参数**：auto 模式公式（低频系数 0.35 / 高频 0.15、上限 12/6dB、120Hz+12kHz Q0.707 shelf 结构）已被 HSE LoudnessComp 采用（API_SPEC 模块 12 明确"v2 兼容"）；`mode/preset/bands` 三段式与 6 预设 id（flat/bass/vocal/warm/bright/night）可直接映射。
+5. **互斥语义（ADR-0002）**：频响补偿与 EQ 二选一、与响度归一化互斥——设计文档 §4.7 仍要求"设备档案与手动 EQ 互斥+锁定"，说明互斥思想在 HSE 延续（只是对象换为设备档案）。
 
 ### 8.2 应由 research 设计替换的部分
 
-| v2 实现 | v3 替换（API_SPEC / 设计文档） | 理由 |
+| v2 实现 | HSE 替换（API_SPEC / 设计文档） | 理由 |
 |---|---|---|
 | EQ 5/10 段 peaking 级联（无补偿） | EqChain 20 段 + Q 补偿迭代（模块 3） | 级联响应误差 ≤0.05-0.1dB，v2 相邻段叠增益会偏离目标 |
 | 程序化生成 IR（早期反射+去相关噪声） | Convolver 分区 FFT 卷积 + IR 去周期化（模块 9） | 确定性、可载入真实 IR、循环无周期伪影；v2 的随机数生成 IR 不可复现 |
 | DynamicsCompressorNode 作输出限幅（threshold -6/ratio 12） | Limiter 前瞻 + 真峰值（模块 7） | 保护能力更强、可测延迟、无 pumping |
-| 夜间 = 压缩 + 高频衰减（无谐波） | NightMode = 压缩增强 + 6kHz shelf（EngineV3 链） | 语义一致，参数更明确（amount×1.5dB） |
+| 夜间 = 压缩 + 高频衰减（无谐波） | NightMode = 压缩增强 + 6kHz shelf（HyperSoundEngine 链） | 语义一致，参数更明确（amount×1.5dB） |
 | 低音 = lowshelf + 55Hz peaking | BassEnhancer 虚拟低频（LP + 非线性谐波 + HP 整形，模块 8） | 真正补足小音箱缺失的低频谐波，而非简单增益 |
 | 外部 Python 服务测 LUFS（3003） | LufsMeter 内置（模块 11） | 离线/实时一致、无网络依赖、可测 |
 | 外部 Python 服务设计补偿曲线（3004） | LoudnessComp 内置 1/3 倍频程 ISO 226 表（模块 12） | 同上；服务端 0.35/0.15 公式保留为 v2 兼容近似 |
 | 响度归一化增益 = 播放器按曲目调用服务 | 引擎链内归一化增益 + LufsMeter 反馈 | 与实时链解耦、可 gapless 化 |
 | SoundTouch（LGPL） | Stretch 相位声码器 / signalsmith-stretch(MIT)（模块 14） | 许可合规（见 §7） |
 | Web Audio 节点图（Biquad/Dynamics/Convolver/Panner 组装） | 纯 TS DSP 类 + AudioWorklet 消息管道（设计文档 §2、§5） | 实时/离线双路径共用同一算法类、零分配、可单测 |
-| 3D 环绕 HRTF Panner + requestAnimationFrame 旋转 | （v3 未列入核心链；如保留需自研双耳旋转或标注降级） | v2 依赖浏览器 PannerNode HRTF，v3 无 WebAudio 依赖原则下需另行设计 |
+| 3D 环绕 HRTF Panner + requestAnimationFrame 旋转 | （HSE 未列入核心链；如保留需自研双耳旋转或标注降级） | v2 依赖浏览器 PannerNode HRTF，HSE 无 WebAudio 依赖原则下需另行设计 |
 
 ### 8.3 v2 缺失而 research 要求的新功能清单（v2 完全没有的）
 
@@ -320,8 +320,8 @@ input
 11. **多相重采样 Resampler**（模块 13，speexdsp 思路）。
 12. **引擎内 IEQ 智能均衡**（设计文档 §4.6，长时频谱 → 目标曲线差 → EQ 拟合，3s 平滑）。
 13. **频谱特征分析 SpectrumAnalyzer**（模块 E，质心/滚降/平坦度/峰值等 meyda 式）。
-14. **gapless 变速接入**：EngineV3.getStretch() 供过渡场景（v2 的 SoundTouch 只服务调音室 UI）。
-15. **确定性 IR / 无随机**：v2 混响 IR 用随机数生成（每次 attach 不同），v3 要求同输入同输出。
+14. **gapless 变速接入**：HyperSoundEngine.getStretch() 供过渡场景（v2 的 SoundTouch 只服务调音室 UI）。
+15. **确定性 IR / 无随机**：v2 混响 IR 用随机数生成（每次 attach 不同），HSE 要求同输入同输出。
 ---
 
 ## 9. 测试模式总结（断言风格）
@@ -332,8 +332,8 @@ input
 2. **纯逻辑精确断言**：服务端公式在 JS 复刻（常量与 Python 端逐值对齐：REF_SPL_DB=80、MIN_SPL_DB=50、0.35/0.15、12/6、120/12000Hz、Q0.707），用 `expect(...).toBe(5.25)` 这类精确值（已与服务端实跑比对）；clamp/边界（-10/150 音量、NaN/Infinity 输入）逐一断言。
 3. **物理意义断言**：`toBeCloseTo` + 注释说明物理意义（如 50% 音量 → 低频 +5.25dB ≈ 5.2）；"中频零污染"用 RBJ biquad 系数解析求幅频响应（magnitudeAt 思路），级联 dB 相加验证 1kHz ≈ 0dB（±1）、8kHz ≤ 1dB。
 4. **状态机断言**：缓存命中/不命中（fetch 调用次数 `toHaveBeenCalledTimes`）、退避窗口（fake timers `advanceTimersByTime(5000)` 后恢复请求）、并发去重（共享同一 Promise 只发一次）、in-flight 失效（延迟 resolve + invalidate → null）。
-5. **设置迁移断言**：写入"旧版本"localStorage JSON（缺新字段）→ new 引擎 → 断言新字段补默认、旧字段保留——v3 的 settings 加载器应同样做深合并迁移测试。
+5. **设置迁移断言**：写入"旧版本"localStorage JSON（缺新字段）→ new 引擎 → 断言新字段补默认、旧字段保留——HSE 的 settings 加载器应同样做深合并迁移测试。
 6. **请求体断言**：`JSON.parse(fetchMock.mock.calls[i][1].body)` toMatchObject 精确校验 mode/volume/preset/bands 字段与 URL。
 7. **互斥/快照语义断言**：applyScene 写入参数 + 清 customized；updateSettings 置 customized；补偿开→EQ 关（双向）；归一化与补偿互斥；多效果可叠加。
-8. **关键启示**（供 v3 测试采用）：算法正确性用"复刻公式 + 精确断言"，而非模糊容差；频响用解析 biquad 计算而非整链 FFT（可单模块验证）；降级行为（服务不可用）必须有独立用例；迁移（旧数据）必须有独立用例。
+8. **关键启示**（供 HSE 测试采用）：算法正确性用"复刻公式 + 精确断言"，而非模糊容差；频响用解析 biquad 计算而非整链 FFT（可单模块验证）；降级行为（服务不可用）必须有独立用例；迁移（旧数据）必须有独立用例。
 

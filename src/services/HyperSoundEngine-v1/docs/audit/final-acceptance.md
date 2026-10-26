@@ -1,7 +1,7 @@
 # 最终交付验收报告 —— HyperSoundEngine-v1
 
 > 验收视角：即将接手融合的工程师（把本模块接入 HyperPlayer）
-> 验收方式：源码复核（Convolver/Stretch/LoudnessComp/MidSide/EngineV3）+ 审计测试与全量回归复跑 +
+> 验收方式：源码复核（Convolver/Stretch/LoudnessComp/MidSide/HyperSoundEngine）+ 审计测试与全量回归复跑 +
 >           独立数值验证（直接卷积参考对照、块长扫描）+ FUSION_GUIDE 逐节核对
 
 ---
@@ -15,7 +15,7 @@
      替换原"调用级 totalIn−L"（B>L 时错位/丢块）；
    - pending 写前**突发动态扩容**（压缩后仍不够则 ×2 扩容），消除 B=4096（8 块突发）越界写；
    - 新增正式回归测试 `test/convolver-blocklen.test.ts`（B=128/512/1024/4096 对拍双精度直接卷积，
-     maxErr ≤ 3.4e-6、零 NaN、零丢块）；EngineV3Host script 兜底 4096 块长 + 卷积混响组合已安全。
+     maxErr ≤ 3.4e-6、零 NaN、零丢块）；HyperSoundEngineHost script 兜底 4096 块长 + 卷积混响组合已安全。
 2. **night-bass 场景 10-15kHz 越界（-33.5dB）** → 已完全修复：
    - 四轮参数调平（EQ 16k −3→0、nightMode 8→1、deesser −28→−36/ratio 6、补偿预设 night→warm），
      实测 **-22.4dB**，回到 ±24dB 契约界内；

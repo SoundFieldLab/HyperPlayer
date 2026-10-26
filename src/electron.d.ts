@@ -285,6 +285,12 @@ export interface ElectronAPI {
   writeHseSceneSeed?: (content: string) => Promise<{ ok: boolean; path?: string; error?: string }>
   /** HSE 离线导出：渲染完成的 MP3 写到桌面（重名自动加序号；TV/网页端缺失走浏览器下载） */
   saveHseRenderedAudio?: (data: Uint8Array, fileName: string) => Promise<{ ok: boolean; path?: string; error?: string }>
+  /** 本机 OSC 头追桥，仅用户显式启动；设备选择由主进程可信窗口处理。 */
+  hseHeadTracking?: {
+    getBridgeState: () => Promise<{ running: boolean; wsUrl: string; udpPort: number; error?: string }>
+    startBridge: () => Promise<{ running: boolean; wsUrl: string; udpPort: number; error?: string }>
+    stopBridge: () => Promise<{ running: boolean; wsUrl: string; udpPort: number; error?: string }>
+  }
   /** 渲染进程日志转发到主进程控制台（后台窗口可见） */
   log: (message: string) => void
   wallpaper: {

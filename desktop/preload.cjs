@@ -147,6 +147,12 @@ contextBridge.exposeInMainWorld('electron', {
   writeHseSceneSeed: (content) => ipcRenderer.invoke('hse-write-scene-seed', content),
   // HSE 离线导出：渲染完成的 MP3 直写用户桌面（<歌曲名>-Modified.mp3）
   saveHseRenderedAudio: (data, fileName) => ipcRenderer.invoke('hse-save-rendered-audio', data, fileName),
+  // 受控本机 OSC 桥；不自动启动、不自动连接设备。
+  hseHeadTracking: {
+    getBridgeState: () => ipcRenderer.invoke('hse-head-tracking:state'),
+    startBridge: () => ipcRenderer.invoke('hse-head-tracking:start'),
+    stopBridge: () => ipcRenderer.invoke('hse-head-tracking:stop'),
+  },
   // OOBE 完成 flag 文件（userData/.oobe-complete，独立于 localStorage 的双重保险）
   oobe: {
     getFlag: () => ipcRenderer.invoke('oobe:get-flag'),

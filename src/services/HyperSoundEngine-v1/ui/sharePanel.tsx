@@ -1,13 +1,13 @@
 /**
- * HyperPlayer v3 调音室 UI —— 调音器页（分享串 / MP3 导出 / 引擎信息）
+ * HyperPlayer HSE 调音室 UI —— 调音器页（分享串 / MP3 导出 / 引擎信息）
  *
- * v3 分享串：完整参数快照（版本 + FNV-1a 校验 + 白名单解码），比 v2 的 EQ JSON 更完整。
+ * HSE 分享串：完整参数快照（版本 + FNV-1a 校验 + 白名单解码），比 v2 的 EQ JSON 更完整。
  * MP3 导出与引擎信息（latency/采样率）供融合侧接线。
  */
 
 import { useState } from 'react'
 import { Copy, ClipboardPaste, FileAudio, Cpu, Info } from 'lucide-react'
-import type { HSETheme } from './theme'
+import type { HSELegacyTheme } from './theme'
 import type { HSEUiBridge } from './bridge'
 import { ActionButton, GlassCard, InfoLine, SectionTitle } from './primitives'
 import type { HSEParamsController } from './hooks'
@@ -15,7 +15,7 @@ import type { HSEParamsController } from './hooks'
 export interface SharePanelProps {
   controller: HSEParamsController
   bridge: HSEUiBridge
-  theme: HSETheme
+  theme: HSELegacyTheme
   /** 离线导出（融合侧实现：解码 → HyperSoundEngine.process → lamejs MP3） */
   exportMp3?: (() => Promise<void>) | null
   /** 导出进行中状态由父级管理 */
@@ -81,7 +81,7 @@ export function SharePanel({ controller, bridge, theme, exportMp3, exporting }: 
             style={{ background: theme.inputBg, border: `1px solid ${theme.glassBorder}` }} />
         )}
         <div className="flex gap-2">
-          <textarea value={importText} onChange={(e) => setImportText(e.target.value)} placeholder="粘贴 v3 分享串（以 wf3: 开头的字符串）"
+          <textarea value={importText} onChange={(e) => setImportText(e.target.value)} placeholder="粘贴 HSE 分享串（以 wf3: 开头的字符串）"
             className={`flex-1 h-16 px-3 py-2 rounded-lg text-xs outline-none ${theme.textPrimary}`}
             style={{ background: theme.inputBg, border: `1px solid ${theme.glassBorder}` }} />
           <ActionButton onClick={handleImportShare} theme={theme}>

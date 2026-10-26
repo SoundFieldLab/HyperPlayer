@@ -1,5 +1,5 @@
 /**
- * HyperPlayer 音频引擎 v3 —— 公共出口（index）
+ * HyperPlayer 音频引擎 HSE —— 公共出口（index）
  *
  * 出处/许可：
  *  - 本文件仅为模块聚合出口，无算法实现；各导出模块的出处/许可见各自源文件头部注释。
@@ -20,6 +20,9 @@ export * from './types'
 export { HyperSoundEngine } from './engine/HyperSoundEngine'
 export { HyperSoundEngineHost } from './integration/HyperSoundEngineHost'
 export type { HSEHostHandle, HSEHostMode, HSEHostOptions, HSEAudioContextLike, HSEAudioNodeLike } from './integration/HyperSoundEngineHost'
+export type { HseProcessingNode } from './integration/ProcessingNode'
+export { createSerializableProcessingNode, registerProcessingNodeFactory } from './integration/ProcessingNode'
+export type { HseSerializableNodeConfig, HseNodeData, HseProcessingNodeFactory } from './integration/ProcessingNode'
 export { SCENE_PRESETS, getSceneById, SCENE_IDS } from './engine/ScenePresets'
 export { encodeShareCode, decodeShareCode, SHARE_CODEC_VERSION } from './engine/ShareCodec'
 export { SpectrumAnalyzer } from './analysis/Spectrum'
@@ -32,6 +35,23 @@ export type { SeparationStem, StemSeparatorAdapter, SeparationTask } from './off
 export * from './dsp/fft'
 export * from './dsp/biquad'
 export * from './dsp/EqChain'
+export { DynamicEq, DynamicEqBank } from './dsp/DynamicEq'
+export { Pcm16Quantizer } from './dsp/PcmQuantizer'
+export { encodePcm16Wav } from './dsp/PcmWav'
+export type { QuantizationMode } from './dsp/PcmQuantizer'
+export { Crossfeed } from './dsp/Crossfeed'
+export { MultibandCompressor } from './dsp/MultibandCompressor'
+export { ConvolutionIrLibrary } from './dsp/ConvolutionIrLibrary'
+export { parseReplayGainTags, selectReplayGainDb, scanReplayGainBytes, scanReplayGainUrl } from './dsp/ReplayGain'
+export { UnrolledComplexProduct, TypeScriptComplexProductKernel, createComplexProductKernel } from './dsp/vectorKernel'
+export type { VectorComplexProduct, ComplexProductKernel, ComplexProductKernelOptions } from './dsp/vectorKernel'
+export {
+  isWasmSimdKernelAvailable,
+  getComplexProductWasmModuleBytes,
+  getWasmKernelViewAllocationCount,
+  WASM_SIMD_THRESHOLD_SAMPLES,
+  WASM_SIMD_THRESHOLD_SAMPLES_F64,
+} from './dsp/wasmSimdKernel'
 export * from './dsp/MidSide'
 export * from './dsp/Deesser'
 export * from './dsp/Compressor'

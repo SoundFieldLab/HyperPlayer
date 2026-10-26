@@ -1,5 +1,5 @@
 /**
- * hrtfInterp —— 球谐（Spherical Harmonics）HRTF 插值（HSE v3 空间音频）
+ * hrtfInterp —— 球谐（Spherical Harmonics）HRTF 插值（HSE HSE 空间音频）
  *
  * 规划书 §4.1：球谐插值，保证任意角度的平滑过渡（替代波 1 的最近邻网格查表）。
  * 算法：**实球谐基展开 + 最小二乘拟合**（时间域逐样本拟合）：
@@ -84,7 +84,7 @@ function shBasis(azDeg: number, elDeg: number, out: Float64Array): void {
   const u2 = u * u
   const u3 = u2 * u
   const v2 = v * v
-  const v3 = v2 * v
+  const HSE = v2 * v
 
   out[0] = K0
   out[1] = -K1 * sa * u
@@ -98,7 +98,7 @@ function shBasis(azDeg: number, elDeg: number, out: Float64Array): void {
   out[9] = -C33 * s3 * u3
   out[10] = C32 * s2 * v * u2
   out[11] = -C31 * sa * (5 * v2 - 1) * u
-  out[12] = K3 * (5 * v3 - 3 * v) * 0.5
+  out[12] = K3 * (5 * HSE - 3 * v) * 0.5
   out[13] = -C31 * ca * (5 * v2 - 1) * u
   out[14] = C32 * c2 * v * u2
   out[15] = -C33 * c3 * u3

@@ -1,6 +1,6 @@
 # 组合/场景/双路径链路健康审计报告（任务 C）
 
-> 审计对象：HyperSoundEngine-v1（EngineV3 / ScenePresets / ShareCodec / DeviceProfile）
+> 审计对象：HyperSoundEngine-v1（HyperSoundEngine / ScenePresets / ShareCodec / DeviceProfile）
 > 审计日期：本会话
 > 测试文件：`test/audit-combo.test.ts`（27 个测试全部通过）
 > 运行方式：`npx vitest run test/audit-combo.test.ts`
@@ -11,7 +11,7 @@
 
 | 模块 | 文件 | 审计点 |
 | --- | --- | --- |
-| 引擎总成 | `src/engine/EngineV3.ts` | 链顺序、热切换状态延续、stats、分析路径、nightMode/IEQ/响度归一化 |
+| 引擎总成 | `src/engine/HyperSoundEngine.ts` | 链顺序、热切换状态延续、stats、分析路径、nightMode/IEQ/响度归一化 |
 | 场景预设 | `src/engine/ScenePresets.ts` | 11 个场景快照逐个应用后的链健康 |
 | 分享串 | `src/engine/ShareCodec.ts` | encode/decode 往返、白名单 + clamp 防注入、解码参数应用安全 |
 | 设备档案 | `src/device/DeviceProfile.ts` | 内置档案 bands 叠加进 Pre-EQ 后的频响有界性 |
@@ -30,7 +30,7 @@
 ### 异常 1（中）：night-bass 场景链频响超出 ±24dB 契约界
 
 - **位置**：`src/engine/ScenePresets.ts` night-bass 场景定义（EQ / deesser / bassEnhancer /
-  loudnessComp 'night' / nightMode 8）+ `src/engine/EngineV3.ts`（nightMode 6kHz shelf -12dB、
+  loudnessComp 'night' / nightMode 8）+ `src/engine/HyperSoundEngine.ts`（nightMode 6kHz shelf -12dB、
   主压缩 6:1 与夜间压缩 8.4:1 串联、deesser 触发）。
 - **现象**（0.25 幅度白噪声，-12dBFS 量级）：
   - 10–15kHz 倍频程平均响应 **-33.5dB**（契约下界 -24dB），逐倍频程响应实测：
@@ -50,7 +50,7 @@
 
 ### 异常 2（低）：loudnessNormalization 外部增益模式热切换无平滑（潜在增益阶跃）
 
-- **位置**：`src/engine/EngineV3.ts`（`setParams`/process）——`useRealtimeMeter=false` 时
+- **位置**：`src/engine/HyperSoundEngine.ts`（`setParams`/process）——`useRealtimeMeter=false` 时
   `this._normGain = Math.pow(10, ln.externalGainDb / 20)` 直接赋值，无平滑（实时模式有 `NORM_SMOOTH_SEC`
   一阶平滑）。
 - **现象**（代码审查 + 实测）：热切换改变 `externalGainDb` 时，下一块输出整块乘以新增益（瞬时阶跃）。
@@ -59,7 +59,7 @@
   附近且增益变化大（0→24dB）**，会产生明显爆音。
 - **复现测试**：校准脚本（审计后已删）测得 `loudnessNorm-ext maxBoundary=0.114 vs maxSteady=0.618`；
   审计测试 D 中默认场景未启用 loudnessNorm，此项作为**代码审查发现**记录。
-- **根因**：v2 兼容语义"整曲测量换算增益直接施加"，未走 v3 实时测量平滑路径。
+- **根因**：v2 兼容语义"整曲测量换算增益直接施加"，未走 HSE 实时测量平滑路径。
 
 ### 异常 3（低/观察项）：部分场景存在 ~1e-3（-60dBFS 级）微小直流残余
 

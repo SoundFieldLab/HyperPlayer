@@ -68,6 +68,29 @@ Use MV Decode Probe to inspect the Bilibili MV / audio **music-start detection**
 - Output stays in memory (`window.__decodeResult` + `console.log`); nothing is persisted to disk or uploaded.
 - The in-page downsample/onset maths is a hand-maintained copy of the app's detection path. When `autoMixAnalysisService.ts` changes, update this page too — a diverged probe yields misleading thresholds.
 
+## Spatial Debug（HSE 空间音频独立预览）
+
+| Field | Value |
+|---|---|
+| Page | `spatial-debug.html` |
+| Local URL | `http://127.0.0.1:3290/spatial-debug.html`（`--serve-build` 模式为 `http://127.0.0.1:3291`） |
+| Start command | `npm run preview:spatial`（独立 Vite 实例，**不要**与 `npm run dev` 的 3210 混用） |
+| Source entry | `src/spatial-debug/main.tsx` |
+| Styles | HSE 模块 `ui/hse-glass.css` + Tailwind（经 `scripts/spatial-preview.mjs` 的 `@tailwindcss/vite` 插件） |
+| Test | None（手动预览；HSE 模块自身的 `src/spatial/test/` 与 `ui/**/*.test.*` 才是回归闸门） |
+| Production status | Development-only. **不在** `vite.config.ts` 生产入口白名单（三入口），Vite 会原样拷贝根目录 `spatial-debug.html` 吗？——不会：该页由 `npm run preview:spatial` 的独立 config（`configFile: false`）服务，主 `vite build` 以 `rollupOptions.input` 白名单为入口，根目录多余 html 不会被构建。 |
+
+### Purpose
+
+用**独立 Host**（不经 HyperPlayer 播放器音频图）驱动 HSE 调音室与空间音频页面：内置测试音源/波形、独立 `HyperSoundEngineHost` 实例、`createHSEUiBridge` + `useHSEParams` 完整参数路径。用于在不播放歌曲的情况下调空间参数、对比 HRTF/房间预设、验证调音室 UI（亮色薄荷玻璃）与空间工作台交互。改 HSE 空间代码后先在这里快速肉眼验证，再回主程序实测。
+
+### Safety Rules
+
+- 页面桥是**独立预览写法**（`Object.assign` 包装桥对象 + 自带 `subscribeParams`），只服务预览——**勿照抄**到正式融合层（正式路径是 `attachHSE.ts` 的 submit 钩子）。
+- 本页 worklet URL 是 `/hse-worklet.js`（绝对路径，dev server 语义）；主程序融合层用 `./hse-worklet.js`（file:// 相对语义），两者勿混。
+- 无网络请求、无后端依赖；所有音频在页面内合成。
+- 端口 3290/3291 为本页专属（避开 3210/3211 与 WaveForge 段 3000–3002）；`npm run check:ports` 的 REQUIRED 锚点不含这两个端口，但不要把 3290/3291 写进主链路。
+
 ## Adding A New Debug Page
 
 1. Create a root `*-debug.html` entry and a dedicated `src/<feature>-debug/` folder.

@@ -1,5 +1,5 @@
 /**
- * HyperPlayer v3 调音室 UI —— HyperSoundEngine 风格新 UI 渲染冒烟测试（jsdom）
+ * HyperPlayer HSE 调音室 UI —— HyperSoundEngine 风格新 UI 渲染冒烟测试（jsdom）
  *
  * 验证主面板可渲染、左侧导航切换、效果弹窗开合、场景应用、分享串往返、
  * 听力测试流程状态机推进。不依赖真实 Web Audio（桥由 HyperSoundEngine 真实实例提供）。
@@ -18,7 +18,7 @@ import { encodeShareCode, decodeShareCode } from '../src/engine/ShareCodec'
 function makeUi() {
   const engine = new HyperSoundEngine(48000, 2)
   const bridge = createHSEUiBridge(engine, 48000)
-  const view = render(<HSEMixingStudio bridge={bridge} playerTheme="dark" onClose={() => undefined} />)
+  const view = render(<HSEMixingStudio bridge={bridge} playerTheme="light" onClose={() => undefined} />)
   return { engine, bridge, view }
 }
 
@@ -30,17 +30,87 @@ function clickNav(label: string) {
 describe('HSE 调音室 UI 冒烟', () => {
   beforeEach(() => cleanup())
 
-  it('主面板渲染：标题 + 8 导航项 + 默认主页', () => {
+  it('动态均衡可从动态调音页启用并打开参数弹窗', () => {
+    const { bridge } = makeUi()
+    clickNav('动态调音')
+    fireEvent.click(screen.getByRole('switch', { name: '启用动态均衡' }))
+    expect(bridge.getParams().dynamicEq?.enabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '动态均衡详细设置' }))
+    expect(screen.getByRole('slider', { name: '中心频率' })).toBeTruthy()
+  })
+
+  it('动态均衡弹窗可增减独立频段并写入参数快照', () => {
+    const { bridge } = makeUi()
+    clickNav('动态调音')
+    fireEvent.click(screen.getByRole('button', { name: '动态均衡详细设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '添加频段' }))
+    expect(bridge.getParams().dynamicEq?.bands).toHaveLength(2)
+    fireEvent.click(screen.getAllByRole('button', { name: '删除频段' })[0])
+    expect(bridge.getParams().dynamicEq?.bands).toBeUndefined()
+  })
+
+  it('耳机交叉馈送可从音效场景页启用并打开配置', () => {
+    const { bridge } = makeUi()
+    clickNav('音效场景')
+    fireEvent.click(screen.getByRole('button', { name: '耳机交叉馈送启停' }))
+    expect(bridge.getParams().crossfeed?.enabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '配置耳机交叉馈送' }))
+    expect(screen.getByRole('slider', { name: '馈送量' })).toBeTruthy()
+  })
+
+  it('主面板渲染：标题 + 9 导航项 + 默认主页', () => {
     makeUi()
     expect(screen.getByText('HyperSoundEngine')).toBeTruthy()
-    for (const label of ['主页', '音效场景', '均衡器', '空间音效', '空间音频', '动态调音', '分析', '调音器']) {
+    expect(screen.getByText('HSE 1.5')).toBeTruthy()
+    for (const label of ['主页', '音效场景', '均衡器', '空间音效', '空间音频', '动态调音', '分析', '调音器', '关于']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0)
     }
-    // 默认页：主页包含系统音效 + 音效模式快捷
-    expect(screen.getByText('系统音效')).toBeTruthy()
-    expect(screen.getByText('Hi-Fi 模式')).toBeTruthy()
-    expect(screen.getByText('增强模式')).toBeTruthy()
-    expect(screen.getByText('影院模式')).toBeTruthy()
+    expect(screen.getByText('声音工作台')).toBeTruthy()
+    expect(screen.getByText('实时音频')).toBeTruthy()
+    expect(screen.getByRole('slider', { name: '输出音量' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Hi-Fi模式' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '增强模式' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '影院模式' })).toBeTruthy()
+  })
+
+  it('内部精度可切换到 Float64 并由引擎统计确认', () => {
+    const { engine, bridge } = makeUi()
+    clickNav('调音器')
+    fireEvent.click(screen.getByRole('radio', { name: '双精度 · Float64' }))
+    expect(bridge.getParams().precision).toBe('float64')
+    expect(engine.getStats().internalPrecision).toBe('float64')
+    fireEvent.click(screen.getByRole('radio', { name: '标准 · Float32' }))
+    expect(engine.getStats().internalPrecision).toBe('float32')
+  })
+
+  it('M/S 比例显式启用后提交，宽度不依赖该开关', () => {
+    const { bridge } = makeUi()
+    clickNav('空间音效')
+    const balance = screen.getByRole('slider', { name: '差分 S ↔ 中央 M' }) as HTMLInputElement
+    expect(balance.disabled).toBe(true)
+    const width = screen.getByRole('slider', { name: '宽度' }) as HTMLInputElement
+    expect(width.disabled).toBe(false)
+    fireEvent.click(screen.getByRole('switch', { name: '启用 M/S 比例与变速变调' }))
+    expect(balance.disabled).toBe(false)
+    fireEvent.change(balance, { target: { value: '0.5' } })
+    expect(bridge.getParams().pitch.enabled).toBe(true)
+    expect(bridge.getParams().pitch.voiceBalance).toBe(0.5)
+    expect(screen.getByText('差分衰减 50%')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '立体声宽度详细设置' }))
+    expect((screen.getByRole('slider', { name: '差分 S ↔ 中央 M（精调）' }) as HTMLInputElement).disabled).toBe(false)
+  })
+
+  it('向上压缩图显示低电平提升，最大提升为零时回到单位曲线', () => {
+    makeUi()
+    clickNav('动态调音')
+    fireEvent.click(screen.getByRole('button', { name: '动态压缩详细设置' }))
+    fireEvent.click(screen.getByRole('radio', { name: '向上' }))
+    const curve = screen.getByRole('img', { name: '向上压缩器输入输出传输曲线' })
+    const paths = curve.querySelectorAll('path')
+    const firstY = (path: Element) => Number(path.getAttribute('d')?.match(/^M[^,]+,([\d.-]+)/)?.[1])
+    expect(firstY(paths[1])).toBeLessThan(firstY(paths[0]))
+    fireEvent.change(screen.getByRole('slider', { name: '最大提升' }), { target: { value: '0' } })
+    expect(firstY(curve.querySelectorAll('path')[1])).toBe(firstY(paths[0]))
   })
 
   it('空间音效页：混响开关可切换启用态', () => {
@@ -48,35 +118,68 @@ describe('HSE 调音室 UI 冒烟', () => {
     clickNav('空间音效')
     // 空间音效页只剩混响/3D环绕/立体声宽度卡（空间音频已独立为「空间音频」选项卡）。
     // 注意：导航栏始终展示「空间音频」标签，故不能以该文案判存在——改用空间音频页
-    // 独有的模式选择器文案「一键空间化」与 Power 按钮 title 作为页面内容标记。
-    expect(screen.queryByText('一键空间化')).toBeNull()
-    expect(screen.queryByTitle('开启空间音频')).toBeNull()
+    // 独有的模式按钮和空间音频开关作为页面内容标记。
+    expect(screen.queryByRole('button', { name: /^快速空间化/ })).toBeNull()
+    expect(screen.queryByRole('switch', { name: '空间音频' })).toBeNull()
     // 混响卡片标题存在
     expect(screen.getAllByText('混响').length).toBeGreaterThan(0)
     // 默认未启用
     expect(bridge.getParams().reverb.enabled).toBe(false)
-    // 点击「启用 混响」开关文案（位于卡片头部右侧 toggle 按钮的 aria-pressed）
-    const toggles = screen.getAllByRole('button')
-    // 找到混响卡片的开关按钮并切换
-    const reverbToggle = toggles.find((btn) => btn.getAttribute('aria-pressed') === 'false' && btn.classList.contains('rounded-full'))
-    expect(reverbToggle).toBeTruthy()
-    fireEvent.click(reverbToggle!)
+    fireEvent.click(screen.getByRole('switch', { name: '启用混响' }))
     expect(bridge.getParams().reverb.enabled).toBe(true)
   })
 
-  it('空间音频页：Power 按钮开启后切到 instant 模式', () => {
+  it.each([
+    ['均衡器', '启用均衡器'],
+    ['空间音效', '启用混响'],
+    ['空间音频', '空间音频'],
+    ['动态调音', '启用动态压缩'],
+  ])('主页快捷卡进入%s后，原有开关可操作', (label, switchName) => {
     makeUi()
+    fireEvent.click(screen.getByRole('button', { name: `打开${label}` }))
+    const toggle = screen.getByRole('switch', { name: switchName })
+    const initial = toggle.getAttribute('aria-checked')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-checked')).toBe(initial === 'true' ? 'false' : 'true')
+  })
+
+  it('主页分析快捷卡打开实际分析页', () => {
+    makeUi()
+    fireEvent.click(screen.getByRole('button', { name: '打开分析' }))
+    expect(screen.getByRole('button', { name: '开始测试' })).toBeTruthy()
+    expect(screen.queryByRole('slider', { name: '输出音量' })).toBeNull()
+  })
+
+  it('空间音频页：开启后恢复快速空间化并同步引擎参数', () => {
+    const { bridge } = makeUi()
     clickNav('空间音频')
     // 空间音频页头部标题存在（与空间音效页区分）
     expect(screen.getAllByText('空间音频').length).toBeGreaterThan(0)
     // 空间音频页不应有混响卡（混响留在空间音效页）
     expect(screen.queryByText('混响')).toBeNull()
-    // 默认模式 off → Power 按钮可开启 instant
-    const powerBtn = screen.getAllByRole('button').find((btn) => btn.title === '开启空间音频')
-    expect(powerBtn).toBeTruthy()
-    fireEvent.click(powerBtn!)
-    // 开启后切到 instant（一键空间化），模式选择器出现「一键空间化」激活
-    expect(screen.getAllByText('一键空间化').length).toBeGreaterThan(0)
+    // 默认模式 off → 总开关可开启 instant
+    const spatialToggle = screen.getByRole('switch', { name: '空间音频' })
+    fireEvent.click(spatialToggle)
+    expect(spatialToggle.getAttribute('aria-checked')).toBe('true')
+    expect(bridge.getParams().spatial!.mode).toBe('instant')
+    expect(screen.getByRole('button', { name: /^快速空间化/ }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('快速空间化可启用多声道输入并选择 7.1.4 布局', () => {
+    const { bridge } = makeUi()
+    clickNav('空间音频')
+    fireEvent.click(screen.getByRole('switch', { name: '空间音频' }))
+    fireEvent.click(screen.getByText('音源与声道格式'))
+    const multi = screen.getByRole('switch', { name: '多声道输入空间化' })
+    fireEvent.click(multi)
+    expect(bridge.getParams().spatial!.instant.multichannelAuto).toBe(true)
+    fireEvent.click(screen.getByRole('radio', { name: '7.1.4' }))
+    expect(bridge.getParams().spatial!.instant.multichannelLayout).toBe('714')
+    fireEvent.click(screen.getByRole('radio', { name: '自动布局' }))
+    expect(bridge.getParams().spatial!.instant.multichannelLayout).toBe('auto')
+    fireEvent.click(screen.getByRole('button', { name: '设备与高级设置' }))
+    fireEvent.click(screen.getByRole('radio', { name: '仅晚混响' }))
+    expect(bridge.getParams().spatial!.budgetMode).toBe('lowLatency')
   })
 
   it('动态调音页：压缩器阈值修改经桥写入引擎', () => {
@@ -85,11 +188,7 @@ describe('HSE 调音室 UI 冒烟', () => {
     // 切换压缩器开关（默认关闭，先开启）
     const compressHeader = screen.getAllByText('动态压缩')
     expect(compressHeader.length).toBeGreaterThan(0)
-    // 找到压缩器开关（aria-pressed=false 的圆角按钮）并开启
-    const toggles = screen.getAllByRole('button')
-    const compToggle = toggles.find((btn) => btn.getAttribute('aria-pressed') === 'false' && btn.classList.contains('rounded-full'))
-    expect(compToggle).toBeTruthy()
-    fireEvent.click(compToggle!)
+    fireEvent.click(screen.getByRole('switch', { name: '启用动态压缩' }))
     expect(bridge.getParams().compressor.enabled).toBe(true)
     // 开启后阈值滑杆出现，拖动到 -30
     const sliders = screen.getAllByRole('slider')
@@ -104,7 +203,11 @@ describe('HSE 调音室 UI 冒烟', () => {
     clickNav('音效场景')
     fireEvent.click(screen.getByText('流行'))
     expect(bridge.getParams().sceneId).toBe('pop')
-    expect(bridge.getParams().eq.proBands[0].gain).not.toBe(0)
+    // 64 段预设：20Hz 端点保持 0dB，微调落在可听/音乐频段。
+    expect(bridge.getParams().eq.bandCount).toBe(64)
+    expect(bridge.getParams().eq.proBands.some((band) => band.gain !== 0)).toBe(true)
+    expect(bridge.getParams().eq.proBands[0].frequency).toBeCloseTo(20, 1)
+    expect(bridge.getParams().eq.proBands[63].frequency).toBeCloseTo(16000, 0)
   })
 
   it('场景应用保留音量控制：内置场景与我的场景快照均不得覆盖 loudnessNormalization', () => {
@@ -168,6 +271,14 @@ describe('HSE 调音室 UI 冒烟', () => {
     expect(bridge.getParams().eq.proBands.length).toBe(20)
     // SVG 曲线编辑器
     expect(document.querySelector('svg')).toBeTruthy()
+  })
+
+  it('均衡器页：可为选中频段切换滤波器类型', () => {
+    const { bridge } = makeUi()
+    clickNav('均衡器')
+    const selector = screen.getByRole('combobox', { name: '滤波器类型' })
+    fireEvent.change(selector, { target: { value: 'notch' } })
+    expect(bridge.getParams().eq.proBands[0].type).toBe('notch')
   })
 
   it('主页音量控制：拖动到 20% → 引擎增益写入响度归一化通道', () => {

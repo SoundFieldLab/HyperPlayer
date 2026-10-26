@@ -1,13 +1,13 @@
 /**
- * 关于页 —— HyperSoundEngine 品牌信息（Logo 动画 + 微光背景 + 三行信息）
+ * 关于页 —— HSE 品牌、版权授权与场景开发者模式
  */
 
 import { useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
 import { Terminal } from 'lucide-react'
 import { Toggle } from '../components/Primitives'
 import type { HSETheme } from '../hse-theme'
 import { isDevMode, setDevMode, HSE_DEV_MODE_EVENT } from '../sceneStore'
+import { HSE_DISPLAY_VERSION } from '../../version'
 
 interface AboutPageProps {
   theme: HSETheme
@@ -23,100 +23,40 @@ export default function AboutPage({ theme }: AboutPageProps) {
   }, [])
 
   return (
-    <div className="relative flex min-h-[56vh] flex-col items-center justify-center text-center overflow-hidden">
-      {/* 微光背景：双层径向辉光 + 缓慢呼吸 */}
-      <motion.div
-        className="pointer-events-none absolute inset-0"
-        style={{ background: `radial-gradient(circle at 50% 45%, ${theme.accentColor}22 0%, transparent 55%)` }}
-        animate={{ opacity: [0.55, 0.9, 0.55] }}
-        transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
-      />
-      <div
-        className="pointer-events-none absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2 rounded-full"
-        style={{ width: 320, height: 320, background: `radial-gradient(circle, ${theme.accentColor}10 0%, transparent 70%)` }}
-      />
-
-      <div className="relative flex flex-col items-center">
-        {/* Logo 标志：双层呼吸环 + 中心圆点 */}
-        <motion.div
-          className="relative mb-7 flex items-center justify-center"
-          style={{ width: 64, height: 64 }}
-        >
-          <motion.div
-            className="absolute inset-0 rounded-full"
-            style={{ border: `1.5px solid ${theme.accentColor}55` }}
-            animate={{ scale: [1, 1.18, 1], opacity: [0.55, 0.2, 0.55] }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
-          />
-          <motion.div
-            className="absolute rounded-full"
-            style={{ inset: 10, border: `1.5px solid ${theme.accentColor}88` }}
-            animate={{ scale: [1, 1.1, 1], opacity: [0.8, 0.4, 0.8] }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut', delay: 0.4 }}
-          />
-          <motion.div
-            className="rounded-full"
-            style={{ width: 14, height: 14, background: theme.accentColor, boxShadow: `0 0 16px ${theme.accentColor}` }}
-            animate={{ scale: [1, 1.12, 1] }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut', delay: 0.2 }}
-          />
-        </motion.div>
-
-        <motion.span
-          className="text-3xl font-bold tracking-wide"
-          style={{
-            background: `linear-gradient(135deg, ${theme.accentColor} 0%, #fff 130%)`,
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            textShadow: `0 0 48px ${theme.accentGlow}`,
-          }}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15, type: 'spring', stiffness: 200, damping: 20 }}
-        >
-          HyperSoundEngine
-        </motion.span>
-        <motion.span
-          className={`${theme.textSecondary} mt-3 text-sm`}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.4 }}
-        >
-          HyperPlayer特供版
-        </motion.span>
-        <motion.span
-          className={`${theme.textTertiary} mt-6 text-[11px] tracking-wide`}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.6 }}
-        >
-          2026 © IceFire_Icer All Right Reserved
-        </motion.span>
-        <motion.span
-          className="mt-2 text-[10px] tracking-wide"
-          style={{ color: `${theme.accentColor}aa` }}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.8 }}
-        >
-          HyperSoundEngine 已授权 HyperPlayer 项目使用
-        </motion.span>
-
-        {/* 开发者模式开关：开启后「音效场景」页可直接微调内置场景并持久化 */}
-        <motion.div
-          className="mt-8 flex items-center gap-3 rounded-xl px-4 py-2.5"
-          style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${theme.cardBorder}` }}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1 }}
-        >
-          <Terminal className="w-3.5 h-3.5" style={{ color: dev ? theme.accentColor : theme.textTertiary }} />
-          <div className="text-left">
-            <div className={`${theme.textPrimary} text-xs font-medium`}>开发者模式</div>
-            <div className={`${theme.textTertiary} text-[10px]`}>开启后可在「音效场景」页编辑内置场景参数并保存</div>
+    <div className="@container w-full space-y-5 py-2">
+      <div className="flex items-center gap-4">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: theme.accentDim, color: theme.accentColor }}>
+          <Terminal className="h-7 w-7" aria-hidden="true" />
+        </div>
+        <div>
+          <h1 className={`${theme.textPrimary} text-2xl font-semibold`}>{HSE_DISPLAY_VERSION}</h1>
+          <p className={`${theme.textSecondary} mt-1 text-sm`}>HyperSoundEngine · HyperPlayer 特供版</p>
+        </div>
+      </div>
+      <div className="rounded-2xl border p-4" style={{ background: theme.cardBg, borderColor: theme.cardBorder }}>
+        <h2 className={`${theme.textPrimary} text-sm font-medium`}>声音处理与空间渲染</h2>
+        <p className={`${theme.textSecondary} mt-2 text-xs leading-relaxed`}>动态均衡、三段压缩、卷积 IR、耳机交叉馈送与双精度处理可在各页面独立调整。空间音频支持多声道输入、AmbiX 一至三阶、FOA FuMa 和通用 SOFA，最终渲染为双声道，适合耳机试听。</p>
+        <p className={`${theme.textSecondary} mt-2 text-xs leading-relaxed`}>中央信号 / 差分信号来自原曲左右声道的组合。头部追踪需要连接兼容设备或本机姿态桥；扬声器校准使用几何估算与导入的 IR 分析结果。</p>
+      </div>
+      <div className="grid items-stretch gap-3 @min-[36rem]:grid-cols-2 @min-[52rem]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(18rem,1.2fr)]">
+        <div className="rounded-2xl border p-4" style={{ background: theme.cardBg, borderColor: theme.cardBorder }}>
+          <div className={`${theme.textTertiary} text-xs`}>版权</div>
+          <div className={`${theme.textPrimary} mt-2 text-sm`}>2026 © IceFire_Icer All Right Reserved</div>
+        </div>
+        <div className="rounded-2xl border p-4" style={{ background: theme.cardBg, borderColor: theme.cardBorder }}>
+          <div className={`${theme.textTertiary} text-xs`}>授权</div>
+          <div className={`${theme.textPrimary} mt-2 text-sm`}>HyperSoundEngine 已授权 HyperPlayer 项目使用</div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border p-4 @min-[36rem]:col-span-2 @min-[52rem]:col-span-1" style={{ background: theme.cardBg, borderColor: theme.cardBorder }}>
+          <div className="flex items-start gap-3">
+            <Terminal className="mt-0.5 h-4 w-4 shrink-0" style={{ color: dev ? theme.accentColor : '#536b66' }} />
+            <div>
+              <div className={`${theme.textPrimary} text-sm font-medium`}>开发者模式</div>
+              <div className={`${theme.textSecondary} mt-1 text-xs leading-relaxed`}>开启后可在「音效场景」页编辑内置场景参数并保存</div>
+            </div>
           </div>
-          <Toggle checked={dev} onChange={(v) => { setDevMode(v); setDev(v) }} theme={theme} />
-        </motion.div>
+          <Toggle label="开发者模式" checked={dev} onChange={(v) => { setDevMode(v); setDev(v) }} theme={theme} />
+        </div>
       </div>
     </div>
   )

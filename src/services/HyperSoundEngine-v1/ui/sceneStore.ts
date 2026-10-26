@@ -54,8 +54,9 @@ export function setDevMode(on: boolean): void {
 
 /** 入库清洗：去 IR、还原实时音量通道为出厂默认、固定场景归属标记 */
 function sanitizeOverrideSnapshot(id: string, p: HSEEngineParams): HSEEngineParams {
-  const clone = JSON.parse(JSON.stringify(p)) as HSEEngineParams
-  clone.reverb.convolution.ir = null
+  const clone = JSON.parse(JSON.stringify({
+    ...p, reverb: { ...p.reverb, convolution: { ...p.reverb.convolution, ir: null } },
+  })) as HSEEngineParams
   // 音量控制是实时控制（externalGainDb 滑杆走此通道），不得写进预设；
   // 整段响度归一化恢复出厂默认，与 ScenePresets 里 base() 的语义一致
   const fs = typeof clone.sampleRate === 'number' && clone.sampleRate > 0 ? clone.sampleRate : 48000
@@ -77,16 +78,15 @@ interface StoredBundle {
 
 function readStoredBundle(): StoredBundle | null {
   try {
-    // 历史键迁移（V3→HSE 命名统一）：旧键一次性搬到新键，场景微调不丢
-    let raw = localStorage.getItem(SCENE_OVERRIDES_KEY)
-    if (raw === null) {
-      const legacy = localStorage.getItem(LEGACY_SCENE_OVERRIDES_KEY)
-      if (legacy !== null) {
-        localStorage.setItem(SCENE_OVERRIDES_KEY, legacy)
-        localStorage.removeItem(LEGACY_SCENE_OVERRIDES_KEY)
-        raw = legacy
-      }
-    }
+let raw = localStorage.getItem(SCENE_OVERRIDES_KEY)
+if (raw === null) {
+  const legacy = localStorage.getItem(LEGACY_SCENE_OVERRIDES_KEY)
+  if (legacy !== null) {
+    localStorage.setItem(SCENE_OVERRIDES_KEY, legacy)
+    localStorage.removeItem(LEGACY_SCENE_OVERRIDES_KEY)
+    raw = legacy
+  }
+}
     if (!raw) return null
     const parsed = JSON.parse(raw) as { overrides?: unknown; rev?: unknown } & Record<string, unknown>
     if (!parsed || typeof parsed !== 'object') return null
@@ -212,8 +212,9 @@ interface LibraryFile {
 export function exportSceneLibraryJson(myScenes: ScenePreset[]): string {
   // 我的场景保留自身 sceneId/customized 语义（sceneId=null、customized=true），只做通用清洗
   const cleanedMy = myScenes.map((s) => {
-    const clone = JSON.parse(JSON.stringify(s)) as ScenePreset
-    clone.params.reverb.convolution.ir = null
+    const clone = JSON.parse(JSON.stringify({ ...s, params: { ...s.params,
+      reverb: { ...s.params.reverb, convolution: { ...s.params.reverb.convolution, ir: null } },
+    } })) as ScenePreset
     const fs = typeof clone.params.sampleRate === 'number' && clone.params.sampleRate > 0 ? clone.params.sampleRate : 48000
     clone.params.loudnessNormalization = createDefaultParams(fs).loudnessNormalization
     return clone
