@@ -27,14 +27,14 @@
 | 音源收敛（2026-09-13） | **Apple Music 与 Spotify 音源整体移除**：`src/services/apple*.ts`（14 个）、`src/services/spotifyService.ts`、`src/components/Apple*.tsx`（探索/登录/搜索浏览/电台 Now Playing/音乐视频）、`SpotifyLoginPanel`、`src/hooks/useAppleDynamicCover.ts`、Apple 相关的全局设置项（登录态、动态封面、Apple 质量档、Apple 歌词源）；后端 `/api/apple/*` 路由 + `server/apple-artwork-api.mjs`；Electron 主进程的 Apple 登录窗/代理/bridge/IPC 与 `desktop/apple-url-policy.cjs`；Spotify OAuth 授权窗。`MusicPlatform` 收敛为 `'netease' \| 'qq'`，**当前 3 个音源**：网易云 / QQ + B站看歌。 |
 | Python Apple bridge | `python-apple-bridge/apple_bridge.py`（端口 **18790**，系统 Python + pywebview + WebView2）、`desktop/main.cjs` 里的 bridge spawn 与探测、`asarUnpack` 解包规则。**18790 端口已不存在的代码路径**。 |
 | Widevine / VMP DRM 链 | `scripts/evs-vmp.cjs` / `evs-runner.cjs` / `ensure-dev-vmp.cjs` / `write-vmp-status.cjs` / `probe-*.cjs`（含 `probe-widevine-electron.cjs`）、`desktop/vmp-status.cjs` 与设置页「VMP 状态」卡、`package.json` 的 `vmp:*` 与 `build:electron:dir:unsigned`、CI 的 EVS secrets 与「production streaming VMP ≥30 天」门槛、`dev-electron.mjs` 的 VMP 预检。**Electron 从 castLabs 分叉 `v42.8.0+wvcus` 回退为官方 stock `electron@42.8.0`**（无 Widevine）。 |
-| 音效引擎 v1/v2 | `src/services/audioEffects/`（v1）、`src/services/audio-effects-v2/`（v2）、`MixingStudio.tsx`、`MixingStudioV2.tsx`、`V1Adapter`/`V2Adapter`、`engines/v1.ts`、`engines/v2.ts`、`loudnessNormalization.ts`、`compensationService.ts`。**现在只有 HSE（v3）一个引擎。** |
+| 音效引擎 v1/v2 | `src/services/audioEffects/`（v1）、`src/services/audio-effects-v2/`（v2）、`MixingStudio.tsx`、`MixingStudioV2.tsx`、`V1Adapter`/`V2Adapter`、`engines/v1.ts`、`engines/v2.ts`、`loudnessNormalization.ts`、`compensationService.ts`。**现在只有 HSE 一个引擎。** |
 | 其它音源 | 汽水音乐（Qishui/Soda）、酷狗（Kugou）。**当前 3 个音源**：网易云 / QQ + B站看歌。 |
 | Android TV | `android/`、`android-server.mjs`、`tv-extensions.mjs`、`dev-tv-server.mjs`、`vite.android.config.ts`、`scripts/build-android-assets.mjs`、`scripts/fetch-nodejs-mobile.mjs`、`scripts/publish-release.mjs`、旧 release workflow。`src/tv/` **只剩 `perfMode.ts`**（性能模式，活代码）；原 `tvCore.ts` 空壳及其 56 个调用点、`data-tv-*` 标记、`platform.ts` 的 TV 表面已于 2026-09-14 彻底删除。 |
 | DG_LAB 插件 | `DGLabPlugin.ts` / `DGLabClient.ts` / `DGLab*` 组件 / `server/dglab-relay.cjs` / `useSystemAudioCapture.ts`。插件宿主 + Chroma / SignalRGB 保留。 |
 | 歌词模式 | Folia、多维 Diorama、摩登、光荣、壁纸歌词。**从 9 种收敛为 4 种**：modern（现代）/ immersive（沉浸式）/ video（B站看歌）/ pv（PV）。（**律动背景**即播放页封面模糊铺底 + 背景律动，已于 2026-09-13 恢复并在用，见 `CrossfadeBackground.tsx` + App.tsx 的 `PulsingCrossfadeBackground`——它是播放页常驻兜底背景，勿当作减配残留删除） |
 | 其它 | AirPlay、分轨 Stem、远程遥控（`desktop/remote-server.cjs`）、设备授权（`device-license.cjs`）、代理管理（`proxy-manager.cjs`）、爱发电赞助同步（`scripts/sync-afdian-sponsors.mjs` 保留为孤立脚本但已无任何调用方/说明文档）、Wallpaper Engine 联动（`wallpaperEngineRotation.ts`）、专注计时 UI（`desktopFocusTimer.ts` / `useDesktopFocusTimer.ts` 已无消费方）、OOBE 引导、多语言 i18n（**法律弹窗改中文单语后保留**）、Smart AutoMix / Beat Crossfade（**只保留 Fixed Crossfade + gapless + 专辑无缝**）、cuefield 死代码。 |
 
-**保留范围**：3 个音源；播放引擎（双 deck + Web Audio）；Fixed Crossfade + gapless + 专辑无缝；HSE(v3)（14 级主链 + 第 15 级空间音频、11 场景、EQ、WAV/MP3 导出、CC BY-NC-ND）；4 种歌词模式 + 桌面歌词独立窗；**Apple 风格歌词特性**（逐词点亮「apple」特效、崭新弹簧滚动、对唱着色 `appleDuetColors`、TTML 解析与 AMLL TTML DB 逐字源——**音源已去、渲染与数据源保留**）；播放页封面模糊铺底 + 背景律动（`CrossfadeBackground.tsx` + `PulsingCrossfadeBackground`）；频谱可视化 + 封面粒子特效（`AppleCoverFx.tsx` 保留、未接线）；桌面模式与小组件、自定义壁纸、天气系统（含 Apple 天气场景）、桌面播放器小窗、任务栏播控条；插件宿主 + Chroma/SignalRGB；B站看歌、MV、社交/评论/歌单；法律协议弹窗（中文单语）。
+**保留范围**：3 个音源；播放引擎（双 deck + Web Audio）；Fixed Crossfade + gapless + 专辑无缝；HSE（14 级主链 + 第 15 级空间音频、11 场景、EQ、WAV/MP3 导出、CC BY-NC-ND）；4 种歌词模式 + 桌面歌词独立窗；**Apple 风格歌词特性**（逐词点亮「apple」特效、崭新弹簧滚动、对唱着色 `appleDuetColors`、TTML 解析与 AMLL TTML DB 逐字源——**音源已去、渲染与数据源保留**）；播放页封面模糊铺底 + 背景律动（`CrossfadeBackground.tsx` + `PulsingCrossfadeBackground`）；频谱可视化 + 封面粒子特效（`AppleCoverFx.tsx` 保留、未接线）；桌面模式与小组件、自定义壁纸、天气系统（含 Apple 天气场景）、桌面播放器小窗、任务栏播控条；插件宿主 + Chroma/SignalRGB；B站看歌、MV、社交/评论/歌单；法律协议弹窗（中文单语）。
 
 功能清单见 `docs/功能清单3.0.md`（12 个域 A–L，与源码冲突时以源码为准）；各模块边界与命令见 `AGENTS.md`。
 
@@ -69,7 +69,7 @@
 5. **热路径日志**：播放/动画热路径必须用 `debugLog()`（`src/utils/debugLog.ts`），裸 console.log 会造成内存增长。开关：`localStorage['hyperplayer:verbose-log']='1'`（gapless 方案提示 `GaplessModeToast` 与过渡调试面板共用此开关）。
 6. **Electron 为官方 stock 构建，不含 Widevine**：castLabs `+wvcus` 分叉、EVS/VMP 签名链与 Apple 原生 CENC 播放已整体移除，DMCA/DRM 相关脚本与状态卡不复存在。**若要做 Electron 性能改造**：把自编译产物整个目录替换到 `node_modules/electron/dist` 即可，electron-builder 的 `electronDist` 就指向该目录（打包链无需改动）；替换后跑 `npm run build:electron:dir` 验证，并避免让 `npm install/ci` 把目录重装回官方版。
 7. **过渡策略只有 Fixed Crossfade**：`src/audio/transitionPlanner.ts` 的 `planTransition` / `planTransitionV2` 只产出 `fixed-crossfade`（`smart-rendered` / `smart-rendered-v2` / `beat-crossfade` 生成分支已整体移除）。节拍/结构分析能力（`autoMixAnalysisService.ts`）**保留**，但只服务 MV 对齐、PV 歌词等消费者，不再用于智能混音。别再从 `git log` 里恢复 Smart AutoMix。
-8. **单一音效引擎**：`src/services/audio-engine/` 注册表只有 `v3Manifest` 一项（HSE）。`V3MixingStudio.tsx` 的引擎切换胶囊**仅在注册表注册了多个引擎时渲染**（渲染条件 `onSwitchEngine && availableEngines && availableEngines.length > 1`）；当前只有 HSE 一个，故界面不显示。接入新引擎只需新增 `engines/xxx.ts` + 注册表加一行。
+8. **单一音效引擎**：`src/services/audio-engine/` 注册表只有 `hseManifest` 一项（HSE）。`HSEMixingStudio.tsx` 的引擎切换胶囊**仅在注册表注册了多个引擎时渲染**（渲染条件 `onSwitchEngine && availableEngines && availableEngines.length > 1`）；当前只有 HSE 一个，故界面不显示。接入新引擎只需新增 `engines/xxx.ts` + 注册表加一行。
 9. **回滚注意**：本仓库有 git 历史，可用 `git log` / `git blame`；但**减配提交之后的 `git reset` 到旧提交会连带恢复已删功能**，不要为"修一个问题"而回退整个分支。
 10. **回归修复记录（2026-08-16 审计，commit `d1b5e5f`）**——仍有效的三条：
     - 无限推荐队列裁剪：`setCurrentIndex` 原在 `setTimeout(0)` 里、与 `setPlaylist` 不同步 → 中间帧 `currentIndex` 越界导致播放页闪回首页 → 已改为同批次同步提交。
@@ -94,7 +94,7 @@
 - [ ] **`scripts/sync-afdian-sponsors.mjs` 为孤立脚本**：无 `package.json` script、无 `prebuild` 钩子、无任何代码引用，配套文档 `AFDIAN_SPONSORS.md` 也不存在。可删（但删除前确认无人手动调用）。
 - [ ] **专注计时残留**：`src/services/desktopFocusTimer.ts` + `src/hooks/useDesktopFocusTimer.ts` 无任何消费方（UI 已移除）。可清理；`desktopCustomization.ts` 里仍保留 `focusTimer → datetime` 的历史迁移映射（需一并判断）。**交叉引用**：`docs/功能清单3.0.md` 域 J 仍把它列为现役（该表 `src/services/desktopFocusTimer.ts:1-105` 一行），应加注「组件层已无消费方」。
 - [x] ~~cuefield 后端残留~~：已确认清理完毕——`grep -c cuefield local-server.mjs` = 0，前后端均无 `/api/cuefield/*` 路由与调用方。
-- [x] ~~HSE 单引擎下的引擎切换 UI~~：已由代码自动解决——`V3MixingStudio.tsx` 的切换胶囊仅在注册多个引擎时渲染，单引擎下自动隐藏（见 §5.8）。
+- [x] ~~HSE 单引擎下的引擎切换 UI~~：已由代码自动解决——`HSEMixingStudio.tsx` 的切换胶囊仅在注册多个引擎时渲染，单引擎下自动隐藏（见 §5.8）。
 - [x] ~~TransitionRenderer 缓存 key~~：已修复——`plan.id` 加入实际策略/起止时长/`RENDERER_VERSION`。
 - [x] ~~CHUNK 体积警告~~：已优化（见 §6.5）。
 
@@ -112,7 +112,7 @@
 - 2026-08-16：**歌词逐字渲染修复**（词唱完瞬间灰闪/敲击感的根因修复、延音门槛收紧）+ **Apple 逐字模式**（`WordByWordEffectMode` 含 clear/soft/apple）；逆向对比见 `docs/歌词对比-LyricsBlossom.md`。
 - 2026-08-16：**QQ/网易云 API 全面补齐 + 社交/个人中心重构** —— QQ MV 直接调 `GetMvUrls`；QQ 关注歌手 `cgi_concern_user_v2`（opertype 1 关注 / 0 取关，**必须用最新登录的 qm_keyst**）；关注/粉丝列表；ProfileView viewStack 导航栈；网易云热评 / 搜索联想 / 歌单搜索 / 私人 FM；探索页 Banner 轮播 / 电台 / 热门歌手 / 新碟 / MV 榜等（后端路由见 `server/` 与 `local-server.mjs`）。
 - 2026-08-16：**自动切歌封面不更新——真正根因（`appleCoverUrl` 残留）** —— `displayCoverUrl = appleCoverUrl || currentTrack.coverUrl`，gapless 自动切歌（`commitPreparedSong`）与 albumGapless handoff（`handlePlayAt`）漏清 → 自动切歌后恒显旧封面。修复：两处路径补齐 `setAppleCoverUrl(null)` + `resolveAppleCover()`。（⚠️ 该变量与函数已随 Apple 音源于 2026-09-13 删除，本条仅作历史留痕，勿据 grep 恢复。）
-- 2026-08-17：**音频引擎统一适配层重构** —— `src/services/audio-engine/`（`types.ts` 接口 `IAudioEngineAdapter` + `V3Adapter` + `engines/v3.ts` + `index.ts` 工厂注册表）。App.tsx 消掉 7 处版本分支，收敛为 `engineAdapterRef.current.xxx()` 单一调用，按 `capabilities` 判断能力。**接入新引擎**：写 `XxxAdapter.ts` + `engines/xxx.ts` + 注册表加一行，App.tsx 零改动。
+- 2026-08-17：**音频引擎统一适配层重构** —— `src/services/audio-engine/`（`types.ts` 接口 `IAudioEngineAdapter` + `HSEAdapter` + `engines/hse.ts` + `index.ts` 工厂注册表（2026-10-04 起标识符已统一为 HSE））。App.tsx 消掉 7 处版本分支，收敛为 `engineAdapterRef.current.xxx()` 单一调用，按 `capabilities` 判断能力。**接入新引擎**：写 `XxxAdapter.ts` + `engines/xxx.ts` + 注册表加一行，App.tsx 零改动。
 - 2026-08-18：**HSE 调音室 UI 重设计** —— 左侧导航 **9 页**（主页 / 音效场景 / 均衡器 / 空间音效 / 空间音频 / 动态调音 / 分析 / 调音器 / 关于）+ 深色琥珀金主题（`hse-theme.ts`）+ 真实品牌徽章 + framer-motion 动效。**UI 重设计 = 覆盖旧组件，勿保留旧实现作并行选项**。
 - 2026-08-18：**HSE 分析页修复 + 低音下潜 + 音量跟手 + 音量独立于场景** —— ①FFT 幅度归一化 dBFS；②线性频率轴 → 20Hz-20kHz 对数轴；③300ms 轮询 → 100ms + EMA 平滑；④`BassEnhancer.lowBoostDb`（-6..+12dB）真实低频下潜；⑤音量滑块经 `loudnessNormalization.externalGainDb` 80ms 快平滑（自动响度归一化仍慢速防抽吸）；⑥`applyScene` 保留音量通道，场景预设不覆盖用户音量。
 - 2026-08-18：**融合同步 + `FusionEntitlements` 类型修复** —— 共享仓库不做强推改写；已知平台必填 + 开放索引签名。
@@ -140,7 +140,7 @@ npx vitest run src/services/HyperSoundEngine-v1   # 改 HSE 算法前必跑
 npm run build                 # vite build -> dist/（三入口：index.html / desktop-player.html / desktop-lyrics.html）
 npm run build:electron        # 发布安装版：build:electron:dir + 安装器美术 + electron-builder NSIS -> release/HyperPlayer-<version>-Setup.exe
 npm run build:electron:dir    # build + electron-builder --win dir + verify-asar 校验 -> release/win-unpacked
-npm run build:v3-worklet      # 重生成 HSE AudioWorklet 单文件 -> public/v3-worklet.js（predev/predev:electron/prebuild 自动执行）
+npm run build:hse-worklet      # 重生成 HSE AudioWorklet 单文件 -> public/hse-worklet.js（predev/predev:electron/prebuild 自动执行）
 npm run build:apple-weather   # 重新生成 Apple 天气场景资源（纯天气视觉，与 Apple Music 音源无关）
 npm run preview               # vite preview
 npm run start                 # electron .（直接起已构建产物）

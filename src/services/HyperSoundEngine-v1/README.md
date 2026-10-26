@@ -25,5 +25,4 @@
 └── docs/
     ├── FUSION_GUIDE.md                 # ★ 融合文档（已完成；操作记录）
     ├── UI_GUIDE.md                     # ★ 调音室 UI 指南（HSE 9 页亮色导航）
-    ├── FEATURES_VERIFICATION.md        # ★ 功能核验报告（26 项功能 / MIT·LGPL 统计 / 候选库调研）
-    └── v2-analysis.md                  # v2 模块深读分析（子代理产出）
+    └── FEATURES_VERIFICATION.md        # ★ 功能核验报告（26 项功能 / MIT·LGPL 统计 / 候选库调研）

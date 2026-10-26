@@ -47,7 +47,7 @@ HyperPlayer/
 ├── src/                        # React 前端
 │   ├── components/            # 组件（App.tsx 懒加载；含 AppleCoverFx 等 Apple 风格歌词侧组件）
 │   ├── services/              # API 客户端、缓存、无缝衔接、appleLyricsStyle（Apple 风格歌词工具）
-│   │   ├── audio-engine/      # 引擎适配层（V3Adapter + 注册表）
+│   │   ├── audio-engine/      # 引擎适配层（HSEAdapter + 注册表）
 │   │   ├── gapless/           # 无缝衔接（私有模块）
 │   │   └── HyperSoundEngine-v1/   # HSE 音效引擎（DSP + UI + 空间音频）
 │   ├── audio/                 # 播放引擎（队列/过渡计划/渲染器）
@@ -69,7 +69,7 @@ npm run test            # vitest 单测（2026-09-13 实测：140 文件 = 139 �
 npm run build           # 仅构建前端 -> dist/（三入口，不生成 EXE）
 npm run build:electron  # 发布：目录构建（build + electron-builder dir + verify-asar）→ NSIS 安装包
 npm run build:electron:dir           # 发布目录包：build + electron-builder --win dir + verify-asar 校验
-npm run build:v3-worklet   # 重生成 HSE 的 AudioWorklet 单文件（predev/prebuild 自动执行）
+npm run build:hse-worklet   # 重生成 HSE 的 AudioWorklet 单文件（predev/prebuild 自动执行）
 npm run build:apple-weather # 重新生成 Apple 天气场景资源（纯天气视觉，与 Apple Music 音源无关）
 npm run build:splash    # 重新生成启动页（帧时基归一 -> desktop/splash.html + splash-baked.webm）
 npm run test:chroma     # Razer Chroma 插件自测
@@ -117,7 +117,7 @@ gh release create v<version> release/HyperPlayer-<version>-Setup.exe release/hyp
 
 ## 音效引擎 HSE（HyperSoundEngine）
 
-当前唯一音效引擎（代码标识符仍为 v3：`src/services/HyperSoundEngine-v1/`）。纯 TypeScript DSP 内核，与引擎适配层 `src/services/audio-engine/` 配合，`V3Adapter` 以 `studioMode: 'custom'` 渲染 HSE 调音室。
+当前唯一音效引擎：`src/services/HyperSoundEngine-v1/`（HSE 1.5，纯 TypeScript DSP 内核）。与引擎适配层 `src/services/audio-engine/` 配合，`HSEAdapter` 以 `studioMode: 'custom'` 渲染 HSE 调音室。
 
 - **处理链（14 级固定顺序）**：响度归一化增益 → 3D 环绕（轻量立体声旋转） → M/S（立体声宽度 + 人声比例） → Pre-EQ（用户 EQ） → Deesser → Compressor → NightMode（压缩增强 + 6kHz 高频衰减） → 混响（卷积/算法/off 三路） → BassEnhancer → LoudnessComp（等响度补偿） → IEQ（Post 智能均衡） → LUFS 采样点 → Limiter → 输出；**第 15 级为空间音频**（见下节）。LUFS 采样点严格位于 Limiter 之前。
 - **11 个内置场景**：pop / enhanced / jazz / dance / classical / livehouse / studio / warm / dts / vocal-stage / night-bass（快照式，一键整体应用；音量独立于场景，不被覆盖）
@@ -127,10 +127,10 @@ gh release create v<version> release/HyperPlayer-<version>-Setup.exe release/hyp
 - **分析页**：对数频率轴实时频谱（32 条，20Hz-20kHz，FFT 幅度按 dBFS 归一化）+ LUFS / 增益缩减 / 频谱特征 + 听力测试；100ms 轮询 + EMA 平滑
 - **调音室音量**：走 `loudnessNormalization.externalGainDb` 通道（0-100% → -60..0dB），80ms 快平滑跟手
 - **响度归一化与频响补偿在引擎内实时实现**（`LufsMeter` / `LoudnessComp` DSP 模块），不依赖任何外部服务
-- **导出**：离线 MP3 导出（解码 PCM → `EngineV3.process` 分块 → lamejs 128kbps）
-- **渲染线程**：`EngineV3Host` 模式 `auto` —— AudioWorklet 优先（`public/v3-worklet.js`，`npm run build:v3-worklet` 生成），失败回退 ScriptProcessor；参数在 worklet 模式下双下发，统计优先取 worklet 周期回传值
+- **导出**：离线 MP3 导出（解码 PCM → `HyperSoundEngine.process` 分块 → lamejs 128kbps）
+- **渲染线程**：`HyperSoundEngineHost` 模式 `auto` —— AudioWorklet 优先（`public/hse-worklet.js`，`npm run build:hse-worklet` 生成），失败回退 ScriptProcessor；参数在 worklet 模式下双下发，统计优先取 worklet 周期回传值
 - **开发者模式**：关于页开关开启后，「音效场景」页可实时微调内置场景并保存为参数覆盖层，支持还原出厂、场景库 JSON 导出/导入；「写回发布种子」经 IPC 写入 `src/services/HyperSoundEngine-v1/src/engine/builtinSceneSeed.ts`，commit/push 后全员生效
-- **调音室 UI**：左侧导航 9 页（主页 / 音效场景 / 均衡器 / 空间音效 / 空间音频 / 动态调音 / 分析 / 调音器 / 关于）+ 深色琥珀金主题
+- **调音室 UI**：左侧导航 9 页（主页 / 音效场景 / 均衡器 / 空间音效 / 空间音频 / 动态调音 / 分析 / 调音器 / 关于）+ 亮色薄荷玻璃主题
 
 **许可红线**：HSE 模块自带 [LICENSE](./src/services/HyperSoundEngine-v1/LICENSE)（CC BY-NC-ND 4.0）、[授权补充说明.md](./src/services/HyperSoundEngine-v1/授权补充说明.md) 与 `THIRD_PARTY_NOTICES.md`，勿删改。
 

@@ -10,10 +10,9 @@
 > "音频能正常切到 HSE 处理"（用现成的 `HyperSoundEngineHost` 接线模块）。
 
 > 依据文档（融合前请通读）：
-> - `docs/v2-analysis.md`（HyperPlayer v2 模块深读：API 面、链顺序、集成点）
 > - `docs/FEATURES_VERIFICATION.md`（功能核验：26 项有效功能 / 324 用例 / MIT·LGPL 统计）
 > - `docs/audit/SUMMARY.md`（审计总结：修复的 12 类问题与确认正常的项）
-> - `src/dsp/API_SPEC.md`（模块契约）；`../research/docs/`（算法原理与设计）
+> - `src/dsp/API_SPEC.md`（模块契约）；`docs/音频算法设计文档.md`、`docs/音频算法技术文档.md`（算法原理与设计）
 
 ---
 
@@ -45,7 +44,7 @@ HyperSoundEngine-v1/
 │   ├── analysis/ offline/ index.ts
 ├── vendor/soundtouchjs/          # LGPL-2.1 原包副本（含 LICENSE，离线可用）
 ├── test/ + ui/uiSmoke.test.tsx        # 324 用例（融合时迁入 HyperPlayer/test/ 或加 include）
-└── docs/                         # FUSION_GUIDE / FEATURES_VERIFICATION / v2-analysis / audit/
+└── docs/                         # FUSION_GUIDE / FEATURES_VERIFICATION / audit/ / 音频算法×2 / 代码构成统计
 ```
 
 ---
