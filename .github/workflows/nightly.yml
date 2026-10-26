@@ -12,10 +12,13 @@
 #     便携版 zip（`release/win-unpacked/` 始终只是本地调试产物，不随 releases 分发）。
 #   - 生成并提交 `update-nightly.json`（nightly 渠道的更新清单）——供客户端
 #     「更新渠道 = 每日构建（Nightly）」时拉取；正式版清单 `update.json` 不受影响。
-#   - 无新增提交时自动跳过（手动触发时可用 force=true 强制构建）。判定会**排除本工作流
-#     与 release.yml 回写的更新清单文件**（update-nightly.json / update.json）——否则每日
-#     回写提交让 HEAD 永远领先于上次 nightly tag，判定失效，nightly 每天空转
-#     （2026-09-14~10-04 曾因此连发 21 次无代码变更的 nightly，2026-10-04 修复）。
+#   - 无新增提交时**取消本次运行**（手动触发时可用 force=true 强制构建）：判定为「无代码
+#     变更」后，prepare 作业在最后一步 cancel 自身运行——Actions 里显示为 cancelled，而不是
+#     一次「success 但 build/release 全跳过」的假构建，避免空转记录被误当成真的构建过。
+#     判定用**树 diff** 且排除本工作流与 release.yml 回写的更新清单文件（update-nightly.json /
+#     update.json）——否则每日回写提交让 HEAD 永远领先于上次 nightly tag，判定失效
+#     （2026-09-14~10-04 曾因此连发 21 次无代码变更的 nightly）。
+#     ⚠️ 取消自身运行需要 actions: write 权限（见下方 permissions）。
 
 name: Nightly Build 每日构建
 
@@ -37,7 +40,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write   # gh release create / 移动 nightly tag 需要
+  contents: write   # gh release create / 移动 nightly tag / 回写 update-nightly.json 需要
+  actions: write    # 无新增提交时 cancel 本次运行（gh run cancel）需要
 
 jobs:
   # ---------- 准备：日期 / nightly 版本 / changelog / 跳过判定 ----------
@@ -92,6 +96,7 @@ jobs:
           fi
 
           # 无新增提交判定：与「上一个 nightly tag」比较（force=true 时强制构建）。
+          # 判为 false 时，本作业末尾会**取消整次运行**（不构建、不发版、不上传 changelog）。
           # 用**排除清单回写文件的树 diff** 而非「tag/HEAD SHA 相等」：
           # 本工作流每次发布都会向 main 回写一条 update-nightly.json 提交（release.yml 亦回写
           # update.json），若不做排除，HEAD 永远领先于上次 nightly tag，判定永远为「有变更」，
@@ -137,7 +142,34 @@ jobs:
           echo "::endgroup::"
           echo "已计算：tag=${NIGHTLY_TAG} version=${NIGHTLY_VERSION} has_changes=${HAS_CHANGES}"
 
+      # ---------- 无代码变更：直接取消本次运行（不构建、不发版） ----------
+      - name: 跳过摘要（无代码变更时）
+        if: steps.meta.outputs.has_changes != 'true'
+        env:
+          NIGHTLY_TAG: ${{ steps.meta.outputs.nightly_tag }}
+        run: |
+          {
+            echo "### ⏭ 本次 nightly 已取消（${NIGHTLY_TAG}）"
+            echo ""
+            echo "自上一个 nightly tag 以来没有代码变更（只有更新清单回写或无新提交），"
+            echo "本次不构建安装包、不发布 Pre-release、不覆盖当天 tag。"
+            echo ""
+            echo "需要强制构建：Actions → Nightly Build → Run workflow，把 `force` 设为 `true`。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 无新增提交 → 取消本次运行
+        if: steps.meta.outputs.has_changes != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_TAG: ${{ steps.meta.outputs.nightly_tag }}
+        run: |
+          echo "自上一个 nightly tag 以来无代码变更，取消本次运行（${NIGHTLY_TAG} 不构建、不发版）。"
+          # 取消会随即终结当前作业，故本步放在 prepare 的最后，changelog 也就不必上传。
+          gh run cancel "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" \
+            || echo "取消请求未被受理（运行可能已自行结束），忽略"
+
       - name: 上传 changelog（供 release 作业读取）
+        if: steps.meta.outputs.has_changes == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: nightly-meta
