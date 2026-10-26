@@ -1,189 +1,203 @@
-# HyperPlayer
+<p align="center">
+  <img src="./logo.png" width="88" alt="HyperPlayer 标志">
+</p>
 
-沉浸式桌面音乐播放器（Windows / Electron），共 **3 个音源**：**网易云音乐 / QQ音乐** 两个平台 + **B站看歌**。覆盖搜索、播放、歌词、可视化、无缝衔接、桌面模式与自定义壁纸。**Apple 风格逐字歌词**（逐词点亮 / 弹簧滚动 / 对唱着色）作为歌词特性保留。
+<h1 align="center">HyperPlayer</h1>
 
-> 本仓库为**减配版（slimdown）**：已移除 Android TV、Python 节拍/响度/补偿服务、汽水与酷狗音源、**Apple Music 与 Spotify 音源（含 Python 播放面 bridge 与 Widevine/VMP DRM 链）**、音效引擎 v1/v2、Folia/多维 Diorama 等歌词模式、DG_LAB 插件、AirPlay / 分轨 / 远程遥控 / 设备授权 / 爱发电 / Smart AutoMix 等模块。功能以本文档与源码为准。
+<p align="center"><strong>把音乐放在眼前，把其他留在身后。</strong></p>
+<p align="center">面向 Windows 的沉浸式桌面音乐播放器<br>网易云音乐 · QQ 音乐 · B 站看歌</p>
 
-## 快速开始
+<p align="center">
+  <a href="https://github.com/SoundFieldLab/HyperPlayer/releases"><strong>下载 Windows 版</strong></a> ·
+  <a href="#体验一览">体验一览</a> ·
+  <a href="#本地开发">本地开发</a> ·
+  <a href="https://github.com/SoundFieldLab/HyperPlayer/issues">反馈问题</a>
+</p>
+
+![HyperPlayer 播放页：专辑封面、逐字歌词与随封面延展的模糊背景](<./docs/assets/screenshots/02-player.webp>)
+
+<p align="center"><sub>封面、歌词、波形，在同一个画面里。让一首歌拥有自己的空间。</sub></p>
+
+---
+
+## 体验一览
+
+**找歌、听歌、看歌，再到调整声音。** HyperPlayer 把这些体验放进同一个窗口，也给不同的听歌习惯留了不同的界面。
+
+| 音乐入口 | 歌词与画面 | 声音与桌面 |
+| :--- | :--- | :--- |
+| 网易云 / QQ 搜索与推荐 | 逐字点亮、翻译与罗马音 | HSE 调音室与空间音频 |
+| 歌单、私人 FM、个人中心 | 现代 / 沉浸 / 看歌 / PV | 交叉淡化、gapless 与专辑无缝 |
+| B 站 MV / 视频看歌 | 封面模糊背景与背景律动 | 桌面小组件、独立播放器与桌面歌词 |
+
+### 每一句歌词，都有自己的位置
+
+大字歌词把注意力留在当下；逐词点亮、柔和过渡与弹簧滚动，让歌词跟着演唱展开。也可以切换到现代、看歌或 PV 模式，换一种方式感受同一首歌。
+
+![沉浸歌词：当前演唱的大字歌词与下一句预览](<./docs/assets/screenshots/03-lyrics-immersive.webp>)
+
+- **不只显示歌词**：支持逐字时间轴、点击跳转、翻译与罗马音。
+- **让不同声部可见**：支持 TTML 对唱着色，逐字数据来自平台与 AMLL TTML DB。
+- **从听歌到看歌**：B 站看歌支持 MV / 视频、弹幕、互动面板与 MV 背景。
+
+> 歌词效果取决于曲目的时间轴与数据完整度；部分歌曲可能没有逐字歌词、翻译或第三方歌词。Apple 风格动画是歌词侧特性，不代表支持 Apple Music 音源。
+
+### 熟悉的歌单，和下一首惊喜
+
+网易云音乐与 QQ 音乐的搜索、推荐和歌单入口集中在一起。知道想听什么，就直接搜索；还没决定，就从每日推荐、私人 FM 和探索页开始。
+
+![探索模式：每日推荐、心动模式与推荐歌单](<./docs/assets/screenshots/06-explore.webp>)
+
+<table>
+  <tr>
+    <td width="50%"><img src="./docs/assets/screenshots/05-search.webp" alt="搜索面板：融合搜索、网易云音乐与 QQ 音乐入口，以及歌曲、艺人、专辑和歌单分类" width="100%"></td>
+    <td width="50%"><img src="./docs/assets/screenshots/07-playlist.webp" alt="歌单详情：歌曲列表、专辑信息、时长与播放入口" width="100%"></td>
+  </tr>
+  <tr>
+    <td><strong>从一个关键词开始</strong><br>按歌曲、艺人、专辑或歌单查找，支持融合搜索。</td>
+    <td><strong>把喜欢的音乐放在一起</strong><br>查看和管理歌单，接着上次的收藏继续听。</td>
+  </tr>
+</table>
+
+### 换一种听法，它也在
+
+**简约、传统、探索、桌面**，四种界面模式。专心听歌时把歌词放大，日常使用时让播放器留在桌面的一角。
+
+![桌面模式：自定义壁纸上的时钟、播放器、天气、歌单与播放队列小组件](<./docs/assets/screenshots/08-desktop-mode.webp>)
+
+- **自己的桌面**：自定义壁纸、小组件布局、时钟、天气与听歌统计。
+- **随手就能控制**：独立桌面播放器、任务栏播控条，不必总切回主窗口。
+- **歌词留在桌面**：独立透明歌词窗口，可调整字体、字号与配色。
+
+<details>
+<summary>再看一眼：简约模式首页</summary>
+
+![简约模式首页：推荐列表、我的歌单与平台个人信息三栏布局](<./docs/assets/screenshots/01-home.webp>)
+
+推荐、收藏和个人信息分区呈现，常听的内容打开就能找到。
+
+</details>
+
+### 声音，也归你调
+
+**HyperSoundEngine（HSE）** 是当前唯一的音效引擎。它由 **IceFire_Icer** 在独立仓库开发，授权集成到 HyperPlayer；从一键场景到细节调整，都可以在调音室完成。
+
+| 想做什么 | HSE 提供什么 |
+| :--- | :--- |
+| 快速换一种听感 | 11 个内置场景、参数保存与分享串 |
+| 调整音色与动态 | 5 / 10 / 20 段均衡器、低音增强、混响、压缩与响度控制 |
+| 调整空间感 | 一键空间化、头锁定环绕、世界漫游、舞台 / 影院 |
+| 观察声音 | 实时频谱、LUFS、增益缩减与听力测试 |
+| 导出处理后的音频 | 离线 MP3 / WAV 导出，输出文件为双声道 |
+
+空间音频支持内嵌 KEMAR 实测 HRIR、SOFA 导入、房间模拟与头部追踪输入。渲染优先使用 AudioWorklet，DSP 内核为 TypeScript，无需外部 Python 服务。
+
+<details>
+<summary>查看宣传素材中的调音室截图（旧版界面）</summary>
+
+![旧版 HSE 调音室：场景、音量与声音分析面板，仅作历史界面展示](<./docs/assets/screenshots/04-tuning-studio.webp>)
+
+**这是宣传素材中的历史截图，不是当前调音室样式。** 当前调音室采用亮色薄荷玻璃主题；截图中的品牌标识、版本号及数值不作为认证、格式支持或性能承诺。实际能力以当前版本与源码为准。
+
+</details>
+
+**播放也要连贯。** 支持固定时长交叉淡化（Fixed Crossfade）、gapless 直接拼接与专辑无缝。智能节拍混音不在当前版本功能范围内。
+
+**灯光也可以加入。** 插件中心支持导入、启停与卸载，内置 Razer Chroma 和 SignalRGB 灯光联动插件。开发方式见[插件开发文档](<./docs/plugin-development.md>)。
+
+## 下载与使用
+
+1. 前往 [GitHub Releases](https://github.com/SoundFieldLab/HyperPlayer/releases)，选择需要的版本。
+2. 下载 `HyperPlayer-<version>-Setup.exe`，安装后启动。首次使用按应用提示完成平台登录或配置。
+3. 选择喜欢的界面模式，从搜索、推荐或自己的歌单开始播放。QQ 音乐所需的 QMK API Key 可通过应用内引导窗口前往官方页面领取。
+
+> **项目仍处于测试阶段，所有版本均以 Pre-release 发布。** 下载请进入 Releases 列表，不依赖 GitHub 的 Latest 入口。热更新 ZIP 用于已有客户端更新，不是独立安装包。
+
+应用支持 **stable / nightly** 两条更新渠道，可在设置中切换，默认 stable。Nightly 用于提前体验更新；无真实代码变更时不会产生新的每日构建。
+
+### 使用前了解
+
+- **平台权限仍然有效**：歌曲播放与音质受版权、地区、账号和 VIP 权限限制，本项目不提供绕过服务。
+- **部分能力依赖平台接口**：登录态过期、接口变化或网络异常可能影响推荐、评论、歌单与播放。
+- **截图用于体验展示**：来自宣传素材实拍，部分界面可能与当前版本不同；画面中的歌曲、封面及商标归各权利人所有。
+- **本地配置独立保存**：用户配置与缓存位于 `%APPDATA%\HyperPlayer\`，安装包不携带开发者的账号或配置。
+
+## 本地开发
+
+前端采用 **React 19 / TypeScript / Tailwind CSS 4 / Vite 6**，桌面端采用 **Electron 44**，本地 API 使用 **Node.js / Express**。前后端均无 Python 运行依赖。
+
+安装 Node.js 与 npm 后，在 Windows 环境运行：
 
 ```bash
-npm install                    # 安装依赖
-npm run dev:electron           # 一键启动：Vite(3210) + API(3211) + Electron 窗口
+git clone https://github.com/SoundFieldLab/HyperPlayer.git
+cd HyperPlayer
+npm ci
+npm run dev:electron
 ```
 
-- 后端为单文件 Express（`local-server.mjs`，端口 3211），由 `dev:electron` 自动拉起；也可直接 `node local-server.mjs` 单独启动（无 `dev:api` 脚本）。后端与前端均**无任何 Python 依赖**。
+`dev:electron` 会启动前端、本地 API 与 Electron 窗口，并在启动前自动生成 HSE AudioWorklet。仅调试前端可运行 `npm run dev`；需要音乐 API 时，另开终端运行 `node local-server.mjs`。
 
-## 核心功能
+| 常用命令 | 用途 |
+| :--- | :--- |
+| `npm run dev:electron` | 完整桌面开发环境 |
+| `npm run dev` | 仅启动 Vite，端口 3210 |
+| `npm run lint` | TypeScript 类型检查，不是 ESLint |
+| `npm test` | Vitest 单元测试 |
+| `npm run test:desktop` | 桌面与安全相关测试 |
+| `npm run check:ports` | 校验 3210 / 3211 端口约定 |
+| `npm run check:packaging` | 校验依赖分区与打包体积约束 |
+| `npm run verify:hse-worklet` | HSE Worklet 装载与 DSP 冒烟验证 |
+| `npm run build` | 仅构建前端，不生成 EXE |
+| `npm run build:electron:dir` | 本地便携目录构建 |
 
-- **多音源搜索与推荐**：网易云 / QQ 实时搜索、每日推荐、榜单、猜你喜欢；平台可见性与顺序可自定义
-- **B站看歌**：B站 MV / 视频作为歌词模式播放，含弹幕、互动面板、MV 背景
-- **QQ 音乐 API Key 领取**：内置引导窗口直达 y.qq.com 领取 qmk API Key（独立隔离 session，每次打开清空登录态）
-- **无缝衔接播放**：`Fixed Crossfade`（固定时长交叉淡化，默认）+ gapless 直接拼接 + 专辑无缝（albumGapless），双 deck 等功率淡入淡出
-- **歌词系统**：LRC 解析、逐字歌词（QQ YRC；网易云/QQ 曲目另有 **AMLL TTML DB** 免 token 逐字源）、实时滚动、点击跳转、翻译与罗马音；**Apple 风格逐字**渲染（逐词点亮 / 柔和 / 清晰三档特效、「崭新」弹簧滚动、TTML 对唱着色）；**4 种歌词模式**：现代 / 沉浸 / 看歌(B站) / PV
-- **桌面歌词**：独立透明窗口（`desktop-lyrics.html`），字体、字号、配色可调，经 IPC 持久化
-- **音效引擎 HSE（HyperSoundEngine）**：唯一引擎，14 级处理链 + 11 场景 + 分享串
-- **空间音频**：合成解析 HRTF 双耳渲染四模式（一键空间化 / 头锁定环绕 / 世界漫游 / 舞台影院），详见下方
-- **可视化**：实时频谱（对数频率轴）、波形、封面脉动、封面粒子特效（`AppleCoverFx`，组件保留、当前未接线）
-- **桌面模式与小组件**：桌面小组件区、自定义壁纸、天气系统、桌面播放器小窗、任务栏播控条
-- **插件宿主**：App Store 式插件中心（卡片/详情/导入/卸载、开关持久化、使用须知门控），内置 **Razer Chroma** 与 **SignalRGB** 灯光联动插件——第三方插件开发见 [docs/plugin-development.md](./docs/plugin-development.md)
-- **社交/个人中心**：QQ/网易云关注与粉丝、查看他人主页、评论、歌单管理、私人 FM
-- **法律协议**：内置《法律声明与用户协议》弹窗（`src/components/legal/LegalAgreement.tsx`，简体中文单语，完整保留含免责条款在内的全部条款）
-- **缓存系统**：IndexedDB（封面双缓冲、歌单缓存、免闪切换）
+**本地默认只构建便携目录**：运行 `npm run build:electron:dir`，完成后打开 `release/win-unpacked/`，双击 `HyperPlayer.exe`。不额外生成 ZIP 或 NSIS 安装包。
 
-## 技术架构
+<details>
+<summary>项目结构与发布说明</summary>
 
-```
-前端:    React 19 + TypeScript + Tailwind CSS 4 + Vite 6
-桌面:    Electron 42（官方 stock `42.8.0`，主进程 CommonJS，preload 桥接）
-后端:    Node.js + Express（local-server.mjs，单文件，端口 3211）
-音频:    Web Audio API + HSE（纯 TS DSP 内核 + AudioWorklet 渲染线程）
-音乐源:  qq-music-api + NeteaseCloudMusicApiEnhanced + B站
-可视化:  Canvas/Web Audio 频谱与封面动效；空间音频 3D 视图用 Three.js + React Three Fiber
-歌词:    Apple 风格逐字渲染（本地实现）+ AMLL TTML DB 逐字数据源
-```
-
-```
+```text
 HyperPlayer/
-├── src/                        # React 前端
-│   ├── components/            # 组件（App.tsx 懒加载；含 AppleCoverFx 等 Apple 风格歌词侧组件）
-│   ├── services/              # API 客户端、缓存、无缝衔接、appleLyricsStyle（Apple 风格歌词工具）
-│   │   ├── audio-engine/      # 引擎适配层（HSEAdapter + 注册表）
-│   │   ├── gapless/           # 无缝衔接（私有模块）
-│   │   └── HyperSoundEngine-v1/   # HSE 音效引擎（DSP + UI + 空间音频）
-│   ├── audio/                 # 播放引擎（队列/过渡计划/渲染器）
-│   ├── hooks/  api/  utils/  types/  vendor/pv/
-├── desktop/                   # Electron 主进程 + preload（.cjs）+ splash/任务栏小窗
-├── server/                    # 后端附加路由（hazard/location/bilibili/netease-native-explore）
-├── local-server.mjs           # Express 后端（约 11k 行，单文件，端口 3211）
-├── build/                     # 打包资源 + 自定义 NSIS 安装器 UI 资产
-└── scripts/                   # dev/build/打包/发布/测试脚本
+├── src/                     React 前端、播放与歌词系统
+│   ├── audio/               播放队列与过渡编排
+│   ├── services/gapless/    无缝衔接
+│   └── services/HyperSoundEngine-v1/
+│                            HSE 内核、调音室与空间音频
+├── desktop/                 Electron 主进程与 preload
+├── server/                  本地 API 附加路由
+├── local-server.mjs         Express 本地服务
+├── scripts/                 开发、构建、校验与发布工具
+└── docs/                    功能、设计与开发文档
 ```
 
-## 开发命令
+- 仅使用 **3210**（Vite）和 **3211**（Express，绑定 `127.0.0.1`）。
+- 发布安装包时才使用 `npm run build:electron`；版本化发布包含 NSIS 安装包与热更新包，Nightly 发布 NSIS 安装包。
+- 手动发版优先使用 [Release 发版工作流](https://github.com/SoundFieldLab/HyperPlayer/actions/workflows/release.yml)。
+- 完整开发约定见 [AGENTS.md](<./AGENTS.md>)；独立调试页使用前先读[调试页注册表](<./DEBUG_PAGES.md>)。
 
-```bash
-npm run dev:electron    # 完整开发（前端+后端+Electron）
-npm run dev             # 仅 Vite（3210）
-npm run lint            # TypeScript 类型检查（tsc --noEmit）
-npm run test            # vitest 单测（2026-09-13 实测：140 文件 = 139 过 + 1 跳过；1269 用例 = 1264 过 + 5 跳过 + 0 todo，含 HSE v3 引擎与空间音频；跳过的 5 项为 HSE 的 LGPL 可选依赖未装自动跳过）
-npm run build           # 仅构建前端 -> dist/（三入口，不生成 EXE）
-npm run build:electron  # 发布：目录构建（build + electron-builder dir + verify-asar）→ NSIS 安装包
-npm run build:electron:dir           # 发布目录包：build + electron-builder --win dir + verify-asar 校验
-npm run build:hse-worklet   # 重生成 HSE 的 AudioWorklet 单文件（predev/prebuild 自动执行）
-npm run build:apple-weather # 重新生成 Apple 天气场景资源（纯天气视觉，与 Apple Music 音源无关）
-npm run build:splash    # 重新生成启动页（帧时基归一 -> desktop/splash.html + splash-baked.webm）
-npm run test:chroma     # Razer Chroma 插件自测
-npm run test:signalrgb  # SignalRGB 插件自测
-npm run test:desktop    # 桌面/安全相关 node --test 用例
-npm run test:installer  # 生成安装器 UI 资产 + 安装器测试
-npm run preview:setup   # 预览自定义安装器
-npm run version:patch|minor|major|pre  # 版本号更迭（自动 commit/tag/push）
-```
+</details>
 
-`npm run dev:electron` 启动前只做一件事——重打包 HSE 的 AudioWorklet 单文件；**已无任何 EVS/Widevine/VMP 预检或签名步骤**（Electron 为官方 stock `42.8.0`，不携带 Widevine）。前端热更新与普通 `npm run build` 不生成 EXE。
+## 深入了解
 
-## 发布（GitHub Releases）
+| 文档 | 内容 |
+| :--- | :--- |
+| [功能清单](<./docs/功能清单3.0.md>) | 各功能域、限制与源码对应关系 |
+| [音效术语](<./CONTEXT.md>) | 效果、场景与自定义状态的区别 |
+| [HSE 接入记录](<./docs/hse/HSE-1.5-快照接入记录.md>) | 引擎集成、接线与验证记录 |
+| [HSE 技术文档](<./src/services/HyperSoundEngine-v1/docs/>) | 引擎算法、UI 与融合说明 |
+| [插件开发](<./docs/plugin-development.md>) | 插件宿主、导入规范与开发方式 |
+| [歌词设计参考](<./docs/歌词对比-LyricsBlossom.md>) | Apple 风格逐字动画的对比分析 |
 
-**正式版（打 `v*` tag）的 release 资产 = NSIS 安装包 `release/HyperPlayer-<version>-Setup.exe` + 热更新包 `hyperplayer-hot-<version>.zip`（app.asar + app.asar.unpacked）；nightly 渠道**同样只发 NSIS 安装包（2026-09-14 起不再发便携版 zip）**；`release/win-unpacked/` 本身仍不入库、不随 releases 分发（仅本地调试产物）。安装版为每用户安装、**不携带任何用户数据/配置**——首次运行在该机 `%APPDATA%\HyperPlayer\` 自动生成全新配置并适配当前用户。
+历史文档可能涉及已移除的音源或模块；发生冲突时以当前源码为准。当前音乐入口为网易云、QQ 与 B 站看歌，不包含 Apple Music、Spotify 等音源，也不包含 Android TV、AirPlay、远程遥控或分轨服务。
 
-```bash
-npm run build:electron          # 构建安装版
-node scripts/build-hot-update.mjs  # 生成热更新包 hyperplayer-hot-<version>.zip
-git tag v<version> && git push origin v<version>
-gh release create v<version> release/HyperPlayer-<version>-Setup.exe release/hyperplayer-hot-<version>.zip --title "v<version>" --notes "..."
-```
+## 许可与致谢
 
-发布机制：**无 EVS、无 VMP 签名、无 Widevine**——Electron 为官方 stock 构建，不要求任何签名账号或有效期门槛；调用链为 `assert-release-not-running` → `build` → `electron-builder --win dir` → `verify-asar`。最终用户安装后**不需要任何签名工具或手动步骤**。CI：`.github/workflows/ci.yml`（类型检查 / 单测 / 桌面与安装器测试 / 前端构建；tag 或手动触发时跑 Windows 打包验证）、`nightly.yml`（每日 nightly 预发布）。
+**源码可见不代表可以任意复制、移植或商用。** 完整条款见 [LICENSE](<./LICENSE>)，版权归属见 [NOTICE](<./NOTICE>)。
 
-### 更新渠道
+- **上游授权**：HyperPlayer 已获上游母项目 **WaveForge** 授权，被授权人为 **IceFireIcer**。
+- **私有模块**：无缝衔接、节拍分析与过渡编排、看歌 / MV、桌面模式、探索模式及 Apple 风格歌词等，适用[私有模块许可](<./PRIVATE-LICENSE.md>)。
+- **HSE**：由 **IceFire_Icer** 开发，采用 [CC BY-NC-ND 4.0](<./src/services/HyperSoundEngine-v1/LICENSE>)，另附面向 HyperPlayer 的[专项授权说明](<./src/services/HyperSoundEngine-v1/授权补充说明.md>)。
+- **第三方组件与数据**：AMLL TTML DB、音乐平台 API、HSE 内第三方库与数据等，仍遵守各自许可及使用条款。
 
-应用支持两条更新渠道，在「设置 → 关于」的「更新渠道」处切换（默认**正式版**）：
+---
 
-| 渠道 | 更新清单 | 内容 | 发布形式 |
-|---|---|---|---|
-| 正式版（stable） | `main/update.json` | 打 `v*` tag 的正式发布 | GitHub Pre-release；纯语义版本号时额外写 update.json 推向全体用户 |
-| 每日构建（Nightly） | `main/update-nightly.json` | 每天 21:00 自动构建 | 每个 `nightly-<日期>` 各自独立 Pre-release |
-
-两个清单都是**版本无关的固定地址**，各自指向对应 release 的产物，因此切换渠道不必关心 tag 命名细节。Nightly 版本号取「正式版 patch + 1」再挂构建日期（如 `1.0.1-nightly.20260911`）：按 semver 高于当前正式版、低于下一个正式版，保证正式版用户切到 Nightly 后能立即检测到当日构建。点「检查新版本」的结果会标注当前所用渠道。
-
-## 端口一览
-
-| 端口 | 服务 | 说明 |
-|---|---|---|
-| 3210 | Vite / 生产 preview | 前端（后端 CORS 白名单） |
-| 3211 | Express API | 后端（绑定 127.0.0.1，仅放行 localhost:3210 / file:// / null） |
-
-> 历史上的 18790（Apple Music 播放面 Python bridge）、3002 / 3003 / 3004（Python 节拍 / 响度 / 频响补偿服务）已随音源移除与减配移除，不再使用。
-
-## 音效引擎 HSE（HyperSoundEngine）
-
-当前唯一音效引擎：`src/services/HyperSoundEngine-v1/`（HSE 1.5，纯 TypeScript DSP 内核）。与引擎适配层 `src/services/audio-engine/` 配合，`HSEAdapter` 以 `studioMode: 'custom'` 渲染 HSE 调音室。
-
-- **处理链（14 级固定顺序）**：响度归一化增益 → 3D 环绕（轻量立体声旋转） → M/S（立体声宽度 + 人声比例） → Pre-EQ（用户 EQ） → Deesser → Compressor → NightMode（压缩增强 + 6kHz 高频衰减） → 混响（卷积/算法/off 三路） → BassEnhancer → LoudnessComp（等响度补偿） → IEQ（Post 智能均衡） → LUFS 采样点 → Limiter → 输出；**第 15 级为空间音频**（见下节）。LUFS 采样点严格位于 Limiter 之前。
-- **11 个内置场景**：pop / enhanced / jazz / dance / classical / livehouse / studio / warm / dts / vocal-stage / night-bass（快照式，一键整体应用；音量独立于场景，不被覆盖）
-- **均衡器**：简约 5 段 / 专业 10 或 20 段 + 级联 Q 补偿
-- **低音增强含「低音下潜」**：`lowBoostDb` -6..+12dB 真实低频能量提升（lowshelf 语义），谐波路径另提供心理声学感知
-- **分享串**：版本 + 校验 + 白名单防注入，编解码覆盖含低音下潜在内的全部参数
-- **分析页**：对数频率轴实时频谱（32 条，20Hz-20kHz，FFT 幅度按 dBFS 归一化）+ LUFS / 增益缩减 / 频谱特征 + 听力测试；100ms 轮询 + EMA 平滑
-- **调音室音量**：走 `loudnessNormalization.externalGainDb` 通道（0-100% → -60..0dB），80ms 快平滑跟手
-- **响度归一化与频响补偿在引擎内实时实现**（`LufsMeter` / `LoudnessComp` DSP 模块），不依赖任何外部服务
-- **导出**：离线 MP3 导出（解码 PCM → `HyperSoundEngine.process` 分块 → lamejs 128kbps）
-- **渲染线程**：`HyperSoundEngineHost` 模式 `auto` —— AudioWorklet 优先（`public/hse-worklet.js`，`npm run build:hse-worklet` 生成），失败回退 ScriptProcessor；参数在 worklet 模式下双下发，统计优先取 worklet 周期回传值
-- **开发者模式**：关于页开关开启后，「音效场景」页可实时微调内置场景并保存为参数覆盖层，支持还原出厂、场景库 JSON 导出/导入；「写回发布种子」经 IPC 写入 `src/services/HyperSoundEngine-v1/src/engine/builtinSceneSeed.ts`，commit/push 后全员生效
-- **调音室 UI**：左侧导航 9 页（主页 / 音效场景 / 均衡器 / 空间音效 / 空间音频 / 动态调音 / 分析 / 调音器 / 关于）+ 亮色薄荷玻璃主题
-
-**许可红线**：HSE 模块自带 [LICENSE](./src/services/HyperSoundEngine-v1/LICENSE)（CC BY-NC-ND 4.0）、[授权补充说明.md](./src/services/HyperSoundEngine-v1/授权补充说明.md) 与 `THIRD_PARTY_NOTICES.md`，勿删改。
-
-## 空间音频（Spatial Audio）
-
-空间音频是 **HyperSoundEngine 的第 15 级处理**（纯 TypeScript，内联调用 `src/services/HyperSoundEngine-v1/src/spatial/*` 纯模块），不是独立 AudioWorklet 节点，也无 WASM/Rust 后端；`mode='off'` 时完全旁路、逐位不触碰 L/R。参数属于 `V3EngineParams.spatial`，随 `hyperplayer:v3-params` 快照持久化。四种模式：
-
-- **A 一键空间化**：立体声展开为 ±30°（20..120° 可调）虚拟扬声器，干湿混合强度 / 房间模拟预设 / 房间混响可调
-- **B 头锁定环绕**：5.1 / 5.1.4 / 7.1 / 7.1.4 / 自定义布局预设 + 环形拖拽编辑器（上限 16 只扬声器）+ 逐扬声器声源路由（L / R / both），声场固定于头部朝向（耳机听感）
-- **C 世界漫游**：3D 视图 + 键盘移动、鼠标拖拽转头，支持多普勒、声源轨迹关键帧（按播放时钟线性插值）、遮挡/衍射简化模型（增益衰减 + 高频低通）
-- **D 舞台/影院**：4 场景预设（音乐舞台 / 电影院 / 钢琴独奏 / 自然场景）+ 座位选择 + 房间大小 / 氛围混响调节
-
-**核心能力**：
-
-- **合成解析 HRTF** 双耳渲染（`analyticHrtf.ts`），无需外部数据文件
-- **双 HRTF 插值模式**：最近邻网格查表 与 实球谐插值（L=3 实球谐基 + 最小二乘拟合，`hrtfInterp.ts`）
-- **完整房间模拟**：镜像声源法早期反射（1-3 阶）+ FDN 晚期混响（8 条质数延迟线 + Hadamard 8×8 反馈矩阵），7 种预设（录音棚/音乐厅/舞台/教堂/户外/浴室/走廊）
-- **Ambisonics 环境上混**（FOA 一阶实球谐编解码，`ambisonics.ts`）
-- **多声道输入自动映射**（`processMulti`）与**输出模式**（binaural / stereo / multichannel）
-- **分区 FFT 卷积 与 时域直接卷积 双模式**（`TsConvolverBackend` / `TimeConvolver`，两者干湿对齐一致、脉冲位置一致）
-- **三道爆音防护**：湿总线能量归一化、IR 重装载淡变、标量增益一阶平滑
-
-## 已知限制
-
-1. 部分歌曲因版权/VIP 无法播放（未登录可播免费曲）
-2. 歌词第三方源（lrclib / amll-ttml-db）部分歌曲无词，属正常
-3. 首次播放网易云高音质需后端启动时联网拉取 xeapi 公钥（已自动化）
-4. QQ 他人歌单/我喜欢歌曲/评论回复/听歌排行受平台限制；QQ 关注/粉丝接口必须用最新登录的 `qm_keyst`
-5. 过渡策略恒为 Fixed Crossfade（智能节拍混音已随减配移除），节拍分析能力仅用于 MV 对齐等场景
-
-> 历史上的 Apple Music 原生播放限制（18790 Python bridge / Widevine CDM / VMP 签名有效期）已随音源与 DRM 链移除，不再适用。
-
-## 文档
-
-- [AGENTS.md](./AGENTS.md) — 给 AI 代理的项目指令（必读）
-- [docs/功能清单3.0.md](./docs/功能清单3.0.md) — 功能清单（12 个域 A–L，按代码实测，含统计与红线）
-- [HANDOVER.md](./HANDOVER.md) — 交接文档（环境 / 端口 / 已知问题 / 历史决策）
-- [CONTEXT.md](./CONTEXT.md) — 音效域词汇表（术语定义，已按 HSE 单引擎现状更新）
-- [docs/adr/](./docs/adr/) — 架构决策记录
-- [PRIVATE-LICENSE.md](./PRIVATE-LICENSE.md) — 私有模块许可（无缝衔接 / 看歌MV / 桌面模式 / 探索模式）
-- [DEBUG_PAGES.md](./DEBUG_PAGES.md) — 独立调试页注册表（Weather Lab 等）
-- [docs/plugin-development.md](./docs/plugin-development.md) — 插件开发文档（公开，供开发者与 AI 编写 HyperPlayer 插件）
-- [docs/歌词对比-LyricsBlossom.md](./docs/歌词对比-LyricsBlossom.md) — Apple Music 歌词逆向对比（Apple 风格逐字动画的设计参考）
-- [src/services/HyperSoundEngine-v1/docs/](./src/services/HyperSoundEngine-v1/docs/) — HSE 融合/UI/算法文档
-
-## 许可证
-
-完整条款见 [LICENSE](./LICENSE)，版权归属见 [NOTICE](./NOTICE)。
-
-**上游授权**：本项目已获上游母项目 **WaveForge** 授权，被授权人 **IceFireIcer**。
-
-**私有模块**：无缝衔接（Gapless）、节拍分析与过渡编排（历史 AutoMix 模块：`autoMixAnalysisService.ts` /
-`audio/transitionPlanner.ts` / `audio/TransitionRenderer.ts`，现仅服务 MV 对齐 / PV 歌词 / Fixed Crossfade 过渡）、
-看歌 / MV 背景（Bilibili）、桌面模式、探索模式等模块以 **私有模块许可**提供，适用范围与使用限制详见
-[PRIVATE-LICENSE.md](./PRIVATE-LICENSE.md)（受保护文件头部 / 目录 `LICENSE.private` 亦标注）。
-HSE 音效引擎模块另受 CC BY-NC-ND 4.0 约束，见 [src/services/HyperSoundEngine-v1/LICENSE](./src/services/HyperSoundEngine-v1/LICENSE)。
+<p align="center"><strong>找到喜欢的音乐，然后留在音乐里。</strong><br><sub>HyperPlayer · Windows 桌面音乐播放器</sub></p>
