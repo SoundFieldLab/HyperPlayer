@@ -154,7 +154,7 @@ jobs:
             echo "自上一个 nightly tag 以来没有代码变更（只有更新清单回写或无新提交），"
             echo "本次不构建安装包、不发布 Pre-release、不覆盖当天 tag。"
             echo ""
-            echo "需要强制构建：Actions → Nightly Build → Run workflow，把 `force` 设为 `true`。"
+            echo "需要强制构建：Actions → Nightly Build → Run workflow，把 \`force\` 设为 \`true\`。"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 无新增提交 → 取消本次运行

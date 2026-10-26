@@ -20,7 +20,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { memo, useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence, Reorder } from 'framer-motion'
-import { X, Settings as SettingsIcon, User, Palette, Sparkles, Info, ExternalLink, Github, ChevronRight, ChevronLeft, Trash2, Heart, Code2, Users, Headphones, Eye, EyeOff, Music, FolderHeart, Trash, ListMusic } from 'lucide-react'
+import { X, Settings as SettingsIcon, User, Palette, Sparkles, Info, ExternalLink, Github, ChevronRight, ChevronLeft, Trash2, Code2, Users, Headphones, Eye, EyeOff, Music, FolderHeart, Trash, ListMusic } from 'lucide-react'
 import LoginButton from './LoginButton'
 import {
   MUSIC_PLATFORMS,
@@ -45,9 +45,7 @@ import {
   fetchUpdateManifest,
   withDownloadProxies,
   readUpdateChannel,
-  writeUpdateChannel,
   UPDATE_CHANNEL_LABEL,
-  UPDATE_CHANNEL_KEY,
   type UpdateChannel,
 } from '../services/updateConstants'
 import { VERSION_HISTORY } from '../services/versionHistory'
@@ -461,7 +459,7 @@ function SettingsPanel({
   const [showVersionHistory, setShowVersionHistory] = useState(false)
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(() => parseStoredBoolean(localStorage.getItem('autoCheckUpdate'), true))
   const [skippedVersion, setSkippedVersion] = useState<string | null>(() => localStorage.getItem('skippedUpdateVersion'))
-  // 更新渠道（正式版 / 每日构建）——与设置注册表同 localStorage 键，双端同步
+  // 保留已保存的更新渠道，设置界面不再提供切换入口。
   const [updateChannel, setUpdateChannel] = useState<UpdateChannel>(() => readUpdateChannel())
 
   // 待应用更新常驻提示（上次「稍后」/ 已下载完成的更新，重启即生效）
@@ -471,7 +469,7 @@ function SettingsPanel({
     }).catch(() => {})
   }, [])
 
-  // 更新渠道可能被其他模式（设置镜像）改动：监听注册表事件保持同步
+  // 保持与更新服务使用的渠道一致。
   useEffect(() => {
     const sync = () => setUpdateChannel(readUpdateChannel())
     window.addEventListener('hyperplayer:global-setting-changed', sync)
@@ -2949,25 +2947,16 @@ function SettingsPanel({
                         </span>
                       </div>
 
-                      <div className={`rounded-xl border ${borderColor} p-4 relative`}>
-                        <div className="flex items-center gap-4 pr-10">
+                      <div className={`rounded-xl border ${borderColor} p-4`}>
+                        <div className="flex items-center gap-4">
                           <img src={appLogoUrl} alt="HyperPlayer" className="w-14 h-14 rounded-xl object-cover shadow-lg shrink-0" />
                           <div className="min-w-0">
                             <p className={`text-xs ${textTertiary} mb-1`}>开发者</p>
-                            <p className={`text-lg font-semibold leading-6 ${textPrimary}`}>Yoshino / Castorice</p>
                             <p className={`text-lg font-semibold leading-6 ${textPrimary}`}>IceFire_Icer</p>
+                            <p className={`text-lg font-semibold leading-6 ${textPrimary}`}>Yoshino / Castorice</p>
                             <p className={`text-sm leading-6 ${textSecondary} mt-1`} style={{ textWrap: 'pretty' }}>HyperPlayer的开发与维护</p>
                           </div>
                         </div>
-                        <button
-                          onClick={() => openExternal('https://www.afdian.com/a/Kirito666233')}
-                          title="支持 HyperPlayer"
-                          aria-label="支持 HyperPlayer"
-                          className="absolute top-3 right-3 w-9 h-9 rounded-full flex items-center justify-center text-white transition-all hover:scale-110 hover:shadow-md"
-                          style={{ background: `linear-gradient(135deg, ${accentColor}, #ff5b9d)`, boxShadow: `0 6px 16px ${accentColor}24` }}
-                        >
-                          <Heart className="w-4 h-4" fill="currentColor" />
-                        </button>
                       </div>
 
                       <div className={`mt-4 pt-4 border-t ${borderColor}`}>
@@ -2983,41 +2972,8 @@ function SettingsPanel({
                       </div>
 
                       <div className={`mt-4 pt-4 border-t ${borderColor}`}>
-                        {/* 更新渠道：正式版 / 每日构建 */}
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className={`text-sm font-medium ${textPrimary}`}>更新渠道</p>
-                            <p className={`text-xs ${textTertiary} mt-0.5`}>
-                              {updateChannel === 'nightly'
-                                ? '接收每天自动构建的测试版，可能不稳定'
-                                : '接收正式发布版本，最稳定'}
-                            </p>
-                          </div>
-                          <div className={`flex shrink-0 rounded-xl p-1 ${playerTheme === 'dark' ? 'bg-white/10' : 'bg-black/5'}`}>
-                            {(['stable', 'nightly'] as const).map((channel) => (
-                              <button
-                                key={channel}
-                                type="button"
-                                onClick={() => {
-                                  if (channel === updateChannel) return
-                                  writeUpdateChannel(channel)
-                                  setUpdateChannel(channel)
-                                  // 切渠道后旧检查结果/跳过记录不适用，重置避免误导
-                                  setUpdateCheck({ status: 'idle' })
-                                  setSkippedVersion(null)
-                                  localStorage.removeItem('skippedUpdateVersion')
-                                }}
-                                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${updateChannel === channel ? 'text-white' : textSecondary}`}
-                                style={updateChannel === channel ? { backgroundColor: accentColor } : undefined}
-                              >
-                                {UPDATE_CHANNEL_LABEL[channel]}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
                         {/* 检查新版本 + 版本历史 */}
-                        <div className="mt-4 flex gap-3 w-full">
+                        <div className="flex gap-3 w-full">
                           <button onClick={() => void checkForUpdates()} disabled={updateCheck.status === 'checking'} className={`flex-1 py-3 px-4 rounded-xl ${playerTheme === 'dark' ? 'bg-white/10 hover:bg-white/15' : 'bg-black/5 hover:bg-black/10'} ${textPrimary} font-medium transition-colors disabled:opacity-60`}>
                             {updateCheck.status === 'checking' ? '正在检查新版本…' : '检查新版本'}
                           </button>

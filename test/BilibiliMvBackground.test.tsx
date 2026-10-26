@@ -432,4 +432,25 @@ describe('BilibiliMvBackground regressions', () => {
     await new Promise((resolve) => setTimeout(resolve, 3300)) // 覆盖多个升档节拍
     expect(bili.getBilibiliPlayUrl).toHaveBeenCalledTimes(1)
   }, 15000)
+
+  it.each([16, 32])('settles when an upgrade request returns tier %i', async (quality) => {
+    vi.useFakeTimers()
+    const audio = new Audio()
+    audio.currentTime = 20
+    Object.defineProperty(audio, 'buffered', { configurable: true, value: { length: 1, start: () => 0, end: () => 45 } })
+    vi.mocked(bili.getBilibiliPlayUrl)
+      .mockReset()
+      .mockImplementationOnce(async () => ({ code: 0, quality: 32, acceptQuality: [32, 80, 112], cacheKey: 'low' } as any))
+      .mockImplementationOnce(async () => ({ code: 0, quality, acceptQuality: [16, 32], cacheKey: 'low-again' } as any))
+    vi.mocked(bili.findBestBilibiliMv).mockResolvedValue(autoResult('current-bvid'))
+
+    const { container } = render(<BilibiliMvBackground {...baseProps(audio)} isPlaying />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(container.querySelector('video')?.getAttribute('src')).toBe('http://stream/low/video')
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+
+    expect(bili.getBilibiliPlayUrl).toHaveBeenCalledTimes(2)
+    expect(bili.getBilibiliPlayUrl).toHaveBeenLastCalledWith('current-bvid', 1, 112, expect.any(AbortSignal))
+    expect(container.querySelector('video')?.getAttribute('src')).toBe('http://stream/low/video')
+  }, 15000)
 })

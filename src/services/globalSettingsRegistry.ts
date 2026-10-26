@@ -24,7 +24,6 @@ import {
   type PlaybackShortcutSettings,
 } from './playbackShortcutSettings'
 import { getVersionDisplay } from './versionInfo'
-import { UPDATE_CHANNEL_KEY as UPDATE_CHANNEL_STORAGE_KEY } from './updateConstants'
 import packageInfo from '../../package.json'
 import type { DesktopLyricsColorMode, DesktopLyricsSettings, TaskbarWidgetSettings } from '../electron'
 
@@ -346,24 +345,6 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         write: (value) => {
           localStorage.setItem('accentColor', String(value))
           window.dispatchEvent(new CustomEvent('accentColorChanged', { detail: value }))
-          notifyGlobalSettingChanged()
-        },
-      },
-      {
-        id: 'updateChannel',
-        label: '更新渠道',
-        description: '正式版只接收稳定版本；每日构建可提前体验最新测试版（可能不稳定）',
-        control: {
-          kind: 'choice',
-          options: [
-            { value: 'stable', label: '正式版', hint: '接收正式发布版本，最稳定' },
-            { value: 'nightly', label: '每日构建（Nightly）', hint: '每天自动构建的测试版，可能有 bug' },
-          ],
-        },
-        read: () => readStr(UPDATE_CHANNEL_STORAGE_KEY, 'stable'),
-        write: (value) => {
-          localStorage.setItem(UPDATE_CHANNEL_STORAGE_KEY, value === 'nightly' ? 'nightly' : 'stable')
-          window.dispatchEvent(new CustomEvent('hyperplayer:update-channel-changed'))
           notifyGlobalSettingChanged()
         },
       },

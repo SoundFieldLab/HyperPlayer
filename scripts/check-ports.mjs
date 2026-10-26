@@ -17,7 +17,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'release', '.portable-extract', 'cache', 'logs', 'data', '.zcode'])
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'release', '.portable-extract', 'cache', 'logs', 'data', '.zcode', 'promo'])
 const SCAN_EXT = new Set(['.ts', '.tsx', '.cjs', '.mjs', '.js', '.json', '.html', '.yml', '.yaml', '.vbs'])
 /** 历史/否定性说明允许出现旧端口（如「已停用 3002」） */
 const ALLOW_LINE = /已停用|历史|不再使用|不要绕|占用坑|避开|avoid/i

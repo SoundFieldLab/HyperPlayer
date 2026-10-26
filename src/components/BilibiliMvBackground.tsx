@@ -1283,8 +1283,8 @@ export default function BilibiliMvBackground({
           }
           const negotiatedQn = Number(playInfo.quality) || info.qn
           if (negotiatedQn <= info.qn) {
-            // 服务器实际协商不出更高档（受限/匿名）：按实际档位记账，后续 tick 自然判定到顶
-            lastPlayInfoRef.current = { ...info, qn: negotiatedQn }
+            // 服务端无法提供更高档：保留正在播放的流与档位，本曲不再重复请求升档。
+            upgradeSettledKeyRef.current = settledKey
             return
           }
           // playurl 期间状态被占（切歌/预载/晋升开始）：放弃本次让位主流程，不标记失败
