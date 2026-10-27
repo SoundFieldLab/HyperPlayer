@@ -1,31 +1,36 @@
-# 每日构建（Nightly）—— 每天北京时间 21:00 从默认分支自动构建 Windows 测试版。
+# 每日构建（Nightly）—— 默认分支有新代码提交时自动构建 Windows 测试版。
 #
 # 行为约定：
 #   - 不 bump 正式版本号：仅在工作区拼「基础版本 patch+1 -nightly.<YYYYMMDD>」用于产物命名与
 #     更新清单版本号，不推回仓库（package.json 保持正式版本号不变）。
-#   - **每次构建生成唯一 tag（nightly-<YYYYMMDD>）并创建独立的 GitHub Pre-release**，
-#     历史 nightly 全部保留（与 pre-release.yml 一致，一律以 Pre-release 形式发布）。
-#     同一天重复构建（当天又有了新提交 / force=true）会覆盖当天的 tag 与 release，
-#     保持「每天一个 nightly」语义；跨天则各自独立、互不覆盖。
-#   - 自上一个 nightly tag 以来的提交生成 changelog。
+#   - **触发条件：main 上有新的代码提交**（不再按 cron 每天跑）。
+#     机器人回写更新清单的那条提交不触发（见 on.push.paths-ignore），没有提交的日子不出 nightly。
+#     也可以手动触发；把 force 设为 true 可跳过「无新增提交」判定强制构建。
+#   - **每次构建生成唯一 tag（nightly-<YYYYMMDD>）并创建独立的 GitHub Pre-release**
+#     （与 pre-release.yml 一致，一律以 Pre-release 形式发布）。
+#     同一天重复构建（当天又有提交 / force=true）会覆盖当天的 tag 与 release。
+#   - **滚动保留最近 3 个 nightly**：每次发布成功后删掉更早的 nightly release 与 tag，
+#     只留最新三个（release 作业末尾的「保留最近 3 个 nightly」步骤）。
+#   - changelog 覆盖上一个 nightly tag 之后的提交。
 #   - 产物：**只发布 NSIS 安装包（`HyperPlayer-<版本>-Setup.exe`）**——2026-09-14 起不再发
-#     便携版 zip（`release/win-unpacked/` 始终只是本地调试产物，不随 releases 分发）。
+#     便携版 zip（`release/win-unpacked/` 只是本地调试产物，不随 releases 分发）。
 #   - 生成并提交 `update-nightly.json`（nightly 渠道的更新清单）——供客户端
 #     「更新渠道 = 每日构建（Nightly）」时拉取；正式版清单 `update.json` 不受影响。
-#   - 无新增提交时**取消本次运行**（手动触发时可用 force=true 强制构建）：判定为「无代码
-#     变更」后，prepare 作业在最后一步 cancel 自身运行——Actions 里显示为 cancelled，而不是
-#     一次「success 但 build/release 全跳过」的假构建，避免空转记录被误当成真的构建过。
-#     判定用**树 diff** 且排除本工作流与 release.yml 回写的更新清单文件（update-nightly.json /
-#     update.json）——否则每日回写提交让 HEAD 永远领先于上次 nightly tag，判定失效
+#   - 无新增提交时**取消本次运行**（force=true 可跳过）：判定为「无代码变更」后，prepare 在
+#     最后一步 cancel 自身运行——Actions 里显示 cancelled，而不是一次「success 但当次全部跳过」
+#     的假构建。判定用**树 diff** 且排除回写的清单文件（update-nightly.json / update.json），
+#     否则回写提交会让 HEAD 永远领先于上次 nightly tag，判定失效
 #     （2026-09-14~10-04 曾因此连发 21 次无代码变更的 nightly）。
 #     ⚠️ 取消自身运行需要 actions: write 权限（见下方 permissions）。
-
 name: Nightly Build 每日构建
 
 on:
-  schedule:
-    # UTC 13:00 = 北京时间 21:00
-    - cron: '0 13 * * *'
+  push:
+    branches: [main]
+    # 机器人回写的更新清单不算代码变更，不触发构建（否则会自触发成循环）。
+    paths-ignore:
+      - update-nightly.json
+      - update.json
   workflow_dispatch:
     inputs:
       force:
@@ -130,7 +135,7 @@ jobs:
             echo ""
             echo "- \`HyperPlayer-*-Setup.exe\` —— NSIS 安装包，双击安装（推荐普通用户）"
             echo ""
-            echo "⚠️ 自动构建的每日测试版本，可能不稳定。仅供主动切换到「每日构建（Nightly）」渠道的用户，不影响正式版更新通道。"
+            echo "⚠️ 自动构建的测试版本，可能不稳定。仅供主动切换到「每日构建（Nightly）」渠道的用户，不影响正式版更新通道。"
           } > changelog.md
 
           echo "nightly_tag=${NIGHTLY_TAG}" >> "$GITHUB_OUTPUT"
@@ -250,8 +255,8 @@ jobs:
           path: artifacts
 
       - name: 创建并推送当日 nightly tag
-        # 用轻量 tag 指向本次构建的 SHA；同名 tag 已存在（当天重复构建）则强制移动到最新提交，
-        # 保证「每天一个 nightly」，跨天的 tag 各自独立保留。
+        # 轻量 tag 指向本次构建的 SHA；同名 tag 已存在（当天重复构建）则强制移到最新提交，
+        # 保证「每天最多一个 nightly」。更早的 nightly 由末尾的步骤滚动清理，只留最新三个。
         env:
           NIGHTLY_TAG: ${{ needs.prepare.outputs.nightly_tag }}
         run: |
@@ -343,3 +348,32 @@ jobs:
             git push origin HEAD:main
             echo "已推送 update-nightly.json（nightly 渠道用户「检查更新」可收到 ${NIGHTLY_VERSION}）"
           fi
+      # ---------- 滚动保留最近 3 个 nightly ----------
+      # 每次发布成功后清掉更早的 nightly：删除 GitHub release 及其 tag，
+      # 只留最新的三个（按 tag 名里的日期倒序）。正式版 tag（v*）与 release 一律不碰。
+      - name: 保留最近 3 个 nightly（删除更早的）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: '3'
+        run: |
+          set -euo pipefail
+          # nightly-YYYYMMDD 按名字排序即时间序，最新在前；当天 tag 刚推送，必然在其中。
+          mapfile -t ALL < <(git tag -l 'nightly-*' --sort=-refname)
+          echo "现有 nightly tag：${#ALL[@]} 个"
+          printf '%s\n' "${ALL[@]:-}"
+          if [ "${#ALL[@]}" -le "$KEEP" ]; then
+            echo "未超过 ${KEEP} 个，无需清理。"
+            exit 0
+          fi
+          for TAG in "${ALL[@]:$KEEP}"; do
+            [ -z "$TAG" ] && continue
+            echo "--- 清理 ${TAG} ---"
+            # --cleanup-tag 会一并删掉对应 tag；release 不存在时忽略
+            gh release delete "$TAG" -y --cleanup-tag \
+              || echo "release ${TAG} 不存在，继续"
+            # 兜底：release 已不在但 tag 残留时单独删远端 tag
+            git push origin ":refs/tags/${TAG}" 2>/dev/null \
+              || echo "远端 tag ${TAG} 已不存在，跳过"
+          done
+          echo "清理完成，保留最新 ${KEEP} 个："
+          git tag -l 'nightly-*' --sort=-refname | head -n "$KEEP"
