@@ -447,7 +447,8 @@ FunctionEnd
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
   File "${BUILD_RESOURCES_DIR}\ui\*.bmp"
-  StrCpy $WaveTheme "dark"
+  ; 交互安装和跳过主题页的更新流程均从亮色开始。
+  StrCpy $WaveTheme "light"
   StrCpy $WaveDesktopShortcutState "1"
   StrCpy $WaveAgreementState "0"
   !insertmacro WaveLoadCloseSet Theme theme
@@ -867,8 +868,8 @@ Function WaveThemeCreate
   Pop $WaveBackground
   ${NSD_SetBitmap} $WaveBackground "$PLUGINSDIR\theme.bmp" $WaveBackgroundImage
   !insertmacro WaveCreateAnimation theme
-  !insertmacro WaveImageButton $WaveThemeDark 138 304 284 172 "card-dark.bmp" "card-dark-hover.bmp" "card-dark-pressed.bmp" WaveThemeDarkClick
-  !insertmacro WaveImageButton $WaveThemeLight 458 304 284 172 "card-light.bmp" "card-light-hover.bmp" "card-light-pressed.bmp" WaveThemeLightClick
+  !insertmacro WaveImageButton $WaveThemeLight 138 304 284 172 "card-light.bmp" "card-light-hover.bmp" "card-light-pressed.bmp" WaveThemeLightClick
+  !insertmacro WaveImageButton $WaveThemeDark 458 304 284 172 "card-dark.bmp" "card-dark-hover.bmp" "card-dark-pressed.bmp" WaveThemeDarkClick
   ${If} $WaveInstallScope == "all"
     !insertmacro WaveImageButton $WaveScopeCurrent 250 246 140 34 "scope-current-normal.bmp" "scope-current-normal.bmp" "scope-current-normal.bmp" WaveScopeCurrentClick
     !insertmacro WaveImageButton $WaveScopeAll 390 246 220 34 "scope-all-selected.bmp" "scope-all-selected.bmp" "scope-all-selected.bmp" WaveScopeAllClick
@@ -1037,9 +1038,9 @@ Function WaveOptionsCreate
   SendMessage $WaveDirEdit ${WM_SETFONT} $WaveFont 1
   SendMessage $WaveDirEdit ${WF_EM_SETMARGINS} ${WF_EC_LEFTMARGIN}|${WF_EC_RIGHTMARGIN} 0x000C000C
   ${If} $WaveTheme == "dark"
-    SetCtlColors $WaveDirEdit 0xE8EEF8 0x111C2F
+    SetCtlColors $WaveDirEdit 0xEAF0F8 0x182231
   ${Else}
-    SetCtlColors $WaveDirEdit 0x172033 0xFFFFFF
+    SetCtlColors $WaveDirEdit 0x18273B 0xFFFFFF
   ${EndIf}
   ${NSD_OnChange} $WaveDirEdit WaveDirectoryChanged
   !insertmacro WaveThemeButton $WaveBrowseButton 776 215 52 44 secondary 浏览 WaveBrowse
@@ -1047,10 +1048,10 @@ Function WaveOptionsCreate
   Pop $WaveSpaceLabel
   SendMessage $WaveSpaceLabel ${WM_SETFONT} $WaveSmallFont 1
   ${If} $WaveTheme == "dark"
-    SetCtlColors $WaveSpaceLabel 0xE8EEF8 0x1B2940
+    SetCtlColors $WaveSpaceLabel 0xEAF0F8 0x263448
     StrCpy $0 "desktop-dark-$WaveDesktopShortcutState.bmp"
   ${Else}
-    SetCtlColors $WaveSpaceLabel 0x172033 0xF0F4F9
+    SetCtlColors $WaveSpaceLabel 0x18273B 0xF0F4F8
     StrCpy $0 "desktop-light-$WaveDesktopShortcutState.bmp"
   ${EndIf}
   ${If} $WaveDesktopShortcutState == "1"
@@ -1326,11 +1327,11 @@ Function WaveInstFilesShow
   IntOp $0 $0 & 0xFF7FFFFF
   System::Call "user32::SetWindowLongW(p $WaveProgressPath, i -16, i r0)"
   ${If} $WaveTheme == "light"
-    SendMessage $WaveProgressPath ${WF_PBM_SETBARCOLOR} 0 0xCE6B24
-    SendMessage $WaveProgressPath ${WF_PBM_SETBKCOLOR} 0 0xF9F4F0
+    SendMessage $WaveProgressPath ${WF_PBM_SETBARCOLOR} 0 0xD76428
+    SendMessage $WaveProgressPath ${WF_PBM_SETBKCOLOR} 0 0xF8F4F0
   ${Else}
-    SendMessage $WaveProgressPath ${WF_PBM_SETBARCOLOR} 0 0xF7914B
-    SendMessage $WaveProgressPath ${WF_PBM_SETBKCOLOR} 0 0x40291B
+    SendMessage $WaveProgressPath ${WF_PBM_SETBARCOLOR} 0 0xDD7540
+    SendMessage $WaveProgressPath ${WF_PBM_SETBKCOLOR} 0 0x483426
   ${EndIf}
   System::Call "user32::SetWindowPos(p $WaveProgressPath, p 0, i 0, i 0, i 0, i 0, i 0x0013)"
   GetDlgItem $0 $WavePage 1006
@@ -1339,9 +1340,9 @@ Function WaveInstFilesShow
   Pop $WaveProgressPathText
   SendMessage $WaveProgressPathText ${WM_SETFONT} $WaveSmallFont 1
   ${If} $WaveTheme == "light"
-    SetCtlColors $WaveProgressPathText 0x607086 0xF7F9FC
+    SetCtlColors $WaveProgressPathText 0x596B80 0xF8FAFC
   ${Else}
-    SetCtlColors $WaveProgressPathText 0x9AAAC0 0x0F172A
+    SetCtlColors $WaveProgressPathText 0xAAB8CB 0x151D29
   ${EndIf}
   GetDlgItem $0 $WavePage 1005
   ShowWindow $0 ${SW_HIDE}
@@ -1366,9 +1367,9 @@ Function WaveFinishCreate
   ${NSD_OnClick} $WaveFinishPath WaveCopyInstallPath
   SendMessage $WaveFinishPath ${WM_SETFONT} $WaveSmallFont 1
   ${If} $WaveTheme == "dark"
-    SetCtlColors $WaveFinishPath 0xE8EEF8 0x162033
+    SetCtlColors $WaveFinishPath 0xEAF0F8 0x1D2838
   ${Else}
-    SetCtlColors $WaveFinishPath 0x172033 0xFFFFFF
+    SetCtlColors $WaveFinishPath 0x18273B 0xFFFFFF
   ${EndIf}
   ${NSD_SetText} $WaveFinishPath "$INSTDIR"
   System::Call "user32::InvalidateRect(p $WaveFinishPath, p 0, i 1)"
@@ -1442,12 +1443,12 @@ Var UnWaveFont
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File "${BUILD_RESOURCES_DIR}\ui\*.bmp"
-    !insertmacro WaveUnLoadImage $UnWaveClose0 "close-dark-0.bmp"
-    !insertmacro WaveUnLoadImage $UnWaveClose1 "close-dark-1.bmp"
-    !insertmacro WaveUnLoadImage $UnWaveClose2 "close-dark-2.bmp"
-    !insertmacro WaveUnLoadImage $UnWaveClose3 "close-dark-3.bmp"
-    !insertmacro WaveUnLoadImage $UnWaveClose4 "close-dark-4.bmp"
-    !insertmacro WaveUnLoadImage $UnWaveClose5 "close-dark-5.bmp"
+    !insertmacro WaveUnLoadImage $UnWaveClose0 "close-light-0.bmp"
+    !insertmacro WaveUnLoadImage $UnWaveClose1 "close-light-1.bmp"
+    !insertmacro WaveUnLoadImage $UnWaveClose2 "close-light-2.bmp"
+    !insertmacro WaveUnLoadImage $UnWaveClose3 "close-light-3.bmp"
+    !insertmacro WaveUnLoadImage $UnWaveClose4 "close-light-4.bmp"
+    !insertmacro WaveUnLoadImage $UnWaveClose5 "close-light-5.bmp"
     System::Call "gdi32::CreateFontW(i -13,i 0,i 0,i 0,i 400,i 0,i 0,i 0,i 1,i 0,i 0,i 5,i 0,w 'Microsoft YaHei UI') p.r0"
     StrCpy $UnWaveFont $0
   ${EndIf}
@@ -1659,12 +1660,12 @@ Function un.WaveUnConfirmCreate
   Call un.WaveHideBuilderButtons
   ${NSD_CreateBitmap} 0 0 ${WF_W} ${WF_H} ""
   Pop $UnWaveBackground
-  ${NSD_SetBitmap} $UnWaveBackground "$PLUGINSDIR\unconfirm-dark.bmp" $UnWaveBackgroundImage
+  ${NSD_SetBitmap} $UnWaveBackground "$PLUGINSDIR\unconfirm-light.bmp" $UnWaveBackgroundImage
   Call un.WaveCreateClose
   ${NSD_CreateLabel} 392 306 424 18 "$INSTDIR"
   Pop $UnWavePath
   SendMessage $UnWavePath ${WM_SETFONT} $UnWaveFont 1
-  SetCtlColors $UnWavePath 0xE8EEF8 0x162033
+  SetCtlColors $UnWavePath 0x18273B 0xFFFFFF
   ReadRegStr $1 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
   ${If} $1 == $INSTDIR
   ${AndIf} $1 != ""
@@ -1675,14 +1676,14 @@ Function un.WaveUnConfirmCreate
   ${NSD_CreateLabel} 392 338 424 18 "$0"
   Pop $UnWaveScope
   SendMessage $UnWaveScope ${WM_SETFONT} $UnWaveFont 1
-  SetCtlColors $UnWaveScope 0xE8EEF8 0x162033
-  !insertmacro WaveUnLoadImage $UnWaveButtonImage2 "btn-secondary-dark-取消.bmp"
+  SetCtlColors $UnWaveScope 0x18273B 0xFFFFFF
+  !insertmacro WaveUnLoadImage $UnWaveButtonImage2 "btn-secondary-light-取消.bmp"
   ${NSD_CreateBitmap} 560 452 120 44 ""
   Pop $UnWaveButton2
   ${NSD_AddStyle} $UnWaveButton2 ${WF_SS_NOTIFY}|${WF_WS_TABSTOP}
   SendMessage $UnWaveButton2 ${WF_STM_SETIMAGE} 0 $UnWaveButtonImage2
   ${NSD_OnClick} $UnWaveButton2 un.WaveCancel
-  !insertmacro WaveUnLoadImage $UnWaveButtonImage "btn-primary-dark-开始卸载.bmp"
+  !insertmacro WaveUnLoadImage $UnWaveButtonImage "btn-primary-light-开始卸载.bmp"
   ${NSD_CreateBitmap} 700 452 160 44 ""
   Pop $UnWaveButton
   ${NSD_AddStyle} $UnWaveButton ${WF_SS_NOTIFY}|${WF_WS_TABSTOP}
@@ -1703,7 +1704,7 @@ Function un.WaveUnInstFilesShow
   FindWindow $UnWavePage "#32770" "" $HWNDPARENT
   System::Call "user32::MoveWindow(p $UnWavePage, i 0, i 0, i ${WF_W}, i ${WF_H}, i 1)"
   Call un.WaveHideBuilderButtons
-  !insertmacro WaveUnLoadImage $UnWaveBackgroundImage "uninst-dark.bmp"
+  !insertmacro WaveUnLoadImage $UnWaveBackgroundImage "uninst-light.bmp"
   System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i ${WF_WS_CHILD}|${WF_WS_VISIBLE}|${WF_SS_BITMAP}, i 0, i 0, i ${WF_W}, i ${WF_H}, p $UnWavePage, p 0, p 0, p 0) p.r3'
   StrCpy $UnWaveBackground $3
   SendMessage $UnWaveBackground ${WF_STM_SETIMAGE} 0 $UnWaveBackgroundImage
@@ -1719,8 +1720,8 @@ Function un.WaveUnInstFilesShow
   GetDlgItem $UnWaveProgress $UnWavePage 1004
   System::Call "user32::MoveWindow(p $UnWaveProgress, i 304, i 204, i 512, i 12, i 1)"
   System::Call 'uxtheme::SetWindowTheme(p $UnWaveProgress, w "", w "")'
-  SendMessage $UnWaveProgress ${WF_PBM_SETBARCOLOR} 0 0xF7914B
-  SendMessage $UnWaveProgress ${WF_PBM_SETBKCOLOR} 0 0x40291B
+  SendMessage $UnWaveProgress ${WF_PBM_SETBARCOLOR} 0 0xD76428
+  SendMessage $UnWaveProgress ${WF_PBM_SETBKCOLOR} 0 0xF8F4F0
   GetDlgItem $0 $UnWavePage 1006
   System::Call "user32::MoveWindow(p $0, i 304, i 232, i 512, i 30, i 1)"
   GetDlgItem $0 $UnWavePage 1005
@@ -1739,9 +1740,9 @@ Function un.WaveUnFinishCreate
   Call un.WaveHideBuilderButtons
   ${NSD_CreateBitmap} 0 0 ${WF_W} ${WF_H} ""
   Pop $UnWaveBackground
-  ${NSD_SetBitmap} $UnWaveBackground "$PLUGINSDIR\unfinish-dark.bmp" $UnWaveBackgroundImage
+  ${NSD_SetBitmap} $UnWaveBackground "$PLUGINSDIR\unfinish-light.bmp" $UnWaveBackgroundImage
   Call un.WaveCreateClose
-  !insertmacro WaveUnLoadImage $UnWaveButtonImage "btn-primary-dark-完成卸载.bmp"
+  !insertmacro WaveUnLoadImage $UnWaveButtonImage "btn-primary-light-完成卸载.bmp"
   ${NSD_CreateBitmap} 700 452 160 44 ""
   Pop $UnWaveButton
   ${NSD_AddStyle} $UnWaveButton ${WF_SS_NOTIFY}|${WF_WS_TABSTOP}

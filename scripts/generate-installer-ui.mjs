@@ -19,14 +19,18 @@ const ANIM_W = 600
 const ANIM_H = H - ANIM_Y
 const FRAME_COUNT = 16
 const CLOSE_LEVELS = 6
+const SS_SCALE = 4
+const DPI_SCALES = [1]
 
 const THEMES = {
-  dark: { bg: '#0F172A', rail: '#101B31', panel: '#162033', panel2: '#1B2940', tx: '#E8EEF8', sub: '#9AAAC0', brand: '#4B91F7', brand2: '#22C7A9', border: '#31425C', edit: '#111C2F' },
-  light: { bg: '#F7F9FC', rail: '#101B31', panel: '#FFFFFF', panel2: '#F0F4F9', tx: '#172033', sub: '#607086', brand: '#246BCE', brand2: '#078B77', border: '#CCD6E3', edit: '#FFFFFF' },
+  dark: { railInk: '#EAF0F8', railSub: '#8FA1B7', railDone: '#C6D2E0', railDot: '#3A4B62', bg: '#151D29', rail: '#111925', panel: '#1D2838', panel2: '#263448', tx: '#EAF0F8', sub: '#AAB8CB', brand: '#4075DD', brand2: '#DDA177', border: '#35465D', edit: '#182231' },
+  light: { railInk: '#1B2A3E', railSub: '#596B80', railDone: '#5F7288', railDot: '#D2DCE6', bg: '#F8FAFC', rail: '#EEF3F8', panel: '#FFFFFF', panel2: '#F0F4F8', tx: '#18273B', sub: '#596B80', brand: '#2864D7', brand2: '#B45B28', border: '#D6E0EA', edit: '#FFFFFF' },
 }
 const PHASES = ['欢迎', '用户协议', '安装目录', '正在安装', '安装完成']
 
 function encodeBmp(width, height, rgb) {
+  width = Math.round(width)
+  height = Math.round(height)
   const rowSize = Math.ceil((width * 3) / 4) * 4
   const buf = Buffer.alloc(54 + rowSize * height)
   buf.write('BM', 0, 'ascii')
@@ -51,7 +55,12 @@ function encodeBmp(width, height, rgb) {
 }
 
 async function svgToRgb(svg, width, height) {
-  const { data, info } = await sharp(Buffer.from(svg)).raw().toBuffer({ resolveWithObject: true })
+  // 位图按逻辑坐标排版，但以 SS_SCALE 倍率栅格化后再精确下采样：低位深 BMP 没有 alpha，
+  // 直接 1× 渲染的圆角、描边和中文小字边缘会发毛。超采样后边缘才是干净的抗锯齿。
+  const { data, info } = await sharp(Buffer.from(svg), { density: 72 * SS_SCALE })
+    .resize(Math.round(width), Math.round(height), { fit: 'fill', kernel: 'lanczos3' })
+    .raw()
+    .toBuffer({ resolveWithObject: true })
   const rgb = Buffer.alloc(width * height * 3)
   for (let i = 0; i < width * height; i += 1) {
     const p = i * info.channels
@@ -80,22 +89,25 @@ function esc(value) {
 }
 
 function rail(theme, phase, phaseNames = PHASES) {
+  const t = THEMES[theme]
+  const railText = t.railInk
+  const railSub = t.railSub
   let steps = ''
   phaseNames.forEach((name, index) => {
     const n = index + 1
     const y = 218 + index * 53
     const done = n < phase
     const active = n === phase
-    steps += `<circle cx="47" cy="${y}" r="8" fill="${done ? '#22C7A9' : active ? '#4B91F7' : '#33445D'}"/>
-      <text x="47" y="${y + 4}" font-family="${FONT}" font-size="10" font-weight="700" fill="#fff" text-anchor="middle">${done ? '✓' : n}</text>
-      <text x="72" y="${y + 5}" font-family="${FONT}" font-size="14" font-weight="${active ? 700 : 400}" fill="${active ? '#FFFFFF' : done ? '#A8B8CC' : '#65758B'}">${name}</text>`
+    steps += `<circle cx="47" cy="${y}" r="8" fill="${done ? t.brand2 : active ? t.brand : t.railDot}"/>
+      <text x="47" y="${y + 4}" font-family="${FONT}" font-size="10" font-weight="700" fill="${active || done ? '#FFFFFF' : railText}" text-anchor="middle">${done ? '✓' : n}</text>
+      <text x="72" y="${y + 5}" font-family="${FONT}" font-size="14" font-weight="${active ? 700 : 400}" fill="${active ? railText : done ? t.railDone : railSub}">${name}</text>`
   })
   return `<rect width="${W}" height="${H}" fill="${THEMES[theme].bg}"/><rect width="${RAIL}" height="${H}" fill="${THEMES[theme].rail}"/>
     <image href="data:image/png;base64,${logoB64}" x="72" y="28" width="88" height="88"/>
-    <text x="116" y="145" font-family="${FONT}" font-size="19" font-weight="700" fill="#fff" text-anchor="middle">HyperPlayer</text>
-    <text x="116" y="168" font-family="${FONT}" font-size="12" fill="#9FC3FF" text-anchor="middle">Hyper Player</text>
-    <rect x="46" y="188" width="140" height="2" rx="1" fill="#4B91F7"/>${steps}
-    <text x="116" y="488" font-family="${FONT}" font-size="11" fill="#607086" text-anchor="middle">NATIVE SETUP</text>`
+    <text x="116" y="145" font-family="${FONT}" font-size="19" font-weight="700" fill="${railText}" text-anchor="middle">HyperPlayer</text>
+    <text x="116" y="168" font-family="${FONT}" font-size="12" letter-spacing="1.4" fill="${t.brand}" text-anchor="middle">HYPER PLAYER</text>
+    <rect x="46" y="188" width="140" height="2" rx="1" fill="${t.brand}"/>${steps}
+    <text x="116" y="488" font-family="${FONT}" font-size="11" letter-spacing="1.6" fill="${railSub}" text-anchor="middle">NATIVE SETUP</text>`
 }
 
 function heading(theme, title, sub) {
@@ -108,7 +120,7 @@ function footerBase(theme) {
   const t = THEMES[theme]
   return `<rect x="0" y="${ANIM_Y}" width="${RAIL}" height="${ANIM_H}" fill="${t.rail}"/>
     <rect x="${RAIL}" y="${ANIM_Y}" width="${W - RAIL}" height="${ANIM_H}" fill="${t.bg}"/>
-    <text x="116" y="566" font-family="${FONT}" font-size="12" fill="#607086" text-anchor="middle">v${APP_VERSION}</text>`
+    <text x="116" y="566" font-family="${FONT}" font-size="11" fill="${t.railSub}" text-anchor="middle">v${APP_VERSION}</text>`
 }
 
 function ambientStrip(theme, frame, yOffset = 0) {
@@ -116,9 +128,9 @@ function ambientStrip(theme, frame, yOffset = 0) {
   const phase = 2 * Math.PI * frame / FRAME_COUNT
   const x1 = 420 + 72 * Math.cos(phase)
   const x2 = 690 + 54 * Math.cos(phase + Math.PI)
-  const a1 = (0.105 + 0.025 * Math.sin(phase)).toFixed(4)
-  const a2 = (0.075 + 0.018 * Math.sin(phase + Math.PI / 2)).toFixed(4)
-  const lineA = (0.12 + 0.025 * Math.sin(phase + Math.PI / 3)).toFixed(4)
+  const a1 = ((theme === 'light' ? 0.07 : 0.105) + 0.02 * Math.sin(phase)).toFixed(4)
+  const a2 = ((theme === 'light' ? 0.05 : 0.075) + 0.014 * Math.sin(phase + Math.PI / 2)).toFixed(4)
+  const lineA = ((theme === 'light' ? 0.09 : 0.12) + 0.02 * Math.sin(phase + Math.PI / 3)).toFixed(4)
   return `<defs><filter id="ambientBlur"><feGaussianBlur stdDeviation="18"/></filter></defs>
     <ellipse cx="${x1.toFixed(2)}" cy="${552 - yOffset}" rx="250" ry="20" fill="${t.brand}" opacity="${a1}" filter="url(#ambientBlur)"/>
     <ellipse cx="${x2.toFixed(2)}" cy="${566 - yOffset}" rx="205" ry="15" fill="${t.brand2}" opacity="${a2}" filter="url(#ambientBlur)"/>
@@ -126,8 +138,8 @@ function ambientStrip(theme, frame, yOffset = 0) {
     <path d="M330 ${569 - yOffset}H414 M590 ${543 - yOffset}H705" stroke="${t.brand2}" stroke-width="1" opacity="${a2}"/>`
 }
 
-function windowBorder(theme = 'dark') {
-  const color = theme === 'light' ? '#BCC8D7' : '#3B4D67'
+function windowBorder(theme = 'light') {
+  const color = theme === 'light' ? '#DCE4EC' : '#2B3A4E'
   return `<rect x="0.5" y="0.5" width="879" height="579" rx="14" fill="none" stroke="${color}" stroke-width="1"/>`
 }
 
@@ -135,31 +147,43 @@ function pageSvg(theme, phase, title, sub, body, phaseNames = PHASES) {
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${rail(theme, phase, phaseNames)}${heading(theme, title, sub)}${body(THEMES[theme])}${footerBase(theme)}${ambientStrip(theme, 0)}${windowBorder(theme)}</svg>`
 }
 
-function themePage(frame = 0) {
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
-    <defs><linearGradient id="themeBg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0B1220"/><stop offset=".55" stop-color="#14274D"/><stop offset="1" stop-color="#0A162C"/></linearGradient></defs>
-    <rect width="${W}" height="${H}" fill="url(#themeBg)"/><circle cx="440" cy="115" r="180" fill="#2D76DB" opacity=".11"/>
-    <image href="data:image/png;base64,${logoB64}" x="388" y="34" width="104" height="104"/>
-    <text x="440" y="185" font-family="${FONT}" font-size="32" font-weight="700" fill="#fff" text-anchor="middle">HyperPlayer</text>
-    <text x="440" y="218" font-family="${FONT}" font-size="13" fill="#A8B8CC" text-anchor="middle">选择界面主题和安装范围</text>
-    <rect x="245" y="246" width="390" height="34" rx="8" fill="#0C172B" stroke="#334968"/>
-    ${cardSvg(true, false, 138, 304)}${cardSvg(false, false, 458, 304)}
-    <rect y="${ANIM_Y}" width="${W}" height="${ANIM_H}" fill="#0A162C"/>${ambientStrip('dark', frame)}
-    <text x="440" y="566" font-family="${FONT}" font-size="12" fill="#7890AD" text-anchor="middle">v${APP_VERSION}</text>
-    ${windowBorder('dark')}
+function themePage(frame = 0, scopeSelected = 'current') {
+  const t = THEMES.light
+  // 这两个胶囊要和 installer.nsh 里原生单选控件的可点击区域对齐（250,140 与 390,140），
+  // 否则点上去高亮和底图会错位。
+  const scope = (x, width, text, selected) => `<rect x="${x}" y="246" width="${width}" height="34" rx="17" fill="${selected ? t.brand : t.panel}" stroke="${selected ? t.brand : t.border}"/><text x="${x + width / 2}" y="267" font-family="${FONT}" font-size="11" fill="${selected ? '#FFFFFF' : t.sub}" text-anchor="middle">${text}</text>`
+  return `<svg width="${W * SS_SCALE}" height="${H * SS_SCALE}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    <defs><linearGradient id="themeBg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F4F8FD"/><stop offset=".58" stop-color="#FFFFFF"/><stop offset="1" stop-color="#EEF4FB"/></linearGradient>
+      <linearGradient id="brandWash" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#2864D7" stop-opacity=".15"/><stop offset="1" stop-color="#B45B28" stop-opacity=".09"/></linearGradient></defs>
+    <rect width="${W}" height="${H}" fill="url(#themeBg)"/>
+    <circle cx="452" cy="96" r="196" fill="url(#brandWash)"/>
+    <image href="data:image/png;base64,${logoB64}" x="58" y="26" width="92" height="92"/>
+    <text x="820" y="66" font-family="${FONT}" font-size="10.5" letter-spacing="2" fill="#8A9AAC" text-anchor="end">H Y P E R P L A Y E R</text>
+    <text x="440" y="186" font-family="${FONT}" font-size="32" font-weight="700" fill="${t.tx}" text-anchor="middle">HyperPlayer</text>
+    <text x="440" y="214" font-family="${FONT}" font-size="12.5" fill="${t.sub}" text-anchor="middle">选一个界面色调，后面几步就按这个色调显示</text>
+    ${scope(250, 140, '当前用户', scopeSelected === 'current')}${scope(390, 220, '所有用户（需要管理员权限）', scopeSelected === 'all')}
+    ${cardSvg(false, false, 138, 304)}${cardSvg(true, false, 458, 304)}
+    <rect y="${ANIM_Y}" width="${W}" height="${ANIM_H}" fill="#EEF3F8"/>${ambientStrip('light', frame)}
+    <text x="440" y="566" font-family="${FONT}" font-size="11" fill="${t.railSub}" text-anchor="middle">v${APP_VERSION}</text>
+    ${windowBorder('light')}
   </svg>`
 }
 
 function cardSvg(dark, hover, x = 0, y = 0) {
-  const bg = dark ? (hover ? '#213354' : '#17243D') : (hover ? '#F6FAFF' : '#FFFFFF')
-  const tx = dark ? '#FFFFFF' : '#172033'
-  const sub = dark ? '#A8B8CC' : '#607086'
-  const border = hover ? '#4B91F7' : dark ? '#334968' : '#D5DEE9'
-  return `<g transform="translate(${x},${y})"><rect width="284" height="172" rx="8" fill="${bg}" stroke="${border}" stroke-width="${hover ? 2 : 1}"/>
-    <text x="24" y="42" font-family="${FONT}" font-size="20" font-weight="700" fill="${tx}">${dark ? '深色模式' : '浅色模式'}</text>
-    <text x="24" y="69" font-family="${FONT}" font-size="12" fill="${sub}">${dark ? '沉稳专注，适合低光环境' : '清晰明亮，适合日间使用'}</text>
-    ${['#0F172A', '#1E293B', '#4B91F7', '#22C7A9'].map((c, i) => `<rect x="${24 + i * 38}" y="103" width="30" height="22" rx="4" fill="${dark ? c : ['#F7F9FC', '#FFFFFF', '#246BCE', '#078B77'][i]}" stroke="${dark ? '#3B4A62' : '#D7E0EA'}"/>`).join('')}
-    <text x="24" y="151" font-family="${FONT}" font-size="11" fill="${hover ? '#4B91F7' : sub}">${hover ? '点击应用此主题  →' : '点击选择'}</text></g>`
+  const t = dark ? THEMES.dark : THEMES.light
+  const bg = hover ? (dark ? '#22303F' : '#FFFFFF') : t.panel
+  const border = hover ? t.brand : t.border
+  const panelBg = dark ? '#111925' : '#EEF3F8'
+  return `<g transform="translate(${x},${y})"><rect x="0.5" y="0.5" width="283" height="171" rx="12" fill="${bg}" stroke="${border}" stroke-width="${hover ? 2 : 1}"/>
+    <rect x="24" y="24" width="236" height="66" rx="8" fill="${panelBg}"/>
+    <rect x="36" y="36" width="34" height="42" rx="4" fill="${t.brand}"/>
+    <rect x="82" y="38" width="96" height="7" rx="3.5" fill="${t.tx}"/>
+    <rect x="82" y="54" width="142" height="5" rx="2.5" fill="${t.sub}"/>
+    <rect x="82" y="68" width="62" height="5" rx="2.5" fill="${t.brand2}"/>
+    <rect x="24" y="103" width="236" height="1" fill="${t.border}"/>
+    <text x="24" y="128" font-family="${FONT}" font-size="16" font-weight="700" fill="${t.tx}">${dark ? '深色模式' : '亮色模式'}</text>
+    <text x="24" y="148" font-family="${FONT}" font-size="11" fill="${hover ? t.brand : t.sub}">${dark ? '夜里看不刺眼' : '默认，白天更清楚'}</text>
+    <text x="260" y="140" font-family="${FONT}" font-size="15" font-weight="700" fill="${hover ? t.brand : t.sub}" text-anchor="end">${hover ? '→' : ''}</text></g>`
 }
 
 function wrapText(text, maxChars = 20) {
@@ -217,14 +241,14 @@ function dirBody(t) {
 }
 
 const pages = {
-  welcome: [1, '欢迎使用 HyperPlayer', '准备好你的沉浸式音乐工作台', (t) => `<rect x="${CX}" y="148" width="560" height="246" rx="8" fill="${t.panel}" stroke="${t.border}"/>
+  welcome: [1, '欢迎使用 HyperPlayer', '几步装完，随时可以开始听歌', (t) => `<rect x="${CX}" y="148" width="560" height="246" rx="8" fill="${t.panel}" stroke="${t.border}"/>
     <text x="${CX + 28}" y="184" font-family="${FONT}" font-size="13" font-weight="700" fill="${t.brand}">安装内容</text>
-    ${['多平台音乐播放与曲库管理', '无缝衔接、智能混音与音频可视化', '桌面组件、歌词与沉浸式背景', '本地配置、缓存与可选模型支持'].map((x, i) => `<circle cx="${CX + 34}" cy="${220 + i * 42}" r="4" fill="${i % 2 ? t.brand2 : t.brand}"/><text x="${CX + 51}" y="${225 + i * 42}" font-family="${FONT}" font-size="13" fill="${t.tx}">${x}</text>`).join('')}
+    ${['网易云 / QQ / B站 MV 三音源', '固定淡入淡出、专辑无缝与切歌提示', 'HSE 音效、空间音频与桌面歌词', '本地配置、缓存与播放列表'].map((x, i) => `<circle cx="${CX + 34}" cy="${220 + i * 42}" r="4" fill="${i % 2 ? t.brand2 : t.brand}"/><text x="${CX + 51}" y="${225 + i * 42}" font-family="${FONT}" font-size="13" fill="${t.tx}">${x}</text>`).join('')}
     <text x="${CX + 28}" y="377" font-family="${FONT}" font-size="10.5" fill="${t.sub}">继续前请关闭正在运行的 HyperPlayer，以便完整更新程序文件。</text>`],
   license: [2, '重点条款摘要', '本页不替代完整《法律声明与用户协议》；首次启动可查看全文', licenseBody],
-  dir: [3, '选择安装位置', '路径可编辑；空间信息将随目录更新', dirBody],
-  inst: [4, '正在安装', '正在部署 HyperPlayer', (t) => `<rect x="${CX}" y="148" width="560" height="122" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="${CX + 24}" y="181" font-family="${FONT}" font-size="11" fill="${t.sub}">安装进度</text><rect x="${CX + 24}" y="204" width="512" height="12" rx="6" fill="${t.panel2}"/><text x="${CX + 24}" y="248" font-family="${FONT}" font-size="11" fill="${t.sub}">正在准备文件...</text>`],
-  finish: [5, '安装完成', 'HyperPlayer 已准备就绪', (t) => `<circle cx="560" cy="224" r="58" fill="${t.brand2}" opacity=".12"/><circle cx="560" cy="224" r="38" fill="${t.brand2}"/><path d="M540 224l13 13 28-31" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><rect x="${CX}" y="310" width="560" height="62" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="560" y="336" font-family="${FONT}" font-size="11" fill="${t.sub}" text-anchor="middle">安装目录</text>`],
+  dir: [3, '选择安装位置', '路径可以直接改，空间大小会跟着变', dirBody],
+  inst: [4, '正在安装', '正在把 HyperPlayer 写入磁盘', (t) => `<rect x="${CX}" y="148" width="560" height="122" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="${CX + 24}" y="181" font-family="${FONT}" font-size="11" fill="${t.sub}">安装进度</text><rect x="${CX + 24}" y="204" width="512" height="12" rx="6" fill="${t.panel2}"/><text x="${CX + 24}" y="248" font-family="${FONT}" font-size="11" fill="${t.sub}">正在准备文件...</text>`],
+  finish: [5, '安装完成', '装好了，可以直接打开', (t) => `<circle cx="560" cy="224" r="58" fill="${t.brand2}" opacity=".12"/><circle cx="560" cy="224" r="38" fill="${t.brand2}"/><path d="M540 224l13 13 28-31" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><rect x="${CX}" y="310" width="560" height="62" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="560" y="336" font-family="${FONT}" font-size="11" fill="${t.sub}" text-anchor="middle">安装目录</text>`],
 }
 
 function buttonSvg(w, h, text, kind, theme, state) {
@@ -236,14 +260,14 @@ function buttonSvg(w, h, text, kind, theme, state) {
   let fill = primary ? t.brand : t.panel
   let border = primary ? t.brand : t.border
   let fg = primary ? '#FFFFFF' : t.tx
-  if (hover) fill = primary ? (theme === 'dark' ? '#66A5FA' : '#175BB8') : t.panel2
-  if (pressed) fill = primary ? (theme === 'dark' ? '#2D6FCA' : '#134E9F') : (theme === 'dark' ? '#101A2A' : '#E3E9F1')
-  if (disabled) { fill = theme === 'dark' ? '#273449' : '#DCE3EC'; border = fill; fg = theme === 'dark' ? '#718198' : '#8A98AA' }
+  if (hover) fill = primary ? (theme === 'dark' ? '#5A8BE8' : '#1C50B6') : t.panel2
+  if (pressed) fill = primary ? (theme === 'dark' ? '#3566C4' : '#153E90') : (theme === 'dark' ? '#1B2533' : '#E4EAF1')
+  if (disabled) { fill = theme === 'dark' ? '#273449' : '#E7EDF4'; border = fill; fg = theme === 'dark' ? '#718198' : '#98A7B8' }
   const y = pressed ? 1 : 0
   const content = text === '浏览'
     ? `<path d="M${w / 2 - 11} ${17 + y}h9l4 4h10v12h-23z" fill="none" stroke="${fg}" stroke-width="2" stroke-linejoin="round"/>`
     : `<text x="${w / 2}" y="${h / 2 + 5 + y}" font-family="${FONT}" font-size="14" font-weight="600" fill="${fg}" text-anchor="middle">${esc(text)}</text>`
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg"><rect width="${w}" height="${h}" fill="${t.bg}"/><rect x="1" y="${1 + y}" width="${w - 2}" height="${h - 3}" rx="7" fill="${fill}" stroke="${border}"/>${content}</svg>`
+  return `<svg width="${w * SS_SCALE}" height="${h * SS_SCALE}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg"><rect width="${w}" height="${h}" fill="${t.bg}"/><rect x="1" y="${1 + y}" width="${w - 2}" height="${h - 3}" rx="7" fill="${fill}" stroke="${border}"/>${content}</svg>`
 }
 
 function checkSvg(w, text, theme, checked, kind) {
@@ -252,27 +276,27 @@ function checkSvg(w, text, theme, checked, kind) {
   return `<svg width="${w}" height="34" viewBox="0 0 ${w} 34" xmlns="http://www.w3.org/2000/svg"><rect width="${w}" height="34" fill="${t.bg}"/><rect x="1" y="1" width="32" height="32" rx="7" fill="${checked ? accent : t.panel}" stroke="${checked ? accent : t.border}" stroke-width="1.5"/>${checked ? '<path d="M9 17l6 6 11-13" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' : ''}<text x="44" y="22" font-family="${FONT}" font-size="13" font-weight="600" fill="${t.tx}">${esc(text)}</text></svg>`
 }
 
-function scopeSvg(width, text, selected, hover = false) {
-  const bg = '#10203B'
-  const border = selected || hover ? '#4B91F7' : '#334968'
-  return `<svg width="${width}" height="34" viewBox="0 0 ${width} 34" xmlns="http://www.w3.org/2000/svg"><rect width="${width}" height="34" fill="${bg}"/><circle cx="17" cy="17" r="8" fill="#0C172B" stroke="${border}" stroke-width="1.5"/>${selected ? '<circle cx="17" cy="17" r="4" fill="#4B91F7"/>' : ''}<text x="34" y="21" font-family="${FONT}" font-size="11" fill="#C5D2E3">${esc(text)}</text></svg>`
-}
-
-function compositeClose(baseRgb, level) {
+function compositeClose(baseRgb, level, size = 40) {
+  // 关闭按钮按目标边长等比合成，圆形与叉号比例保持一致。
   const out = Buffer.from(baseRgb)
   const alpha = level / (CLOSE_LEVELS - 1)
-  for (let y = 0; y < 40; y += 1) {
-    for (let x = 0; x < 40; x += 1) {
-      const distance = Math.hypot(x - 19.5, y - 19.5)
-      const circle = Math.max(0, Math.min(1, 15.5 - distance)) * alpha
+  const k = size / 40
+  const cx = 19.5 * k
+  const rOuter = 15.5 * k
+  const rStroke = 10 * k
+  const strokeHalf = 1.15 * k
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const distance = Math.hypot(x - cx, y - cx)
+      const circle = Math.max(0, Math.min(1, rOuter - distance)) * alpha
       const d1 = Math.abs(x - y) / Math.SQRT2
-      const d2 = Math.abs(x + y - 39) / Math.SQRT2
-      const stroke = distance < 10 && Math.min(d1, d2) < 1.15 ? alpha : 0
-      const i = (y * 40 + x) * 3
+      const d2 = Math.abs(x + y - 2 * cx) / Math.SQRT2
+      const stroke = distance < rStroke && Math.min(d1, d2) < strokeHalf ? alpha : 0
+      const i = (y * size + x) * 3
       if (circle > 0) {
         out[i] = Math.round(out[i] * (1 - circle) + 200 * circle)
-        out[i + 1] = Math.round(out[i + 1] * (1 - circle) + 62 * circle)
-        out[i + 2] = Math.round(out[i + 2] * (1 - circle) + 77 * circle)
+        out[i + 1] = Math.round(out[i + 1] * (1 - circle) + 60 * circle)
+        out[i + 2] = Math.round(out[i + 2] * (1 - circle) + 60 * circle)
       }
       if (stroke > 0) {
         out[i] = Math.round(out[i] * (1 - stroke) + 255 * stroke)
@@ -286,29 +310,40 @@ function compositeClose(baseRgb, level) {
 
 rmSync(OUT, { recursive: true, force: true })
 mkdirSync(OUT, { recursive: true })
-const themeRgb = await svgToRgb(themePage(), W, H)
-writeFileSync(join(OUT, 'theme.bmp'), encodeBmp(W, H, themeRgb))
+for (const S of DPI_SCALES) {
+  const write = (name, buffer) => writeFileSync(join(OUT, name), buffer)
+const themeRgb = await svgToRgb(themePage(), W * S, H * S)
+write('theme.bmp', encodeBmp(W * S, H * S, themeRgb))
 for (const name of ['dark', 'light']) {
-  const normal = cropRgb(themeRgb, W, name === 'dark' ? 138 : 458, 304, 284, 172)
-  const hoverRgb = await svgToRgb(`<svg width="284" height="172" xmlns="http://www.w3.org/2000/svg">${cardSvg(name === 'dark', true)}</svg>`, 284, 172)
-  writeFileSync(join(OUT, `card-${name}.bmp`), encodeBmp(284, 172, normal))
-  writeFileSync(join(OUT, `card-${name}-hover.bmp`), encodeBmp(284, 172, hoverRgb))
-  writeFileSync(join(OUT, `card-${name}-pressed.bmp`), encodeBmp(284, 172, hoverRgb))
+  const cx = (name === 'dark' ? 458 : 138) * S
+  const normal = cropRgb(themeRgb, W * S, cx, 304 * S, 284 * S, 172 * S)
+  const hoverRgb = await svgToRgb(`<svg width="${284 * SS_SCALE}" height="${172 * SS_SCALE}" viewBox="0 0 284 172" xmlns="http://www.w3.org/2000/svg">${cardSvg(name === 'dark', true)}</svg>`, 284 * S, 172 * S)
+  write(`card-${name}.bmp`, encodeBmp(284 * S, 172 * S, normal))
+  write(`card-${name}-hover.bmp`, encodeBmp(284 * S, 172 * S, hoverRgb))
+  write(`card-${name}-pressed.bmp`, encodeBmp(284 * S, 172 * S, hoverRgb))
 }
 
-for (const [name, [phase, title, sub, body]] of Object.entries(pages)) {
-  for (const theme of ['dark', 'light']) writeFileSync(join(OUT, `${name}-${theme}.bmp`), await svgToBmp(pageSvg(theme, phase, title, sub, body), W, H))
+const pageCache = new Map()
+const pageRgb = async (theme, page, phases = PHASES) => {
+  const key = `${page[1]}|${theme}|${phases.join('/')}`
+  if (!pageCache.has(key)) pageCache.set(key, await svgToRgb(pageSvg(theme, ...page, phases), W * S, H * S))
+  return pageCache.get(key)
+}
+const emitPage = async (name, theme, page, phases = PHASES) => write(`${name}-${theme}.bmp`, encodeBmp(W * S, H * S, await pageRgb(theme, page, phases)))
+
+for (const [name, page] of Object.entries(pages)) {
+  for (const theme of ['dark', 'light']) await emitPage(name, theme, page)
 }
 
 for (const theme of ['dark', 'light']) {
   for (let frame = 0; frame < FRAME_COUNT; frame += 1) {
-    const svg = `<svg width="${ANIM_W}" height="${ANIM_H}" viewBox="${ANIM_X} 0 ${ANIM_W} ${ANIM_H}" xmlns="http://www.w3.org/2000/svg">${footerBase(theme).replaceAll(`y="${ANIM_Y}"`, 'y="0"').replace('y="566"', 'y="34"')}${ambientStrip(theme, frame, ANIM_Y)}</svg>`
-    writeFileSync(join(OUT, `anim-${theme}-${frame}.bmp`), await svgToBmp(svg, ANIM_W, ANIM_H))
+    const svg = `<svg width="${ANIM_W * SS_SCALE}" height="${ANIM_H * SS_SCALE}" viewBox="${ANIM_X} 0 ${ANIM_W} ${ANIM_H}" xmlns="http://www.w3.org/2000/svg">${footerBase(theme).replaceAll(`y="${ANIM_Y}"`, 'y="0"').replace('y="566"', 'y="34"')}${ambientStrip(theme, frame, ANIM_Y)}</svg>`
+    write(`anim-${theme}-${frame}.bmp`, await svgToBmp(svg, ANIM_W * S, ANIM_H * S))
   }
 }
 for (let frame = 0; frame < FRAME_COUNT; frame += 1) {
-  const rgb = await svgToRgb(themePage(frame), W, H)
-  writeFileSync(join(OUT, `anim-theme-${frame}.bmp`), encodeBmp(ANIM_W, ANIM_H, cropRgb(rgb, W, ANIM_X, ANIM_Y, ANIM_W, ANIM_H)))
+  const rgb = await svgToRgb(themePage(frame), W * S, H * S)
+  write(`anim-theme-${frame}.bmp`, encodeBmp(ANIM_W * S, ANIM_H * S, cropRgb(rgb, W * S, ANIM_X * S, ANIM_Y * S, ANIM_W * S, ANIM_H * S)))
 }
 
 const buttons = [['下一步', 'primary', 160], ['同意并继续', 'primary', 200], ['安装', 'primary', 160], ['立即打开', 'primary', 160], ['取消安装', 'secondary', 160], ['上一步', 'secondary', 120], ['完成', 'secondary', 120], ['浏览', 'secondary', 52]]
@@ -316,42 +351,47 @@ for (const theme of ['dark', 'light']) {
   for (const [text, kind, width] of buttons) {
     for (const state of ['normal', 'hover', 'pressed', 'disabled']) {
       const suffix = state === 'normal' ? '' : `-${state}`
-      writeFileSync(join(OUT, `btn-${kind}-${theme}-${text}${suffix}.bmp`), await svgToBmp(buttonSvg(width, 44, text, kind, theme, state), width, 44))
+      write(`btn-${kind}-${theme}-${text}${suffix}.bmp`, await svgToBmp(buttonSvg(width, 44, text, kind, theme, state), width * S, 44 * S))
     }
   }
   for (const [kind, text, width] of [['agreement', '我已阅读并同意完整《法律声明与用户协议》', 380], ['desktop', '创建桌面快捷方式', 260]]) {
-    for (const checked of [false, true]) writeFileSync(join(OUT, `${kind}-${theme}-${checked ? 'checked' : 'unchecked'}.bmp`), await svgToBmp(checkSvg(width, text, theme, checked, kind), width, 34))
+    for (const checked of [false, true]) write(`${kind}-${theme}-${checked ? 'checked' : 'unchecked'}.bmp`, await svgToBmp(checkSvg(width, text, theme, checked, kind), width * S, 34 * S))
   }
 }
 const closePages = {
   theme: themeRgb,
-  dark: await svgToRgb(pageSvg('dark', ...pages.welcome), W, H),
-  light: await svgToRgb(pageSvg('light', ...pages.welcome), W, H),
+  dark: await svgToRgb(pageSvg('dark', ...pages.welcome), W * S, H * S),
+  light: await svgToRgb(pageSvg('light', ...pages.welcome), W * S, H * S),
 }
 for (const [theme, page] of Object.entries(closePages)) {
-  const base = cropRgb(page, W, 828, 10, 40, 40)
+  const base = cropRgb(page, W * S, 828 * S, 10 * S, 40 * S, 40 * S)
   for (let level = 0; level < CLOSE_LEVELS; level += 1) {
-    writeFileSync(join(OUT, `close-${theme}-${level}.bmp`), encodeBmp(40, 40, compositeClose(base, level)))
+    write(`close-${theme}-${level}.bmp`, encodeBmp(40 * S, 40 * S, compositeClose(base, level, 40 * S)))
   }
 }
-for (const [name, text, width] of [['current', '当前用户', 140], ['all', '所有用户（需要管理员权限）', 220]]) {
-  for (const selected of [false, true]) {
-    writeFileSync(join(OUT, `scope-${name}-${selected ? 'selected' : 'normal'}.bmp`), await svgToBmp(scopeSvg(width, text, selected), width, 34))
-  }
+// 范围选择叠加图直接从主题页底图对应区域裁出（两种选中态各裁一次），
+// 这样叠在底图上不会露出异色矩形把胶囊盖成白条。
+for (const [state, selected] of [['selected', 'current'], ['normal', 'all']]) {
+  const rgb = await svgToRgb(themePage(0, selected), W * S, H * S)
+  write(`scope-current-${state}.bmp`, encodeBmp(140 * S, 34 * S, cropRgb(rgb, W * S, 250 * S, 246 * S, 140 * S, 34 * S)))
+  write(`scope-all-${state}.bmp`, encodeBmp(220 * S, 34 * S, cropRgb(rgb, W * S, 390 * S, 246 * S, 220 * S, 34 * S)))
 }
 
 const uninstallPages = {
-  unconfirm: [1, '卸载 HyperPlayer', '确认要从此电脑移除程序文件', (t) => `<rect x="${CX}" y="142" width="560" height="250" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="${CX + 24}" y="180" font-family="${FONT}" font-size="12" font-weight="700" fill="${t.tx}">将移除</text><text x="${CX + 24}" y="208" font-family="${FONT}" font-size="11" fill="${t.sub}">HyperPlayer 程序文件、开始菜单与桌面快捷方式</text><rect x="${CX + 24}" y="230" width="512" height="1" fill="${t.border}"/><text x="${CX + 24}" y="264" font-family="${FONT}" font-size="12" font-weight="700" fill="${t.brand2}">默认保留本地数据</text><text x="${CX + 24}" y="290" font-family="${FONT}" font-size="11" fill="${t.tx}">配置、登录凭据、缓存、歌单和分析数据不会删除</text><text x="${CX + 24}" y="326" font-family="${FONT}" font-size="10.5" fill="${t.sub}">安装目录</text><text x="${CX + 24}" y="357" font-family="${FONT}" font-size="10.5" fill="${t.sub}">安装范围</text>`],
-  uninst: [2, '正在移除组件', '请稍候，卸载器正在清理程序文件', pages.inst[3]],
-  unfinish: [3, '卸载完成', 'HyperPlayer 程序文件已从此电脑移除', pages.finish[3]],
+  unconfirm: [1, '卸载 HyperPlayer', '确认后开始删除程序文件', (t) => `<rect x="${CX}" y="142" width="560" height="250" rx="8" fill="${t.panel}" stroke="${t.border}"/><text x="${CX + 24}" y="180" font-family="${FONT}" font-size="12" font-weight="700" fill="${t.tx}">将移除</text><text x="${CX + 24}" y="208" font-family="${FONT}" font-size="11" fill="${t.sub}">HyperPlayer 程序文件、开始菜单与桌面快捷方式</text><rect x="${CX + 24}" y="230" width="512" height="1" fill="${t.border}"/><text x="${CX + 24}" y="264" font-family="${FONT}" font-size="12" font-weight="700" fill="${t.brand2}">默认保留本地数据</text><text x="${CX + 24}" y="290" font-family="${FONT}" font-size="11" fill="${t.tx}">配置、登录凭据、缓存、歌单和分析数据不会删除</text><text x="${CX + 24}" y="326" font-family="${FONT}" font-size="10.5" fill="${t.sub}">安装目录</text><text x="${CX + 24}" y="357" font-family="${FONT}" font-size="10.5" fill="${t.sub}">安装范围</text>`],
+  uninst: [2, '正在移除组件', '正在删除程序文件，请稍候', pages.inst[3]],
+  unfinish: [3, '卸载完成', '程序文件已删除，本地数据保留', pages.finish[3]],
 }
 const UNINSTALL_PHASES = ['确认卸载', '移除组件', '完成']
-for (const [name, page] of Object.entries(uninstallPages)) writeFileSync(join(OUT, `${name}-dark.bmp`), await svgToBmp(pageSvg('dark', ...page, UNINSTALL_PHASES), W, H))
+for (const [name, page] of Object.entries(uninstallPages)) {
+  for (const theme of ['light', 'dark']) await emitPage(name, theme, page, UNINSTALL_PHASES)
+}
 for (const [text, kind, width] of [['开始卸载', 'primary', 160], ['取消', 'secondary', 120], ['完成卸载', 'primary', 160]]) {
   for (const state of ['normal', 'hover', 'pressed', 'disabled']) {
     const suffix = state === 'normal' ? '' : `-${state}`
-    writeFileSync(join(OUT, `btn-${kind}-dark-${text}${suffix}.bmp`), await svgToBmp(buttonSvg(width, 44, text, kind, 'dark', state), width, 44))
+    for (const theme of ['light', 'dark']) write(`btn-${kind}-${theme}-${text}${suffix}.bmp`, await svgToBmp(buttonSvg(width, 44, text, kind, theme, state), width * S, 44 * S))
   }
 }
 
-console.log(`Installer UI generated: ${OUT} (${FRAME_COUNT} closed-loop animation frames, ${ANIM_H}px strips)`)
+}
+console.log(`Installer UI generated: ${OUT} (${DPI_SCALES.length} DPI scales, ${FRAME_COUNT} animation frames)`)

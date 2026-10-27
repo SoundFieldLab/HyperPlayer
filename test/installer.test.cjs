@@ -75,13 +75,68 @@ test('interactive setup is borderless, keyboard accessible, and silent safe', ()
   assert.match(installer, /GetAsyncKeyState\(i 13\)/)
   assert.match(installer, /GetAsyncKeyState\(i 32\)/)
   assert.match(installer, /Function WaveKeyboardActivate/)
-  assert.match(installer, /close-dark-0\.bmp/)
+  assert.match(installer, /WaveLoadCloseSet Dark dark/)
+  assert.ok(existsSync(join(root, 'build', 'ui', 'close-dark-0.bmp')))
   assert.ok(existsSync(join(root, 'build', 'ui', 'close-light-5.bmp')))
   assert.match(installer, /WaveCloseTicks >= 20/)
   assert.match(installer, /WaveCloseCurrentImage != \$8[\s\S]*STM_SETIMAGE/)
   assert.doesNotMatch(installer, /ShowWindow \$WaveClose \$\{SW_HIDE\}/)
   assert.match(installer, /\$\{If\} \$\{Silent\}[\s\S]*Return[\s\S]*InitPluginsDir/)
   assert.match(preview, /Function \.onGUIInit[\s\S]*Call WaveGuiInit/)
+})
+
+test('interactive and update setup default to light without adding a confirmation step', () => {
+  const init = block(installer, '!macro customInit', '!macroend')
+  assert.match(init, /StrCpy \$WaveTheme "light"/)
+  assert.doesNotMatch(init, /StrCpy \$WaveTheme "dark"/)
+  const chooser = block(installer, 'Function WaveThemeCreate', 'FunctionEnd')
+  assert.match(chooser, /WaveThemeLight 138 304 284 172 "card-light\.bmp"/)
+  assert.match(chooser, /WaveThemeDark 458 304 284 172 "card-dark\.bmp"/)
+  assert.match(chooser, /PLUGINSDIR\\theme\.bmp/)
+  assert.match(chooser, /WaveCreateAnimation theme/)
+  assert.match(chooser, /StrCpy \$WaveCloseImage \$WaveCloseTheme5/)
+  assert.doesNotMatch(chooser, /WavePageStart|StrCpy \$WaveTheme/)
+  for (const [callback, theme] of [['WaveThemeLightClick', 'light'], ['WaveThemeDarkClick', 'dark']]) {
+    const click = block(installer, 'Function ' + callback, 'FunctionEnd')
+    assert.match(click, new RegExp('StrCpy \\$WaveTheme "' + theme + '"\\s+Call WaveNext'))
+  }
+})
+
+test('selected theme controls page, button, close, animation, and native control colors', () => {
+  const page = block(installer, '!macro WavePageStart PAGE', '!macroend')
+  assert.match(page, /WaveTheme == "dark"[\s\S]*PAGE\}-dark\.bmp[\s\S]*WaveCloseDark5[\s\S]*PAGE\}-light\.bmp[\s\S]*WaveCloseLight5/)
+  assert.match(page, /WaveCreateAnimation \$1/)
+  const button = block(installer, '!macro WaveThemeButton', '!macroend')
+  for (const theme of ['dark', 'light']) assert.ok(button.includes('btn-${KIND}-' + theme + '-${TEXT}'))
+  const options = block(installer, 'Function WaveOptionsCreate', 'FunctionEnd')
+  assert.match(options, /SetCtlColors \$WaveDirEdit 0xEAF0F8 0x182231/)
+  assert.match(options, /SetCtlColors \$WaveDirEdit 0x18273B 0xFFFFFF/)
+  assert.match(options, /SetCtlColors \$WaveSpaceLabel 0xEAF0F8 0x263448/)
+  assert.match(options, /SetCtlColors \$WaveSpaceLabel 0x18273B 0xF0F4F8/)
+  const progress = block(installer, 'Function WaveInstFilesShow', 'FunctionEnd')
+  assert.match(progress, /WaveTheme == "light"[\s\S]*inst-light\.bmp[\s\S]*inst-dark\.bmp/)
+  // PBM colors are Win32 COLORREF (0xBBGGRR), unlike SetCtlColors (0xRRGGBB).
+  assert.match(progress, /WF_PBM_SETBARCOLOR\} 0 0xD76428/)
+  assert.match(progress, /WF_PBM_SETBKCOLOR\} 0 0xF8F4F0/)
+  assert.match(progress, /WF_PBM_SETBARCOLOR\} 0 0xDD7540/)
+  assert.match(progress, /WF_PBM_SETBKCOLOR\} 0 0x483426/)
+  assert.match(progress, /SetCtlColors \$WaveProgressPathText 0x596B80 0xF8FAFC/)
+  assert.match(progress, /SetCtlColors \$WaveProgressPathText 0xAAB8CB 0x151D29/)
+  const finish = block(installer, 'Function WaveFinishCreate', 'FunctionEnd')
+  assert.match(finish, /SetCtlColors \$WaveFinishPath 0xEAF0F8 0x1D2838/)
+  assert.match(finish, /SetCtlColors \$WaveFinishPath 0x18273B 0xFFFFFF/)
+})
+
+test('uninstaller consistently uses bright pages, buttons, close frames, and native controls', () => {
+  const uninstaller = installer.slice(installer.indexOf('!macro customUnInit'))
+  for (const name of ['unconfirm', 'uninst', 'unfinish']) assert.ok(uninstaller.includes(name + '-light.bmp'))
+  for (const label of ['btn-secondary-light-取消', 'btn-primary-light-开始卸载', 'btn-primary-light-完成卸载']) assert.ok(uninstaller.includes(label + '.bmp'))
+  for (let frame = 0; frame < 6; frame += 1) assert.ok(uninstaller.includes('close-light-' + frame + '.bmp'))
+  assert.doesNotMatch(uninstaller, /(?:unconfirm|uninst|unfinish|close|btn-primary|btn-secondary)-dark/)
+  assert.match(uninstaller, /SetCtlColors \$UnWavePath 0x18273B 0xFFFFFF/)
+  assert.match(uninstaller, /SetCtlColors \$UnWaveScope 0x18273B 0xFFFFFF/)
+  assert.match(uninstaller, /WF_PBM_SETBARCOLOR\} 0 0xD76428/)
+  assert.match(uninstaller, /WF_PBM_SETBKCOLOR\} 0 0xF8F4F0/)
 })
 
 test('license is a summary of the complete in-app agreement with mandatory explicit acceptance', () => {
@@ -317,8 +372,43 @@ test('production build generates UI before electron-builder', () => {
   assert.ok(command.lastIndexOf('electron-builder --prepackaged') > command.indexOf('node scripts/generate-installer-ui.mjs'))
 })
 
+test('bright setup and uninstall bitmaps have a bright rail instead of a fixed dark sidebar', () => {
+  const rgbAt = (bmp, x, y) => Array.from(bmp.rgb.subarray((y * bmp.width + x) * 3, (y * bmp.width + x) * 3 + 3))
+  for (const name of ['welcome', 'license', 'dir', 'inst', 'finish', 'unconfirm', 'uninst', 'unfinish']) {
+    const light = bmpRgb(join(root, 'build', 'ui', name + '-light.bmp'))
+    const dark = bmpRgb(join(root, 'build', 'ui', name + '-dark.bmp'))
+    for (const y of [120, 200, 460, 550]) {
+      assert.deepEqual(rgbAt(light, 16, y), [238, 243, 248], name + ' light rail at y=' + y)
+      assert.deepEqual(rgbAt(dark, 16, y), [17, 25, 37], name + ' dark rail at y=' + y)
+    }
+    assert.deepEqual(rgbAt(light, 860, 120), [248, 250, 252], name + ' light background')
+    assert.deepEqual(rgbAt(dark, 860, 120), [21, 29, 41], name + ' dark background')
+  }
+})
+
+test('theme chooser stays bright, with light card on the left and bright scope controls', () => {
+  const rgbAt = (bmp, x, y) => Array.from(bmp.rgb.subarray((y * bmp.width + x) * 3, (y * bmp.width + x) * 3 + 3))
+  const chooser = bmpRgb(join(root, 'build', 'ui', 'theme.bmp'))
+  for (const [x, y] of [[16, 120], [860, 120], [16, 500], [860, 500]]) {
+    assert.ok(rgbAt(chooser, x, y).every(channel => channel >= 230), 'chooser background must be bright at ' + x + ',' + y)
+  }
+  const lightCard = bmpRgb(join(root, 'build', 'ui', 'card-light.bmp'))
+  const darkCard = bmpRgb(join(root, 'build', 'ui', 'card-dark.bmp'))
+  assert.deepEqual(rgbAt(lightCard, 16, 16), [255, 255, 255])
+  assert.deepEqual(rgbAt(darkCard, 16, 16), [29, 40, 56])
+  assert.deepEqual(rgbAt(chooser, 138 + 16, 304 + 16), rgbAt(lightCard, 16, 16))
+  assert.deepEqual(rgbAt(chooser, 458 + 16, 304 + 16), rgbAt(darkCard, 16, 16))
+  // 范围叠加图是从主题页底图的对应区域裁出来的，叠上去才能和渐变背景无缝，
+  // 所以角落像素应等于底图同坐标的像素，而不是某个固定纯色。
+  for (const scope of ['current', 'all']) for (const state of ['normal', 'selected']) {
+    const bmp = bmpRgb(join(root, 'build', 'ui', 'scope-' + scope + '-' + state + '.bmp'))
+    const left = scope === 'current' ? 250 : 390
+    assert.deepEqual(rgbAt(bmp, 0, 0), rgbAt(chooser, left, 246), scope + ' ' + state + ' matches chooser backdrop')
+  }
+})
+
 test('full page assets are 880x580 24-bit BMPs', () => {
-  for (const page of ['theme', 'welcome-dark', 'welcome-light', 'license-dark', 'license-light', 'dir-dark', 'dir-light', 'inst-dark', 'inst-light', 'finish-dark', 'finish-light']) {
+  for (const page of ['theme', 'welcome-dark', 'welcome-light', 'license-dark', 'license-light', 'dir-dark', 'dir-light', 'inst-dark', 'inst-light', 'finish-dark', 'finish-light', 'unconfirm-dark', 'unconfirm-light', 'uninst-dark', 'uninst-light', 'unfinish-dark', 'unfinish-light']) {
     assert.deepEqual(bmpInfo(join(root, 'build', 'ui', `${page}.bmp`)), { magic: 'BM', width: 880, height: 580, bits: 24 })
   }
 })
