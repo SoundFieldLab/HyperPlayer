@@ -1,19 +1,19 @@
 {
   "channel": "stable",
-  "version": "1.0.0",
-  "notes": "## 版本说明\n\nHyperPlayer正式上线\n\n---\n\n# HyperPlayer 1.0.0\n\n## 更新内容（无更早的版本 tag，列出最近 30 条提交）\n\n- fix: simplify about page and address review findings (f9438e1)\n- ci(nightly): 无代码变更时取消本次运行，不再产出 success 假构建 (383c686)\n- docs: 清理无用文档并同步 V3→HSE 改名遗留 (40c6f08)\n- feat(mv): MV 背景带宽保障——480P 低清起步 + 音频缓冲健康后无感升档 (52f75f4)\n- feat(hse): 接入 HSE 1.5 快照并并入 WaveForge master 后续微调 (91ae9cd)\n- chore(nightly): 更新 update-nightly.json 至 1.0.1-nightly.20261005 (cbcb53f)\n- docs(release): nightly 旧 tag/release 已清理，仅保留最新 nightly-20261004 (40ef0c9)\n- chore(nightly): 合并历史每日清单回写提交，保留最新清单内容（1.0.1-nightly.20261004） (01df587)\n- ci(nightly)!: 修复「无新提交」判定失效导致的每日空转构建 (91d8346)\n- ci(release): 新增手动发版工作流 release.yml（自填版本号 + 可选版本说明） (155ba22)\n- refactor(hse)!: V3 历史命名强制统一为 HSE（用户拍板覆盖旧「标识符保持不动」约定） (5d7a986)\n- docs(perf): 同步升级与优化实施状态（阶段E） (3f02f69)\n- perf(build+ui): splitCityData 跳过未变写入 + HSE 剩余 4 处 resize 接 rafThrottle（§6.5/§4.5 收尾） (8b0d63d)\n- perf(player): AutoMix 全曲 DSP 搬入 Web Worker（性能计划 1.0 §6.1b；§6.1a 以结构化方式达成） (6f6fe3f)\n- perf(electron): backgroundThrottling 默认节流 + 灯效消费者运行时豁免（性能计划 1.0 §6.4） (ded0d58)\n- perf(player): 内置字体按需注入（性能计划 1.0 §6.3，dist 体积预期修正见正文） (5a94837)\n- perf(player): HSE 引擎模块出首包（性能计划 1.0 §6.2） (f23df39)\n- perf(electron): protocol.handle 迁移 + V8 编译缓存按大版本分段 + 启动裁剪开关（升级后阶段 B6/C） (e7be2ad)\n- perf(electron)!: Electron 42.8.0 -> 44.5.0（Chromium 148→152 / V8 14.8→15.2 / Node 24.18→24.18.1） (37d3cd2)\n- chore: gitignore promo/ 宣传视频素材目录（文案/截图/logo，本地交付物） (d31c402)\n- docs(perf): 性能优化计划 1.0（九大类逐项对照）+ 2.0（Electron 44 升级报告）并登记 AGENTS.md (b0f4ea9)\n- perf(build): vite 显式 target chrome148 + vendor-three/pixi/hls 手动分块（性能计划 1.0 §6.5 部分） (62e2d25)\n- perf(player): 过渡进度外移至外部 store，过渡期不再全树重渲染（性能计划 1.0 §5.1） (ed315b2)\n- perf(render): 渲染侧稳态优化（性能计划 1.0 §4.2/4.4/4.5） (6698f12)\n- perf(core): 启动链路与主进程稳态优化（性能计划 1.0 阶段 0/1 + 4.1/4.4） (6946875)\n- refactor(tv)!: 彻底清除 TV 残留（tvCore 空壳 + 56 个调用点 + data-tv 标记） (956cfe8)\n- perf(packaging)!: asar 411MB -> 80MB（前端库移出 dependencies + 四条排除规则 + 体积闸门） (ef6938b)\n- docs(build): 约定本地构建只出便携版目录（不打包 zip、不建安装包） (e4a792a)\n- ci(release)!: nightly 只发 NSIS 安装包（停发便携版 zip）；修复发布步骤被注释吞掉的 gh release create (39c02f6)\n- chore(ports)!: 端口迁到 3210（Vite）/ 3211（后端），避开 WaveForge 占用的 3000–3002 (d029402)",
+  "version": "1.0.1",
+  "notes": "## 版本说明\n\n1.0.1-Official\n\n---\n\n# HyperPlayer 1.0.1\n\n## 更新内容（自 v1.0.0 起）\n\n- chore: bump version to v1.0.1 (0a5024f)\n- chore(nightly): 更新 update-nightly.json 至 1.0.1-nightly.20261027 (a24d792)\n- ci(nightly): 改为有新提交才构建，只滚动保留最新 3 个 nightly (5d30880)\n- feat(installer): 安装器改为默认亮色，深浅跟随色调选择 (24973c9)\n- chore(nightly): 更新 update-nightly.json 至 1.0.1-nightly.20261027 (f155f34)\n- docs: redesign README with promo screenshots (ae80c49)\n- chore(release): 更新 update.json 至 v1.0.0 (d3f3e3e)",
   "artifacts": {
     "win-x64": {
       "urls": [
-        "https://github.com/SoundFieldLab/HyperPlayer/releases/download/v1.0.0/HyperPlayer-1.0.0-Setup.exe"
+        "https://github.com/SoundFieldLab/HyperPlayer/releases/download/v1.0.1/HyperPlayer-1.0.1-Setup.exe"
       ],
-      "sha256": "fad4b3ba926b926e3cde86fec1b2eba39c55037f238873ff8d66a86037b81fd3"
+      "sha256": "613edd2c3c01e57709f570ea9c1667ce1fd1b9dea843c1a5beb28ec49e70d8aa"
     },
     "win-x64-hot": {
       "urls": [
-        "https://github.com/SoundFieldLab/HyperPlayer/releases/download/v1.0.0/hyperplayer-hot-1.0.0.zip"
+        "https://github.com/SoundFieldLab/HyperPlayer/releases/download/v1.0.1/hyperplayer-hot-1.0.1.zip"
       ],
-      "sha256": "c6b01f8e976eae9e5b27b8e4271f9537e51e765355dd3e1dc341d241bfeaeeb2"
+      "sha256": "b1fdac4be44a8d90c1f9de6c899e4f012ff76a40a3adce72e8136e30f93b6034"
     }
   }
 }
