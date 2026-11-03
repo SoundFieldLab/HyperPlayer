@@ -1443,6 +1443,10 @@ const trustedIpc = createTrustedIpcGuard({
 })
 const guardTrustedIpc = trustedIpc.handle
 
+// 系统主音量读取器（注入 execFile，便于单测替换）
+const { createSystemVolumeReader } = require('./system-volume.cjs')
+const readSystemVolume = createSystemVolumeReader({ execFile })
+
 // HSE 头追仅限主应用主文档；桥与设备授权都不随应用启动自动恢复。
 const { createHseHeadTrackingController } = require('./hse-head-tracking.cjs')
 const hseHeadTracking = createHseHeadTrackingController({
@@ -4699,6 +4703,10 @@ app.whenReady().then(async () => {
     console.error('[SignalRGB] 初始化失败:', error instanceof Error ? error.message : error)
   }
   ipcMain.handle('audio-output:is-supported', () => process.platform === 'win32' || process.platform === 'darwin')
+
+  // 系统主音量 → 渲染端 HSE 等响度补偿（App 启动读一次 + 每 10 分钟一次）。
+  // 读数实现与缓存见 system-volume.cjs；失败返回 success:false，由前端静默忽略。
+  ipcMain.handle('audio:get-system-volume', () => readSystemVolume())
 
   app.on('will-quit', async () => {
     if (chromaControllerHandle) {

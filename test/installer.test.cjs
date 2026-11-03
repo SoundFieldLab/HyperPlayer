@@ -290,7 +290,16 @@ test('animation uses preloaded closed-loop frames, one throttled timer, and paus
   assert.match(stop, /NSD_KillTimer.*WaveHoverTick/)
   assert.doesNotMatch(stop, /WaveAnimationTick/)
   assert.match(stop, /WaveDeleteImage \$WaveBackgroundImage/)
-  assert.match(installer, /Function WaveInstFilesShow[\s\S]*WaveHoverTick 250/)
+  // 进度页是 MUI 自己创建的页面：nsDialogs 的控件创建与定时器只作用于 nsDialogs 页面，
+  // 在 MUI 页上调用会复用已销毁的旧页句柄，实测 nsDialogs.dll+0x1a92 访问违例 → 安装器闪退。
+  // 因此进度页禁止任何 nsDialogs 调用，并必须把 MUI 的「取消」按钮放回来。
+  const instFilesShow = block(installer, 'Function WaveInstFilesShow', 'Function WaveInstFilesLeave')
+  assert.doesNotMatch(instFilesShow, /\$\{NSD_/)
+  assert.match(instFilesShow, /WaveRestoreCancelButton/)
+  const unInstFilesShow = block(installer, 'Function un.WaveUnInstFilesShow', 'Function un.WaveUnFinishCreate')
+  assert.doesNotMatch(unInstFilesShow, /\$\{NSD_/)
+  assert.match(unInstFilesShow, /WaveRestoreCancelButton/)
+  // 动画帧仍必须是 16 帧闭环（进度页停在首帧，其余页面继续播放）。
   const show = block(installer, 'Function WaveInstFilesShow', 'FunctionEnd')
   assert.match(show, /GetDlgItem \$WaveProgressPath \$WavePage 1004/)
   assert.match(show, /目标：\$INSTDIR/)
@@ -308,6 +317,78 @@ test('animation uses preloaded closed-loop frames, one throttled timer, and paus
   }
   const animationBytes = ['theme', 'dark', 'light'].flatMap((theme) => Array.from({ length: 16 }, (_, frame) => statSync(join(root, 'build', 'ui', `anim-${theme}-${frame}.bmp`)).size)).reduce((a, b) => a + b, 0)
   assert.ok(animationBytes < 5 * 1024 * 1024, `animation assets are too large: ${animationBytes}`)
+})
+
+test('compiled NSIS path validation preserves the complete chosen directory', t => {
+  if (process.platform !== 'win32') return t.skip('requires the Windows NSIS compiler')
+  const fs = require('node:fs')
+  const { spawnSync } = require('node:child_process')
+  const makensis = process.env.MAKENSIS || join(process.env.LOCALAPPDATA || '', 'electron-builder', 'Cache', 'nsis-3.0.4.1', 'nsis-3.0.4.1-1mx3n', 'makensis.exe')
+  if (!existsSync(makensis)) return t.skip('NSIS cache not installed; run preview:setup first')
+  const scratch = fs.mkdtempSync(join(require('node:os').tmpdir(), 'hyperplayer-installer-paths-'))
+  try {
+    const compiled = spawnSync(makensis, ['/V1', '/DSRC=' + root.replaceAll('\\', '/'), '/DOUT=' + scratch.replaceAll('\\', '/'), join(root, 'scripts', 'setup-preview', 'path-validation.nsi')], { encoding: 'utf8', windowsHide: true })
+    assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr)
+    const cases = [
+      ['E:\\HyperPlayer', 'E:\\HyperPlayer'],
+      ['E:\\应用 目录', 'E:\\应用 目录'],
+      ['E:\\HyperPlayer\\', 'E:\\HyperPlayer\\'],
+      ['E:\\HyperPlayer.', null],
+      ['E:\\HyperPlayer ', null],
+      ['E:\\CON', null],
+      ['relative-path', null],
+      ['', null],
+    ]
+    for (const [input, expected] of cases) {
+      fs.writeFileSync(join(scratch, 'path-input.txt'), input, 'utf16le')
+      const executed = spawnSync(join(scratch, 'path-validation.exe'), [], { timeout: 10000, windowsHide: true })
+      assert.equal(executed.status, 0, 'native validation failed for ' + input)
+      const [error, actual] = fs.readFileSync(join(scratch, 'path-output.txt'), 'utf16le').split('\r\n')
+      if (expected === null) assert.notEqual(error, '', 'invalid path accepted: ' + input)
+      else {
+        assert.equal(error, '', input + ': ' + error)
+        assert.equal(actual, expected, 'chosen directory was changed')
+      }
+    }
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true })
+  }
+})
+
+test('progress pages advance to the custom completion page without a hidden Next button', () => {
+  const install = block(installer, 'Function WaveInstFilesPre', 'FunctionEnd')
+  assert.match(install, /SetAutoClose true/)
+  const uninstall = block(installer, 'Function un.WaveUnInstFilesShow', 'FunctionEnd')
+  assert.match(uninstall, /SetAutoClose true/)
+})
+
+test('MUI progress cancellation is enabled and brought above the full-window page', () => {
+  const cancel = block(installer, '!macro WaveRestoreCancelButton', '!macroend')
+  assert.match(cancel, /GetDlgItem \$0 .* 2/)
+  assert.match(cancel, /EnableWindow \$0 1/)
+  assert.match(cancel, /SetWindowPos\(p r0, p 0, i 304, i 452, i 160, i 44/)
+  const uninstallProgress = block(installer, 'Function un.WaveUnInstFilesShow', 'FunctionEnd')
+  assert.doesNotMatch(uninstallProgress, /Call un\.WaveHideBuilderButtons/)
+  assert.doesNotMatch(uninstallProgress, /StrCpy \$UnWaveClose \$3/)
+})
+
+test('native MUI overlay controls clip sibling painting like nsDialogs controls', () => {
+  for (const name of ['WaveInstFilesShow', 'un.WaveUnInstFilesShow']) {
+    const source = block(installer, 'Function ' + name, 'FunctionEnd')
+    const creations = source.split('\n').filter(line => line.includes('CreateWindowExW'))
+    assert.ok(creations.length > 0)
+    for (const creation of creations) assert.match(creation, /WF_WS_CLIPSIBLINGS/, name + ': native overlay must not paint over its siblings')
+  }
+})
+
+test('all preview MUI callbacks resolve to production or preview functions', () => {
+  for (const file of ['preview.nsi', 'uninstall-preview.nsi']) {
+    const source = readFileSync(join(root, 'scripts', 'setup-preview', file), 'utf8')
+    const definitions = new Set([... (installer + source).matchAll(/^Function ([^\s]+)$/gm)].map(match => match[1]))
+    for (const match of source.matchAll(/^!define MUI_PAGE_CUSTOMFUNCTION_(?:PRE|SHOW|LEAVE) ([^\s]+)$/gm)) {
+      assert.ok(definitions.has(match[1]), file + ': missing callback ' + match[1])
+    }
+  }
 })
 
 test('all bitmap buttons provide normal, hover, pressed, and disabled art', () => {
@@ -332,6 +413,27 @@ test('close behavior is state aware and custom image replacements release GDI ob
   assert.match(installer, /SendMessage \$WaveLicenseCheck \$\{WF_STM_SETIMAGE\} 0 \$5 \$6/)
   assert.match(installer, /SendMessage \$WaveDesktopShortcutControl \$\{WF_STM_SETIMAGE\} 0 \$1 \$2/)
   assert.match(installer, /WaveDeleteImage \$WaveBackgroundImage/)
+})
+
+test('completion callbacks leave nsDialogs through the native enabled Finish button', () => {
+  for (const name of ['WaveFinishDone', 'un.WaveDone']) {
+    const done = block(installer, 'Function ' + name, 'FunctionEnd')
+    // NSIS ignores WM_COMMAND for disabled buttons; Quit alone leaves nsDialogs::Show running.
+    assert.match(done, /GetDlgItem \$0 \$HWNDPARENT 1[\s\S]*EnableWindow \$0 1[\s\S]*SendMessage \$HWNDPARENT \$\{WM_COMMAND\} 1 0/)
+    assert.doesNotMatch(done, /\bQuit\b|!insertmacro WavePageStop|Call un\.WaveReleasePageImages/)
+  }
+  const close = block(installer, 'Function un.WaveCloseClick', 'FunctionEnd')
+  assert.match(close, /UnWaveFinishActive == 1[\s\S]*Call un\.WaveDone/)
+  assert.doesNotMatch(close, /\bQuit\b/)
+})
+
+test('opening the installed app also uses the common completion exit path', () => {
+  const run = block(installer, 'Function WaveFinishRun', 'FunctionEnd')
+  assert.match(run, /StdUtils\.ExecShellAsUser[\s\S]*Call WaveFinishDone/)
+  assert.doesNotMatch(run, /\bQuit\b/)
+  const previewRun = block(preview, 'Function WaveFinishRun', 'FunctionEnd')
+  assert.match(previewRun, /Call WaveFinishDone/)
+  assert.doesNotMatch(previewRun, /\bQuit\b/)
 })
 
 test('generator owns a clean BMP directory and installer tests regenerate assets', () => {

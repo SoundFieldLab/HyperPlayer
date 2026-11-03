@@ -22,10 +22,12 @@
 !define WF_STM_SETIMAGE 0x0172
 !define WF_SS_BITMAP 0x0000000E
 !define WF_SS_NOTIFY 0x00000100
+!define WF_SS_PATHELLIPSIS 0x00008000
 !define WF_WS_CHILD 0x40000000
 !define WF_WS_VISIBLE 0x10000000
 !define WF_WS_TABSTOP 0x00010000
 !define WF_WS_CLIPCHILDREN 0x02000000
+!define WF_WS_CLIPSIBLINGS 0x04000000
 !define WF_WM_NCLBUTTONDOWN 0x00A1
 !define WF_HTCAPTION 2
 !define WF_EM_SCROLLCARET 0x00B7
@@ -38,6 +40,19 @@
 
 !define MUI_ABORTWARNING
 !define MUI_ABORTWARNING_TEXT "你确定要取消 ${PRODUCT_NAME} 的安装吗？"
+
+; MUI 的原生按钮负责取消消息，不能在其进度页使用 nsDialogs 控件。
+!macro WaveRestoreCancelButton PARENT
+  GetDlgItem $0 ${PARENT} 1
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 ${PARENT} ${WF_IDBACK}
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 ${PARENT} 2
+  ; MUI 默认禁用进度页取消；全窗自绘页面还会盖住按钮原来的位置。
+  EnableWindow $0 1
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:取消"
+  System::Call 'user32::SetWindowPos(p r0, p 0, i 304, i 452, i 160, i 44, i 0x0040)'
+!macroend
 
 !ifndef BUILD_UNINSTALLER
 !define MUI_CUSTOMFUNCTION_GUIINIT WaveGuiInit
@@ -508,17 +523,15 @@ FunctionEnd
 
 !macro customFinishPage
   Function WaveFinishRun
-    !ifdef WF_PREVIEW
-      Quit
-    !else
+    !ifndef WF_PREVIEW
       ${If} $WaveIsUpdate == "1"
         StrCpy $1 "--updated"
       ${Else}
         StrCpy $1 ""
       ${EndIf}
       ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
-      Quit
     !endif
+    Call WaveFinishDone
   FunctionEnd
   Page custom WaveFinishCreate WavePageLeave
 !macroend
@@ -1082,7 +1095,6 @@ FunctionEnd
 Function WaveValidatePathSyntax
   StrCpy $WavePathError ""
   StrCpy $WaveValidatedPath ""
-  StrCpy $0 $0 -1
   ${If} $0 == ""
     StrCpy $WavePathError "安装路径不能为空。"
     Return
@@ -1283,6 +1295,8 @@ Function WaveOptionsLeave
 FunctionEnd
 
 Function WaveInstFilesPre
+  ; 完成后直接进入自定义完成页，不能等待已隐藏的 MUI 下一步按钮。
+  SetAutoClose true
   !insertmacro WavePageStop
   StrCpy $WaveInstFilesActive "0"
 FunctionEnd
@@ -1307,19 +1321,18 @@ Function WaveInstFilesShow
   ${EndIf}
   System::Call 'user32::LoadImageW(p 0, w r0, i 0, i 0, i 0, i 0x10) p.r2'
   StrCpy $WaveBackgroundImage $2
-  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i ${WF_WS_CHILD}|${WF_WS_VISIBLE}|${WF_SS_BITMAP}, i 0, i 0, i ${WF_W}, i ${WF_H}, p $WavePage, p 0, p 0, p 0) p.r3'
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i ${WF_WS_CHILD}|${WF_WS_VISIBLE}|${WF_WS_CLIPSIBLINGS}|${WF_SS_BITMAP}, i 0, i 0, i ${WF_W}, i ${WF_H}, p $WavePage, p 0, p 0, p 0) p.r3'
   StrCpy $WaveBackground $3
   SendMessage $WaveBackground ${WF_STM_SETIMAGE} 0 $2
-  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i ${WF_WS_CHILD}|${WF_WS_VISIBLE}|${WF_SS_BITMAP}, i ${WF_ANIM_X}, i ${WF_ANIM_Y}, i ${WF_ANIM_W}, i ${WF_ANIM_H}, p $WavePage, p 0, p 0, p 0) p.r3'
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i ${WF_WS_CHILD}|${WF_WS_VISIBLE}|${WF_WS_CLIPSIBLINGS}|${WF_SS_BITMAP}, i ${WF_ANIM_X}, i ${WF_ANIM_Y}, i ${WF_ANIM_W}, i ${WF_ANIM_H}, p $WavePage, p 0, p 0, p 0) p.r3'
   StrCpy $WaveAnimation $3
   StrCpy $WaveAnimationTheme $1
   StrCpy $WaveAnimationFrame "0"
   StrCpy $WaveAnimationTickCount "0"
   !insertmacro WaveAnimationHandle $WaveAnimationImage $1 0
   SendMessage $WaveAnimation ${WF_STM_SETIMAGE} 0 $WaveAnimationImage
-  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i ${WF_WS_CHILD}|${WF_WS_VISIBLE}|${WF_SS_NOTIFY}|${WF_SS_BITMAP}, i 828, i 10, i 40, i 40, p $WavePage, p 0, p 0, p 0) p.r3'
-  StrCpy $WaveClose $3
-  SendMessage $WaveClose ${WF_STM_SETIMAGE} 0 $WaveCloseImage
+  ; 进度页不画自绘关闭按钮：它依赖 nsDialogs 定时器处理悬停/点击，而该定时器在 MUI 页上不会触发，
+  ; 画出来就是一个点不动的 X。取消统一走 MUI 的「取消」按钮（上面已恢复）。
   GetDlgItem $WaveProgressPath $WavePage 1004
   System::Call "user32::MoveWindow(p $WaveProgressPath, i 304, i 204, i 512, i 12, i 1)"
   System::Call 'uxtheme::SetWindowTheme(p $WaveProgressPath, w "", w "")'
@@ -1336,19 +1349,32 @@ Function WaveInstFilesShow
   System::Call "user32::SetWindowPos(p $WaveProgressPath, p 0, i 0, i 0, i 0, i 0, i 0x0013)"
   GetDlgItem $0 $WavePage 1006
   System::Call "user32::MoveWindow(p $0, i 304, i 232, i 512, i 30, i 1)"
-  ${NSD_CreateLabel} 304 272 512 20 "目标：$INSTDIR"
-  Pop $WaveProgressPathText
+  SendMessage $0 ${WM_SETFONT} $WaveSmallFont 1
+  ${If} $WaveTheme == "light"
+    SetCtlColors $0 0x596B80 0xFFFFFF
+  ${Else}
+    SetCtlColors $0 0xAAB8CB 0x1D2838
+  ${EndIf}
+  ; ⚠️ 本页是 MUI 自己创建的页面，不是 nsDialogs 页面。
+  ; 在 MUI 页上用 nsDialogs 建控件会复用上一步自定义页已销毁的窗口句柄，
+  ; 实测在 nsDialogs.dll+0x1a92（CreateControl）直接访问违例（0xc0000005 / 0xc000041d）
+  ; —— 症状就是点「安装」后安装器一闪即退。故本页控件一律用原生 Win32 创建。
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "目标：$INSTDIR", i ${WF_WS_CHILD}|${WF_WS_VISIBLE}|${WF_WS_CLIPSIBLINGS}|${WF_SS_PATHELLIPSIS}, i 304, i 272, i 512, i 20, p $WavePage, p 0, p 0, p 0) p.r3'
+  StrCpy $WaveProgressPathText $3
   SendMessage $WaveProgressPathText ${WM_SETFONT} $WaveSmallFont 1
   ${If} $WaveTheme == "light"
     SetCtlColors $WaveProgressPathText 0x596B80 0xF8FAFC
   ${Else}
     SetCtlColors $WaveProgressPathText 0xAAB8CB 0x151D29
   ${EndIf}
-  GetDlgItem $0 $WavePage 1005
+  ; NSIS 的详细信息按钮和列表分别是 1027 / 1016，1005 并不存在。
+  GetDlgItem $0 $WavePage 1027
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $WavePage 1016
   ShowWindow $0 ${SW_HIDE}
   System::Call "user32::SetWindowPos(p $WaveBackground, p 1, i 0, i 0, i 0, i 0, i 0x0013)"
   StrCpy $WaveInstFilesActive "1"
-  ${NSD_CreateTimer} WaveHoverTick 250
+  !insertmacro WaveRestoreCancelButton $HWNDPARENT
 FunctionEnd
 Function WaveInstFilesLeave
   StrCpy $WaveInstFilesActive "0"
@@ -1395,8 +1421,10 @@ FunctionEnd
 
 Function WaveFinishDone
   StrCpy $WaveFinishActive "0"
-  !insertmacro WavePageStop
-  Quit
+  ; 让 NSIS 通知 nsDialogs 退出消息循环，资源统一由页面 leave 回调释放。
+  GetDlgItem $0 $HWNDPARENT 1
+  EnableWindow $0 1
+  SendMessage $HWNDPARENT ${WM_COMMAND} 1 0
 FunctionEnd
 
 !else
@@ -1633,7 +1661,7 @@ FunctionEnd
 
 Function un.WaveCloseClick
   ${If} $UnWaveFinishActive == 1
-    Quit
+    Call un.WaveDone
   ${ElseIf} $UnWaveProgressActive == 1
     MessageBox MB_ICONQUESTION|MB_YESNO "卸载正在进行。确定要尝试取消吗？" IDNO done
     SendMessage $HWNDPARENT ${WM_COMMAND} 2 0
@@ -1650,7 +1678,10 @@ Function un.WaveStart
   SendMessage $HWNDPARENT ${WM_COMMAND} 1 0
 FunctionEnd
 Function un.WaveDone
-  Quit
+  ; 与安装完成页一样，经原生完成流程退出 nsDialogs。
+  GetDlgItem $0 $HWNDPARENT 1
+  EnableWindow $0 1
+  SendMessage $HWNDPARENT ${WM_COMMAND} 1 0
 FunctionEnd
 
 Function un.WaveUnConfirmCreate
@@ -1698,25 +1729,16 @@ Function un.WaveUnConfirmLeave
 FunctionEnd
 
 Function un.WaveUnInstFilesShow
+  SetAutoClose true
   ${If} ${Silent}
     Return
   ${EndIf}
   FindWindow $UnWavePage "#32770" "" $HWNDPARENT
   System::Call "user32::MoveWindow(p $UnWavePage, i 0, i 0, i ${WF_W}, i ${WF_H}, i 1)"
-  Call un.WaveHideBuilderButtons
   !insertmacro WaveUnLoadImage $UnWaveBackgroundImage "uninst-light.bmp"
-  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i ${WF_WS_CHILD}|${WF_WS_VISIBLE}|${WF_SS_BITMAP}, i 0, i 0, i ${WF_W}, i ${WF_H}, p $UnWavePage, p 0, p 0, p 0) p.r3'
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i ${WF_WS_CHILD}|${WF_WS_VISIBLE}|${WF_WS_CLIPSIBLINGS}|${WF_SS_BITMAP}, i 0, i 0, i ${WF_W}, i ${WF_H}, p $UnWavePage, p 0, p 0, p 0) p.r3'
   StrCpy $UnWaveBackground $3
   SendMessage $UnWaveBackground ${WF_STM_SETIMAGE} 0 $UnWaveBackgroundImage
-  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i ${WF_WS_CHILD}|${WF_WS_VISIBLE}|${WF_SS_NOTIFY}|${WF_SS_BITMAP}, i 828, i 10, i 40, i 40, p $UnWavePage, p 0, p 0, p 0) p.r3'
-  StrCpy $UnWaveClose $3
-  StrCpy $UnWaveCloseLevel 5
-  StrCpy $UnWaveCloseTicks 0
-  StrCpy $UnWaveCloseInitialDone 0
-  StrCpy $UnWaveCloseWasHover 0
-  StrCpy $UnWaveCloseTarget 5
-  StrCpy $UnWaveCloseCurrent $UnWaveClose5
-  SendMessage $UnWaveClose ${WF_STM_SETIMAGE} 0 $UnWaveCloseCurrent
   GetDlgItem $UnWaveProgress $UnWavePage 1004
   System::Call "user32::MoveWindow(p $UnWaveProgress, i 304, i 204, i 512, i 12, i 1)"
   System::Call 'uxtheme::SetWindowTheme(p $UnWaveProgress, w "", w "")'
@@ -1724,15 +1746,25 @@ Function un.WaveUnInstFilesShow
   SendMessage $UnWaveProgress ${WF_PBM_SETBKCOLOR} 0 0xF8F4F0
   GetDlgItem $0 $UnWavePage 1006
   System::Call "user32::MoveWindow(p $0, i 304, i 232, i 512, i 30, i 1)"
-  GetDlgItem $0 $UnWavePage 1005
+  SendMessage $0 ${WM_SETFONT} $UnWaveFont 1
+  SetCtlColors $0 0x596B80 0xFFFFFF
+  ; NSIS 的详细信息按钮和列表分别是 1027 / 1016，1005 并不存在。
+  GetDlgItem $0 $UnWavePage 1027
+  ShowWindow $0 ${SW_HIDE}
+  GetDlgItem $0 $UnWavePage 1016
   ShowWindow $0 ${SW_HIDE}
   System::Call "user32::SetWindowPos(p $UnWaveBackground, p 1, i 0, i 0, i 0, i 0, i 0x0013)"
   StrCpy $UnWaveProgressActive 1
-  ${NSD_CreateTimer} un.WaveTick 250
+  !insertmacro WaveRestoreCancelButton $HWNDPARENT
+FunctionEnd
+
+Function un.WaveUnInstFilesLeave
+  StrCpy $UnWaveProgressActive 0
+  Call un.WaveReleasePageImages
 FunctionEnd
 
 Function un.WaveUnFinishCreate
-  Call un.WaveReleasePageImages
+  Call un.WaveUnInstFilesLeave
   StrCpy $UnWaveFinishActive 1
   nsDialogs::Create 1018
   Pop $UnWavePage

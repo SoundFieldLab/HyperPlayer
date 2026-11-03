@@ -138,7 +138,7 @@ Page custom ReviewDirectoryCreate WaveOptionsLeave
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE WaveInstFilesLeave
 !insertmacro MUI_PAGE_INSTFILES
 Function WaveFinishRun
-  Quit
+  Call WaveFinishDone
 FunctionEnd
 Page custom ReviewFinishCreate WavePageLeave
 
