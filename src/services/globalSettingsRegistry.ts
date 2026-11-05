@@ -17,6 +17,7 @@
  */
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { parseStoredBoolean } from '../utils/storage'
+import { setTransitionMode, setCrossfadeDuration, setAlbumGaplessEnabled } from './transitionSettings'
 import {
   loadPlaybackShortcutSettings,
   savePlaybackShortcutSettings,
@@ -206,26 +207,11 @@ const hasDisplayBridge = () => typeof window !== 'undefined' && !!electron()?.di
 
 // ─────────────────────────── 各域写入逻辑（与 SettingsPanel 逐一对齐） ───────────────────────────
 
-// 播放过渡两开关互斥：开启其一则关闭另一个
-const setTransitionModeExclusive = (target: 'crossfade' | 'gapless', value: boolean) => {
-  const keys = {
-    crossfade: 'crossfadeEnabled',
-    gapless: 'gaplessEnabled',
-  } as const
-  const events = {
-    crossfade: 'crossfadeSettingsChanged',
-    gapless: 'gaplessSettingsChanged',
-  } as const
-  if (value) {
-    for (const mode of ['crossfade', 'gapless'] as const) {
-      if (mode === target) continue
-      writeBool(keys[mode], false)
-      window.dispatchEvent(new Event(events[mode]))
-    }
-  }
-  writeBool(keys[target], value)
-  window.dispatchEvent(new Event(events[target]))
-  notifyGlobalSettingChanged()
+// 播放过渡（Crossfade / Gapless / 专辑融合）的写入规则**不在本文件重复实现**——
+// 统一走 services/transitionSettings.ts，与简约模式设置共用同一套互斥/钳制/事件。
+// 注意：共享规则**自己会派发** hyperplayer:global-setting-changed，这里不要再补一次。
+const writeTransitionMode = (mode: 'crossfade' | 'gapless', value: boolean) => {
+  setTransitionMode(mode, value)
 }
 
 // 快捷键（服务自带存储 + 事件）
@@ -361,18 +347,17 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         description: '两首歌之间交叉淡入淡出，与无缝衔接互斥',
         control: { kind: 'toggle' },
         read: () => readBool('crossfadeEnabled', false),
-        write: (value) => setTransitionModeExclusive('crossfade', Boolean(value)),
+        write: (value) => writeTransitionMode('crossfade', Boolean(value)),
       },
       {
         id: 'crossfadeDuration',
         label: '渐入渐出时长',
-        control: { kind: 'slider', min: 1, max: 12, step: 0.5, unit: '秒' },
+        // step 必须与钳制粒度一致：共享规则会把时长取整到整秒，
+        // 滑杆若给 0.5 就会出现「拖到 4.5 结果变 5」的抖动感。
+        control: { kind: 'slider', min: 1, max: 12, step: 1, unit: '秒' },
         read: () => readNum('crossfadeDuration', 4),
         write: (value) => {
-          const duration = Math.max(1, Math.min(12, Number(value)))
-          localStorage.setItem('crossfadeDuration', duration.toString())
-          window.dispatchEvent(new Event('crossfadeSettingsChanged'))
-          notifyGlobalSettingChanged()
+          setCrossfadeDuration(Number(value))
         },
         visibleIf: () => readBool('crossfadeEnabled', false),
       },
@@ -382,7 +367,7 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         description: '取消歌曲间过渡空隙，与渐入渐出互斥',
         control: { kind: 'toggle' },
         read: () => readBool('gaplessEnabled', false),
-        write: (value) => setTransitionModeExclusive('gapless', Boolean(value)),
+        write: (value) => writeTransitionMode('gapless', Boolean(value)),
       },
       {
         id: 'albumGaplessEnabled',
@@ -391,9 +376,7 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         control: { kind: 'toggle' },
         read: () => readBool('albumGaplessEnabled', true),
         write: (value) => {
-          writeBool('albumGaplessEnabled', Boolean(value))
-          window.dispatchEvent(new Event('albumGaplessSettingsChanged'))
-          notifyGlobalSettingChanged()
+          setAlbumGaplessEnabled(Boolean(value))
         },
       },
       {

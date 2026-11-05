@@ -13,7 +13,7 @@ npm run dev              # Vite dev server only (port 3210; Weather Lab: http://
 npm run lint             # Typecheck: tsc --noEmit (covers src/ only; no ESLint in repo)
 npm run check:ports      # 端口一致性闸门（必须 3210/3211，禁止回退 3000–3002；已接入 CI checks）
 npm run check:packaging  # 打包体积闸门（前端库必须在 devDependencies；排除规则齐全；asar 体积/内容；已接入 ci/nightly/pre-release + 本地 build:electron:dir 前后 + electron-builder 的 beforePack）
-npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-10-25 实测：183 文件 = 180 过 + 3 跳过；1789 用例 = 1773 过 + 16 跳过 + 0 失败。跳过的 16 项 = 5 项可选 LGPL SoundTouch 适配 + 11 项需显式启用的诊断微基准；vitest maxWorkers=2 防 HSE 时序测试偶发超时)
+npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-10-29 实测：197 文件 = 194 过 + 3 跳过；1888 用例 = 1872 过 + 16 跳过 + 0 失败。跳过的 16 项 = 5 项可选 LGPL SoundTouch 适配 + 11 项需显式启用的诊断微基准；vitest maxWorkers=2 防 HSE 时序测试偶发超时)
 npm run verify:hse-worklet # 校验 public/hse-worklet.js 可在 Worklet realm 装载并跑空间/多声道/IR/扩展节点冒烟（重生成 worklet 后必跑）
 npm run build:hse-worklet # 重生成 HSE AudioWorklet 单文件 -> public/hse-worklet.js（predev/predev:electron/prebuild 已自动执行）
 npm run build            # vite build -> dist/（三入口：index.html / desktop-player.html / desktop-lyrics.html）
@@ -23,7 +23,7 @@ npm run build:apple-weather  # 重新生成 Apple 天气场景资源（scripts/b
 npm run build:splash     # 重新生成启动页（scripts/build-splash.mjs）：帧时基归一 + 生成 desktop/splash.html 与 splash-baked.webm
 npm run test:chroma      # Razer Chroma 插件自测（scripts/test-chroma*.cjs）
 npm run test:signalrgb   # SignalRGB 插件自测（scripts/test-signalrgb*.cjs）
-npm run test:desktop     # node --test 桌面/安全相关用例（audio-download / local-api-health / taskbar-widget-polling / trusted-ipc / update-manager-security / user-data-profile 等）
+npm run test:desktop     # node --test 桌面/安全相关用例（hse-desktop / system-volume / audio-download / local-api-health / taskbar-widget-polling / trusted-ipc / update-manager-security / user-data-profile；2026-10-29 实测 9 文件 39 用例全过）
 npm run test:installer   # 生成安装器 UI 资产 + 安装器测试
 npm run gen:installer-art    # 生成 NSIS 安装器美术资产
 npm run preview:setup    # 预览自定义安装器（scripts/setup-preview/preview.nsi）
@@ -74,7 +74,7 @@ Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./D
 
 **发布形式一律为 Pre-release**：本仓库处于测试阶段，版本化发版（`release.yml` 手动触发 / `pre-release.yml` 打 `v*` tag 触发）与每日构建（`nightly.yml`）**全部以 GitHub Pre-release 形式发布**，不占用正式 latest。`nightly.yml` 每次构建生成唯一 tag `nightly-<YYYYMMDD>` 并创建**独立** Pre-release（当天重复构建覆盖当天同名 tag/release）。**无真实代码变更时 nightly 取消本次运行**（2026-10-26 起）：prepare 判定为「无代码变更」后不再构建/发版，而是写一条跳过摘要并 `gh run cancel "$GITHUB_RUN_ID"` **取消整次运行**（运行记录显示 cancelled，而不是「success 但 build/release 全跳过」的假构建）——因此 workflow 的 `permissions` 除 `contents: write` 外还需 `actions: write`；changelog 上传步骤加了 `has_changes == true` 门控。判定用与上次 nightly tag 的树 diff 并**排除机器人回写的 update-nightly.json / update.json**——此前每日清单回写提交让判定永远失真，曾连发 21 次空转 nightly 并在 main 上留下 21 条机器人提交（这些提交已于 2026-10-04 从 main 历史剔除、清单内容压成一条保留；**旧 nightly tag/release 也已同日清理，仅保留最新的 `nightly-20261004`**——即 update-nightly.json 指向的目标，nightly 渠道「检查更新」不受影响）。
 
-**更新渠道（两条，客户端可切换）**：`src/services/updateConstants.ts` 是渠道定义的唯一事实源。
+**更新渠道（两条，清单由 CI 产出）**：`src/services/updateConstants.ts` 是渠道定义的唯一事实源。
 
 | 渠道 | 清单文件 | 产出方 | 规则 |
 |---|---|---|---|
@@ -84,7 +84,7 @@ Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./D
 - 两个清单都是**版本无关的固定地址**（`raw.githubusercontent.com/.../main/<文件>`，代理优先 + 直连兜底），各自指向对应 release 的产物（正式 tag / `nightly-<日期>` pre-release）。清单内带 `channel` 字段。
 - **Nightly 版本号 = 正式版 patch + 1 再挂日期**（`1.0.0` → `1.0.1-nightly.<YYYYMMDD>`）：按 semver 高于当前正式版，保证正式版用户切到 nightly 能立即检测到；`package.json` 的正式版本号不因此改动。
 - `compareVersions` 遵循 semver **预发布规则**（`1.0.1-nightly.x < 1.0.1`，数字标识 < 字母标识）。**勿改回「按 `.` 切分取前 3 段」的旧实现**——那会把预发布后缀丢掉，导致 nightly 永远检测不到。
-- 渠道选择持久化于 `localStorage['hyperplayer:update-channel']`（默认 `stable`），在设置注册表 `general` 分组登记为 `choice` 条目（`updateChannel`），故简约/传统/探索/桌面四种模式的设置页都能切换并互相同步。
+- 渠道选择持久化于 `localStorage['hyperplayer:update-channel']`（默认 `stable`）。**设置页已无切换入口**（`SettingsPanel.tsx:462` 只读不写，注册表里也没有 `updateChannel` 条目）——旧文档声称「四种模式都能切换并互相同步」与代码不符，勿据此恢复控件。恢复切换属于产品决定，需同时改设置 UI、注册表与 README 说明。
 
 **版本号更迭机制**：版本号唯一事实来源是 `package.json` 的 `version`（设置→关于页显示 `versionInfo.ts` `getVersionLabel()` 的结果，形如 `1.0.0「澜 おおなみ」 · 预览版`；"检查新版本"功能对比 GitHub tag 与本地 version）。**版本号起点为 `1.0.0`**——本仓库自 1.0.0 起重新编号（减配 + 改名后的首个版本），此前的 0.x 记录已不再保留。使用 `scripts/bump-version.mjs` 自动更迭：
 
@@ -119,6 +119,8 @@ HyperPlayer 共 **4 个界面模式**（简约 minimal / 传统 traditional / �
 
 - `src/` — React frontend. `components/` (App.tsx lazy-loads nearly everything), `services/` (API clients, cache, gapless 逻辑, Apple 风格歌词工具 `appleLyricsStyle.ts` 等)、`audio/` (playback engine: `PlaybackQueue.ts`, `transitionPlanner.ts`, `TransitionRenderer.ts`, `playbackTimeStore.ts`), `hooks/`, `api/`, `utils/`, `features/`(neteaseExplore/qqExplore), `vendor/pv`(PV 歌词渲染)。
 - `src/services/gapless/` — **无缝衔接独立模块**（从 `useAudioPlayer.ts` 抽离）：`gaplessConstants.ts`（设置/常量）、`seamlessJoinController.ts`（首选拼接控制器：预热缓存/静音预启动/ended 拼接/边界调度/兜底，依赖注入）、`gaplessTransition.ts`（60ms 等功率双 deck 淡入淡出）。`useAudioPlayer.ts` 只保留调用接口（注入依赖 + 事件接线），改动无缝逻辑优先改此处。目录含 `LICENSE.private`（私有模块许可，见根 `PRIVATE-LICENSE.md`）。
+- **播放过渡设置的写入规则（2026-10-29 立）**：Crossfade / Gapless / 专辑融合的互斥、时长钳制、存储格式与事件派发**唯一实现在 `src/services/transitionSettings.ts`**。`SettingsPanel.tsx`（简约"总设置"）与 `globalSettingsRegistry.ts`（镜像给传统/探索/桌面）都只是调用它、负责呈现，**不要再各自手写一套**。这条链原先有两套不等价的写法，实际后果有两个：① 镜像侧写完会派发 `hyperplayer:global-setting-changed` 而简约侧不派发，且 SettingsPanel 的四个过渡 state 只在挂载时读一次 localStorage——**从传统模式改完回到简约设置页会显示旧值**；② 镜像滑杆 step 是 0.5 而写入只 clamp 不取整，同一档位能存出 4.5 秒。现在两处统一走共享规则，且 SettingsPanel 订阅了三个领域事件 + 通用事件回灌 state。键名（`crossfadeEnabled` / `crossfadeDuration` / `gaplessEnabled` / `albumGaplessEnabled`）与事件名是**历史裸键，勿改**（改名丢用户设置）。回归测试：`test/transitionSettings.test.ts`（含"真实注册表条目 vs 共享规则"等价性断言——注册表若偷偷写回自己那套就会红）。
+
 - **过渡计划层已收敛**：`src/audio/transitionPlanner.ts` 保留 `planTransition` / `planTransitionV2` 导出，但 **只产出 `fixed-crossfade`**（smart-rendered / smart-rendered-v2 / beat-crossfade 生成分支已整体移除）；`transitionPlanner.ts` / `TransitionRenderer.ts` / `autoMixAnalysisService.ts` 仍保留节拍分析能力（供 MV 对齐、PV 歌词等消费），但不再用于智能混音。切歌时右上角弹 gapless 方案提示（`GaplessModeToast.tsx`：直接拼接 / 60ms 淡入淡出 / albumGapless 交叉淡化，`App.tsx` 按 transitionCommit.strategy + 专辑归属判定）。
 - **音效引擎 = HyperSoundEngine（品牌名 HSE）——当前唯一引擎**：由作者 IceFire_Icer 在独立仓库开发后整体融入本项目，**不是 HyperPlayer 内部自研**。许可证有特殊约束——模块目录自带 [LICENSE](src/services/HyperSoundEngine-v1/LICENSE)（**CC BY-NC-ND 4.0**）+ [授权补充说明.md](src/services/HyperSoundEngine-v1/授权补充说明.md)（IceFire_Icer 对 HyperPlayer 项目的专项授权：允许在本仓库范围内使用、集成、修改、分发，含 `public/hse-worklet.js` 打包产物；授权日 2026-08-18）。**红线**：勿删改模块内的 LICENSE / 授权补充说明 / THIRD_PARTY_NOTICES / 版权声明；第三方在 HyperPlayer 之外取用该代码仍受 CC BY-NC-ND（署名/非商业/禁止演绎）约束。**命名已强制统一为 HSE**（2026-10-04 用户拍板；2026-10-24 HSE 1.5 优化快照接入时对快照源全文执行同一映射）：类名 `HyperSoundEngine` / `HyperSoundEngineHost`、文件 `attachHSE.ts` / `HSEAdapter.tsx` / `HSEMixingStudio.tsx`、类型 `HSEEngineParams` / `HSEUiBridge` 等；引擎 id 与存储值 `hse`（audioEngineVersion 读到旧值 v3 自动迁移回写）；存储键 `hyperplayer:hse-*`（旧键 `hyperplayer:v3-*` 在读取处一次性迁移后移除）；worklet `public/hse-worklet.js` + 处理器名 `hyperplayer-hse-effects`。**勿再新建 V3 命名标识符**；模块目录 `HyperSoundEngine-v1` 保留（品牌+版本语义）；模块内 docs/架构书 的历史称呼仅作资料。**品牌 grep 门禁**：`grep -rniE "waveforge|EngineV3|V3Adapter|V3Ui|V3Mixing|V3Host|v3-worklet|v3Hearing" src/services/HyperSoundEngine-v1` 必须为 0 命中（合法保留仅两种：旧存储键迁移代码、GPLv3/homepageV3.1 等第三方字样）。
 - `src/services/HyperSoundEngine-v1/` — **HSE 引擎**（纯 TS DSP 内核，零运行时 npm 依赖）：`src/`（`dsp/` 纯 DSP 模块（实时/离线共用；含 `wasmSimdKernel.ts` 运行时生成 WASM SIMD128 复数乘法内核 + `vectorKernel.ts` 门面，f32 阈值 256 样本 / f64 512，不可用静默回退纯 TS）+ `engine/HyperSoundEngine.ts` 14 级主链 + 第 15 级空间音频 + `engine/ScenePresets.ts` 11 场景 + `engine/ShareCodec.ts` 分享串（含 float32/float64 精度自描述）+ `engine/builtinSceneSeed.ts` 发布种子 + `worklet/` + `analysis/` + `offline/`（Separator 等）+ `integration/`（Host + ProcessingNode 可序列化扩展节点 + SpatialAudioSource）+ `spatial/`（纯 TS 空间渲染后端 + `kemarData.ts` 内嵌 KEMAR 实测 HRIR））、`ui/`（**HSE 调音室**——左侧导航 9 页（主页 / 音效场景 / 均衡器 / 空间音效 / 空间音频 / 动态调音 / 分析 / 调音器 / 关于）+ **亮色薄荷玻璃主题**（`hse-theme.ts` 新主题 + `hse-glass.css`/`hse-main-controls.css`，主色 #006A63；`theme.ts` 的 `HSELegacyTheme` 是旧弹窗主题接口，勿与新 `HSETheme` 混淆）+ IR 库 / SOFA 导入（`h5wasm` 惰性动态 import）/ 头部追踪输入（WebSocket/Serial/BLE/DeviceOrientation）/ 保存状态指示）、`test/` + `ui/**/*.test.{ts,tsx}` + `src/spatial/test/`、`vendor/`（soundtouchjs LGPL 原包副本**未安装未链接**；kemar 数据出处 README + h5wasm LICENSE）、`docs/`、`attachHSE.ts`（**HyperPlayer 融合层**）、`../examples/dc-blocker.ts`（扩展节点第三方示例，verify 脚本依赖）。
@@ -187,7 +189,7 @@ HyperPlayer 由 WaveForge 改名而来，**两者的配置、登录态、缓存�
 
 - `README.md` — feature map（音源 / 无缝衔接 / 歌词模式 / 音效 HSE / 空间音频 / 桌面模式）。
 - `HANDOVER.md` — 交接文档（⚠️ 内容早于减配，涉及已删功能/端口的段落已失效，以本文件与源码为准）。
-- `CONTEXT.md` — 音效域词汇表（效果/场景方案/自定义状态/频响补偿等术语定义；引擎相关词条已按 HSE 单引擎现状更新）。
+- `GLOSSARY.md` — 音效域词汇表（效果/场景方案/自定义状态/频响补偿等术语定义；引擎相关词条已按 HSE 单引擎现状更新）。
 - `PRIVATE-LICENSE.md` — 私有模块许可（适用范围表已按现状逐条核对，表中点名的文件全部存在；唯「AutoMix」是历史模块名——`autoMixAnalysisService.ts` / `transitionPlanner.ts` / `TransitionRenderer.ts` 仍在，用途已收敛为节拍分析 / 过渡编排）。
 - `DEBUG_PAGES.md` — 独立调试页注册表（新增独立调试页前必读）。
 - `docs/adr/` — 架构决策记录（历史决策，部分针对已移除的 v1/v2 引擎）。
@@ -198,3 +200,17 @@ HyperPlayer 由 WaveForge 改名而来，**两者的配置、登录态、缓存�
 - `docs/功能清单3.0.md` — 功能清单（12 个功能域 A–L，按代码实测，含统计、红线文件、已知限制、文档索引；与源码冲突时以源码为准）。
 - `docs/性能优化计划.md` — 性能优化计划（把 `temp/electron性能优化措施汇总.md` 的 9 大类清单逐条对照本仓现状，标注「已达标 / 可优化 / 不采纳」并附 file:line 证据、预期收益、风险、验收方式；另含**性能红线**、基线数字与「一项一提交」纪律；2026-10-04 起阶段 0–5 已基本实施完毕，状态表以文内为准）。**做任何性能相关改动前先读它**——已达标项别重复劳动，红线项碰不得。
 - `docs/性能优化计划2.0.md` — Electron 44 升级 + 启动优化合并报告（⚠️ 内文内核版本号有误，**以文首勘误块为准**：44 = Chromium 152 / V8 15.2 / Node 24.18.1）。
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues in `SoundFieldLab/HyperPlayer`; use the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses the five canonical triage roles with their default label strings. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: `GLOSSARY.md` at the repo root plus `docs/adr/`. See `docs/agents/domain.md`.
