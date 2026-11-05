@@ -123,24 +123,31 @@ test('真实导出IPC同时写同名WAV/MP3保持不覆盖，并拒绝异常类�
   const vm = require('node:vm')
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperplayer-hse-export-'))
   let handler
-  let capability
   const source = fs.readFileSync(path.join(__dirname, '../desktop/main.cjs'), 'utf8')
   const start = source.indexOf("ipcMain.handle('hse-save-rendered-audio'")
-  // 切片终点用「下一个 IPC 处理器声明」定位，不要用注释文案：注释一改文案，
-  // indexOf 返回 -1，slice(start, -1) 会静默吞掉整个文件尾部，把无关的主进程接线
-  // 一并塞进 vm 上下文（旧夹具就是这样撞上 ipcMain.on 不存在的）。
   assert.ok(start >= 0, 'main.cjs 中未找到 hse-save-rendered-audio 处理器')
-  const end = source.indexOf('\nipcMain.', start + 1)
-  assert.ok(end > start, '未找到 hse-save-rendered-audio 处理器的结束边界')
-  vm.runInNewContext(source.slice(start, end), {
+  // 按花括号配对截取单个 handler，不依赖注释或下一个 IPC 声明。
+  const bodyStart = source.indexOf('{', start)
+  assert.ok(bodyStart > start, '未找到 hse-save-rendered-audio 处理器主体')
+  let depth = 0
+  let end = bodyStart
+  for (; end < source.length; end += 1) {
+    if (source[end] === '{') depth += 1
+    else if (source[end] === '}') {
+      depth -= 1
+      if (depth === 0) break
+    }
+  }
+  assert.ok(end > bodyStart, '未找到 hse-save-rendered-audio 处理器的结束边界')
+  const closeParen = source.indexOf(')', end)
+  assert.ok(closeParen > end, '未找到 hse-save-rendered-audio 处理器的注册结束')
+  vm.runInNewContext(source.slice(start, closeParen + 1), {
     // 处理器本身只用 handle；on 是对上述边界被判宽的保险桩，不要因此放宽断言。
     ipcMain: { handle: (name, fn) => { if (name === 'hse-save-rendered-audio') handler = fn }, on: () => {} },
-    guardTrustedIpc: (role, fn) => { capability = role; return fn },
     fs, path, Buffer, ArrayBuffer, Uint8Array, app: { getPath: () => directory }, console: { log() {} },
   })
   try {
     assert.equal(typeof handler, 'function', '未捕获到 hse-save-rendered-audio 处理器')
-    assert.equal(capability, 'privileged')
     const first = Uint8Array.of(1, 2, 3), second = Uint8Array.of(4, 5, 6)
     const results = await Promise.all([handler({}, first, '../同名.wav'), handler({}, second, '../同名.wav')])
     assert.equal(results.every(item => item.ok), true)

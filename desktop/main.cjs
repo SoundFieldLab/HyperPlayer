@@ -22,7 +22,7 @@ for (const stream of [process.stdout, process.stderr]) {
 
 // Avoid spawning chcp/cmd.exe here. Electron is a GUI process, and the child
 // console can flash visibly whenever the main process is initialized.
-const { app, BrowserWindow, ipcMain, protocol, shell, session, safeStorage, dialog, globalShortcut, clipboard, utilityProcess, net, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain: electronIpcMain, protocol, shell, session, safeStorage, dialog, globalShortcut, clipboard, utilityProcess, net, nativeImage } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const crypto = require('crypto')
@@ -58,6 +58,21 @@ if (windowIcon.isEmpty()) {
   console.warn('[Startup] Failed to decode window icon:', windowIconPath)
 }
 const { createDocumentUrlMatcher, createTrustedIpcGuard } = require('./trusted-ipc.cjs')
+const { createIpcRegistry, IpcRegistryError } = require('./ipc-registry.cjs')
+let ipcRegistry = null
+const ipcMain = {
+  handle: (channel, handler) => {
+    if (!ipcRegistry) throw new Error('IPC registry 尚未初始化')
+    return ipcRegistry.handle(channel, handler)
+  },
+  on: (...args) => electronIpcMain.on(...args),
+  removeHandler: (...args) => {
+    if (!ipcRegistry) throw new Error('IPC registry 尚未初始化')
+    return ipcRegistry.removeHandler(...args)
+  },
+  removeListener: (...args) => electronIpcMain.removeListener(...args),
+  removeAllListeners: (...args) => electronIpcMain.removeAllListeners(...args),
+}
 const LOCAL_SERVICE_TOKEN = process.env.HYPERPLAYER_LOCAL_TOKEN || crypto.randomBytes(32).toString('base64url')
 const {
   loadWindowState,
@@ -781,6 +796,50 @@ function closeDesktopLyricsWindow() {
   desktopLyricsMousePassthrough = false
 }
 
+// IPC 权限同时绑定窗口身份、顶层 frame 和当前文档 URL。辅助窗口只保留各自
+// 播控能力；凭据、路径、启动器、模型、下载与更新操作仅主应用文档可调用。
+// 注册统一经过 ipc-registry，channel → capability 的决策集中在那个 module。
+const trustedIpc = createTrustedIpcGuard({
+  roles: {
+    main: {
+      getWindow: () => mainWindow,
+      isAllowedUrl: createDocumentUrlMatcher([
+        devServerUrl,
+        pathToFileURL(path.join(__dirname, '../dist/index.html')).href,
+      ]),
+    },
+    desktopPlayer: {
+      getWindow: () => desktopPlayerWindow,
+      isAllowedUrl: createDocumentUrlMatcher([
+        `${devServerUrl}/desktop-player.html`,
+        pathToFileURL(path.join(__dirname, '../dist/desktop-player.html')).href,
+      ]),
+    },
+    desktopLyrics: {
+      getWindow: () => desktopLyricsWindow,
+      isAllowedUrl: createDocumentUrlMatcher([
+        `${devServerUrl}/desktop-lyrics.html`,
+        pathToFileURL(path.join(__dirname, '../dist/desktop-lyrics.html')).href,
+      ]),
+    },
+    taskbarWidget: {
+      getWindow: () => taskbarWidgetWindow,
+      isAllowedUrl: createDocumentUrlMatcher([
+        pathToFileURL(path.join(__dirname, 'taskbar-widget.html')).href,
+      ]),
+    },
+  },
+  capabilities: {
+    privileged: ['main'],
+    update: ['main'],
+    desktopPlayer: ['main', 'desktopPlayer', 'desktopLyrics'],
+    desktopLyrics: ['main', 'desktopLyrics'],
+    taskbarWidget: ['main', 'taskbarWidget'],
+  },
+})
+const guardTrustedIpc = trustedIpc.handle
+ipcRegistry = createIpcRegistry({ ipcMain: electronIpcMain, guard: guardTrustedIpc })
+
 ipcMain.handle('desktop-lyrics:get-settings', () => getDesktopLyricsSettings())
 
 ipcMain.handle('desktop-lyrics:set-enabled', (_event, enabled) => {
@@ -1400,49 +1459,6 @@ const TASKBAR_WIDGET_DEFAULTS = { enabled: false, position: 'right', width: 340,
 let taskbarWidgetSettings = { ...TASKBAR_WIDGET_DEFAULTS }
 let taskbarWidgetWindow = null
 
-// IPC 权限同时绑定窗口身份、顶层 frame 和当前文档 URL。辅助窗口只保留各自
-// 播控能力；凭据、路径、启动器、模型、下载与更新操作仅主应用文档可调用。
-const trustedIpc = createTrustedIpcGuard({
-  roles: {
-    main: {
-      getWindow: () => mainWindow,
-      isAllowedUrl: createDocumentUrlMatcher([
-        devServerUrl,
-        pathToFileURL(path.join(__dirname, '../dist/index.html')).href,
-      ]),
-    },
-    desktopPlayer: {
-      getWindow: () => desktopPlayerWindow,
-      isAllowedUrl: createDocumentUrlMatcher([
-        `${devServerUrl}/desktop-player.html`,
-        pathToFileURL(path.join(__dirname, '../dist/desktop-player.html')).href,
-      ]),
-    },
-    desktopLyrics: {
-      getWindow: () => desktopLyricsWindow,
-      isAllowedUrl: createDocumentUrlMatcher([
-        `${devServerUrl}/desktop-lyrics.html`,
-        pathToFileURL(path.join(__dirname, '../dist/desktop-lyrics.html')).href,
-      ]),
-    },
-    taskbarWidget: {
-      getWindow: () => taskbarWidgetWindow,
-      isAllowedUrl: createDocumentUrlMatcher([
-        pathToFileURL(path.join(__dirname, 'taskbar-widget.html')).href,
-      ]),
-    },
-  },
-  capabilities: {
-    privileged: ['main'],
-    models: ['main'],
-    update: ['main'],
-    desktopPlayer: ['main', 'desktopPlayer', 'desktopLyrics'],
-    desktopLyrics: ['main', 'desktopLyrics'],
-    taskbarWidget: ['main', 'taskbarWidget'],
-  },
-})
-const guardTrustedIpc = trustedIpc.handle
-
 // 系统主音量读取器（注入 execFile，便于单测替换）
 const { createSystemVolumeReader } = require('./system-volume.cjs')
 const readSystemVolume = createSystemVolumeReader({ execFile })
@@ -1455,9 +1471,9 @@ const hseHeadTracking = createHseHeadTrackingController({
   showMessageBox: (win, options) => dialog.showMessageBox(win, options),
   createBridge: options => require('../scripts/lib/head-tracking-osc.cjs').createHeadTrackingBridge(options),
 })
-ipcMain.handle('hse-head-tracking:state', guardTrustedIpc('privileged', () => hseHeadTracking.state()))
-ipcMain.handle('hse-head-tracking:start', guardTrustedIpc('privileged', () => hseHeadTracking.startBridge()))
-ipcMain.handle('hse-head-tracking:stop', guardTrustedIpc('privileged', () => hseHeadTracking.stopBridge()))
+ipcMain.handle('hse-head-tracking:state', () => hseHeadTracking.state())
+ipcMain.handle('hse-head-tracking:start', () => hseHeadTracking.startBridge())
+ipcMain.handle('hse-head-tracking:stop', () => hseHeadTracking.stopBridge())
 
 let taskbarWidgetClosedByUser = false
 let taskbarWidgetInteractive = false
@@ -2838,7 +2854,7 @@ ipcMain.handle('get-current-wallpaper', async () => {
 })
 
 // IPC 处理：打开外部链接
-ipcMain.handle('open-external', guardTrustedIpc('privileged', async (event, url) => {
+ipcMain.handle('open-external', async (event, url) => {
   logWallpaper('📞 [IPC] 收到打开外部链接请求:', url)
   try {
     const parsed = new URL(String(url || ''))
@@ -2852,7 +2868,7 @@ ipcMain.handle('open-external', guardTrustedIpc('privileged', async (event, url)
     console.error('❌ [IPC] 打开外部链接失败:', error.message)
     return { success: false, error: error.message }
   }
-}))
+})
 
 ipcMain.handle('desktop-widgets:get-system-status', async () => {
   const current = readCpuTimes()
@@ -2874,20 +2890,20 @@ ipcMain.handle('desktop-widgets:get-system-status', async () => {
   }
 })
 
-ipcMain.handle('desktop-widgets:pick-launcher-target', guardTrustedIpc('privileged', async (_event, kind) => {
+ipcMain.handle('desktop-widgets:pick-launcher-target', async (_event, kind) => {
   const result = await dialog.showOpenDialog({
     title: kind === 'folder' ? '选择文件夹' : '选择应用或文件',
     properties: kind === 'folder' ? ['openDirectory'] : ['openFile'],
   })
   return result.canceled ? null : result.filePaths[0] || null
-}))
+})
 
 // 启动器组件合法的可执行/快捷方式类型；扩展名不在白名单内的一律拒绝打开。
 const ALLOWED_LAUNCHER_EXTENSIONS = new Set([
   '.exe', '.bat', '.cmd', '.lnk', '.url', '.msi', '.appref-ms',
 ])
 
-ipcMain.handle('desktop-widgets:open-launcher-target', guardTrustedIpc('privileged', async (_event, target, kind) => {
+ipcMain.handle('desktop-widgets:open-launcher-target', async (_event, target, kind) => {
   const value = String(target || '').trim()
   if (!value) return { success: false, error: '目标为空' }
   if (kind === 'url') {
@@ -2906,7 +2922,7 @@ ipcMain.handle('desktop-widgets:open-launcher-target', guardTrustedIpc('privileg
   }
   const error = await shell.openPath(resolved)
   return error ? { success: false, error } : { success: true }
-}))
+})
 
 // 启动壁纸监听（每10秒检查一次）
 let lastWallpaperSignature = null
@@ -3249,7 +3265,7 @@ ipcMain.handle('hse-write-scene-seed', async (_e, content) => {
 // 重名自动 (2) 序号，绝不覆盖用户已存在的文件。300MB 上限防误传巨型数据。
 // 导出落盘属于特权写操作（渲染端数据直接写到桌面）：必须与其余 privileged 处理器
 // 一样做来源校验，否则桌面歌词 / 任务栏小窗等次要渲染进程也能触发任意文件写入。
-ipcMain.handle('hse-save-rendered-audio', guardTrustedIpc('privileged', (_e, data, fileName) => {
+ipcMain.handle('hse-save-rendered-audio', (_e, data, fileName) => {
   try {
     if (!(data instanceof ArrayBuffer) && !(data instanceof Uint8Array)) return { ok: false, error: '导出数据格式无效' }
     if (data.byteLength > 300 * 1024 * 1024) return { ok: false, error: '导出内容超过 300MB，疑似异常' }
@@ -3278,7 +3294,7 @@ ipcMain.handle('hse-save-rendered-audio', guardTrustedIpc('privileged', (_e, dat
   } catch (err) {
     return { ok: false, error: (err && err.message) || String(err) }
   }
-}))
+})
 
 // 监听打开 QQ 登录窗口的请求
 ipcMain.handle('open-qq-login-window', async () => {
@@ -4680,6 +4696,7 @@ app.whenReady().then(async () => {
       }
     }
   } catch (error) {
+    if (error instanceof IpcRegistryError) throw error
     console.error('[Chroma] 初始化失败:', error instanceof Error ? error.message : error)
   }
   // SignalRGB：Effect 安装、Local API 与 Canvas Event 桥。
@@ -4701,6 +4718,7 @@ app.whenReady().then(async () => {
       }
     }
   } catch (error) {
+    if (error instanceof IpcRegistryError) throw error
     console.error('[SignalRGB] 初始化失败:', error instanceof Error ? error.message : error)
   }
   ipcMain.handle('audio-output:is-supported', () => process.platform === 'win32' || process.platform === 'darwin')
@@ -4720,7 +4738,7 @@ app.whenReady().then(async () => {
     }
   })
   
-  ipcMain.handle('audio-download:selectLocalFile', guardTrustedIpc('privileged', async () => {
+  ipcMain.handle('audio-download:selectLocalFile', async () => {
     if (!analysisRuntime?.audioDownload) throw new Error('Audio download service not initialized')
     const result = await dialog.showOpenDialog({
       title: '选择本地音频文件',
@@ -4729,33 +4747,33 @@ app.whenReady().then(async () => {
     })
     if (result.canceled || !result.filePaths[0]) return null
     return analysisRuntime.audioDownload.authorizeLocalFile(result.filePaths[0])
-  }))
+  })
 
   // Setup audio download IPC handlers
-  ipcMain.handle('audio-download:prepare', guardTrustedIpc('privileged', async (_event, urlOrPath, trackKey) => {
+  ipcMain.handle('audio-download:prepare', async (_event, urlOrPath, trackKey) => {
     if (!analysisRuntime || !analysisRuntime.audioDownload) {
       throw new Error('Audio download service not initialized')
     }
     const result = await analysisRuntime.audioDownload.prepareAudioFile(urlOrPath, trackKey)
     const ext = String(result || '').split('.').pop()?.toLowerCase() || '?'
     return result
-  }))
+  })
 
 
   // 只读缓存命中检查（不触发下载）：看歌等场景优先用本地已缓存音轨（mv-align 已下载
   // 同一 DASH 音频），命中即秒开；未命中返回 null，调用方照旧走流式 URL。
-  ipcMain.handle('audio-download:peekCached', guardTrustedIpc('privileged', (_event, trackKey) => {
+  ipcMain.handle('audio-download:peekCached', (_event, trackKey) => {
     if (!analysisRuntime || !analysisRuntime.audioDownload) {
       return null
     }
     return analysisRuntime.audioDownload.peekCached(trackKey)
-  }))
+  })
 
 
   // 把已下载的音频文件映射为渲染进程可 fetch 的 hyperplayer-media:// URL
   // （浏览器端 decodeAudioData 原生支持 m4a/aac——Python/librosa 侧 libsndfile 打不开）。
   // 仅允许下载缓存目录内的文件，与 render:getAudioUrl 同款路径校验。
-  ipcMain.handle('audio-download:getMediaUrl', guardTrustedIpc('privileged', (_event, filePath) => {
+  ipcMain.handle('audio-download:getMediaUrl', (_event, filePath) => {
     if (!analysisRuntime || !analysisRuntime.audioDownload || !analysisRuntime.audioDownload.tempRoot) {
       throw new Error('Audio download service not initialized')
     }
@@ -4766,13 +4784,13 @@ app.whenReady().then(async () => {
     const resolved = fs.realpathSync.native(filePath)
     const url = toMediaUrl(resolved)
     return url
-  }))
+  })
 
 
   // 保存渲染进程转码后的 WAV（Chromium decodeAudioData → 16bit PCM），供 Python
   // 渲染/AI worker 读取（libsndfile 只认 wav/flac/ogg/mp3，m4a/aac/opus 必须转码）。
   // 已存在同 key 的 WAV 直接复用，同一首歌只转码一次。
-  ipcMain.handle('audio-download:saveWav', guardTrustedIpc('privileged', (_event, trackKey, wavArrayBuffer) => {
+  ipcMain.handle('audio-download:saveWav', (_event, trackKey, wavArrayBuffer) => {
     if (!analysisRuntime || !analysisRuntime.audioDownload || !analysisRuntime.audioDownload.tempRoot) {
       throw new Error('Audio download service not initialized')
     }
@@ -4807,36 +4825,36 @@ app.whenReady().then(async () => {
       try { fs.rmSync(temp, { force: true }) } catch {}
     }
     return target
-  }))
+  })
 
   
-  ipcMain.handle('audio-download:cleanup', guardTrustedIpc('privileged', () => {
+  ipcMain.handle('audio-download:cleanup', () => {
     if (analysisRuntime && analysisRuntime.audioDownload) {
       analysisRuntime.audioDownload.clearLocalAuthorizations()
       analysisRuntime.audioDownload.cleanupOldFiles()
     }
     return { success: true }
-  }))
+  })
 
   
-  ipcMain.handle('audio-download:get-stats', guardTrustedIpc('privileged', () => {
+  ipcMain.handle('audio-download:get-stats', () => {
     if (!analysisRuntime || !analysisRuntime.audioDownload) {
       return { fileCount: 0, totalSize: 0, maxSize: 2 * 1024 * 1024 * 1024, cachePath: '' }
     }
     const stats = analysisRuntime.audioDownload.getCacheStats()
     const cachePath = path.join(configManager.getCachePath(), 'temp')
     return { ...stats, cachePath }
-  }))
+  })
 
   
-  ipcMain.handle('audio-download:clear-cache', guardTrustedIpc('privileged', () => {
+  ipcMain.handle('audio-download:clear-cache', () => {
     if (analysisRuntime && analysisRuntime.audioDownload) {
       analysisRuntime.audioDownload.clearLocalAuthorizations()
       analysisRuntime.audioDownload.cleanupAll()
       return { success: true }
     }
     return { success: false }
-  }))
+  })
 
 
   // 应用更新管理：后台静默下载 + 退出即应用 + 更新日志/版本历史。
@@ -4845,25 +4863,26 @@ app.whenReady().then(async () => {
     const { setupUpdateIPC } = require('./update-manager.cjs')
     setupUpdateIPC(ipcMain, () => mainWindow, event => trustedIpc.isTrusted(event, 'update'))
   } catch (error) {
+    if (error instanceof IpcRegistryError) throw error
     console.error('⚠️ [更新] 更新管理器初始化失败:', error instanceof Error ? error.message : error)
   }
   
   // 配置管理 IPC 处理器
-  ipcMain.handle('config:get-cache-path', guardTrustedIpc('privileged', () => {
+  ipcMain.handle('config:get-cache-path', () => {
     return configManager.getCachePath()
-  }))
+  })
 
 
   // QQ 音乐官方 Skills Key 使用系统安全存储（Windows 上为 DPAPI）加密后再落盘。
   // 不写入项目配置、环境文件或日志。
-  ipcMain.handle('credentials:get-qqmusic-skill-key', guardTrustedIpc('privileged', () => ({
+  ipcMain.handle('credentials:get-qqmusic-skill-key', () => ({
     success: true,
     configured: Boolean(readQQMusicSkillKey()),
     key: readQQMusicSkillKey(),
     secure: safeStorage.isEncryptionAvailable()
-  })))
+  }))
 
-  ipcMain.handle('credentials:set-qqmusic-skill-key', guardTrustedIpc('privileged', (_event, value) => {
+  ipcMain.handle('credentials:set-qqmusic-skill-key', (_event, value) => {
     const key = String(value || '').trim()
     if (!/^qmk-[A-Za-z0-9._-]+$/.test(key)) {
       return { success: false, error: 'API Key 格式应为 qmk-…' }
@@ -4879,10 +4898,10 @@ app.whenReady().then(async () => {
     } catch (error) {
       return { success: false, error: error.message || '保存 API Key 失败' }
     }
-  }))
+  })
 
 
-  ipcMain.handle('credentials:delete-qqmusic-skill-key', guardTrustedIpc('privileged', () => {
+  ipcMain.handle('credentials:delete-qqmusic-skill-key', () => {
     try {
       const credentials = readSecureCredentials()
       delete credentials[QQMUSIC_SKILL_CREDENTIAL]
@@ -4891,10 +4910,10 @@ app.whenReady().then(async () => {
     } catch (error) {
       return { success: false, error: error.message || '删除 API Key 失败' }
     }
-  }))
+  })
 
   
-  ipcMain.handle('config:set-cache-path', guardTrustedIpc('privileged', (event, newPath) => {
+  ipcMain.handle('config:set-cache-path', (event, newPath) => {
     try {
       // 验证路径是否有效
       if (typeof newPath !== 'string' || !newPath.trim() || !path.isAbsolute(newPath.trim())) {
@@ -4913,10 +4932,10 @@ app.whenReady().then(async () => {
     } catch (error) {
       return { success: false, error: error.message }
     }
-  }))
+  })
 
   
-  ipcMain.handle('config:select-cache-path', guardTrustedIpc('privileged', async () => {
+  ipcMain.handle('config:select-cache-path', async () => {
     try {
       const result = await dialog.showOpenDialog({
         properties: ['openDirectory', 'createDirectory'],
@@ -4942,10 +4961,10 @@ app.whenReady().then(async () => {
       console.error('Failed to select cache path:', error)
       return null
     }
-  }))
+  })
 
   
-  ipcMain.handle('config:reset-cache-path', guardTrustedIpc('privileged', () => {
+  ipcMain.handle('config:reset-cache-path', () => {
     try {
       const defaultCachePath = configManager.getDefaultCachePath()
       
@@ -4961,7 +4980,7 @@ app.whenReady().then(async () => {
       console.error('Failed to reset cache path:', error)
       throw error
     }
-  }))
+  })
 
   
   registerMediaProtocol()
