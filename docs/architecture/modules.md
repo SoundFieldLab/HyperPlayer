@@ -67,6 +67,15 @@ consent、运行时能力门控、enabled 写入、生命周期队列 / 代际�
 - 第三方源会按时长错位（-40）与平台时间轴偏差（+30 / +10 / -150）评分；**-150 是重罚而非硬排除**，逐字与主源加分仍可能抵消。QQ 平台强制以 QQ 官方为骨架，第三方只补空缺。
 - 回归测试：`test/lyricsSelection.test.ts`（QQ 权威 / 评分 / 时长降权 / 同步排除 / 合并 / 空候选）。
 
+## 预载账本
+
+`src/services/preloadLedger.ts` 拥有预载条目的唯一形状：URL、歌词、时间戳、URL / 歌词失效代际、进行中的歌词 promise 与歌词策略键。
+
+- `App.tsx` 只调 `getFreshUrl()` / `getUrl()` / `getLyrics()` / `getLyricsSnapshot()` / `beginLyrics()` / `updateLyricsProgress()` / `completeLyrics()` / `failLyrics()` / `setUrlIfCurrent()` / `clearUrl()` / `invalidateAudioUrls()` / `invalidateLyrics()` / `prune()`；**不读取内部条目对象**。
+- TTL（5 分钟）、30 条上限、最旧淘汰与“URL + 歌词都过期才删”都在 module 内；不要在 App 里再手写记录形状或时间戳。
+- URL 与歌词是两个独立代际：音质 / 登录态变化清 URL，歌词策略变化清歌词；异步回来时代际不符的写入被丢弃。
+- 回归测试：`test/preloadLedger.test.ts`（TTL / 代际 / 歌词生命周期 / 策略键 / 清理与上限）。
+
 ## 设置快照模块的复用边界
 
 `transitionSettings.ts` 与 `lyricModeSettings.ts` 的 `WeakMap` store / snapshot / commit / subscribe 骨架目前是两份近似实现。**这是有意接受的两份重复**：两份的领域规则差异大，过早抽公共层会把语义压平。

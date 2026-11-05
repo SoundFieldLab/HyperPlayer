@@ -48,6 +48,7 @@ import {
   type AccountSessionUi,
 } from './services/accountSession'
 import { cacheManager } from './services/cacheManager'
+import { PreloadLedger } from './services/preloadLedger'
 import { indexedDBCache } from './services/indexedDBCache'
 import { autoMixAnalysisService } from './services/autoMixAnalysisService'
 import { getAudioEngineVersion, setAudioEngineVersion, type AudioEngineVersion } from './services/audioEngineVersion'
@@ -818,36 +819,18 @@ function App() {
     return nextRevision
   }, [])
   
-  // 预加载接下来2首歌曲的URL和歌词
-  const preloadCacheRef = useRef<Map<string, {
-    url: string | null
-    lyrics: LyricLine[]
-    timestamp: number
-    urlTimestamp?: number
-    lyricsTimestamp?: number
-    lyricsLoaded?: boolean
-    lyricsPromise?: Promise<LyricLine[]>
-    lyricsPolicyKey?: string
-  }>>(new Map())
-  const lyricsCacheGenerationRef = useRef(0)
-  const lyricsPolicyFingerprintRef = useRef('')
-  const audioUrlCacheGenerationRef = useRef(0)
+  // 预加载账本：条目形状 / TTL / 上限 / URL 与歌词代际 / pending promise 的唯一所有者
+  const preloadLedgerRef = useRef<PreloadLedger | null>(null)
+  if (preloadLedgerRef.current === null) preloadLedgerRef.current = new PreloadLedger()
+  const preloadLedger = preloadLedgerRef.current
   const audioPlayerCacheControlRef = useRef<{
     cancelTransition: (reason?: string, preserveNext?: boolean, announceCancellation?: boolean) => void
   } | null>(null)
 
   useEffect(() => {
     const invalidatePreloadedAudioUrls = () => {
-      audioUrlCacheGenerationRef.current += 1
+      preloadLedger.invalidateAudioUrls()
       audioPlayerCacheControlRef.current?.cancelTransition('audio source settings changed', false)
-      for (const [key, cached] of preloadCacheRef.current) {
-        if (!cached.url) continue
-        preloadCacheRef.current.set(key, {
-          ...cached,
-          url: null,
-          urlTimestamp: 0,
-        })
-      }
     }
 
     window.addEventListener(AUDIO_QUALITY_SETTINGS_EVENT, invalidatePreloadedAudioUrls)
@@ -856,41 +839,16 @@ function App() {
       window.removeEventListener(AUDIO_QUALITY_SETTINGS_EVENT, invalidatePreloadedAudioUrls)
       window.removeEventListener('hyperplayer-auth-changed', invalidatePreloadedAudioUrls)
     }
-  }, [])
+  }, [preloadLedger])
 
   // 预载缓存只写不删会随播放时长无限增长（歌词数组可达数百 KB/首）。
   // 定期清理过期条目并限制总条数，防止长时间播放积压内存。
   useEffect(() => {
-    const PRELOAD_CACHE_TTL = 5 * 60 * 1000
-    const PRELOAD_CACHE_MAX_ENTRIES = 30
-    const prunePreloadCache = () => {
-      const cache = preloadCacheRef.current
-      const now = Date.now()
-      for (const [key, value] of cache) {
-        const urlAge = now - (value.urlTimestamp ?? value.timestamp)
-        const lyricsAge = now - (value.lyricsTimestamp ?? value.timestamp)
-        if (urlAge > PRELOAD_CACHE_TTL && lyricsAge > PRELOAD_CACHE_TTL) {
-          cache.delete(key)
-        }
-      }
-      while (cache.size > PRELOAD_CACHE_MAX_ENTRIES) {
-        let oldestKey: string | null = null
-        let oldestTime = Number.POSITIVE_INFINITY
-        for (const [key, value] of cache) {
-          const age = value.urlTimestamp ?? value.timestamp
-          if (age < oldestTime) {
-            oldestTime = age
-            oldestKey = key
-          }
-        }
-        if (oldestKey === null) break
-        cache.delete(oldestKey)
-      }
-    }
+    const prunePreloadCache = () => preloadLedger.prune()
     prunePreloadCache()
     const timer = window.setInterval(prunePreloadCache, 60_000)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [preloadLedger])
   const [showUpNext, setShowUpNext] = useState(false)
   const [upNextEnabled, setUpNextEnabled] = useState(() => {
     const saved = localStorage.getItem('upNextEnabled')
@@ -1237,15 +1195,12 @@ function App() {
   // URL 与歌词分开预载，并共享同一个进行中的歌词请求。无缝切歌时先使用
   // 已返回的基础歌词，随后原位升级为 TTML 逐字、翻译和罗马音组合结果。
   const ensureSongLyrics = useCallback((song: Song, cacheKey = getSongKey(song)): Promise<LyricLine[]> => {
-    const cached = preloadCacheRef.current.get(cacheKey)
-    const cachedUrlTimestamp = cached?.urlTimestamp ?? (cached?.url ? cached.timestamp : undefined)
-
     const platform = song.platform || 'netease'
     // QQ 用 mid，网易云用 id。
     const rawSongId = platform === 'qq'
       ? (song.mid || song.id)
       : song.id
-    const lyricsCacheGeneration = lyricsCacheGenerationRef.current
+    const lyricsGeneration = preloadLedger.lyricsGeneration
     let lyricsLoadedFromPersistentCache = false
     // 歌词缓存版本：评分/数据源/解析逻辑变更时递增，使旧缓存（旧解析选中的劣质/残缺源）失效。
     // v3→v4：修复 QQ 歌词请求的 songID 形态后，**递增版本强制清除今天缓存下来的残缺结果**
@@ -1259,11 +1214,9 @@ function App() {
       localStorage.getItem('primaryLyricsSource') || 'AMLL',
     ].join(':')
     const lyricsCacheKey = `v5:${lyricsPolicyKey}:${cacheKey}`
-    const isFresh = cached
-      && cached.lyricsPolicyKey === lyricsPolicyKey
-      && Date.now() - (cached.lyricsTimestamp ?? cached.timestamp) < 5 * 60 * 1000
-    if (isFresh && cached.lyricsLoaded) return Promise.resolve(cached.lyrics)
-    if (isFresh && cached.lyricsPromise) return cached.lyricsPromise
+    const snapshot = preloadLedger.getLyricsSnapshot(cacheKey, lyricsPolicyKey)
+    if (snapshot.fresh && snapshot.loaded) return Promise.resolve(snapshot.lyrics)
+    if (snapshot.fresh && snapshot.promise) return snapshot.promise
     const request = indexedDBCache.getCachedLyrics<LyricLine[]>(lyricsCacheKey, platform)
       .catch(() => null)
       .then(async persistedLyrics => {
@@ -1279,18 +1232,12 @@ function App() {
       song.artists.map(artist => artist.name).join(', '),
       song.duration,
       (progressLyrics, source, hasWordByWord) => {
-        if (lyricsCacheGeneration !== lyricsCacheGenerationRef.current) return
-        const latest = preloadCacheRef.current.get(cacheKey)
-        preloadCacheRef.current.set(cacheKey, {
-          url: latest?.url ?? cached?.url ?? null,
-          lyrics: progressLyrics,
-          timestamp: Date.now(),
-          urlTimestamp: latest?.urlTimestamp ?? cachedUrlTimestamp,
-          lyricsTimestamp: Date.now(),
-          lyricsLoaded: false,
-          lyricsPromise: latest?.lyricsPromise,
+        if (!preloadLedger.updateLyricsProgress(
+          cacheKey,
+          progressLyrics,
+          lyricsGeneration,
           lyricsPolicyKey,
-        })
+        )) return
         if (activeTrackKeyRef.current === cacheKey) {
           debugLog(`📝 歌词更新: ${source} (${progressLyrics.length}行 逐字=${hasWordByWord})`)
           setLyrics(progressLyrics)
@@ -1299,67 +1246,34 @@ function App() {
       }
         )
       }).then(finalLyrics => {
-      if (lyricsCacheGeneration !== lyricsCacheGenerationRef.current) return finalLyrics
+      if (!preloadLedger.completeLyrics(
+        cacheKey,
+        finalLyrics,
+        lyricsGeneration,
+        lyricsPolicyKey,
+      )) return finalLyrics
       if (!lyricsLoadedFromPersistentCache && finalLyrics.length > 0) {
         void indexedDBCache.cacheLyrics(lyricsCacheKey, platform, finalLyrics)
           .catch(error => console.warn('写入歌词缓存失败:', error))
       }
-      const latest = preloadCacheRef.current.get(cacheKey)
-      preloadCacheRef.current.set(cacheKey, {
-        url: latest?.url ?? cached?.url ?? null,
-        lyrics: finalLyrics,
-        timestamp: Date.now(),
-        urlTimestamp: latest?.urlTimestamp ?? cachedUrlTimestamp,
-        lyricsTimestamp: Date.now(),
-        lyricsLoaded: true,
-        lyricsPolicyKey,
-      })
       if (activeTrackKeyRef.current === cacheKey) {
         setLyrics(finalLyrics)
         setIsPureMusic(detectPureMusic(finalLyrics))
       }
       return finalLyrics
     }).catch(error => {
-      const latest = preloadCacheRef.current.get(cacheKey)
-      preloadCacheRef.current.set(cacheKey, {
-        url: latest?.url ?? cached?.url ?? null,
-        lyrics: latest?.lyrics || cached?.lyrics || [],
-        timestamp: latest?.timestamp || cached?.timestamp || Date.now(),
-        urlTimestamp: latest?.urlTimestamp ?? cachedUrlTimestamp,
-        lyricsTimestamp: latest?.lyricsTimestamp ?? cached?.lyricsTimestamp,
-        lyricsLoaded: false,
-        lyricsPolicyKey,
-      })
+      preloadLedger.failLyrics(cacheKey, lyricsGeneration, lyricsPolicyKey)
       console.warn(`[Lyrics preload] ${song.name} 加载失败:`, error)
       return []
     })
 
-    preloadCacheRef.current.set(cacheKey, {
-      url: cached?.url ?? null,
-      lyrics: cached?.lyrics || [],
-      timestamp: Date.now(),
-      urlTimestamp: cachedUrlTimestamp,
-      lyricsTimestamp: Date.now(),
-      lyricsLoaded: false,
-      lyricsPromise: request,
-      lyricsPolicyKey,
-    })
+    preloadLedger.beginLyrics(cacheKey, lyricsPolicyKey, request)
     return request
-  }, [])
+  }, [preloadLedger])
 
   useEffect(() => {
     const clearLyricsMemory = () => {
-      lyricsCacheGenerationRef.current += 1
-      for (const [key, value] of preloadCacheRef.current) {
-        preloadCacheRef.current.set(key, {
-          ...value,
-          lyrics: [],
-          lyricsLoaded: false,
-          lyricsPromise: undefined,
-          lyricsTimestamp: undefined,
-          lyricsPolicyKey: undefined,
-        })
-      }
+      preloadLedger.invalidateLyrics()
       const currentSong = playlistRef.current[currentIndexRef.current]
       if (currentSong) {
         const currentKey = getSongKey(currentSong)
@@ -1373,7 +1287,7 @@ function App() {
       window.removeEventListener('hyperplayer:lyrics-cache-cleared', clearLyricsMemory)
       window.removeEventListener('hyperplayer:lyrics-policy-changed', clearLyricsMemory)
     }
-  }, [ensureSongLyrics])
+  }, [ensureSongLyrics, preloadLedger])
 
   useEffect(() => {
     const handleLyricOffsetChange = (event: Event) => {
@@ -1709,8 +1623,7 @@ function App() {
       }
       const trackKey = activeTrackKeyRef.current
       if (!trackKey) return
-      const cached = preloadCacheRef.current.get(trackKey)
-      const url = cached?.url || ''
+      const url = preloadLedger.getUrl(trackKey) || ''
       if (url) adapter.applyLoudnessNormalization(trackKey, url)
     }
     window.addEventListener('normalizationEnabledChanged', handleNormalizationChange)
@@ -1997,8 +1910,7 @@ function App() {
       // 补挂响度归一化（若新引擎支持且调音室已开启；adapter 内部按 capabilities 判断，不支持则 no-op）
       const trackKey = activeTrackKeyRef.current
       if (trackKey) {
-        const cached = preloadCacheRef.current.get(trackKey)
-        const url = cached?.url ?? null
+        const url = preloadLedger.getUrl(trackKey)
         if (url) newAdapter.applyLoudnessNormalization(trackKey, url)
       }
       // 引擎热切换后当前曲目的重新注入（ReplayGain 曲目生命周期）
@@ -2178,7 +2090,7 @@ function App() {
         setCurrentIndex(index)
         setCurrentTrack(createTrackFromSong(normalizedSong))
         commitCurrentTime(audioPlayer.getAudioElement()?.currentTime || 0)
-        const cachedLyrics = preloadCacheRef.current.get(cacheKey)?.lyrics || []
+        const cachedLyrics = preloadLedger.getLyrics(cacheKey)
         setLyrics(cachedLyrics)
         setIsPureMusic(detectPureMusic(cachedLyrics))
         setCurrentTranslation('')
@@ -3191,7 +3103,7 @@ function App() {
       return
     }
     const requestRevision = revisionOverride
-    const audioUrlGeneration = audioUrlCacheGenerationRef.current
+    const audioUrlGeneration = preloadLedger.audioUrlGeneration
     // 计算接下来的 2 首歌曲索引
     const upcomingIndices = getUpcomingIndices(
       actualPlaylist.map(getSongKey),
@@ -3219,16 +3131,15 @@ function App() {
       const audioSource = Promise.resolve({ songId: platform === 'qq' ? (song.mid || song.id) : song.id, platform })
       
       // 检查缓存是否已存在且未过期（5分钟内有效）
-      const cached = preloadCacheRef.current.get(cacheKey)
-      const now = Date.now()
-      if (cached && cached.url && (now - (cached.urlTimestamp ?? cached.timestamp)) < 5 * 60 * 1000) {
-        debugLog(`✅ [Preload] 使用缓存的 URL: ${cached.url.substring(0, 50)}...`)
+      const cachedUrl = preloadLedger.getFreshUrl(cacheKey)
+      if (cachedUrl) {
+        debugLog(`✅ [Preload] 使用缓存的 URL: ${cachedUrl.substring(0, 50)}...`)
         // 只预加载第一首歌到音频元素，其他歌曲只缓存
         if (requestRevision === queueRevisionRef.current && position === 0 && (effectiveCrossfadeEnabled || effectiveGaplessEnabled)) {
           debugLog(`📥 [Preload] 调用 audioPlayer.preloadNext (从缓存)`)
           debugLog(`   Position: ${position}`)
             audioPlayer.preloadNext({
-              url: getProxiedAudioUrl(cached.url),
+              url: getProxiedAudioUrl(cachedUrl),
               trackKey: cacheKey,
             index: idx,
             duration: song.duration / 1000,
@@ -3245,19 +3156,9 @@ function App() {
         const resolvedPlatform = source.platform
         debugLog(`⏳ [Preload] URL 缓存未命中，开始获取音频地址...`)
         getSongUrl(resolvedSongId, resolvedPlatform).catch(() => null).then(url => {
-          if (audioUrlGeneration !== audioUrlCacheGenerationRef.current) return
           if (url && url !== 'SONG_UNAVAILABLE') {
-            const latest = preloadCacheRef.current.get(cacheKey)
-            preloadCacheRef.current.set(cacheKey, {
-              url,
-              lyrics: latest?.lyrics || [],
-              timestamp: Date.now(),
-              urlTimestamp: Date.now(),
-              lyricsTimestamp: latest?.lyricsTimestamp,
-              lyricsLoaded: latest?.lyricsLoaded,
-              lyricsPromise: latest?.lyricsPromise,
-            })
-            debugLog(`  ✅ 第 ${position + 1} 首歌曲: ${song.name} (${latest?.lyrics.length || 0}行歌词已就绪)`)
+            if (!preloadLedger.setUrlIfCurrent(cacheKey, url, audioUrlGeneration)) return
+            debugLog(`  ✅ 第 ${position + 1} 首歌曲: ${song.name} (${preloadLedger.getLyrics(cacheKey).length}行歌词已就绪)`)
             
             // 只预加载第一首歌到音频元素，其他歌曲只缓存
             if (requestRevision === queueRevisionRef.current && position === 0 && (effectiveCrossfadeEnabled || effectiveGaplessEnabled)) {
@@ -3273,7 +3174,9 @@ function App() {
               })
             }
           } else {
-            debugLog(`❌ [Preload] 第 ${position + 1} 首歌曲 URL 获取失败，可能是VIP歌曲`)
+            if (audioUrlGeneration === preloadLedger.audioUrlGeneration) {
+              debugLog(`❌ [Preload] 第 ${position + 1} 首歌曲 URL 获取失败，可能是VIP歌曲`)
+            }
           }
         }).catch(err => {
           console.error(`  ❌ 第 ${position + 1} 首歌曲失败: ${song.name}`, err)
@@ -3392,27 +3295,14 @@ function App() {
       const playable = song
       if (!playable) return null
       const resolvedPlatform = playable.platform || 'netease'
-      const cached = preloadCacheRef.current.get(trackKey)
-      const cachedUrlIsFresh = Boolean(
-        cached?.url
-        && Date.now() - (cached.urlTimestamp ?? cached.timestamp) < 5 * 60 * 1000
-      )
+      const cachedUrl = preloadLedger.getFreshUrl(trackKey)
       const songId = resolvedPlatform === 'qq' ? (playable.mid || playable.id) : playable.id
-      const audioUrlGeneration = audioUrlCacheGenerationRef.current
-      const url = cachedUrlIsFresh ? cached!.url : await getSongUrl(songId, resolvedPlatform)
+      const audioUrlGeneration = preloadLedger.audioUrlGeneration
+      const url = cachedUrl ?? await getSongUrl(songId, resolvedPlatform)
       if (!url || url === 'SONG_UNAVAILABLE') return null
 
-      if (!cachedUrlIsFresh && audioUrlGeneration === audioUrlCacheGenerationRef.current) {
-        const latest = preloadCacheRef.current.get(trackKey)
-        preloadCacheRef.current.set(trackKey, {
-          url,
-          lyrics: latest?.lyrics || [],
-          timestamp: Date.now(),
-          urlTimestamp: Date.now(),
-          lyricsTimestamp: latest?.lyricsTimestamp,
-          lyricsLoaded: latest?.lyricsLoaded,
-          lyricsPromise: latest?.lyricsPromise,
-        })
+      if (!cachedUrl) {
+        preloadLedger.setUrlIfCurrent(trackKey, url, audioUrlGeneration)
       }
 
       const analysis = await autoMixAnalysisService.analyze({
@@ -3547,13 +3437,13 @@ function App() {
     setDuration(normalizedSong.duration / 1000)
     setCurrentTranslation('')
 
-    const cached = preloadCacheRef.current.get(cacheKey)
-    if (cached && cached.lyrics.length > 0) {
-      setLyrics(cached.lyrics)
-      setIsPureMusic(detectPureMusic(cached.lyrics))
+    const cachedLyrics = preloadLedger.getLyrics(cacheKey)
+    if (cachedLyrics.length > 0) {
+      setLyrics(cachedLyrics)
+      setIsPureMusic(detectPureMusic(cachedLyrics))
     } else {
       setLyrics([])
-      setIsPureMusic(detectPureMusic(cached?.lyrics))
+      setIsPureMusic(detectPureMusic(cachedLyrics))
     }
     void ensureSongLyrics(normalizedSong, cacheKey)
 
@@ -3618,31 +3508,22 @@ function App() {
       // 如果有艺人ID，获取艺人详情
       const cacheKey = getSongKey(normalizedSong)
       activeTrackKeyRef.current = cacheKey
-      const cached = preloadCacheRef.current.get(cacheKey)
-      const now = Date.now()
+      const audioUrlGeneration = preloadLedger.audioUrlGeneration
+      const cachedUrl = preloadLedger.getFreshUrl(cacheKey)
       const lyricsPromise = ensureSongLyrics(normalizedSong, cacheKey)
       
       let url: string | null = null
-      let songLyrics: LyricLine[] = cached?.lyrics || []
+      let songLyrics: LyricLine[] = preloadLedger.getLyrics(cacheKey)
 
       // 音频 URL 与歌词分别判断时效，歌词请求不再等播放器完成加载后才开始。
-      if (cached?.url && (now - (cached.urlTimestamp ?? cached.timestamp)) < 5 * 60 * 1000) {
-        url = cached.url
+      if (cachedUrl) {
+        url = cachedUrl
         debugLog('🎵 歌词: 缓存命中 (' + songLyrics.length + '行)')
       } else {
         url = await getSongUrl(songId, platform)
         if (!isLatestLoad()) return
         if (url && url !== 'SONG_UNAVAILABLE') {
-          const latest = preloadCacheRef.current.get(cacheKey)
-          preloadCacheRef.current.set(cacheKey, {
-            url,
-            lyrics: latest?.lyrics || songLyrics,
-            timestamp: Date.now(),
-            urlTimestamp: Date.now(),
-            lyricsTimestamp: latest?.lyricsTimestamp,
-            lyricsLoaded: latest?.lyricsLoaded,
-            lyricsPromise: latest?.lyricsPromise,
-          })
+          preloadLedger.setUrlIfCurrent(cacheKey, url, audioUrlGeneration)
         }
       }
       
@@ -3675,7 +3556,8 @@ function App() {
       setCurrentTrack(createTrackFromSong(normalizedSong, url ?? undefined))
       
       // 如果是当前播放的歌曲，确保歌词已加载且不为空
-      songLyrics = preloadCacheRef.current.get(cacheKey)?.lyrics || songLyrics
+      const latestLyrics = preloadLedger.getLyrics(cacheKey)
+      if (latestLyrics.length > 0) songLyrics = latestLyrics
       if (songLyrics.length > 0) {
         setLyrics(songLyrics)
       } else {
@@ -3704,30 +3586,13 @@ function App() {
         // Signed playback URLs can expire or be rejected by the CDN before the
         // five-minute memory entry expires. Evict only this song and retry once.
         invalidateSongUrl(songId, platform)
-        const latest = preloadCacheRef.current.get(cacheKey)
-        preloadCacheRef.current.set(cacheKey, {
-          url: null,
-          lyrics: latest?.lyrics || songLyrics,
-          timestamp: latest?.timestamp || Date.now(),
-          urlTimestamp: 0,
-          lyricsTimestamp: latest?.lyricsTimestamp,
-          lyricsLoaded: latest?.lyricsLoaded,
-          lyricsPromise: latest?.lyricsPromise,
-        })
+        preloadLedger.clearUrl(cacheKey)
+        const retryGeneration = preloadLedger.audioUrlGeneration
         const refreshedUrl = await getSongUrl(songId, platform)
         // 即使签名 URL 与失败 URL 相同也再试一次：瞬时 CDN 解码失败不代表 URL 无效
         if (!refreshedUrl || !isLatestLoad()) throw firstPlaybackError
         url = refreshedUrl
-        const refreshedLatest = preloadCacheRef.current.get(cacheKey)
-        preloadCacheRef.current.set(cacheKey, {
-          url,
-          lyrics: refreshedLatest?.lyrics || songLyrics,
-          timestamp: Date.now(),
-          urlTimestamp: Date.now(),
-          lyricsTimestamp: refreshedLatest?.lyricsTimestamp,
-          lyricsLoaded: refreshedLatest?.lyricsLoaded,
-          lyricsPromise: refreshedLatest?.lyricsPromise,
-        })
+        preloadLedger.setUrlIfCurrent(cacheKey, url, retryGeneration)
         setCurrentTrack(createTrackFromSong(normalizedSong, url))
         started = await audioPlayer.loadAndPlay(getProxiedAudioUrl(url), volume, {
           trackKey: cacheKey,
