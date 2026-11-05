@@ -24,6 +24,18 @@ import { useAudioAnalyzer } from './hooks/useAudioAnalyzer'
 import { useAudioPulseStore, type AudioPulseStore } from './hooks/useAudioPulse'
 import { useAutoHideCursor } from './hooks/useAutoHideCursor'
 import { useTransitionSettings } from './hooks/useTransitionSettings'
+import { useLyricModeSettings } from './hooks/useLyricModeSettings'
+import {
+  ALL_LYRIC_MODES,
+  canHideLyricMode,
+  commitLyricDisplayMode,
+  isLyricDisplayMode,
+  LYRIC_MODE_EVENTS,
+  LYRIC_MODE_NAMES,
+  toggleLyricModeVisibility as toggleLyricModeVisibilitySetting,
+  withCurrentLyricModeVisible,
+  type LyricDisplayMode,
+} from './services/lyricModeSettings'
 import { Song, getSongUrl, invalidateSongUrl, getLyrics, getProxiedImageUrl, getProxiedAudioUrl, getLocalAlbumIdentifier, resolveSongAlbumIdentifier, LyricLine } from './services/musicApi'
 import type { MusicPlatform } from './services/platforms'
 import { getPlatformCapabilities, isPlatformVisible, platformLabel } from './services/platforms'
@@ -282,53 +294,6 @@ const buildDesktopLyricsWithInterludes = (lyrics: LyricLine[]): DesktopLyricLine
 }
 
 type CoverPulseMode = 'dynamic' | 'soft' | 'restless'
-type LyricDisplayMode = 'modern' | 'immersive' | 'video' | 'pv'
-
-const LYRIC_MODE_VISIBILITY_KEY = 'hyperplayer_visible_lyric_modes'
-const LYRIC_MODE_VIDEO_MIGRATED_KEY = 'hyperplayer_video_mode_migrated'
-const LYRIC_MODE_PV_MIGRATED_KEY = 'hyperplayer_pv_mode_migrated'
-const ALL_LYRIC_MODES: LyricDisplayMode[] = ['modern', 'immersive', 'video', 'pv']
-const LYRIC_MODE_NAMES: Record<LyricDisplayMode, string> = {
-  modern: '现代',
-  immersive: '沉浸式',
-  video: '看歌',
-  pv: 'PV',
-}
-
-function loadVisibleLyricModes(): LyricDisplayMode[] {
-  try {
-    const raw = localStorage.getItem(LYRIC_MODE_VISIBILITY_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed)) {
-        const valid = parsed.filter((mode: unknown): mode is LyricDisplayMode =>
-          ALL_LYRIC_MODES.includes(mode as LyricDisplayMode))
-        // 现代模式始终显示，历史设置里即使缺失也要补回
-        const withModern = valid.includes('modern') ? valid : ['modern' as LyricDisplayMode, ...valid]
-        if (withModern.length > 0) {
-          // 看歌（B站MV）为新增模式：同样一次性补回
-          if (!withModern.includes('video') && !localStorage.getItem(LYRIC_MODE_VIDEO_MIGRATED_KEY)) {
-            const withVideo = [...withModern, 'video' as LyricDisplayMode]
-            localStorage.setItem(LYRIC_MODE_VIDEO_MIGRATED_KEY, '1')
-            localStorage.setItem(LYRIC_MODE_VISIBILITY_KEY, JSON.stringify(withVideo))
-            return withVideo
-          }
-          // PV（pv-tool 移植歌词模式）为新增模式：同样一次性补回
-          if (!withModern.includes('pv') && !localStorage.getItem(LYRIC_MODE_PV_MIGRATED_KEY)) {
-            const withPv = [...withModern, 'pv' as LyricDisplayMode]
-            localStorage.setItem(LYRIC_MODE_PV_MIGRATED_KEY, '1')
-            localStorage.setItem(LYRIC_MODE_VISIBILITY_KEY, JSON.stringify(withPv))
-            return withPv
-          }
-          return withModern
-        }
-      }
-    }
-  } catch (error) {
-    console.warn('读取歌词模式可见设置失败:', error)
-  }
-  return [...ALL_LYRIC_MODES]
-}
 
 // 播放页背景层：封面模糊铺底（CrossfadeBackground）+ 随音频脉冲缩放/提亮。
 // 这一层是常驻最底兜底层 —— MV 背景叠在它上面（加载期间 MV 透明露出封面），
@@ -1003,10 +968,7 @@ function App() {
 
   // 纯音乐模式状态
   const [isPureMusic, setIsPureMusic] = useState(false)
-  const [lyricDisplayMode, setLyricDisplayMode] = useState<LyricDisplayMode>(() => {
-    const saved = localStorage.getItem('lyricDisplayMode')
-    return saved === 'immersive' || saved === 'video' || saved === 'pv' ? saved : 'modern'
-  })
+  const { displayMode: lyricDisplayMode, visibleModes } = useLyricModeSettings()
   // 歌词模式状态 ref：供回调读取最新值
   const lyricDisplayModeRef = useRef(lyricDisplayMode)
   lyricDisplayModeRef.current = lyricDisplayMode
@@ -1016,10 +978,6 @@ function App() {
   })
   const [showLyricModePanel, setShowLyricModePanel] = useState(false)
   const [showLyricModeCustomize, setShowLyricModeCustomize] = useState(false)
-  const [visibleLyricModes, setVisibleLyricModes] = useState<LyricDisplayMode[]>(() => {
-    const loaded = loadVisibleLyricModes()
-    return loaded.includes(lyricDisplayMode) ? loaded : [...loaded, lyricDisplayMode]
-  })
   const [isLyricModeTopHovered, setIsLyricModeTopHovered] = useState(false)
   const [showLyricModeArrowHint, setShowLyricModeArrowHint] = useState(false)
   const [hideImmersiveSongInfo, setHideImmersiveSongInfo] = useState(() => {
@@ -2594,10 +2552,8 @@ function App() {
       void loadBilibiliMvPlayer().catch(() => { /* chunk 失败不阻断 */ }).then(() => {
         window.requestAnimationFrame(() => {
           if (switchSeq !== lyricModeSwitchSeqRef.current) return
-          setLyricDisplayMode(mode)
-          localStorage.setItem('lyricDisplayMode', mode)
           lyricDisplayModeRef.current = mode
-          window.dispatchEvent(new CustomEvent('lyricDisplayModeChanged', { detail: mode }))
+          commitLyricDisplayMode(mode)
         })
       })
       return
@@ -2641,10 +2597,8 @@ function App() {
         try { if (exitLoader) await exitLoader() } catch { /* chunk 失败不阻断 */ }
         window.requestAnimationFrame(() => {
           if (switchSeq !== lyricModeSwitchSeqRef.current) return
-          setLyricDisplayMode(mode)
-          localStorage.setItem('lyricDisplayMode', mode)
           lyricDisplayModeRef.current = mode
-          window.dispatchEvent(new CustomEvent('lyricDisplayModeChanged', { detail: mode }))
+          commitLyricDisplayMode(mode)
         })
       })()
       return
@@ -2657,9 +2611,8 @@ function App() {
       window.requestAnimationFrame(() => {
         // 迟到的旧切换请求直接丢弃（快速连点时只有最新一次生效）
         if (switchSeq !== lyricModeSwitchSeqRef.current) return
-        setLyricDisplayMode(mode)
-        localStorage.setItem('lyricDisplayMode', mode)
-        window.dispatchEvent(new CustomEvent('lyricDisplayModeChanged', { detail: mode }))
+        lyricDisplayModeRef.current = mode
+        commitLyricDisplayMode(mode)
       })
     }
     if (modeLoader) {
@@ -2669,52 +2622,12 @@ function App() {
     applyLyricMode()
   }
 
-  // 外部（快捷设置 QuickSettings 等）发起的歌词模式切换 → 走统一切换逻辑；
-  // App 自身派发该事件时 lyricDisplayModeRef 已等于目标 mode，判等后直接忽略（防自触发递归）
-  useEffect(() => {
-      const handleExternalLyricMode = (event: Event) => {
-        const mode = (event as CustomEvent<LyricDisplayMode>).detail
-        if (!ALL_LYRIC_MODES.includes(mode) || lyricDisplayModeRef.current === mode) return
-        lyricModeHandlerRef.current(mode)
-      }
-    window.addEventListener('lyricDisplayModeChanged', handleExternalLyricMode)
-    return () => window.removeEventListener('lyricDisplayModeChanged', handleExternalLyricMode)
-  }, [])
-
-  // 同步其他视图修改的歌词模式可见性设置
-  useEffect(() => {
-    const handleLyricModesVisibilityChanged = () => setVisibleLyricModes(loadVisibleLyricModes())
-    window.addEventListener('hyperplayer-lyric-modes-visibility-changed', handleLyricModesVisibilityChanged)
-    return () => window.removeEventListener('hyperplayer-lyric-modes-visibility-changed', handleLyricModesVisibilityChanged)
-  }, [])
-
   // 当前所在歌词模式始终保留在可见列表里
-  const ensureModernVisible = (modes: LyricDisplayMode[]): LyricDisplayMode[] =>
-    modes.includes('modern') ? modes : ['modern', ...modes]
-  const effectiveVisibleLyricModes = ensureModernVisible(
-    visibleLyricModes.includes(lyricDisplayMode)
-      ? visibleLyricModes
-      : [...visibleLyricModes, lyricDisplayMode]
-  )
+  const effectiveVisibleLyricModes = withCurrentLyricModeVisible(visibleModes, lyricDisplayMode)
 
   const toggleLyricModeVisibility = (mode: LyricDisplayMode) => {
-    const isVisible = effectiveVisibleLyricModes.includes(mode)
-    // 不能隐藏当前所在模式、现代模式，也不能隐藏最后一个可见模式
-    if (isVisible) {
-      if (mode === lyricDisplayMode) return
-      if (mode === 'modern') return
-      if (effectiveVisibleLyricModes.length <= 1) return
-    }
-    const next = isVisible
-      ? effectiveVisibleLyricModes.filter((item) => item !== mode)
-      : [...effectiveVisibleLyricModes, mode]
-    try {
-      localStorage.setItem(LYRIC_MODE_VISIBILITY_KEY, JSON.stringify(next))
-    } catch (error) {
-      console.warn('保存歌词模式可见设置失败:', error)
-    }
-    setVisibleLyricModes(next)
-    window.dispatchEvent(new Event('hyperplayer-lyric-modes-visibility-changed'))
+    // 可见性约束（当前模式 / 现代模式 / 最后一个可见模式）由 service 统一判定
+    toggleLyricModeVisibilitySetting(mode, lyricDisplayModeRef.current)
   }
 
   // 显示封面：始终用平台封面
@@ -4021,14 +3934,27 @@ function App() {
   /** 看歌视频的实时播放状态（迷你播放器/桌面小窗按视频进度显示） */
   /** 看歌视频为当前时间线（视频模式且视频已接管播放）——迷你播放器/桌面小窗据此按视频显示与控制 */
   const watchTimelineActive = lyricDisplayMode === 'video' && watchVideoActive
+  const lyricModeHandlerRef = useRef<(mode: LyricDisplayMode) => void>(() => undefined)
+  lyricModeHandlerRef.current = handleLyricDisplayModeChange
+
+  // 外部（快捷键 / 其他界面）发起的歌词模式切换 → 走统一切换逻辑，触发看歌播放交接。
+  // App 自身的 commit 会先更新 ref，判等后直接忽略（防自触发递归）；状态同步本身走 service 快照。
+  useEffect(() => {
+    const handleExternalLyricMode = (event: Event) => {
+      const mode = (event as CustomEvent<LyricDisplayMode>).detail
+      if (!isLyricDisplayMode(mode) || lyricDisplayModeRef.current === mode) return
+      lyricModeHandlerRef.current(mode)
+    }
+    window.addEventListener(LYRIC_MODE_EVENTS.displayMode, handleExternalLyricMode)
+    return () => window.removeEventListener(LYRIC_MODE_EVENTS.displayMode, handleExternalLyricMode)
+  }, [])
+
   const watchTimelineActiveRef = useRef(watchTimelineActive)
   watchTimelineActiveRef.current = watchTimelineActive
   /** 切到看歌时的按歌曲归属音频续播位置（秒） */
   const [watchSyncSeek, setWatchSyncSeek] = useState<SongOwnedHandoff<number> | null>(null)
   const watchPausedEngineRef = useRef(false)
   const watchHandoffPendingRef = useRef(false)
-  const lyricModeHandlerRef = useRef<(mode: LyricDisplayMode) => void>(() => undefined)
-  lyricModeHandlerRef.current = handleLyricDisplayModeChange
   /**
    * 切出看歌时视频进度已越过歌曲音频末尾（MV 往往比歌长）：引擎停在歌曲末尾保持暂停，
    * 不再起播触发 ended → 自动切下一首（用户切个模式歌就被顶掉）。恢复 effect 据此跳过自动 play。
@@ -6051,8 +5977,8 @@ function App() {
                               {ALL_LYRIC_MODES.map((mode) => {
                                 const isVisible = effectiveVisibleLyricModes.includes(mode)
                                 const isCurrent = lyricDisplayMode === mode
-                                // 现代模式始终显示；当前模式与最后一个可见模式不可隐藏
-                                const locked = isCurrent || mode === 'modern' || (isVisible && effectiveVisibleLyricModes.length <= 1)
+                                // 禁用态与 service 的可见性规则共用同一判定，避免两处漂移
+                                const locked = isVisible && !canHideLyricMode(mode, lyricDisplayMode, visibleModes)
                                 return (
                                   <button
                                     key={mode}

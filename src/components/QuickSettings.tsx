@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { memo, useState, useEffect, type CSSProperties } from 'react'
 import { SlidersHorizontal, Plus, Minus, X } from 'lucide-react'
+import { useLyricModeSettings } from '../hooks/useLyricModeSettings'
 
 interface QuickSettingsProps {
   forceClose?: boolean
@@ -22,7 +23,6 @@ interface QuickSettingsProps {
 }
 
 type WordByWordEffectMode = 'clear' | 'soft' | 'apple'
-type LyricDisplayMode = 'modern' | 'immersive' | 'video' | 'pv'
 /** 背景律动强度档（与 App.tsx 的 CoverPulseMode 同集合） */
 type CoverPulseMode = 'dynamic' | 'soft' | 'restless'
 
@@ -64,22 +64,6 @@ export default memo(function QuickSettings({
       setIsOpen(false)
     }
   }, [forceClose])
-
-  useEffect(() => {
-    const handleLyricDisplayModeChange = (event: Event) => {
-      const mode = (event as CustomEvent<LyricDisplayMode>).detail
-      if (mode) {
-        setLyricDisplayMode(mode)
-        return
-      }
-
-      const saved = localStorage.getItem('lyricDisplayMode')
-      setLyricDisplayMode(saved === 'immersive' || saved === 'video' || saved === 'pv' ? saved : 'modern')
-    }
-
-    window.addEventListener('lyricDisplayModeChanged', handleLyricDisplayModeChange)
-    return () => window.removeEventListener('lyricDisplayModeChanged', handleLyricDisplayModeChange)
-  }, [])
 
   const [lyricSize, setLyricSize] = useState(() => {
     const saved = localStorage.getItem('lyricSize')
@@ -158,10 +142,7 @@ export default memo(function QuickSettings({
     return saved !== null ? JSON.parse(saved) : true
   })
 
-  const [lyricDisplayMode, setLyricDisplayMode] = useState<LyricDisplayMode>(() => {
-    const saved = localStorage.getItem('lyricDisplayMode')
-    return saved === 'immersive' || saved === 'video' || saved === 'pv' ? saved : 'modern'
-  })
+  const { displayMode: lyricDisplayMode } = useLyricModeSettings()
 
   // PV 歌词模式切换入口（全自动编排，无设置面板）
 
