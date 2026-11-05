@@ -19,6 +19,16 @@ import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { parseStoredBoolean } from '../utils/storage'
 import { getTransitionSnapshot, setTransitionMode, setCrossfadeDuration, setAlbumGaplessEnabled } from './transitionSettings'
 import {
+  getPlaybackDisplaySnapshot,
+  readPlaybackDisplaySettings,
+  setShowUpNextOutsidePlayer as commitShowUpNextOutsidePlayer,
+  setPlayerTheme,
+  setTranslationEnabled as commitTranslationEnabled,
+  setTranslationPosition as commitTranslationPosition,
+  setUpNextEnabled as commitUpNextEnabled,
+  setUpNextSeconds as commitUpNextSeconds,
+} from './playbackDisplaySettings'
+import {
   loadPlaybackShortcutSettings,
   savePlaybackShortcutSettings,
   PLAYBACK_SHORTCUT_SETTINGS_EVENT,
@@ -315,11 +325,9 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
             { value: 'light', label: '浅色' },
           ],
         },
-        read: () => readStr('playerTheme', 'dark'),
+        read: () => readPlaybackDisplaySettings().playerTheme,
         write: (value) => {
-          localStorage.setItem('playerTheme', String(value))
-          window.dispatchEvent(new CustomEvent('playerThemeChanged', { detail: value }))
-          notifyGlobalSettingChanged()
+          setPlayerTheme(value === 'light' ? 'light' : 'dark')
         },
       },
       {
@@ -429,11 +437,9 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         label: '歌词翻译',
         description: '在播放界面显示翻译',
         control: { kind: 'toggle' },
-        read: () => readBool('translationEnabled', false),
+        read: () => getPlaybackDisplaySnapshot().translationEnabled,
         write: (value) => {
-          writeBool('translationEnabled', Boolean(value))
-          window.dispatchEvent(new Event('translationSettingsChanged'))
-          notifyGlobalSettingChanged()
+          commitTranslationEnabled(Boolean(value))
         },
       },
       {
@@ -446,14 +452,11 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
             { value: 'bottom-right', label: '现代', hint: '右下角浮动显示' },
           ],
         },
-        read: () => readStr('translationPosition', 'traditional'),
+        read: () => getPlaybackDisplaySnapshot().translationPosition,
         write: (value) => {
-          localStorage.setItem('translationPosition', String(value))
-          window.dispatchEvent(new CustomEvent('translationPositionChanged', { detail: value }))
-          window.dispatchEvent(new Event('translationSettingsChanged'))
-          notifyGlobalSettingChanged()
+          commitTranslationPosition(value === 'bottom-right' ? 'bottom-right' : 'traditional')
         },
-        visibleIf: () => readBool('translationEnabled', false),
+        visibleIf: () => getPlaybackDisplaySnapshot().translationEnabled,
       },
       {
         id: 'thirdPartyLyricsEnabled',
@@ -552,36 +555,29 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         label: '即将播放提示',
         description: '歌曲将结束时提示下一首歌',
         control: { kind: 'toggle' },
-        read: () => readBool('upNextEnabled', true),
+        read: () => getPlaybackDisplaySnapshot().upNextEnabled,
         write: (value) => {
-          writeBool('upNextEnabled', Boolean(value))
-          window.dispatchEvent(new Event('upNextEnabledChanged'))
-          notifyGlobalSettingChanged()
+          commitUpNextEnabled(Boolean(value))
         },
       },
       {
         id: 'showUpNextOutsidePlayer',
         label: '在播放页外显示播放提示',
         control: { kind: 'toggle' },
-        read: () => readBool('showUpNextOutsidePlayer', false),
+        read: () => getPlaybackDisplaySnapshot().showUpNextOutsidePlayer,
         write: (value) => {
-          writeBool('showUpNextOutsidePlayer', Boolean(value))
-          window.dispatchEvent(new Event('showUpNextOutsidePlayerChanged'))
-          notifyGlobalSettingChanged()
+          commitShowUpNextOutsidePlayer(Boolean(value))
         },
       },
       {
         id: 'upNextSeconds',
         label: '提前显示时间',
         control: { kind: 'slider', min: 5, max: 30, step: 1, unit: '秒' },
-        read: () => readNum('upNextSeconds', 10),
+        read: () => getPlaybackDisplaySnapshot().upNextSeconds,
         write: (value) => {
-          const seconds = Math.max(5, Math.min(30, Math.round(Number(value))))
-          localStorage.setItem('upNextSeconds', seconds.toString())
-          window.dispatchEvent(new CustomEvent('upNextSecondsChanged', { detail: seconds }))
-          notifyGlobalSettingChanged()
+          commitUpNextSeconds(Number(value))
         },
-        visibleIf: () => readBool('showUpNextOutsidePlayer', false),
+        visibleIf: () => getPlaybackDisplaySnapshot().showUpNextOutsidePlayer,
       },
     ],
   },

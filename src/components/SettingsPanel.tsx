@@ -79,6 +79,15 @@ import {
 } from '../services/bilibiliApi'
 import { setTransitionMode, setCrossfadeDuration, setAlbumGaplessEnabled } from '../services/transitionSettings'
 import { useTransitionSettings } from '../hooks/useTransitionSettings'
+import { usePlaybackDisplaySettings } from '../hooks/usePlaybackDisplaySettings'
+import {
+  setShowUpNextOutsidePlayer as commitShowUpNextOutsidePlayer,
+  setPlayerTheme,
+  setTranslationEnabled as commitTranslationEnabled,
+  setTranslationPosition as commitTranslationPosition,
+  setUpNextEnabled as commitUpNextEnabled,
+  setUpNextSeconds as commitUpNextSeconds,
+} from '../services/playbackDisplaySettings'
 
 type UpdateCheckState = {
   status: 'idle' | 'checking' | 'current' | 'available' | 'error'
@@ -199,28 +208,13 @@ function SettingsPanel({
     const saved = localStorage.getItem('wordByWordLyrics')
     return parseStoredBoolean(saved, true)
   })
-  const [upNextEnabled, setUpNextEnabled] = useState(() => {
-    const saved = localStorage.getItem('upNextEnabled')
-    return parseStoredBoolean(saved, true)
-  })
-  const [showUpNextOutsidePlayer, setShowUpNextOutsidePlayer] = useState(() => {
-    const saved = localStorage.getItem('showUpNextOutsidePlayer')
-    return parseStoredBoolean(saved, false)
-  })
-  
-  const [upNextSeconds, setUpNextSeconds] = useState(() => {
-    const saved = localStorage.getItem('upNextSeconds')
-    return saved !== null ? parseInt(saved) : 10
-  })
-  
-  const [translationEnabled, setTranslationEnabled] = useState(() => {
-    const saved = localStorage.getItem('translationEnabled')
-    return parseStoredBoolean(saved, false)
-  })
-  const [translationPosition, setTranslationPosition] = useState<'traditional' | 'bottom-right'>(() => {
-    const saved = localStorage.getItem('translationPosition')
-    return (saved as 'traditional' | 'bottom-right') || 'traditional'
-  })
+  const {
+    upNextEnabled,
+    showUpNextOutsidePlayer,
+    upNextSeconds,
+    translationEnabled,
+    translationPosition,
+  } = usePlaybackDisplaySettings()
   
   const [accentColor, setAccentColor] = useState(() => {
     const saved = localStorage.getItem('accentColor')
@@ -768,35 +762,24 @@ function SettingsPanel({
 
   // 保存即将播放提示设置
   const handleUpNextToggle = (enabled: boolean) => {
-    setUpNextEnabled(enabled)
-    localStorage.setItem('upNextEnabled', JSON.stringify(enabled))
-    window.dispatchEvent(new Event('upNextEnabledChanged'))
+    commitUpNextEnabled(enabled)
   }
 
   const handleShowUpNextOutsidePlayerToggle = (enabled: boolean) => {
-    setShowUpNextOutsidePlayer(enabled)
-    localStorage.setItem('showUpNextOutsidePlayer', JSON.stringify(enabled))
-    window.dispatchEvent(new Event('showUpNextOutsidePlayerChanged'))
+    commitShowUpNextOutsidePlayer(enabled)
   }
   
   const handleUpNextSecondsChange = (seconds: number) => {
-    const newSeconds = Math.max(5, Math.min(30, seconds))
-    setUpNextSeconds(newSeconds)
-    localStorage.setItem('upNextSeconds', newSeconds.toString())
-    window.dispatchEvent(new CustomEvent('upNextSecondsChanged', { detail: newSeconds }))
+    commitUpNextSeconds(seconds)
   }
 
   // 保存翻译设置
   const handleTranslationToggle = (enabled: boolean) => {
-    setTranslationEnabled(enabled)
-    localStorage.setItem('translationEnabled', JSON.stringify(enabled))
-    window.dispatchEvent(new Event('translationSettingsChanged'))
+    commitTranslationEnabled(enabled)
   }
 
   const handleTranslationPositionChange = (position: 'traditional' | 'bottom-right') => {
-    setTranslationPosition(position)
-    localStorage.setItem('translationPosition', position)
-    window.dispatchEvent(new Event('translationSettingsChanged'))
+    commitTranslationPosition(position)
   }
   
   // 保存主题色设置
@@ -945,8 +928,7 @@ function SettingsPanel({
 
   // 深浅色主题：与播放页快捷设置共用同一存储与事件，App 监听后统一更新
   const handlePlayerThemeChange = (newTheme: 'dark' | 'light') => {
-    localStorage.setItem('playerTheme', newTheme)
-    window.dispatchEvent(new CustomEvent('playerThemeChanged', { detail: newTheme }))
+    setPlayerTheme(newTheme)
   }
 
   return (
@@ -1638,11 +1620,7 @@ function SettingsPanel({
 
                         <div className="grid grid-cols-2 gap-3">
                           <button
-                            onClick={() => {
-                              setTranslationPosition('traditional')
-                              localStorage.setItem('translationPosition', 'traditional')
-                              window.dispatchEvent(new CustomEvent('translationPositionChanged', { detail: 'traditional' }))
-                            }}
+                            onClick={() => handleTranslationPositionChange('traditional')}
                             className={`p-4 rounded-xl transition-all border-2 ${
                               translationPosition === 'traditional'
                                 ? 'border-2'
@@ -1669,11 +1647,7 @@ function SettingsPanel({
                           </button>
 
                           <button
-                            onClick={() => {
-                              setTranslationPosition('bottom-right')
-                              localStorage.setItem('translationPosition', 'bottom-right')
-                              window.dispatchEvent(new CustomEvent('translationPositionChanged', { detail: 'bottom-right' }))
-                            }}
+                            onClick={() => handleTranslationPositionChange('bottom-right')}
                             className={`p-4 rounded-xl transition-all border-2 ${
                               translationPosition === 'bottom-right'
                                 ? 'border-2'

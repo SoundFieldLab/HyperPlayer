@@ -2,6 +2,12 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { memo, useState, useEffect, type CSSProperties } from 'react'
 import { SlidersHorizontal, Plus, Minus, X } from 'lucide-react'
 import { useLyricModeSettings } from '../hooks/useLyricModeSettings'
+import { usePlaybackDisplaySettings } from '../hooks/usePlaybackDisplaySettings'
+import {
+  setModernAudioVisualizerEnabled as commitModernAudioVisualizerEnabled,
+  setHideImmersiveSongInfo as commitHideImmersiveSongInfo,
+  setPlayerTheme,
+} from '../services/playbackDisplaySettings'
 
 interface QuickSettingsProps {
   forceClose?: boolean
@@ -96,10 +102,7 @@ export default memo(function QuickSettings({
     return saved === 'amodern' ? 'amodern' : 'classic'
   })
 
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    const saved = localStorage.getItem('playerTheme')
-    return (saved as 'dark' | 'light') || 'dark'
-  })
+  const { playerTheme: theme } = usePlaybackDisplaySettings()
 
   // 背景律动（封面模糊铺底随音频脉冲缩放/提亮）——与 App.tsx 的 coverPulseEnabled 同键同事件
   const [coverPulseEnabled, setCoverPulseEnabled] = useState(() => {
@@ -146,15 +149,10 @@ export default memo(function QuickSettings({
 
   // PV 歌词模式切换入口（全自动编排，无设置面板）
 
-  const [modernAudioVisualizerEnabled, setModernAudioVisualizerEnabled] = useState(() => {
-    const saved = localStorage.getItem('modernAudioVisualizerEnabled')
-    return saved !== null ? JSON.parse(saved) : true
-  })
-
-  const [hideImmersiveSongInfo, setHideImmersiveSongInfo] = useState(() => {
-    const saved = localStorage.getItem('hideImmersiveSongInfo')
-    return saved !== null ? JSON.parse(saved) : false
-  })
+  const {
+    modernAudioVisualizerEnabled,
+    hideImmersiveSongInfo,
+  } = usePlaybackDisplaySettings()
 
   const handleLyricSizeChange = (delta: number) => {
     const newSize = Math.max(1.5, Math.min(4.5, lyricSize + delta))
@@ -198,9 +196,7 @@ export default memo(function QuickSettings({
   }
 
   const handleThemeChange = (newTheme: 'dark' | 'light') => {
-    setTheme(newTheme)
-    localStorage.setItem('playerTheme', newTheme)
-    window.dispatchEvent(new CustomEvent('playerThemeChanged', { detail: newTheme }))
+    setPlayerTheme(newTheme)
   }
 
   // 背景律动开关/强度：与 App.tsx 的 coverPulseEnabled / coverPulseMode 同键同事件
@@ -252,17 +248,11 @@ export default memo(function QuickSettings({
   }
 
   const handleModernAudioVisualizerToggle = () => {
-    const newValue = !modernAudioVisualizerEnabled
-    setModernAudioVisualizerEnabled(newValue)
-    localStorage.setItem('modernAudioVisualizerEnabled', JSON.stringify(newValue))
-    window.dispatchEvent(new CustomEvent('modernAudioVisualizerChanged', { detail: newValue }))
+    commitModernAudioVisualizerEnabled(!modernAudioVisualizerEnabled)
   }
 
   const handleHideImmersiveSongInfoToggle = () => {
-    const newValue = !hideImmersiveSongInfo
-    setHideImmersiveSongInfo(newValue)
-    localStorage.setItem('hideImmersiveSongInfo', JSON.stringify(newValue))
-    window.dispatchEvent(new CustomEvent('hideImmersiveSongInfoChanged', { detail: newValue }))
+    commitHideImmersiveSongInfo(!hideImmersiveSongInfo)
   }
 
   const formatLyricOffset = (value: number) => {

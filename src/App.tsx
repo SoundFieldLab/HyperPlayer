@@ -25,6 +25,12 @@ import { useAudioPulseStore, type AudioPulseStore } from './hooks/useAudioPulse'
 import { useAutoHideCursor } from './hooks/useAutoHideCursor'
 import { useTransitionSettings } from './hooks/useTransitionSettings'
 import { useLyricModeSettings } from './hooks/useLyricModeSettings'
+import { usePlaybackDisplaySettings } from './hooks/usePlaybackDisplaySettings'
+import {
+  setMvBackgroundEnabled,
+  setRomanEnabled,
+  setTranslationEnabled,
+} from './services/playbackDisplaySettings'
 import {
   ALL_LYRIC_MODES,
   canHideLyricMode,
@@ -850,18 +856,17 @@ function App() {
     return () => window.clearInterval(timer)
   }, [preloadLedger])
   const [showUpNext, setShowUpNext] = useState(false)
-  const [upNextEnabled, setUpNextEnabled] = useState(() => {
-    const saved = localStorage.getItem('upNextEnabled')
-    return parseStoredBoolean(saved, true)
-  })
-  const [showUpNextOutsidePlayer, setShowUpNextOutsidePlayer] = useState(() => {
-    const saved = localStorage.getItem('showUpNextOutsidePlayer')
-    return parseStoredBoolean(saved, false)
-  })
-  const [upNextTime, setUpNextTime] = useState(() => {
-    const saved = Number.parseInt(localStorage.getItem('upNextSeconds') || '', 10)
-    return Number.isFinite(saved) ? Math.max(5, Math.min(30, saved)) : 10
-  })
+  const {
+    upNextEnabled,
+    showUpNextOutsidePlayer,
+    upNextSeconds: upNextTime,
+    translationEnabled,
+    translationPosition,
+    romanEnabled,
+    mvBackgroundEnabled,
+    modernAudioVisualizerEnabled,
+    hideImmersiveSongInfo,
+  } = usePlaybackDisplaySettings()
   
   // Toast通知状态
   // Toast消息队列
@@ -899,28 +904,8 @@ function App() {
     toastTimersRef.current.clear()
   }, [])
   
-  // 歌词翻译设置
-  const [translationEnabled, setTranslationEnabled] = useState(() => {
-    const saved = localStorage.getItem('translationEnabled')
-    return parseStoredBoolean(saved, false)
-  })
-  const [translationPosition, setTranslationPosition] = useState<'traditional' | 'bottom-right'>(() => {
-    const saved = localStorage.getItem('translationPosition')
-    return (saved as 'traditional' | 'bottom-right') || 'traditional'
-  })
   const [currentTranslation, setCurrentTranslation] = useState('')
-  
-  // 罗马音设置
-  const [romanEnabled, setRomanEnabled] = useState(() => {
-    const saved = localStorage.getItem('romanEnabled')
-    return parseStoredBoolean(saved, false)
-  })
 
-  // MV 背景设置（B 站视频作为歌词背景层）
-  const [mvBackgroundEnabled, setMvBackgroundEnabled] = useState(() => {
-    const saved = localStorage.getItem('mvBackgroundEnabled')
-    return parseStoredBoolean(saved, false)
-  })
   // MV 背景回退：未找到 MV / 播放失败时自动切回普通封面背景（由 BilibiliMvBackground 上报）
   const [mvBackgroundFallback, setMvBackgroundFallback] = useState(false)
 
@@ -930,24 +915,13 @@ function App() {
   // 歌词模式状态 ref：供回调读取最新值
   const lyricDisplayModeRef = useRef(lyricDisplayMode)
   lyricDisplayModeRef.current = lyricDisplayMode
-  const [modernAudioVisualizerEnabled, setModernAudioVisualizerEnabled] = useState(() => {
-    const saved = localStorage.getItem('modernAudioVisualizerEnabled')
-    return parseStoredBoolean(saved, true)
-  })
   const [showLyricModePanel, setShowLyricModePanel] = useState(false)
   const [showLyricModeCustomize, setShowLyricModeCustomize] = useState(false)
   const [isLyricModeTopHovered, setIsLyricModeTopHovered] = useState(false)
   const [showLyricModeArrowHint, setShowLyricModeArrowHint] = useState(false)
-  const [hideImmersiveSongInfo, setHideImmersiveSongInfo] = useState(() => {
-    const saved = localStorage.getItem('hideImmersiveSongInfo')
-    return parseStoredBoolean(saved, false)
-  })
   
-  // 播放模式状态
-  const [playerTheme, setPlayerTheme] = useState<'dark' | 'light'>(() => {
-    const saved = localStorage.getItem('playerTheme')
-    return (saved as 'dark' | 'light') || 'dark'
-  })
+  // 播放模式状态（主题由播放页显示偏好 module 拥有）
+  const { playerTheme } = usePlaybackDisplaySettings()
 
   // 将主题同步到根节点属性，供全局 CSS（玻璃质感等）做浅色适配
   useEffect(() => {
@@ -1305,24 +1279,6 @@ function App() {
     return () => window.removeEventListener('lyricScrollTransitionStyleChanged', handleLyricScrollTransitionStyleChange)
   }, [])
 
-  useEffect(() => {
-    const handleHideImmersiveSongInfoChange = (event: Event) => {
-      setHideImmersiveSongInfo(Boolean((event as CustomEvent<boolean>).detail))
-    }
-
-    window.addEventListener('hideImmersiveSongInfoChanged', handleHideImmersiveSongInfoChange)
-    return () => window.removeEventListener('hideImmersiveSongInfoChanged', handleHideImmersiveSongInfoChange)
-  }, [])
-
-  useEffect(() => {
-    const handleModernAudioVisualizerChange = (event: Event) => {
-      setModernAudioVisualizerEnabled(Boolean((event as CustomEvent<boolean>).detail))
-    }
-
-    window.addEventListener('modernAudioVisualizerChanged', handleModernAudioVisualizerChange)
-    return () => window.removeEventListener('modernAudioVisualizerChanged', handleModernAudioVisualizerChange)
-  }, [])
-  
   // 登录状态
   const [initialNeteaseAccount] = useState(() => readAccountSession('netease'))
   const [neteaseLoggedIn, setNeteaseLoggedIn] = useState(initialNeteaseAccount.loggedIn)
@@ -2144,67 +2100,9 @@ function App() {
     }
   }, [])
   
-  // 监听“即将播放”提示设置
-  useEffect(() => {
-    const handleUpNextEnabledChange = () => {
-      const saved = localStorage.getItem('upNextEnabled')
-      setUpNextEnabled(parseStoredBoolean(saved, true))
-    }
-    const handleShowUpNextOutsidePlayerChange = () => {
-      const saved = localStorage.getItem('showUpNextOutsidePlayer')
-      setShowUpNextOutsidePlayer(parseStoredBoolean(saved, false))
-    }
-    const handleUpNextSecondsChange = () => {
-      const saved = Number.parseInt(localStorage.getItem('upNextSeconds') || '', 10)
-      setUpNextTime(Number.isFinite(saved) ? Math.max(5, Math.min(30, saved)) : 10)
-    }
-    
-    window.addEventListener('upNextEnabledChanged', handleUpNextEnabledChange)
-    window.addEventListener('showUpNextOutsidePlayerChanged', handleShowUpNextOutsidePlayerChange)
-    window.addEventListener('upNextSecondsChanged', handleUpNextSecondsChange)
-    
-    return () => {
-      window.removeEventListener('upNextEnabledChanged', handleUpNextEnabledChange)
-      window.removeEventListener('showUpNextOutsidePlayerChanged', handleShowUpNextOutsidePlayerChange)
-      window.removeEventListener('upNextSecondsChanged', handleUpNextSecondsChange)
-    }
-  }, [])
-
   useEffect(() => {
     if (!canShowUpNextOnCurrentSurface && showUpNext) setShowUpNext(false)
   }, [canShowUpNextOnCurrentSurface, showUpNext])
-  
-  // 监听歌词翻译设置变化
-  useEffect(() => {
-    const handleTranslationChange = () => {
-      const savedEnabled = localStorage.getItem('translationEnabled')
-      const savedPosition = localStorage.getItem('translationPosition')
-      setTranslationEnabled(parseStoredBoolean(savedEnabled, false))
-      setTranslationPosition((savedPosition as 'traditional' | 'bottom-right') || 'traditional')
-    }
-    
-    window.addEventListener('translationSettingsChanged', handleTranslationChange)
-    window.addEventListener('translationPositionChanged', handleTranslationChange)
-    
-    return () => {
-      window.removeEventListener('translationSettingsChanged', handleTranslationChange)
-      window.removeEventListener('translationPositionChanged', handleTranslationChange)
-    }
-  }, [])
-  
-  // 监听罗马音设置变化
-  useEffect(() => {
-    const handleRomanChange = () => {
-      const savedEnabled = localStorage.getItem('romanEnabled')
-      setRomanEnabled(parseStoredBoolean(savedEnabled, false))
-    }
-    
-    window.addEventListener('romanSettingsChanged', handleRomanChange)
-    
-    return () => {
-      window.removeEventListener('romanSettingsChanged', handleRomanChange)
-    }
-  }, [])
   
   // 全局错误处理
   useEffect(() => {
@@ -2236,21 +2134,14 @@ function App() {
   
   // 监听音频元素事件
   useEffect(() => {
-    const handleThemeChange = (e: Event) => {
-      const customEvent = e as CustomEvent
-      setPlayerTheme(customEvent.detail)
-    }
-    
     const handleBackgroundEffectChange = (e: Event) => {
       const customEvent = e as CustomEvent
       setBackgroundEffect(customEvent.detail)
     }
     
-    window.addEventListener('playerThemeChanged', handleThemeChange as EventListener)
     window.addEventListener('backgroundEffectChanged', handleBackgroundEffectChange as EventListener)
     
     return () => {
-      window.removeEventListener('playerThemeChanged', handleThemeChange as EventListener)
       window.removeEventListener('backgroundEffectChanged', handleBackgroundEffectChange as EventListener)
     }
   }, [])
@@ -2383,25 +2274,18 @@ function App() {
   
   // 切换翻译显示
   const handleTranslationToggle = () => {
-    const newValue = !translationEnabled
-    setTranslationEnabled(newValue)
-    localStorage.setItem('translationEnabled', JSON.stringify(newValue))
+    setTranslationEnabled(!translationEnabled)
   }
 
   const handleRomanToggle = () => {
-    const newValue = !romanEnabled
-    setRomanEnabled(newValue)
-    localStorage.setItem('romanEnabled', JSON.stringify(newValue))
-    window.dispatchEvent(new Event('romanSettingsChanged'))
+    setRomanEnabled(!romanEnabled)
   }
 
   const handleMvBackgroundToggle = () => {
     const newValue = !mvBackgroundEnabled
-    setMvBackgroundEnabled(newValue)
     // 重新启用时清掉上次的死胡同回退标记，让 MV 层重新参与匹配
     setMvBackgroundFallback(false)
-    localStorage.setItem('mvBackgroundEnabled', JSON.stringify(newValue))
-    window.dispatchEvent(new Event('mvBackgroundSettingsChanged'))
+    setMvBackgroundEnabled(newValue)
   }
 
   const handleLyricDisplayModeChange = (mode: LyricDisplayMode) => {

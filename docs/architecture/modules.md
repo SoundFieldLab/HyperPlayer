@@ -76,6 +76,15 @@ consent、运行时能力门控、enabled 写入、生命周期队列 / 代际�
 - URL 与歌词是两个独立代际：音质 / 登录态变化清 URL，歌词策略变化清歌词；异步回来时代际不符的写入被丢弃。
 - 回归测试：`test/preloadLedger.test.ts`（TTL / 代际 / 歌词生命周期 / 策略键 / 清理与上限）。
 
+## 播放页显示偏好
+
+`src/services/playbackDisplaySettings.ts` 拥有这组历史裸键的默认值、布尔格式、枚举校验、`upNextSeconds` 钳制（5–30 秒并取整）、历史事件、快照与订阅。
+
+- 覆盖：`upNextEnabled` / `showUpNextOutsidePlayer` / `upNextSeconds` / `translationEnabled` / `translationPosition` / `romanEnabled` / `mvBackgroundEnabled` / `modernAudioVisualizerEnabled` / `hideImmersiveSongInfo` / `playerTheme`。快照包含主题，三个界面都从快照读主题。
+- `App.tsx` / `SettingsPanel.tsx` / `QuickSettings.tsx` 通过 `src/hooks/usePlaybackDisplaySettings.ts` 订阅；写入只调 setter，`globalSettingsRegistry.ts` 的镜像条目也读同一份快照。
+- **不要再裸读这些键或手写 `upNextEnabledChanged` / `translationSettingsChanged` / `romanSettingsChanged` 监听**。事件名与键名是历史值，勿改。
+- 回归测试：`test/playbackDisplaySettings.test.ts`（默认值 / 钳制 / 事件序列 / 快照与单次通知 / 注册表写入等价性）。
+
 ## 设置快照模块的复用边界
 
 `transitionSettings.ts` 与 `lyricModeSettings.ts` 的 `WeakMap` store / snapshot / commit / subscribe 骨架目前是两份近似实现。**这是有意接受的两份重复**：两份的领域规则差异大，过早抽公共层会把语义压平。
