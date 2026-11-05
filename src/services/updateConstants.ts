@@ -15,6 +15,8 @@
  * 因此按「ghproxy 加速的 GitHub → GitHub 直连」顺序尝试。
  */
 
+import updateManifestFiles from '../../shared/update-manifest-files.json'
+
 /** 更新渠道标识 */
 export type UpdateChannel = 'stable' | 'nightly'
 
@@ -33,11 +35,8 @@ function withProxyFirst(rawUrl: string): string[] {
   return [`${GH_PROXY}${rawUrl}`, rawUrl]
 }
 
-/** 各渠道的清单文件名（版本无关的固定地址） */
-const MANIFEST_FILE: Record<UpdateChannel, string> = {
-  stable: 'update.json',
-  nightly: 'update-nightly.json',
-}
+/** 各渠道的清单文件名（版本无关的固定地址；与 CI 脚本共用同一 JSON 事实源）。 */
+const MANIFEST_FILE: Record<UpdateChannel, string> = updateManifestFiles
 
 /** 读取当前更新渠道（无存储 / 非法值 → 默认正式版） */
 export function readUpdateChannel(): UpdateChannel {

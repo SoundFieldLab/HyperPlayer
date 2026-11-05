@@ -298,40 +298,14 @@ jobs:
           NIGHTLY_VERSION: ${{ needs.prepare.outputs.nightly_version }}
         run: |
           set -euo pipefail
-          cat > gen-nightly-manifest.cjs <<'JS'
-          const fs = require('fs')
-          const crypto = require('crypto')
-          const path = require('path')
-
-          const repo = process.env.GITHUB_REPOSITORY
-          const tag = process.env.NIGHTLY_TAG
-          const version = process.env.NIGHTLY_VERSION
-          const dir = 'artifacts'
-          const base = `https://github.com/${repo}/releases/download/${tag}`
-
-          const files = fs.readdirSync(dir)
-          const installer = files.find(f => /-Setup\.exe$/i.test(f))
-          if (!installer) throw new Error('未找到 NSIS 安装包（*-Setup.exe）')
-
-          const sha256 = (f) => crypto.createHash('sha256')
-            .update(fs.readFileSync(path.join(dir, f)))
-            .digest('hex')
-
-          const manifest = {
-            channel: 'nightly',
-            version,
-            notes: fs.readFileSync('changelog.md', 'utf8').trim(),
-            artifacts: {
-              'win-x64': { urls: [`${base}/${installer}`], sha256: sha256(installer) },
-            },
-          }
-
-          fs.writeFileSync('update-nightly.json', JSON.stringify(manifest, null, 2) + '\n')
-          console.log('已生成 update-nightly.json：')
-          console.log(JSON.stringify(manifest, null, 2))
-          JS
-          node gen-nightly-manifest.cjs
-          rm -f gen-nightly-manifest.cjs
+          node scripts/build-update-manifest.mjs \
+            --channel nightly \
+            --version "$NIGHTLY_VERSION" \
+            --tag "$NIGHTLY_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --notes-file changelog.md \
+            --artifacts artifacts \
+            --output update-nightly.json
 
       - name: 提交 update-nightly.json 到默认分支
         env:

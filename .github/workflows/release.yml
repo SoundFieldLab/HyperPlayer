@@ -273,43 +273,14 @@ jobs:
           VERSION: ${{ needs.bump.outputs.version }}
         run: |
           set -euo pipefail
-          cat > gen-manifest.cjs <<'JS'
-          const fs = require('fs')
-          const crypto = require('crypto')
-          const path = require('path')
-
-          const repo = process.env.GITHUB_REPOSITORY
-          const tag = process.env.TAG
-          const version = process.env.VERSION
-          const dir = 'artifacts'
-          const base = `https://github.com/${repo}/releases/download/${tag}`
-
-          const files = fs.readdirSync(dir)
-          const installer = files.find(f => /-Setup\.exe$/i.test(f))
-          const hot = files.find(f => /^hyperplayer-hot-.*\.zip$/i.test(f))
-          if (!installer) throw new Error('未找到 NSIS 安装包（*-Setup.exe）')
-
-          const sha256 = (f) => crypto.createHash('sha256')
-            .update(fs.readFileSync(path.join(dir, f)))
-            .digest('hex')
-
-          const manifest = {
-            channel: 'stable',
-            version,
-            notes: fs.readFileSync('release-notes.md', 'utf8').trim(),
-            artifacts: {
-              'win-x64': { urls: [`${base}/${installer}`], sha256: sha256(installer) },
-            },
-          }
-          if (hot) {
-            manifest.artifacts['win-x64-hot'] = { urls: [`${base}/${hot}`], sha256: sha256(hot) }
-          }
-
-          fs.writeFileSync('update.json', JSON.stringify(manifest, null, 2) + '\n')
-          console.log('已生成 update.json：')
-          console.log(JSON.stringify(manifest, null, 2))
-          JS
-          node gen-manifest.cjs
+          node scripts/build-update-manifest.mjs \
+            --channel stable \
+            --version "$VERSION" \
+            --tag "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --notes-file release-notes.md \
+            --artifacts artifacts \
+            --output update.json
 
       - name: 提交 update.json 到默认分支
         if: needs.bump.outputs.is_stable == 'true'

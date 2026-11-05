@@ -13,7 +13,7 @@ npm run dev              # Vite dev server only (port 3210; Weather Lab: http://
 npm run lint             # Typecheck: tsc --noEmit (covers src/ only; no ESLint in repo)
 npm run check:ports      # 端口一致性闸门（必须 3210/3211，禁止回退 3000–3002；已接入 CI checks）
 npm run check:packaging  # 打包体积闸门（前端库必须在 devDependencies；排除规则齐全；asar 体积/内容；已接入 ci/nightly/pre-release + 本地 build:electron:dir 前后 + electron-builder 的 beforePack）
-npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-10-29 实测：197 文件 = 194 过 + 3 跳过；1888 用例 = 1872 过 + 16 跳过 + 0 失败。跳过的 16 项 = 5 项可选 LGPL SoundTouch 适配 + 11 项需显式启用的诊断微基准；vitest maxWorkers=2 防 HSE 时序测试偶发超时)
+npm run test             # vitest 单测 (test/ + src/services/HyperSoundEngine-v1/，2026-11-05 实测：201 文件 = 198 过 + 3 跳过；1914 用例 = 1898 过 + 16 跳过 + 0 失败。跳过的 16 项 = 5 项可选 LGPL SoundTouch 适配 + 11 项需显式启用的诊断微基准；vitest maxWorkers=2 防 HSE 时序测试偶发超时)
 npm run verify:hse-worklet # 校验 public/hse-worklet.js 可在 Worklet realm 装载并跑空间/多声道/IR/扩展节点冒烟（重生成 worklet 后必跑）
 npm run build:hse-worklet # 重生成 HSE AudioWorklet 单文件 -> public/hse-worklet.js（predev/predev:electron/prebuild 已自动执行）
 npm run build            # vite build -> dist/（三入口：index.html / desktop-player.html / desktop-lyrics.html）
@@ -74,13 +74,14 @@ Before creating or using a standalone debug webpage, read [`DEBUG_PAGES.md`](./D
 
 **发布形式一律为 Pre-release**：本仓库处于测试阶段，版本化发版（`release.yml` 手动触发 / `pre-release.yml` 打 `v*` tag 触发）与每日构建（`nightly.yml`）**全部以 GitHub Pre-release 形式发布**，不占用正式 latest。`nightly.yml` 每次构建生成唯一 tag `nightly-<YYYYMMDD>` 并创建**独立** Pre-release（当天重复构建覆盖当天同名 tag/release）。**无真实代码变更时 nightly 取消本次运行**（2026-10-26 起）：prepare 判定为「无代码变更」后不再构建/发版，而是写一条跳过摘要并 `gh run cancel "$GITHUB_RUN_ID"` **取消整次运行**（运行记录显示 cancelled，而不是「success 但 build/release 全跳过」的假构建）——因此 workflow 的 `permissions` 除 `contents: write` 外还需 `actions: write`；changelog 上传步骤加了 `has_changes == true` 门控。判定用与上次 nightly tag 的树 diff 并**排除机器人回写的 update-nightly.json / update.json**——此前每日清单回写提交让判定永远失真，曾连发 21 次空转 nightly 并在 main 上留下 21 条机器人提交（这些提交已于 2026-10-04 从 main 历史剔除、清单内容压成一条保留；**旧 nightly tag/release 也已同日清理，仅保留最新的 `nightly-20261004`**——即 update-nightly.json 指向的目标，nightly 渠道「检查更新」不受影响）。
 
-**更新渠道（两条，清单由 CI 产出）**：`src/services/updateConstants.ts` 是渠道定义的唯一事实源。
+**更新渠道（两条，清单由 CI 产出）**：`src/services/updateConstants.ts` 是渠道标识 / 展示名 / 客户端读取规则的唯一事实源；清单文件名由 `shared/update-manifest-files.json` 与 CI 脚本共用。
 
 | 渠道 | 清单文件 | 产出方 | 规则 |
 |---|---|---|---|
 | 正式版 stable | `update.json` | `pre-release.yml` | 仅当 tag 为**纯语义版本号**（如 `1.0.0`）时生成并提交，推向全体用户 |
 | 每日构建 nightly | `update-nightly.json` | `nightly.yml` | 每次构建都生成并提交，仅被主动切到 nightly 渠道的用户拉取 |
 
+- **更新清单生成唯一实现在 `scripts/lib/update-manifest.mjs`**：`scripts/build-update-manifest.mjs` 是 CLI，`release.yml` / `pre-release.yml` / `nightly.yml` 只传 channel / version / tag / repo / notes-file / artifacts / output，**不要再在 workflow 里内嵌 Node heredoc**。清单文件名唯一事实源是 `shared/update-manifest-files.json`（`updateConstants.ts` 与脚本共同读取）。stable 默认带 `win-x64-hot`（存在热更包时），nightly 只带 `win-x64` 安装包。回归测试：`test/updateManifest.test.ts`（模块 + CLI，含 stable/nightly 与缺安装包退出码）。
 - 两个清单都是**版本无关的固定地址**（`raw.githubusercontent.com/.../main/<文件>`，代理优先 + 直连兜底），各自指向对应 release 的产物（正式 tag / `nightly-<日期>` pre-release）。清单内带 `channel` 字段。
 - **Nightly 版本号 = 正式版 patch + 1 再挂日期**（`1.0.0` → `1.0.1-nightly.<YYYYMMDD>`）：按 semver 高于当前正式版，保证正式版用户切到 nightly 能立即检测到；`package.json` 的正式版本号不因此改动。
 - `compareVersions` 遵循 semver **预发布规则**（`1.0.1-nightly.x < 1.0.1`，数字标识 < 字母标识）。**勿改回「按 `.` 切分取前 3 段」的旧实现**——那会把预发布后缀丢掉，导致 nightly 永远检测不到。
