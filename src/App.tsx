@@ -27,8 +27,14 @@ import { useTransitionSettings } from './hooks/useTransitionSettings'
 import { Song, getSongUrl, invalidateSongUrl, getLyrics, getProxiedImageUrl, getProxiedAudioUrl, getLocalAlbumIdentifier, resolveSongAlbumIdentifier, LyricLine } from './services/musicApi'
 import type { MusicPlatform } from './services/platforms'
 import { getPlatformCapabilities, isPlatformVisible, platformLabel } from './services/platforms'
-import { recordLogin, clearLoginExpiry, isLoginExpired } from './services/loginExpiry'
-import { beginAccountSession, invalidateAccountSession } from './services/accountSession'
+import { isLoginExpired } from './services/loginExpiry'
+import {
+  beginAccountSession,
+  endAccountSession,
+  readAccountSession,
+  type AccountProfile,
+  type AccountSessionUi,
+} from './services/accountSession'
 import { cacheManager } from './services/cacheManager'
 import { indexedDBCache } from './services/indexedDBCache'
 import { autoMixAnalysisService } from './services/autoMixAnalysisService'
@@ -1446,26 +1452,20 @@ function App() {
   }, [])
   
   // 登录状态
-  const [neteaseLoggedIn, setNeteaseLoggedIn] = useState(() => Boolean(
-    localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie')
-  ))
-  const [neteaseUsername, setNeteaseUsername] = useState(() => localStorage.getItem('netease_username') || '')
-  const [neteaseAvatar, setNeteaseAvatar] = useState(() => localStorage.getItem('netease_avatar') || '')
-  const [neteaseUserId, setNeteaseUserId] = useState(() => localStorage.getItem('netease_user_id') || '')
-  const [neteaseVip, setNeteaseVip] = useState(() => localStorage.getItem('netease_vip') === 'true')
-  const [_neteaseCookie, setNeteaseCookie] = useState(() => (
-    localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
-  ))
-  const [qqLoggedIn, setQQLoggedIn] = useState(() => Boolean(
-    localStorage.getItem('qq_cookie') || localStorage.getItem('qqCookie') || localStorage.getItem('qq_logged_in') === 'true'
-  ))
-  const [qqUsername, setQQUsername] = useState(() => localStorage.getItem('qq_username') || '')
-  const [qqAvatar, setQQAvatar] = useState(() => localStorage.getItem('qq_avatar') || '')
-  const [qqUserId, setQQUserId] = useState(() => localStorage.getItem('qq_user_id') || '')
-  const [qqVip, setQQVip] = useState(() => localStorage.getItem('qq_vip') === 'true')
-  const [_qqCookie, setQQCookie] = useState(() => (
-    localStorage.getItem('qq_cookie') || localStorage.getItem('qqCookie') || ''
-  ))
+  const [initialNeteaseAccount] = useState(() => readAccountSession('netease'))
+  const [neteaseLoggedIn, setNeteaseLoggedIn] = useState(initialNeteaseAccount.loggedIn)
+  const [neteaseUsername, setNeteaseUsername] = useState(initialNeteaseAccount.username)
+  const [neteaseAvatar, setNeteaseAvatar] = useState(initialNeteaseAccount.avatar)
+  const [neteaseUserId, setNeteaseUserId] = useState(initialNeteaseAccount.userId)
+  const [neteaseVip, setNeteaseVip] = useState(initialNeteaseAccount.vip)
+  const [_neteaseCookie, setNeteaseCookie] = useState(initialNeteaseAccount.cookie)
+  const [initialQQAccount] = useState(() => readAccountSession('qq'))
+  const [qqLoggedIn, setQQLoggedIn] = useState(initialQQAccount.loggedIn)
+  const [qqUsername, setQQUsername] = useState(initialQQAccount.username)
+  const [qqAvatar, setQQAvatar] = useState(initialQQAccount.avatar)
+  const [qqUserId, setQQUserId] = useState(initialQQAccount.userId)
+  const [qqVip, setQQVip] = useState(initialQQAccount.vip)
+  const [_qqCookie, setQQCookie] = useState(initialQQAccount.cookie)
   const platformEntitlements = useMemo(() => createPlatformEntitlements({
     netease: entitlementTierFromVip(neteaseVip),
     qq: entitlementTierFromVip(qqVip),
@@ -1473,6 +1473,46 @@ function App() {
   const [loginRestoreComplete, setLoginRestoreComplete] = useState(false)
   // 登录态发生变化后通知首页、个人中心等依赖平台账号的视图刷新。
   const [authRevision, setAuthRevision] = useState(0)
+
+  const neteaseAccountUi: AccountSessionUi = {
+    apply: (patch) => {
+      if (patch.loggedIn !== undefined) setNeteaseLoggedIn(patch.loggedIn)
+      if (patch.cookie !== undefined) setNeteaseCookie(patch.cookie)
+      if (patch.username !== undefined) setNeteaseUsername(patch.username)
+      if (patch.avatar !== undefined) setNeteaseAvatar(patch.avatar)
+      if (patch.userId !== undefined) setNeteaseUserId(patch.userId)
+      if (patch.vip !== undefined) setNeteaseVip(patch.vip)
+    },
+    clear: () => {
+      setNeteaseLoggedIn(false)
+      setNeteaseCookie('')
+      setNeteaseUsername('')
+      setNeteaseAvatar('')
+      setNeteaseUserId('')
+      setNeteaseVip(false)
+    },
+    onAuthChanged: () => setAuthRevision(previous => previous + 1),
+  }
+
+  const qqAccountUi: AccountSessionUi = {
+    apply: (patch) => {
+      if (patch.loggedIn !== undefined) setQQLoggedIn(patch.loggedIn)
+      if (patch.cookie !== undefined) setQQCookie(patch.cookie)
+      if (patch.username !== undefined) setQQUsername(patch.username)
+      if (patch.avatar !== undefined) setQQAvatar(patch.avatar)
+      if (patch.userId !== undefined) setQQUserId(patch.userId)
+      if (patch.vip !== undefined) setQQVip(patch.vip)
+    },
+    clear: () => {
+      setQQLoggedIn(false)
+      setQQCookie('')
+      setQQUsername('')
+      setQQAvatar('')
+      setQQUserId('')
+      setQQVip(false)
+    },
+    onAuthChanged: () => setAuthRevision(previous => previous + 1),
+  }
 
   // 各平台账号用户 id（各平台互相独立，避免喜欢/加歌串台）
   const getPlatformUserId = useCallback((target: MusicPlatform) => {
@@ -4666,57 +4706,33 @@ function App() {
 
   // 登录处理
   const handleNeteaseLogin = async (cookie: string, showToastMessage = true) => {
-    // 开启新一轮账号会话：此前仍在等待的网络请求（旧登录 / 旧账号）随即失效，
-    // 它们返回后不能再把资料写回本地。见 services/accountSession.ts。
     const session = beginAccountSession('netease')
-    session.commit(() => {
-      setNeteaseCookie(cookie)
-      setNeteaseLoggedIn(true)
-      localStorage.setItem('netease_cookie', cookie)
-      localStorage.setItem('neteaseCookie', cookie)
-    })
-    
-    // 获取网易云账号资料
-    let profile: any = null
+    if (!session.commitLogin({ cookie }, neteaseAccountUi)) return
+
+    let profile: AccountProfile | null = null
     let profileFailed = false
     try {
       const res = await fetch(`http://localhost:3211/api/netease/user/account?cookie=${encodeURIComponent(cookie)}`)
-      profile = (await res.json()).profile || null
+      const data = await res.json()
+      if (data.profile) {
+        profile = {
+          username: data.profile.nickname || '网易云用户',
+          avatar: data.profile.avatarUrl || '',
+          userId: data.profile.userId?.toString() || '',
+          vip: data.profile.vipType > 0,
+        }
+      }
     } catch (error) {
       console.error('获取用户信息失败:', error)
       profileFailed = true
     }
-    // 等待期间用户可能已经退出或换了账号：此时这一轮的资料整体丢弃，
-    // 既不写 state / localStorage，也不派发认证事件与登录有效期。
-    const expired = session.commit(() => {
-      if (profile) {
-        const profileUserId = profile.userId?.toString() || ''
-        setNeteaseUsername(profile.nickname || '网易云用户')
-        setNeteaseAvatar(profile.avatarUrl || '')
-        setNeteaseUserId(profileUserId)
-        const isVip = profile.vipType > 0
-        setNeteaseVip(isVip)
-        localStorage.setItem('netease_vip', isVip.toString())
-        if (profileUserId) localStorage.setItem('netease_user_id', profileUserId)
-        localStorage.setItem('netease_username', profile.nickname || '网易云用户')
-      } else if (profileFailed) {
-        setNeteaseUsername('网易云用户')
-      }
-      return true
-    }) === undefined
-    if (expired) {
+
+    if (!session.commitProfile(profile, neteaseAccountUi)) {
       debugLog('[账号] 网易云登录资料返回时该轮会话已失效（已退出或被新登录取代），丢弃本次回写')
       return
     }
-    setAuthRevision(previous => previous + 1)
-    // 记录登录有效期（网易云 cookie 官方约 30 天）
-    recordLogin('netease')
-    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', {
-      detail: {
-        platform: 'netease',
-        userId: localStorage.getItem('netease_user_id') || ''
-      }
-    }))
+    if (profileFailed) neteaseAccountUi.apply({ username: '网易云用户' })
+
     // 显示登录成功Toast（只在主动登录时显示，不在页面加载时显示）
     if (showToastMessage) {
       addToast('网易云音乐登录成功', 'info')
@@ -4724,26 +4740,10 @@ function App() {
   }
 
   const handleNeteaseLogout = () => {
-    // 先让所有在途登录请求失效：退出后它们的迟到响应一律不再回写。
-    invalidateAccountSession('netease')
-    setNeteaseLoggedIn(false)
-    setNeteaseUsername('')
-    setNeteaseAvatar('')
-    setNeteaseUserId('')
-    setNeteaseVip(false)
-    setNeteaseCookie('')
-    localStorage.removeItem('netease_cookie')
-    localStorage.removeItem('neteaseCookie')
-    localStorage.removeItem('netease_user_id')
-    localStorage.removeItem('netease_username')
-    localStorage.removeItem('netease_vip')
-    clearLoginExpiry('netease')
-    setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'netease' } }))
+    endAccountSession('netease', neteaseAccountUi)
   }
 
   const handleQQLogin = async (cookie: string, showToastMessage = true) => {
-    // 与网易云同样处理：本轮会话之外的回写一律丢弃（退出/换号后旧响应不得覆盖）。
     const session = beginAccountSession('qq')
     try {
       // 1. 先写入 QQ cookie 到后端服务器
@@ -4755,16 +4755,8 @@ function App() {
       const setCookieData = await setCookieRes.json()
       
       if (setCookieData.result === 100 && setCookieData.data?.uin) {
-        const uin = setCookieData.data.uin
-        session.commit(() => {
-          setQQCookie(cookie)
-          setQQLoggedIn(true)
-          setQQUserId(uin)
-          localStorage.setItem('qq_cookie', cookie)
-          localStorage.setItem('qqCookie', cookie)
-          localStorage.setItem('qq_logged_in', 'true')
-          localStorage.setItem('qq_user_id', uin)
-        })
+        const uin = String(setCookieData.data.uin)
+        if (!session.commitLogin({ cookie, userId: uin }, qqAccountUi)) return
         
         // 2. 获取用户详细信息（失败不回滚已成功的 cookie 登录，仅用默认资料）
         let userDetailData: any = null
@@ -4776,93 +4768,43 @@ function App() {
           userDetailData = null
         }
         
-        // 等待详情期间可能已退出或换号：过期则连提示与登录有效期一起放弃。
-        const expired = session.commit(() => {
-          // qq-music-api返回的歌曲详情可能在result字段中
-          if (userDetailData && userDetailData.creator) {
-            const user = userDetailData.creator
-            
-            const username = getQQUserDisplayName(userDetailData, uin)
-            const avatar = user.headpic || user.avatarUrl || user.avatar || ''
-            const isVip = detectQQMusicVip(userDetailData)
-            
-            setQQUsername(username)
-            setQQAvatar(avatar)
-            setQQVip(isVip)
-            
-            // 保存到localStorage
-            localStorage.setItem('qq_username', username)
-            localStorage.setItem('qq_avatar', avatar)
-            localStorage.setItem('qq_vip', isVip.toString())
-            // 显示登录成功Toast（只在主动登录时显示）
-            if (showToastMessage) {
-              addToast('QQ音乐登录成功', 'success')
-            }
-          } else {
-            // 如果获取详情失败，至少设置基本信息
-            console.warn('⚠️ 获取QQ音乐用户详情失败，使用默认信息')
-            console.warn('响应数据:', userDetailData)
-            setQQUsername(getQQUserDisplayName(userDetailData, uin))
-            setQQAvatar('')
-            const cachedVip = localStorage.getItem('qq_vip') === 'true'
-            setQQVip(cachedVip)
-            localStorage.setItem('qq_username', getQQUserDisplayName(userDetailData, uin))
-          }
-          return true
-        }) === undefined
-        if (expired) {
+        const hasCreator = Boolean(userDetailData && userDetailData.creator)
+        if (!hasCreator) {
+          console.warn('⚠️ 获取QQ音乐用户详情失败，使用默认信息')
+          console.warn('响应数据:', userDetailData)
+        }
+        const user = userDetailData?.creator
+        const profile: AccountProfile = {
+          username: getQQUserDisplayName(userDetailData, uin),
+          avatar: hasCreator ? (user.headpic || user.avatarUrl || user.avatar || '') : '',
+          userId: uin,
+          vip: hasCreator ? detectQQMusicVip(userDetailData) : readAccountSession('qq').vip,
+        }
+
+        if (!session.commitProfile(profile, qqAccountUi)) {
           debugLog('[账号] QQ 登录详情返回时该轮会话已失效（已退出或被新登录取代），丢弃本次回写')
           return
         }
-        setAuthRevision(previous => previous + 1)
-        // 记录登录有效期（QQ 音乐 cookie 官方约 30 天）
-        recordLogin('qq')
-        window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', {
-          detail: { platform: 'qq', userId: uin }
-        }))
+
+        // 显示登录成功Toast（只在主动登录且有详情时显示）
+        if (showToastMessage && hasCreator) {
+          addToast('QQ音乐登录成功', 'success')
+        }
       } else {
         throw new Error('设置Cookie失败')
       }
     } catch (error) {
       console.error('❌ QQ音乐登录失败:', error)
-      // 失败清理同样只在会话仍有效时执行：否则用户已经退出（或换了账号），
-      // 这次失败清理会把新会话的登录态一起清掉。
-      const stale = !session.isCurrent()
-      session.commit(() => {
-        setQQUsername('QQ音乐用户')
-        setQQAvatar('')
-        setQQUserId('')
-        setQQVip(false)
-        setQQCookie('')
-        setQQLoggedIn(false)
-        localStorage.removeItem('qq_cookie')
-        localStorage.removeItem('qqCookie')
-        localStorage.removeItem('qq_logged_in')
-        localStorage.removeItem('qq_user_id')
-        localStorage.removeItem('qq_vip')
-      })
       // 该轮已被退出/换号取代时不再提示「登录失败」——用户主动放弃，不是失败。
-      if (showToastMessage && !stale) addToast(error instanceof Error ? error.message : 'QQ音乐登录失败', 'error')
+      if (session.fail(qqAccountUi)) {
+        qqAccountUi.apply({ username: 'QQ音乐用户' })
+        if (showToastMessage) addToast(error instanceof Error ? error.message : 'QQ音乐登录失败', 'error')
+      }
     }
   }
 
   const handleQQLogout = () => {
-    // 同网易云：退出先作废在途会话，防止详情请求迟到后把账号资料写回。
-    invalidateAccountSession('qq')
-    setQQLoggedIn(false)
-    setQQUsername('')
-    setQQAvatar('')
-    setQQUserId('')
-    setQQVip(false)
-    setQQCookie('')
-    localStorage.removeItem('qq_cookie')
-    localStorage.removeItem('qqCookie')
-    localStorage.removeItem('qq_logged_in')
-    localStorage.removeItem('qq_user_id')
-    localStorage.removeItem('qq_vip')
-    clearLoginExpiry('qq')
-    setAuthRevision(previous => previous + 1)
-    window.dispatchEvent(new CustomEvent('hyperplayer-auth-changed', { detail: { platform: 'qq' } }))
+    endAccountSession('qq', qqAccountUi)
     void fetch('http://localhost:3211/api/qq/cookie', { method: 'DELETE' }).catch(() => undefined)
   }
 
