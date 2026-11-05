@@ -63,4 +63,9 @@ export interface PluginContext {
 export interface PluginRuntime {
   onEnable?: (ctx: PluginContext) => void | Promise<void>
   onDisable?: () => void | Promise<void>
+  /**
+   * 非空表示这份 runtime 根本不可用（如 CSP 禁止动态执行插件代码）。
+   * 启用流程必须据此如实报错并回滚开关，不能把「已启用」写进存储。
+   */
+  unavailableReason?: import('./runtimeCapability').PluginRuntimeFailure
 }

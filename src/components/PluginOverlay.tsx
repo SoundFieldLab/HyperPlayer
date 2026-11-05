@@ -13,6 +13,7 @@ import {
   resolveNotice,
   usePluginHostState,
   isPluginEnabled,
+  setPluginEnabled,
   PLUGIN_STATE_EVENT,
   closePluginConsole,
 } from '../services/pluginStore'
@@ -63,11 +64,22 @@ function useRuntimeBridge() {
         })
         enqueue(manifest.id, async () => {
           if (generations.get(manifest.id) !== generation) return
-          if (enabled) {
-            await runtime.onEnable?.(context)
-          } else {
+          if (!enabled) {
             await runtime.onDisable?.()
+            return
           }
+          // 运行时不可用（典型：CSP 禁止动态执行导入插件代码）时不要把开关留在「已启用」，
+          // 否则用户会以为插件在跑。这里直接回写关闭并给出可读原因。
+          const reason = runtime.unavailableReason
+          if (reason) {
+            console.error(`[插件:${manifest.id}] 无法启用:`, reason)
+            setPluginEnabled(manifest.id, false)
+            window.dispatchEvent(new CustomEvent('showToast', {
+              detail: { message: `插件[${manifest.name}]无法启用：${reason.message}`, type: 'error', duration: 6000 },
+            }))
+            return
+          }
+          await runtime.onEnable?.(context)
         })
       }
     }

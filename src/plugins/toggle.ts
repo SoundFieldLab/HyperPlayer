@@ -5,7 +5,7 @@
  * - 首次开启功能先弹 consent 须知，确认后启用并 toast，此后开关自由。
  */
 
-import { getPluginManifest } from './registry'
+import { getPluginManifest, getPluginRuntime } from './registry'
 import {
   hasViewedDetail,
   markDetailViewed,
@@ -51,6 +51,26 @@ export { resolveNotice, requestNotice }
  * 请求切换插件开关。返回 true = 已直接切换；false = 被 consent 须知拦截
  * （用户确认后由回调完成启用 + toast）。
  */
+/**
+ * 真正落盘启用状态前的最后一道闸：运行时不可用就如实失败并保持关闭。
+ *
+ * 这里修的是「显示成功但没生效」——导入插件的代码在 CSP 下无法动态执行时，
+ * 旧实现仍写 enabled=true 并弹成功 toast。返回 true 表示确实启用成功。
+ */
+function enableIfRuntimeUsable(pluginId: string): boolean {
+  const runtime = getPluginRuntime(pluginId)
+  const reason = runtime?.unavailableReason
+  if (!reason) {
+    setPluginEnabled(pluginId, true)
+    return true
+  }
+  // 保持关闭，避免重启后又显示成「已启用」的假状态。
+  setPluginEnabled(pluginId, false)
+  const name = getPluginManifest(pluginId)?.name ?? pluginId
+  showToast(`插件[${name}]无法启用：${reason.message}`, 'error', 6000)
+  return false
+}
+
 export function requestTogglePlugin(pluginId: string, wantEnabled: boolean): boolean {
   if (!wantEnabled) {
     setPluginEnabled(pluginId, false)
@@ -64,7 +84,7 @@ export function requestTogglePlugin(pluginId: string, wantEnabled: boolean): boo
       onResolve: (ok) => {
         if (ok) {
           setPluginConsent(pluginId, true)
-          setPluginEnabled(pluginId, true)
+          if (!enableIfRuntimeUsable(pluginId)) return
           const name = getPluginManifest(pluginId)?.name ?? pluginId
           showToast(`插件[${name}]已启用 请在主页使用此功能`, 'success', 3600)
         }
@@ -72,7 +92,7 @@ export function requestTogglePlugin(pluginId: string, wantEnabled: boolean): boo
     })
     return false
   }
-  setPluginEnabled(pluginId, true)
+  if (!enableIfRuntimeUsable(pluginId)) return false
   const name = getPluginManifest(pluginId)?.name ?? pluginId
   showToast(`插件[${name}]已启用 请在主页使用此功能`, 'success', 3600)
   return true

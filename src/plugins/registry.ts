@@ -8,6 +8,7 @@
 
 import type { PluginContext, PluginManifest, PluginRuntime } from './types'
 import { getImportedPluginManifests } from '../services/pluginStore'
+import { compilePluginFactory } from './runtimeCapability'
 
 /** 内置插件注册表（id -> manifest + runtime）。 */
 const builtinPlugins = new Map<string, { manifest: PluginManifest; runtime?: PluginRuntime }>()
@@ -55,13 +56,6 @@ export function isBuiltinPlugin(id: string): boolean {
 
 /* ---------------------------------- 导入插件运行时 ---------------------------------- */
 
-const FN_WRAPPER = (code: string) => `
-return function (ctx) {
-  "use strict";
-  const plugin = (${code});
-  return typeof plugin === 'function' ? plugin(ctx) : plugin;
-}`
-
 /**
  * 执行用户明确导入的插件代码：
  * - 代码与应用 renderer 同权限运行，不是安全沙箱；
@@ -69,23 +63,25 @@ return function (ctx) {
  * - 插件约定的导出形态：函数返回生命周期对象。
  */
 export function createImportedPluginRuntime(code: string): PluginRuntime {
-  try {
-    const factory = new Function(FN_WRAPPER(code))() as (ctx: PluginContext) => PluginRuntime | undefined
-    let lifecycle: PluginRuntime | undefined
-    return {
-      onEnable: async (ctx) => {
-        lifecycle = factory(ctx) ?? {}
-        await lifecycle.onEnable?.(ctx)
-      },
-      onDisable: async () => {
-        const current = lifecycle
-        lifecycle = undefined
-        await current?.onDisable?.()
-      },
-    }
-  } catch (error) {
-    console.error('[插件] 运行时代码解析失败:', error)
-    return {}
+  const compiled = compilePluginFactory(code)
+  if (!compiled.ok) {
+    // 解析失败不再静默退化成空 runtime：把原因挂到 runtime 上，让启用流程能如实报错
+    // 并回滚开关状态（旧实现返回 {} 会让 UI 提示「已启用」而插件一次都没执行）。
+    console.error('[插件] 运行时代码解析失败:', compiled.failure)
+    return { unavailableReason: compiled.failure }
+  }
+  let lifecycle: PluginRuntime | undefined
+  return {
+    onEnable: async (ctx) => {
+      const factory = compiled.factory() as (ctx: PluginContext) => PluginRuntime | undefined
+      lifecycle = factory(ctx) ?? {}
+      await lifecycle.onEnable?.(ctx)
+    },
+    onDisable: async () => {
+      const current = lifecycle
+      lifecycle = undefined
+      await current?.onDisable?.()
+    },
   }
 }
 
