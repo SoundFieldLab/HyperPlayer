@@ -65,6 +65,13 @@ temp/
 # 调试截图
 wf-screen-check.png
 
+# 临时歌词调试页（本地复现用，勿提交）
+lyrics-debug.html
+src/lyrics-debug/
+
+# B站 MV 基准报告（本地运行产物，可重建）
+benchmark/bilibili-mv/reports/
+
 # 大型构建产物（不纳入 git 版本管理）
 android/
 python-beat-service/packages/
