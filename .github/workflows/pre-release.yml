@@ -148,8 +148,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 75
     steps:
+      # 手动触发时 prepare 可能在「当前 HEAD」上新建 tag，而不是发布已有 tag 的内容。
+      # 因此构建必须显式钉到 prepare 解析出的 tag，否则手动填一个旧 tag 会拿 HEAD 的
+      # 代码去构建、再以该旧 tag 的名义发布（产物与 tag 不一致）。
+      # 由 tag / 分支触发的运行时，该 ref 与触发点相同，不改变原行为。
       - name: 拉取代码
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: 安装 Node.js
         uses: actions/setup-node@v4

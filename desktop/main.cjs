@@ -3247,7 +3247,9 @@ ipcMain.handle('hse-write-scene-seed', async (_e, content) => {
 // HSE 离线导出落盘：把调音室渲染好的 MP3/WAV 写到用户桌面。
 // 文件名由渲染层给，这里再做一次非法字符兜底清洗与
 // 重名自动 (2) 序号，绝不覆盖用户已存在的文件。300MB 上限防误传巨型数据。
-ipcMain.handle('hse-save-rendered-audio', (_e, data, fileName) => {
+// 导出落盘属于特权写操作（渲染端数据直接写到桌面）：必须与其余 privileged 处理器
+// 一样做来源校验，否则桌面歌词 / 任务栏小窗等次要渲染进程也能触发任意文件写入。
+ipcMain.handle('hse-save-rendered-audio', guardTrustedIpc('privileged', (_e, data, fileName) => {
   try {
     if (!(data instanceof ArrayBuffer) && !(data instanceof Uint8Array)) return { ok: false, error: '导出数据格式无效' }
     if (data.byteLength > 300 * 1024 * 1024) return { ok: false, error: '导出内容超过 300MB，疑似异常' }
@@ -3276,8 +3278,7 @@ ipcMain.handle('hse-save-rendered-audio', (_e, data, fileName) => {
   } catch (err) {
     return { ok: false, error: (err && err.message) || String(err) }
   }
-})
-
+}))
 
 // 监听打开 QQ 登录窗口的请求
 ipcMain.handle('open-qq-login-window', async () => {

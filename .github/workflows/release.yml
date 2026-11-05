@@ -37,11 +37,9 @@ on:
         required: false
         default: ''
         type: textarea
-      prerelease:
-        description: '以 Pre-release 形式发布（项目约定恒为是）'
-        required: false
-        default: true
-        type: boolean
+      # 刻意不提供 prerelease 开关：本仓库处于测试阶段，版本化发版与每日构建一律
+      # 以 Pre-release 发布（不占用 GitHub Latest）。此前该开关默认 true 但可被设为
+      # false，实际跑出过 prerelease=false 的 v1.0.0（页面显示 Latest），与项目约定矛盾。
 
 concurrency:
   group: release
@@ -255,16 +253,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ needs.bump.outputs.version }}
           VERSION: ${{ needs.bump.outputs.version }}
-          PRERELEASE: ${{ inputs.prerelease }}
+
         run: |
           set -euo pipefail
           ls -la artifacts
-          ARGS=(--title "HyperPlayer ${VERSION}" --notes-file release-notes.md --verify-tag)
-          if [ "$PRERELEASE" = "true" ]; then
-            ARGS+=(--prerelease)
-          fi
-          gh release create "$TAG" "${ARGS[@]}" artifacts/*
-          echo "已发布：${TAG}（prerelease=${PRERELEASE}）"
+          # 恒为 Pre-release：与 AGENTS.md 的发布约定一致，避免误占 Latest。
+          gh release create "$TAG" \
+            --title "HyperPlayer ${VERSION}" \
+            --notes-file release-notes.md \
+            --prerelease \
+            --verify-tag \
+            artifacts/*
+          echo "已发布：${TAG}（Pre-release）"
 
       - name: 生成并回写 update.json（仅纯语义版本号）
         if: needs.bump.outputs.is_stable == 'true'
