@@ -17,7 +17,7 @@
  */
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { parseStoredBoolean } from '../utils/storage'
-import { setTransitionMode, setCrossfadeDuration, setAlbumGaplessEnabled } from './transitionSettings'
+import { getTransitionSnapshot, setTransitionMode, setCrossfadeDuration, setAlbumGaplessEnabled } from './transitionSettings'
 import {
   loadPlaybackShortcutSettings,
   savePlaybackShortcutSettings,
@@ -346,7 +346,7 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         label: '渐入渐出 (Crossfade)',
         description: '两首歌之间交叉淡入淡出，与无缝衔接互斥',
         control: { kind: 'toggle' },
-        read: () => readBool('crossfadeEnabled', false),
+        read: () => getTransitionSnapshot().crossfadeEnabled,
         write: (value) => writeTransitionMode('crossfade', Boolean(value)),
       },
       {
@@ -355,18 +355,18 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         // step 必须与钳制粒度一致：共享规则会把时长取整到整秒，
         // 滑杆若给 0.5 就会出现「拖到 4.5 结果变 5」的抖动感。
         control: { kind: 'slider', min: 1, max: 12, step: 1, unit: '秒' },
-        read: () => readNum('crossfadeDuration', 4),
+        read: () => getTransitionSnapshot().crossfadeDuration,
         write: (value) => {
           setCrossfadeDuration(Number(value))
         },
-        visibleIf: () => readBool('crossfadeEnabled', false),
+        visibleIf: () => getTransitionSnapshot().crossfadeEnabled,
       },
       {
         id: 'gaplessEnabled',
         label: '无缝衔接 (Gapless)',
         description: '取消歌曲间过渡空隙，与渐入渐出互斥',
         control: { kind: 'toggle' },
-        read: () => readBool('gaplessEnabled', false),
+        read: () => getTransitionSnapshot().gaplessEnabled,
         write: (value) => writeTransitionMode('gapless', Boolean(value)),
       },
       {
@@ -374,7 +374,7 @@ export const GLOBAL_SETTINGS_GROUPS: GlobalSettingsGroup[] = [
         label: '专辑融合',
         description: '同一专辑内的歌曲以无缝方式衔接',
         control: { kind: 'toggle' },
-        read: () => readBool('albumGaplessEnabled', true),
+        read: () => getTransitionSnapshot().albumGaplessEnabled,
         write: (value) => {
           setAlbumGaplessEnabled(Boolean(value))
         },
@@ -962,7 +962,6 @@ export function isEntryVisible(entry: GlobalSettingEntry): boolean {
 // 事件名集中列出（写侧 dispatch 的自定义事件 + 镜像自身的通用事件）
 const REGISTRY_WATCHED_EVENTS = [
   GLOBAL_SETTING_CHANGED_EVENT,
-  'crossfadeSettingsChanged', 'gaplessSettingsChanged', 'albumGaplessSettingsChanged',
   'videoEndBehaviorChanged', 'wordByWordLyricsChanged', 'translationSettingsChanged', 'translationPositionChanged',
   'upNextEnabledChanged', 'showUpNextOutsidePlayerChanged', 'upNextSecondsChanged',
   'playerThemeChanged', 'accentColorChanged', 'developerModeChanged', 'audioAnalyzerEnabledChanged',

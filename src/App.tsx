@@ -23,6 +23,7 @@ import { useAudioPlayer, type AudioGraphHandle } from './hooks/useAudioPlayer'
 import { useAudioAnalyzer } from './hooks/useAudioAnalyzer'
 import { useAudioPulseStore, type AudioPulseStore } from './hooks/useAudioPulse'
 import { useAutoHideCursor } from './hooks/useAutoHideCursor'
+import { useTransitionSettings } from './hooks/useTransitionSettings'
 import { Song, getSongUrl, invalidateSongUrl, getLyrics, getProxiedImageUrl, getProxiedAudioUrl, getLocalAlbumIdentifier, resolveSongAlbumIdentifier, LyricLine } from './services/musicApi'
 import type { MusicPlatform } from './services/platforms'
 import { getPlatformCapabilities, isPlatformVisible, platformLabel } from './services/platforms'
@@ -1056,28 +1057,12 @@ function App() {
     return () => window.removeEventListener('mvBackgroundBlurChanged', onMvBlur as EventListener)
   }, [])
   
-  // Crossfade 设置
-  const [crossfadeEnabled, setCrossfadeEnabled] = useState(() => {
-    const saved = localStorage.getItem('crossfadeEnabled')
-    return parseStoredBoolean(saved, false)
-  })
-  const [crossfadeDuration, setCrossfadeDuration] = useState(() => {
-    const saved = localStorage.getItem('crossfadeDuration')
-    return saved ? parseFloat(saved) : 4 // 默认值 4 秒
-  })
-  
-  // Gapless 设置
-  const [gaplessEnabled, setGaplessEnabled] = useState(() => {
-    const saved = localStorage.getItem('gaplessEnabled')
-    return parseStoredBoolean(saved, false)
-  })
-  
-  // Gapless 动画设置
-  // 专辑融合设置
-  const [albumGaplessEnabled, setAlbumGaplessEnabled] = useState(() => {
-    const saved = localStorage.getItem('albumGaplessEnabled')
-    return parseStoredBoolean(saved, true)
-  })
+  const {
+    crossfadeEnabled,
+    crossfadeDuration,
+    gaplessEnabled,
+    albumGaplessEnabled,
+  } = useTransitionSettings()
 
   const [audioAnalyzerEnabled, setAudioAnalyzerEnabled] = useState(() => {
     const saved = localStorage.getItem('audioAnalyzerEnabled')
@@ -2485,36 +2470,6 @@ function App() {
     }, 200)
     return () => window.clearInterval(timer)
   }, [modeTransition])
-  
-  // 监听 Crossfade 和 Gapless 设置变化
-  useEffect(() => {
-    const handleCrossfadeChange = () => {
-      const enabled = localStorage.getItem('crossfadeEnabled')
-      const duration = localStorage.getItem('crossfadeDuration')
-      setCrossfadeEnabled(parseStoredBoolean(enabled, false))
-      if (duration) setCrossfadeDuration(parseFloat(duration))
-    }
-    
-    const handleGaplessChange = () => {
-      const enabled = localStorage.getItem('gaplessEnabled')
-      setGaplessEnabled(parseStoredBoolean(enabled, false))
-    }
-    
-    const handleAlbumGaplessChange = () => {
-      const enabled = localStorage.getItem('albumGaplessEnabled')
-      setAlbumGaplessEnabled(parseStoredBoolean(enabled, true))
-    }
-    
-    window.addEventListener('crossfadeSettingsChanged', handleCrossfadeChange)
-    window.addEventListener('gaplessSettingsChanged', handleGaplessChange)
-    window.addEventListener('albumGaplessSettingsChanged', handleAlbumGaplessChange)
-    
-    return () => {
-      window.removeEventListener('crossfadeSettingsChanged', handleCrossfadeChange)
-      window.removeEventListener('gaplessSettingsChanged', handleGaplessChange)
-      window.removeEventListener('albumGaplessSettingsChanged', handleAlbumGaplessChange)
-    }
-  }, [])
   
   // 切换翻译显示
   const handleTranslationToggle = () => {

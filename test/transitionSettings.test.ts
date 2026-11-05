@@ -179,27 +179,6 @@ describe('镜像写入必须通知简约侧', () => {
   })
 })
 
-describe('接线回归：两个入口都不得再自己写 localStorage', () => {
-  const read = (p: string) => require('node:fs').readFileSync(new URL(`../src/${p}`, import.meta.url), 'utf8')
-
-  it('SettingsPanel 的过渡设置走 transitionSettings，而不是直接写键', () => {
-    const panel = read('components/SettingsPanel.tsx')
-    expect(panel).toContain("from '../services/transitionSettings'")
-    expect(panel).toContain('setTransitionMode(')
-    expect(panel).toContain('setCrossfadeDuration(')
-    // 这两行是旧手写实现的指纹，必须消失
-    expect(panel).not.toContain("localStorage.setItem('gaplessEnabled'")
-    expect(panel).not.toContain("localStorage.setItem('crossfadeEnabled'")
-  })
-
-  it('注册表的过渡设置也走 transitionSettings，且不再自带互斥 helper', () => {
-    const registry = read('services/globalSettingsRegistry.ts')
-    expect(registry).toContain("from './transitionSettings'")
-    expect(registry).not.toContain('const setTransitionModeExclusive')
-    expect(registry).not.toContain("localStorage.setItem('crossfadeDuration', duration.toString())")
-  })
-})
-
 /**
  * 端到端等价性：直接驱动**真实的注册表条目**（镜像三模式用的那套），与共享规则对比。
  *

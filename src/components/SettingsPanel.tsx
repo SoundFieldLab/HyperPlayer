@@ -77,7 +77,8 @@ import {
   removeLocalMvMark,
   clearAllMvMatchCache,
 } from '../services/bilibiliApi'
-import { readTransitionSettings, setTransitionMode, setCrossfadeDuration, setAlbumGaplessEnabled } from '../services/transitionSettings'
+import { setTransitionMode, setCrossfadeDuration, setAlbumGaplessEnabled } from '../services/transitionSettings'
+import { useTransitionSettings } from '../hooks/useTransitionSettings'
 
 type UpdateCheckState = {
   status: 'idle' | 'checking' | 'current' | 'available' | 'error'
@@ -919,71 +920,27 @@ function SettingsPanel({
     }))
   }
   
-  // Crossfade 和 Gapless 设置
-  const [crossfadeEnabled, setCrossfadeEnabled] = useState(() => {
-    const saved = localStorage.getItem('crossfadeEnabled')
-    return parseStoredBoolean(saved, false)
-  })
-  
-  const [crossfadeDuration, setCrossfadeDuration] = useState(() => {
-    const saved = localStorage.getItem('crossfadeDuration')
-    return saved ? parseFloat(saved) : 4
-  })
-  
-  const [gaplessEnabled, setGaplessEnabled] = useState(() => {
-    const saved = localStorage.getItem('gaplessEnabled')
-    return parseStoredBoolean(saved, false)
-  })
-  
-  const [albumGaplessEnabled, setAlbumGaplessEnabled] = useState(() => {
-    const saved = localStorage.getItem('albumGaplessEnabled')
-    return parseStoredBoolean(saved, true)
-  })
+  const {
+    crossfadeEnabled,
+    crossfadeDuration,
+    gaplessEnabled,
+    albumGaplessEnabled,
+  } = useTransitionSettings()
 
-  // ⚠️ 本面板是「总设置」，但它的这四个 state 只在挂载时读一次 localStorage。
-  // 从传统/探索/桌面模式（镜像 UI）改过过渡设置后回到这里会显示旧值——
-  // 所以必须订阅领域事件 + 通用变更事件，把存储里的真实值回灌进 state。
-  const syncTransitionState = useCallback(() => {
-    const next = readTransitionSettings()
-    setCrossfadeEnabled(next.crossfadeEnabled)
-    setCrossfadeDuration(next.crossfadeDuration)
-    setGaplessEnabled(next.gaplessEnabled)
-    setAlbumGaplessEnabled(next.albumGaplessEnabled)
-  }, [])
-
-  useEffect(() => {
-    const events = [
-      'crossfadeSettingsChanged',
-      'gaplessSettingsChanged',
-      'albumGaplessSettingsChanged',
-      'hyperplayer:global-setting-changed',
-    ]
-    for (const name of events) window.addEventListener(name, syncTransitionState)
-    return () => {
-      for (const name of events) window.removeEventListener(name, syncTransitionState)
-    }
-  }, [syncTransitionState])
-  
-  // 互斥、钳制、存储格式与事件全部交给 services/transitionSettings（与镜像三模式同一套规则）。
-  // 这里只负责把规则算出的结果回填到本面板的 state。
   const handleCrossfadeToggle = (enabled: boolean) => {
     setTransitionMode('crossfade', enabled)
-    syncTransitionState()
   }
-  
+
   const handleCrossfadeDurationChange = (duration: number) => {
-    setCrossfadeDuration(duration) // 返回实际落库值，这里以回读为准
-    syncTransitionState()
+    setCrossfadeDuration(duration)
   }
-  
+
   const handleGaplessToggle = (enabled: boolean) => {
     setTransitionMode('gapless', enabled)
-    syncTransitionState()
   }
-  
+
   const handleAlbumGaplessToggle = (enabled: boolean) => {
     setAlbumGaplessEnabled(enabled)
-    syncTransitionState()
   }
 
   // 深浅色主题：与播放页快捷设置共用同一存储与事件，App 监听后统一更新
