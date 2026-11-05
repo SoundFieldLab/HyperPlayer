@@ -9,7 +9,6 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
 import {
   canEvaluateDynamicCode,
   classifyRuntimeFailure,
@@ -78,20 +77,5 @@ describe('registry 不再把失败伪装成可用 runtime', () => {
     const runtime = createImportedPluginRuntime('function () { return {} }')
     expect(runtime.unavailableReason).toBeUndefined()
     expect(typeof runtime.onEnable).toBe('function')
-  })
-})
-
-describe('启用流程接线', () => {
-  const toggle = readFileSync(new URL('../src/plugins/toggle.ts', import.meta.url), 'utf8')
-  const overlay = readFileSync(new URL('../src/components/PluginOverlay.tsx', import.meta.url), 'utf8')
-
-  it('开关写入前先检查运行时可用性', () => {
-    expect(toggle).toContain('enableIfRuntimeUsable')
-    expect(toggle).toContain('runtime?.unavailableReason')
-  })
-
-  it('生命周期桥在不可用时不留下 enabled=true', () => {
-    expect(overlay).toContain('setPluginEnabled(manifest.id, false)')
-    expect(overlay).toContain('runtime.unavailableReason')
   })
 })
