@@ -8,6 +8,14 @@ import {
   AUDIO_QUALITY_SETTINGS_EVENT,
   getAudioQualityRequest,
 } from './audioQualitySettings'
+import {
+  detectLyricsCapabilities,
+  isMetadataOnlyLyrics,
+  mergeLyricsWithTranslationAndRoman,
+  platformLyricsSourceName,
+  selectLyrics,
+  type LyricsCapabilities,
+} from './lyricsSelection'
 
 const isYrcTimestampFragment = (value: string) => {
   const trimmed = value.trim()
@@ -1123,17 +1131,6 @@ export async function getLyrics(
   duration?: number,
   onProgress?: (lyrics: LyricLine[], source: string, hasWordByWord: boolean, apiLogs?: LyricsFinalInfo) => void
 ): Promise<LyricLine[]> {
-  // 只有元数据（作词/作曲…）没有正文的"空壳歌词"：视为无效结果，
-  // 避免 Lrclib/AMLL 等第三方源用空壳抢跑，导致界面只剩"作词 作曲"没有正文。
-  const LYRIC_METADATA_ONLY = /^(词|曲|编曲|作词|作曲|演唱|歌手|制作人|录音|混音|母带)[：:\s]/u
-  const isMetadataOnlyLyrics = (lyrics: LyricLine[]): boolean => {
-    if (!Array.isArray(lyrics) || lyrics.length === 0) return false
-    return !lyrics.some(line => {
-      const text = (line.text || '').trim()
-      if (!text) return false
-      return !LYRIC_METADATA_ONLY.test(text)
-    })
-  }
   try {
     // 检查用户设置
     const thirdPartyEnabled = localStorage.getItem('thirdPartyLyricsEnabled')
@@ -1164,8 +1161,12 @@ export async function getLyrics(
     }
     
     // 默认策略：流式加载 - 先显示基础歌词，再逐步增强
-    type LyricsSourceResult = { source: string; lyrics: LyricLine[]; hasWW: boolean; hasTrans: boolean; hasRom: boolean }
-    const platformSourceName = platform === 'qq' ? 'QQ音乐' : '网易云'
+    type LyricsSourceResult = {
+      source: string
+      lyrics: LyricLine[]
+      capabilities: LyricsCapabilities
+    }
+    const platformSourceName = platformLyricsSourceName(platform)
     
     // 平台互斥：QQ音乐歌曲不请求网易云API，网易云歌曲不请求QQ音乐API。
     const platformSourcePromise = getPlatformLyrics(id, platform, songName, artistName)
@@ -1192,23 +1193,21 @@ export async function getLyrics(
       source.promise
         .then(lyrics => {
           completedCount++
-          const hasWW = lyrics.some(line => line.words && line.words.length > 0)
-          const hasTrans = lyrics.some(line => line.translation)
-          const hasRom = lyrics.some(line => line.roman || (line.romanWords && line.romanWords.length > 0))
+          const capabilities = detectLyricsCapabilities(lyrics)
           
           // 记录API日志
           apiLogs.push({
             source: source.name,
-            hasWordByWord: hasWW,
-            hasRoman: hasRom,
-            hasTranslation: hasTrans,
+            hasWordByWord: capabilities.hasWordByWord,
+            hasRoman: capabilities.hasRoman,
+            hasTranslation: capabilities.hasTranslation,
             status: lyrics.length === 0 ? 'empty' : 'success',
             lineCount: lyrics.length
           })
           
           if (lyrics.length === 0 || isMetadataOnlyLyrics(lyrics)) return null
           
-          return { source: source.name, lyrics, hasWW, hasTrans, hasRom }
+          return { source: source.name, lyrics, capabilities }
         })
         .catch((error) => {
           completedCount++
@@ -1253,9 +1252,9 @@ export async function getLyrics(
       
       if (firstResult && firstResult.lyrics.length > 0) {
         currentLyrics = firstResult.lyrics
-        hasWordByWord = firstResult.hasWW
-        hasTranslation = firstResult.hasTrans
-        hasRoman = firstResult.hasRom
+        hasWordByWord = firstResult.capabilities.hasWordByWord
+        hasTranslation = firstResult.capabilities.hasTranslation
+        hasRoman = firstResult.capabilities.hasRoman
         
         // 记录来源
         if (hasWordByWord) finalSourceTracking.wordByWord = firstResult.source
@@ -1282,116 +1281,25 @@ export async function getLyrics(
       )
       if (successfulResults.length === 0) return []
 
-      const preferredSource = primarySource === 'AMLL'
-        ? 'AMLL TTML DB'
-        : platformSourceName
-
-      // 先选逐字质量最高的骨架，再按时间把其他来源的翻译/罗马音补进来。
-      // 第三方歌词源必须通过「同步性达标」检查，否则降权甚至不被采纳：
-      // 1) 时长一致性：歌词时间轴须落在歌曲时长范围内（过短/超长视为不同步）
-      // 2) 平台歌词时间轴交叉验证：与当前平台官方歌词做文本对齐，时间偏差中位数小才加分
-      const platformResult = successfulResults.find(result => result.source === platformSourceName)
-
-      const normalizeLyricText = (text: string) => (text || '')
-        .toLowerCase()
-        .replace(/[\s·•\-–—()（）[\]【】「」『』〈〉《》"'`、，。！？!?,.&/|:：]+/g, '')
-
-      /** 候选歌词 vs 平台官方歌词：文本对齐后的时间偏差中位数 → 同步分 */
-      const lyricTimingSyncScore = (candidate: LyricLine[], reference: LyricLine[]): number => {
-        const referenceTimes = new Map<string, number[]>()
-        reference.forEach(line => {
-          const key = normalizeLyricText(line.text)
-          if (!key) return
-          const list = referenceTimes.get(key) ?? []
-          list.push(line.time)
-          referenceTimes.set(key, list)
-        })
-        const diffs: number[] = []
-        candidate.forEach(line => {
-          const key = normalizeLyricText(line.text)
-          if (!key) return
-          const times = referenceTimes.get(key)
-          if (times && times.length > 0) diffs.push(line.time - times[0])
-        })
-        // 匹配对数不足（平台歌词过劣/过少）视为无法验证：不加分也不降权
-        if (diffs.length < Math.max(3, Math.floor(candidate.length * 0.3))) return 0
-        diffs.sort((a, b) => a - b)
-        const medianDiff = Math.abs(diffs[Math.floor(diffs.length / 2)])
-        if (medianDiff < 1.0) return 30   // 同步良好
-        if (medianDiff < 2.5) return 10   // 轻微偏差可接受
-        return -150                       // 明显不同步 → 直接排除（超过逐字分 100，任何第三方源必败）
-      }
-
-      const sourceScore = (result: LyricsSourceResult) => {
-        let score = (result.hasWW ? 100 : 0)
-          + (result.hasTrans ? 20 : 0)
-          + (result.hasRom ? 20 : 0)
-          + (result.source === preferredSource ? 35 : 0)
-          + (result.source === platformSourceName ? 5 : 0)
-          + Math.min(10, result.lyrics.length / 20)
-        // 时长一致性：歌词时间轴必须落在歌曲时长内（duration 为毫秒）
-        if (duration && result.lyrics.length > 0) {
-          const lastTime = result.lyrics[result.lyrics.length - 1].time
-          const durationSeconds = duration / 1000
-          if (lastTime >= durationSeconds * 0.5 && lastTime <= durationSeconds * 1.05) {
-            score += 10
-          } else {
-            score -= 40
-          }
-        }
-        // 平台歌词交叉验证：第三方源需与当前平台官方歌词时间轴对齐
-        if (platformResult && result.source !== platformSourceName
-          && result.lyrics.length > 0 && platformResult.lyrics.length > 0) {
-          score += lyricTimingSyncScore(result.lyrics, platformResult.lyrics)
-        }
-        return score
-      }
-
-      // 骨架源选择策略（用户策略）：
-      // - **QQ 音乐**：QQ 官方歌词权威（逐字+翻译+罗马音一次请求全拿），其缺失部分第三方
-      //   通常也没有（实测 QQ 的 qrc/trans 覆盖极高）——**强制以 QQ 官方为骨架**，
-      //   第三方源只做翻译/罗马音空缺的兜底拼接，绝不让第三方逐字源顶掉 QQ 骨架。
-      // - **网易云**：官方逐字（yrc）覆盖少，保持评分制——第三方逐字源（WW+100）可竞争
-      //   骨架，官方+第三方并行拼接（网易云本身就是拼接生态）。
-      const baseResult = platformSourceName === 'QQ音乐'
-        ? [...successfulResults].sort((a, b) => (a.source === 'QQ音乐' ? -1 : 0) - (b.source === 'QQ音乐' ? -1 : 0))[0]
-        : [...successfulResults].sort((a, b) => sourceScore(b) - sourceScore(a))[0]
-      currentLyrics = baseResult.lyrics
-      hasWordByWord = baseResult.hasWW
-      hasTranslation = baseResult.hasTrans
-      hasRoman = baseResult.hasRom
+      // 源选择、评分、同步校验与合并全部在 lyricsSelection 的纯仲裁器里；
+      // 这里只负责取数与流式回调。
+      const selection = selectLyrics(
+        successfulResults.map(result => ({ source: result.source, lyrics: result.lyrics })),
+        { platform, primarySource, duration },
+      )
+      currentLyrics = selection.lyrics
+      hasWordByWord = selection.hasWordByWord
+      hasTranslation = selection.hasTranslation
+      hasRoman = selection.hasRoman
       finalSourceTracking = {
-        wordByWord: baseResult.hasWW ? baseResult.source : undefined,
-        roman: baseResult.hasRom ? baseResult.source : undefined,
-        translation: baseResult.hasTrans ? baseResult.source : undefined,
+        wordByWord: selection.finalSources.wordByWord,
+        roman: selection.finalSources.roman,
+        translation: selection.finalSources.translation,
       }
 
-      for (const result of successfulResults) {
-        if (result === baseResult) continue
-        const translations = result.lyrics
-          .filter(line => line.translation)
-          .map(line => ({ time: line.time, text: line.translation || '' }))
-        const romans = result.lyrics
-          .filter(line => line.roman || line.romanWords)
-          .map(line => ({ time: line.time, text: line.roman || '', words: line.romanWords }))
-        if (translations.length === 0 && romans.length === 0) continue
-
-        const neededTranslation = !hasTranslation && translations.length > 0
-        const neededRoman = !hasRoman && romans.length > 0
-        currentLyrics = mergeLyricsWithTranslationAndRoman(currentLyrics, translations, romans)
-        if (neededTranslation) {
-          hasTranslation = true
-          finalSourceTracking.translation = result.source
-        }
-        if (neededRoman) {
-          hasRoman = true
-          finalSourceTracking.roman = result.source
-        }
-      }
-
-      console.log(`  [Lyrics] 组合完成: 骨架=${baseResult.source}, 逐字=${hasWordByWord}, 罗马音=${hasRoman}, 翻译=${hasTranslation}`)
+      console.log(`  [Lyrics] 组合完成: 骨架=${selection.skeletonSource}, 逐字=${hasWordByWord}, 罗马音=${hasRoman}, 翻译=${hasTranslation}`)
       if (onProgress) {
-        onProgress(currentLyrics, baseResult.source, hasWordByWord, {
+        onProgress(currentLyrics, selection.skeletonSource || platformSourceName, hasWordByWord, {
           logs: [...apiLogs],
           finalSources: { ...finalSourceTracking },
           allCompleted: true,
@@ -1557,97 +1465,6 @@ async function getPlatformLyrics(id: number | string, platform: MusicPlatform, s
     return []
   }
 }
-
-// 合并歌词、翻译和罗马音
-function mergeLyricsWithTranslationAndRoman(
-  lyrics: LyricLine[], 
-  translations: LyricLine[], 
-  romans: LyricLine[] = []
-): LyricLine[] {
-  if (translations.length === 0 && romans.length === 0) return lyrics
-  
-  // 使用贪婪算法：为每句歌词找最接近的翻译和罗马音
-  const usedTranslations = new Set<number>()
-  const usedRomans = new Set<number>()
-  
-  return lyrics.map((lyric) => {
-    const text = lyric.text?.trim() || ''
-    
-    // 检查是否是元数据行（词:、曲:、编曲:等）或歌曲标题行（包含 " - " 分隔符）
-    const isMetadata = /^(词|曲|编曲|作词|作曲|演唱|歌手)[：:]/u.test(text)
-    const isSongTitle = / - /.test(text) && lyric.time < 2 // 前2秒内包含 " - " 的行视为标题
-    
-    // 元数据行和标题行不需要匹配翻译和罗马音
-    if (isMetadata || isSongTitle) {
-      return lyric
-    }
-    
-    let bestTransMatch: LyricLine | undefined
-    let bestRomanMatch: LyricLine | undefined
-    let minTransDiff = Infinity
-    let minRomanDiff = Infinity
-    
-    // 找到时间最接近且未使用的翻译
-    translations.forEach((t, index) => {
-      if (usedTranslations.has(index)) return
-      
-      const diff = Math.abs(t.time - lyric.time)
-      // 开头歌词（前5秒）放宽阈值到2秒，因为时间戳经常不准确
-      const threshold = lyric.time < 5 ? 2.0 : 1.0
-      if (diff < threshold && diff < minTransDiff) {
-        minTransDiff = diff
-        bestTransMatch = t
-      }
-    })
-    
-    // 找到时间最接近且未使用的罗马音
-    romans.forEach((r, index) => {
-      if (usedRomans.has(index)) return
-      
-      const diff = Math.abs(r.time - lyric.time)
-      // 特殊处理：第一句歌词（0-3秒内）使用更宽松的阈值，允许向后匹配
-      let threshold = 1.0
-      if (lyric.time < 3) {
-        // 第一句歌词放宽到3秒，且允许罗马音时间晚于歌词
-        threshold = 3.0
-      } else if (lyric.time < 10) {
-        // 前10秒放宽到2秒
-        threshold = 2.0
-      }
-      
-      if (diff < threshold && diff < minRomanDiff) {
-        minRomanDiff = diff
-        bestRomanMatch = r
-      }
-    })
-    
-    // 标记已使用的翻译
-    if (bestTransMatch) {
-      const matchIndex = translations.indexOf(bestTransMatch)
-      if (matchIndex !== -1) {
-        usedTranslations.add(matchIndex)
-      }
-    }
-    
-    // 标记已使用的罗马音
-    if (bestRomanMatch) {
-      const matchIndex = romans.indexOf(bestRomanMatch)
-      if (matchIndex !== -1) {
-        usedRomans.add(matchIndex)
-      }
-    }
-    
-    return {
-      ...lyric,
-      // 组合多个来源时只补空缺，不能让后到的空结果擦掉 TTML 自带内容。
-      translation: lyric.translation || bestTransMatch?.text || '',
-      roman: lyric.roman || bestRomanMatch?.text || '',
-      // 如果罗马音有逐字信息，也合并进来（用于显示逐字罗马音）
-      romanWords: lyric.romanWords || bestRomanMatch?.words || undefined
-    }
-  })
-}
-
 
 export function parseAMLLTTMLLyrics(ttmlText: string): LyricLine[] {
   const parsed = parseTTML(ttmlText)

@@ -58,6 +58,15 @@ consent、运行时能力门控、enabled 写入、生命周期队列 / 代际�
 
 `transitionPlanner.ts` / `TransitionRenderer.ts` / `autoMixAnalysisService.ts` 仍保留节拍分析能力（供 MV 对齐、PV 歌词等消费），但不再用于智能混音。切歌时右上角弹 gapless 方案提示（`GaplessModeToast.tsx`：直接拼接 / 60ms 淡入淡出 / albumGapless 交叉淡化，`App.tsx` 按 transitionCommit.strategy + 专辑归属判定）。
 
+## 歌词源仲裁
+
+`src/services/lyricsSelection.ts` 拥有歌词源策略：来源名映射、逐字 / 翻译 / 罗马音能力检测、元数据空壳过滤、评分（逐字 / 时长 / 同步中位数）、QQ 官方权威规则、翻译 / 罗马音合并与来源记录。`selectLyrics()` 自己会剔除空数组与元数据空壳，直接调用也安全。
+
+- `musicApi.getLyrics` 只负责取数、流式回调与日志；最终仲裁走 `selectLyrics()`。
+- `getPlatformLyrics` 的翻译 / 罗马音合并也复用同一个 `mergeLyricsWithTranslationAndRoman()`。
+- 第三方源会按时长错位（-40）与平台时间轴偏差（+30 / +10 / -150）评分；**-150 是重罚而非硬排除**，逐字与主源加分仍可能抵消。QQ 平台强制以 QQ 官方为骨架，第三方只补空缺。
+- 回归测试：`test/lyricsSelection.test.ts`（QQ 权威 / 评分 / 时长降权 / 同步排除 / 合并 / 空候选）。
+
 ## 设置快照模块的复用边界
 
 `transitionSettings.ts` 与 `lyricModeSettings.ts` 的 `WeakMap` store / snapshot / commit / subscribe 骨架目前是两份近似实现。**这是有意接受的两份重复**：两份的领域规则差异大，过早抽公共层会把语义压平。
