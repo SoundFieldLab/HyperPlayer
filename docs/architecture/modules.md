@@ -85,8 +85,17 @@ consent、运行时能力门控、enabled 写入、生命周期队列 / 代际�
 - **不要再裸读这些键或手写 `upNextEnabledChanged` / `translationSettingsChanged` / `romanSettingsChanged` 监听**。事件名与键名是历史值，勿改。
 - 回归测试：`test/playbackDisplaySettings.test.ts`（默认值 / 钳制 / 事件序列 / 快照与单次通知 / 注册表写入等价性）。
 
+## 详情导航栈
+
+`src/services/detailNavigation.ts` 拥有详情弹窗的栈：压栈去重（仅栈顶重复忽略）、20 条深度上限、出栈、彻底清空、以及在打开新详情前 `pushAll()` 批量追加。
+
+- 歌曲身份与 `App.getSongKey()` 同义：`platform-mid||id`；QQ 歌曲以 mid 为准，**不要用 id 比较**。
+- `pushAll()` **保留已有历史**，只追加当前仍可见的详情；不要改成「清空再重建」，那会丢掉多级返回。
+- `App.tsx` 的 `close*Detail` 先 `pop()` 再回退，`dismiss*Detail` 走 `clear()`，`handleOpenArtist` / `handleOpenAlbum` 用 `pushAll()`，三条路径共享同一账本。
+- 回归测试：`test/detailNavigation.test.ts`（去重 / 深度上限 / 出栈 / 清空 / pushAll 保留历史 / QQ mid 身份）。
+
 ## 设置快照模块的复用边界
 
-`transitionSettings.ts` 与 `lyricModeSettings.ts` 的 `WeakMap` store / snapshot / commit / subscribe 骨架目前是两份近似实现。**这是有意接受的两份重复**：两份的领域规则差异大，过早抽公共层会把语义压平。
+`transitionSettings.ts` / `lyricModeSettings.ts` / `playbackDisplaySettings.ts` 的 store / snapshot / commit / subscribe 骨架是**三份近似实现**。**这是有意接受的重复**：三份的领域规则（互斥、迁移、钳制）差异大，过早抽公共层会把语义压平。
 
-出现第三份同类「单 host 快照 + 单次通知」需求时，再抽 `createSettingsSnapshotStore`，并先补一组跨模块等价性测试。这是判断题，不是机械 lint 规则。
+再出现同类「单 host 快照 + 单次通知」需求时，抽 `createSettingsSnapshotStore`，并先补一组跨模块等价性测试。这是判断题，不是机械 lint 规则。

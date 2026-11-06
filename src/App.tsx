@@ -55,6 +55,7 @@ import {
 } from './services/accountSession'
 import { cacheManager } from './services/cacheManager'
 import { PreloadLedger } from './services/preloadLedger'
+import { DetailNavigationLedger, type DetailNavigationEntry } from './services/detailNavigation'
 import { indexedDBCache } from './services/indexedDBCache'
 import { autoMixAnalysisService } from './services/autoMixAnalysisService'
 import { getAudioEngineVersion, setAudioEngineVersion, type AudioEngineVersion } from './services/audioEngineVersion'
@@ -769,11 +770,10 @@ function App() {
   const [selectedAlbumPlatform, setSelectedAlbumPlatform] = useState<MusicPlatform>('netease')
   const [selectedArtistAlbumId, setSelectedArtistAlbumId] = useState<string | number | undefined>()
   const [selectedArtistTab, setSelectedArtistTab] = useState<PlaybackOrigin['artistTab']>('hotSongs')
-  // 导航栈：支持歌曲详情、艺人和专辑之间反向关闭
-  const navigationStack = useRef<Array<
-    | { type: 'artist' | 'album'; id: string; platform: MusicPlatform; tab?: string }
-    | { type: 'song'; song: Song }
-  >>([])
+  // 详情导航账本：支持歌曲详情、艺人和专辑之间反向关闭
+  const navigationStackRef = useRef<DetailNavigationLedger | null>(null)
+  if (navigationStackRef.current === null) navigationStackRef.current = new DetailNavigationLedger()
+  const navigationStack = navigationStackRef.current
   const [showCommentModal, setShowCommentModal] = useState(false)
   const [selectedCommentSong, setSelectedCommentSong] = useState<Song | null>(null)
   const [currentSongLiked, setCurrentSongLiked] = useState(false)
@@ -2534,7 +2534,7 @@ function App() {
     transitionToTrack?.title,
   ])
 
-  const restoreNavigationEntry = (prev: (typeof navigationStack.current)[number] | undefined): boolean => {
+  const restoreNavigationEntry = (prev: DetailNavigationEntry | undefined): boolean => {
     if (!prev) return false
     setShowArtistDetail(false)
     setShowAlbumDetail(false)
@@ -2559,14 +2559,14 @@ function App() {
   }
 
   const closeArtistDetail = () => {
-    if (restoreNavigationEntry(navigationStack.current.pop())) return
+    if (restoreNavigationEntry(navigationStack.pop())) return
     setShowArtistDetail(false)
     setSelectedArtistId(null)
     setSelectedArtistAlbumId(undefined)
   }
 
   const closeAlbumDetail = () => {
-    if (restoreNavigationEntry(navigationStack.current.pop())) return
+    if (restoreNavigationEntry(navigationStack.pop())) return
     setShowAlbumDetail(false)
     setSelectedAlbumId(null)
   }
@@ -2580,30 +2580,16 @@ function App() {
   // 与 close*Detail（返回上一级）不同：选中歌曲、查看评论等场景要的是"彻底关闭"，
   // 若沿用 close*Detail 会在栈非空时把上一级弹窗重新打开，留下脏栈条目。
   const dismissArtistDetail = () => {
-    navigationStack.current = []
+    navigationStack.clear()
     setShowArtistDetail(false)
     setSelectedArtistId(null)
     setSelectedArtistAlbumId(undefined)
   }
 
   const dismissAlbumDetail = () => {
-    navigationStack.current = []
+    navigationStack.clear()
     setShowAlbumDetail(false)
     setSelectedAlbumId(null)
-  }
-
-  // 压栈统一入口：栈顶去重 + 深度上限，避免相似歌手自引用造成无限入栈
-  const pushNavigation = (entry: (typeof navigationStack.current)[number]) => {
-    const stack = navigationStack.current
-    const top = stack[stack.length - 1]
-    const duplicate = top?.type === entry.type && (
-      entry.type === 'song'
-        ? top.type === 'song' && getSongKey(top.song) === getSongKey(entry.song)
-        : top.type !== 'song' && top.id === entry.id && top.platform === entry.platform
-    )
-    if (duplicate) return
-    if (stack.length >= 20) stack.shift()
-    stack.push(entry)
   }
 
   // 歌曲详情「也爱歌单」→ 应用内打开歌单详情
@@ -2644,7 +2630,7 @@ function App() {
     setSelectedAlbumId(null)
     // 选歌是"离开详情弹窗"的动作：清空艺人/专辑导航栈，防止之后 closeAlbumDetail
     // 把早已关闭的上一级弹窗重新弹出（脏栈复活）
-    navigationStack.current = []
+    navigationStack.clear()
     // Keep the source view painted while the first-use playback chunks are prepared. Without
     // this, the app-level Suspense boundary can reveal the fixed black base on the first song.
     const playbackSurfaceReady = Promise.allSettled([
@@ -2714,28 +2700,35 @@ function App() {
     await loadAndPlaySong(nextPlaylist[selectedIndex] || normalizedSong, selectedIndex, nextPlaylist)
   }
 
+  /** 收集当前仍可见的详情弹窗，供打开新详情时压栈（顺序由调用方决定）。 */
+  const captureVisibleDetails = () => ({
+    song: showSongDetail && songDetailSong
+      ? { type: 'song' as const, song: songDetailSong }
+      : null,
+    artist: showArtistDetail && selectedArtistId
+      ? { type: 'artist' as const, id: selectedArtistId, platform: selectedArtistPlatform, tab: selectedArtistTab }
+      : null,
+    album: showAlbumDetail && selectedAlbumId
+      ? { type: 'album' as const, id: selectedAlbumId, platform: selectedAlbumPlatform }
+      : null,
+  })
+
   // 打开艺人详情
   const handleOpenArtist = (artistId: string, platform: MusicPlatform) => {
     // 歌单详情面板(z-95)高于艺人弹窗(z-70)：从面板内"查看歌手"时先关面板，避免新弹窗被盖住
     setDetailPlaylist(null)
     // 先关闭弹窗（不触发导航栈弹出）
-    const hadAlbum = showAlbumDetail && selectedAlbumId
-    const hadArtist = showArtistDetail && selectedArtistId
-    const hadSong = showSongDetail && songDetailSong
-    const prevSong = hadSong ? { type: 'song' as const, song: songDetailSong } : null
-    const prevArtist = hadArtist ? { type: 'artist' as const, id: selectedArtistId, platform: selectedArtistPlatform, tab: selectedArtistTab } : null
-    const prevAlbum = hadAlbum ? { type: 'album' as const, id: selectedAlbumId, platform: selectedAlbumPlatform } : null
-    // 临时阻止 closeAlbumDetail/closeCommentModal 弹出导航栈
-    const savedStack = navigationStack.current
-    navigationStack.current = [] as any
-    closeAlbumDetail()
+    const prev = captureVisibleDetails()
+    // 关掉当前弹窗但不消费导航栈（close*Detail 会 pop），再用旧详情重建栈
+    setShowAlbumDetail(false)
+    setSelectedAlbumId(null)
     closeCommentModal()
     setShowSongDetail(false)
-    navigationStack.current = savedStack
-    // 压入导航栈
-    if (prevAlbum) pushNavigation(prevAlbum)
-    if (prevArtist) pushNavigation(prevArtist)
-    if (prevSong) pushNavigation(prevSong)
+    navigationStack.pushAll([
+      ...(prev.album ? [prev.album] : []),
+      ...(prev.artist ? [prev.artist] : []),
+      ...(prev.song ? [prev.song] : []),
+    ])
     setSelectedArtistId(artistId)
     setSelectedArtistPlatform(platform)
     setSelectedArtistAlbumId(undefined)
@@ -2747,23 +2740,18 @@ function App() {
   const handleOpenAlbum = (albumId: string, platform: MusicPlatform) => {
     // 歌单详情面板(z-95)低于专辑弹窗(z-300)可见，但为统一"离开面板"语义，同样先关闭
     setDetailPlaylist(null)
-    const hadAlbum = showAlbumDetail && selectedAlbumId
-    const hadArtist = showArtistDetail && selectedArtistId
-    const hadSong = showSongDetail && songDetailSong
-    const prevSong = hadSong ? { type: 'song' as const, song: songDetailSong } : null
-    const prevArtist = hadArtist ? { type: 'artist' as const, id: selectedArtistId, platform: selectedArtistPlatform, tab: selectedArtistTab } : null
-    const prevAlbum = hadAlbum ? { type: 'album' as const, id: selectedAlbumId, platform: selectedAlbumPlatform } : null
-    // 临时阻止 closeArtistDetail/closeCommentModal 弹出导航栈
-    const savedStack = navigationStack.current
-    navigationStack.current = [] as any
-    closeArtistDetail()
+    const prev = captureVisibleDetails()
+    // 关掉当前弹窗但不消费导航栈（close*Detail 会 pop），再用旧详情重建栈
+    setShowArtistDetail(false)
+    setSelectedArtistId(null)
+    setSelectedArtistAlbumId(undefined)
     closeCommentModal()
     setShowSongDetail(false)
-    navigationStack.current = savedStack
-    // 压入导航栈
-    if (prevArtist) pushNavigation(prevArtist)
-    if (prevAlbum) pushNavigation(prevAlbum)
-    if (prevSong) pushNavigation(prevSong)
+    navigationStack.pushAll([
+      ...(prev.artist ? [prev.artist] : []),
+      ...(prev.album ? [prev.album] : []),
+      ...(prev.song ? [prev.song] : []),
+    ])
     setSelectedAlbumId(albumId)
     setSelectedAlbumPlatform(platform)
     setShowAlbumDetail(true)
@@ -2783,7 +2771,7 @@ function App() {
     setShowArtistDetail(false)
     setShowAlbumDetail(false)
     // 回到来源页：弹窗全部关闭，导航栈一并清空，避免残留脏条目
-    navigationStack.current = []
+    navigationStack.clear()
 
     if ((origin.surface === 'artist' || origin.surface === 'artist-album') && origin.artistId && origin.platform) {
       setSelectedArtistId(String(origin.artistId))
