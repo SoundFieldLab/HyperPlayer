@@ -4,6 +4,23 @@
 
 改 `App.tsx` 的播放接线后，先跑 `npm run test:wiring`（秒级），再跑全量 `npm run test`。
 
+## 改哪块 → 读哪节 → 跑哪个测试
+
+| 你要改的 | 读 | 跑 |
+|---|---|---|
+| 过渡设置 / Crossfade / Gapless | [播放过渡设置](#播放过渡设置) | `test/transitionSettings.test.ts`、`test/transitionSettingsStore.test.ts` |
+| 歌词模式 / 看歌可见性 | [歌词模式偏好](#歌词模式偏好) | `test/lyricModeSettings.test.ts` |
+| 登录 / 退出 / 换号 | [账号会话](#账号会话) | `test/accountSession.test.ts` |
+| 插件启停 / consent | [插件启用 / 生命周期](#插件启用--生命周期) | `test/pluginActivation.test.ts`、`test/pluginRuntimeCapability.test.ts` |
+| 新增 ipcMain.handle | [IPC 注册 / capability](#ipc-注册--capability) | `npm run test:desktop` |
+| 歌词源选择 / 合并 | [歌词源仲裁](#歌词源仲裁) | `test/lyricsSelection.test.ts`、`test/migrationEquivalence.test.ts` 歌词段 |
+| 预载 / 缓存歌词与 URL | [预载账本](#预载账本) | `test/preloadLedger.test.ts` |
+| 播放页开关 / 主题 | [播放页显示偏好](#播放页显示偏好) | `test/playbackDisplaySettings.test.ts`、`test/migrationEquivalence.test.ts` 秒数段 |
+| 详情弹窗返回 / 关闭 | [详情导航栈](#详情导航栈) | `test/detailNavigation.test.ts`、`test/migrationEquivalence.test.ts` 歌曲身份段 |
+| 后端进程内缓存 | [进程内过期缓存（后端）](#进程内过期缓存后端) | `test/ttlCache.test.ts`、`test/migrationEquivalence.test.ts` 缓存段 |
+
+全部改完都要跑 `npm run lint && npm run test`；pre-commit 只跑前三个秒级闸门。
+
 **迁移类改动（把散在调用点的逻辑搬进 module）还必须补等价性用例**：把旧实现字面复刻进 `test/migrationEquivalence.test.ts` 的 `legacy*`，与新 module 在同一组 case 上对比。理由：本轮 07–11 五个候选里，双审抓到的回归有 6 个属于「新 module 与旧实现语义不同」，而当时没有任何确定性检查。`npm run test:equivalence` 是这条约定的闸门，也接进了 pre-commit 与 CI。
 
 ## 播放过渡设置
@@ -124,3 +141,6 @@ consent、运行时能力门控、enabled 写入、生命周期队列 / 代际�
 新增进程内缓存时用 `TtlCache`，**不要再手写 `Map + expiresAt + while(size>max)`**。回归测试：`test/ttlCache.test.ts`。
 
 **已声明的豁免（下一轮候选）**：`server/bilibili-api.mjs` 的 `pruneCache` 三处、`server/netease-native-explore.mjs` 的 `createTimedCache` 三处、`server/location-api.mjs` 的 `reverseCache` — 它们的淘汰判据与主缓存不同（滚动窗口 / 带 pending 合并），迁移需要单独一轮确认，不在候选 11 范围内。
+
+
+

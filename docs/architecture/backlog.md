@@ -29,8 +29,23 @@
 | 10 | 详情导航栈 module | 已完成 | `c6c6020` |
 | 11 | 进程内过期缓存 module | 已完成 | `e1e5f01` |
 
+### 已登记但尚未实现的遗留项
+
+这两项来自候选 08 / 11 的落地说明，范围已界定但尚未开工。**按旧编号继续排，不要重新发明候选**。
+
+| 编号 | 项 | 来源 | 范围 |
+|---|---|---|---|
+| 12 | `musicApi` 短 TTL URL 缓存并入预载账本 | 候选 08 落地说明 | `songUrlCache` / `songUrlPending` / `songUrlInvalidationVersions` 与 `PreloadLedger` 目前是两套失效体系。注意 `musicApi` 那套是 5 分钟正缓存 + 25 秒负缓存，且键含音质 / VIP / cookie 指纹，合并前必须先补等价性用例（`test/migrationEquivalence.test.ts`）。风险：取歌链。 |
+| 13 | 后端剩余自定义过期缓存 | 候选 11 落地说明 | `server/bilibili-api.mjs` 的 `pruneCache` 三处、`server/netease-native-explore.mjs` 的 `createTimedCache` 三处、`server/location-api.mjs` 的 `reverseCache`。它们淘汰判据与主缓存不同（滚动窗口 / 带 pending 合并），迁移需逐处确认后再接 `TtlCache`。 |
+
 ## 使用规则
 
 - `/implement 0X` 前先查本表；编号不存在时**停下来问**，不要临时发明一个候选。
 - 新报告落地后，把候选摘要追加到本文件，并保留报告文件名与日期。
 - 候选完成后补上 commit 与回归测试名，方便下一次审查跳过已完成项。
+- **已界定范围但未开工的项也要给编号**（当前 `12` / `13`），否则下次 `/implement 0X` 会卡在“编号不存在”。
+- 迁移类候选一律先补 `test/migrationEquivalence.test.ts` 的 `legacy*` 再动实现；`npm run test:equivalence` 是它的闸门。
+
+
+
+

@@ -6,6 +6,14 @@ Desktop music player (Windows/Electron)，共 **3 个音源**：网易云 / QQ �
 
 - ⚠️ **例外：播放页「封面模糊铺底 + 背景律动」已按用户要求恢复**（2026-09-13）。它是播放页的常驻兜底背景：`src/components/CrossfadeBackground.tsx` + `App.tsx` 的 `PulsingCrossfadeBackground` + `QuickSettings.tsx` 的「背景律动」开关与三档强度。**勿再当作减配残留删除。**
 
+## 本机环境（先读这一条）
+
+**shell 固定用 `powershell.exe`**：本会话默认的 bash 会落到 WSL，`$LASTEXITCODE` / `Select-Object` / `-ErrorAction` 之类会被拆解成语法错误，白烧一轮 tool call。所有 `exec_command` 都带 `shell: powershell.exe`。
+
+- 不要假设有 `rg`（本机没有）：用 `Select-String` / `Get-ChildItem -Recurse -Include`。
+- `git status` 显示整仓 `M` 但 `git diff` 为空时，先 `git update-index --refresh`。
+- 启动后端/服务用 `Start-Process -WindowStyle Hidden`，不要弹可见窗口。
+
 ## Commands
 
 ```bash
@@ -101,7 +109,7 @@ HyperPlayer 共 **4 个界面模式**（简约 minimal / 传统 traditional / �
 - 热路径用 `debugLog()`（`src/utils/debugLog.ts`）而不是 `console.log`；它由 `localStorage['hyperplayer:verbose-log']` 门控。
 - **Files must be UTF-8** — Windows 编码问题曾破坏中文 UI 文案（GBK 误读、正则字符类损坏）。
 - **提交前闸门（`.githooks/pre-commit`，由 `npm run prepare` 装 `core.hooksPath`）**：只跑 `lint` + `test:wiring` + `test:equivalence`（约 22 秒）。全量 `npm run test` 留给 CI 与 push 前。**迁移类改动必须先补 `test/migrationEquivalence.test.ts`**：把旧实现字面复刻成 `legacy*`，与新 module 在同一组 case 上对比——本轮双审抓到的回归几乎全属这一类。
-- **Windows 工具习惯**：shell 用 `powershell.exe`；`git status` 若显示整仓修改但 `git diff` 为空，先跑 `git update-index --refresh`；不要假设 `rg` 存在（用 `Select-String` / `Get-ChildItem`）。
+
 - **性能基线（已完成，勿回退）**：三视图/弹窗/列表行 memo + latest-ref 稳定回调；过渡进度 30fps 节流；评论/艺人列表 react-window 虚拟化；封面代理流式转发；后端 gzip；axios keepAlive；vite `manualChunks` 拆 vendor。
 - Ports: **3210** Vite / **3211** backend（127.0.0.1；CORS 仅 localhost:3210 / file:// / null origins）。
 
@@ -155,5 +163,3 @@ Uses the five canonical triage roles with their default label strings. See `docs
 ### Domain docs
 
 Single-context layout: `GLOSSARY.md` at the repo root plus `docs/adr/`. See `docs/agents/domain.md`.
-
-
