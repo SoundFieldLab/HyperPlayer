@@ -21,6 +21,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:wiring": "vitest run test/modeIntegrationWiring.test.ts test/exploreModeWiring.test.ts",
+    "test:equivalence": "vitest run test/migrationEquivalence.test.ts",
+    "prepare": "node scripts/install-git-hooks.mjs",
     "test:chroma": "node scripts/test-chroma.cjs && node scripts/test-razer-device-discovery.cjs && node scripts/test-chroma-app-list-repair.cjs",
     "test:signalrgb": "node scripts/test-signalrgb.cjs && node scripts/test-signalrgb-effect.cjs",
     "benchmark:mv": "node scripts/bilibili-mv-benchmark.mjs",
@@ -171,3 +173,5 @@
     }
   }
 }
+
+

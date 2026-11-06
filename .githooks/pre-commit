@@ -1,0 +1,16 @@
+#!/bin/sh
+# 提交前闸门：只跑「快、确定、和本次改动强相关」的检查。
+# 全量 vitest (~80s) 留给 CI 与 push 前的 npm run test；这里卡住的是
+# 类型错误、播放接线契约、以及迁移等价性（本轮双审抓到最多的一类回归）。
+set -e
+
+echo "[pre-commit] 类型检查"
+npm run lint --silent
+
+echo "[pre-commit] 播放接线契约"
+npm run test:wiring --silent
+
+echo "[pre-commit] 迁移等价性"
+npm run test:equivalence --silent
+
+echo "[pre-commit] 通过"

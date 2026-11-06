@@ -4,6 +4,8 @@
 
 改 `App.tsx` 的播放接线后，先跑 `npm run test:wiring`（秒级），再跑全量 `npm run test`。
 
+**迁移类改动（把散在调用点的逻辑搬进 module）还必须补等价性用例**：把旧实现字面复刻进 `test/migrationEquivalence.test.ts` 的 `legacy*`，与新 module 在同一组 case 上对比。理由：本轮 07–11 五个候选里，双审抓到的回归有 6 个属于「新 module 与旧实现语义不同」，而当时没有任何确定性检查。`npm run test:equivalence` 是这条约定的闸门，也接进了 pre-commit 与 CI。
+
 ## 播放过渡设置
 
 Crossfade / Gapless / 专辑融合的互斥、时长钳制、存储格式、快照与事件派发**唯一实现在 `src/services/transitionSettings.ts`**。`App.tsx` 与 `SettingsPanel.tsx` 通过 `src/hooks/useTransitionSettings.ts` 订阅缓存快照，`globalSettingsRegistry.ts` 通过 `getTransitionSnapshot()` 读取；三个入口都只负责呈现，**不要再各自裸读 localStorage 或手写事件监听**。

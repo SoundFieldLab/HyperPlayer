@@ -62,6 +62,14 @@ jobs:
       - name: 打包体积闸门（前端库必须留在 devDependencies，禁止重复打包）
         run: node scripts/check-packaging.mjs
 
+      # 迁移等价性：把旧分散实现字面复刻后与新 module 对比。
+      # 单独一步（而不是并进 npm run test）是为了失败时一眼看出是哪类回归。
+      - name: 迁移等价性闸门（新 module vs 旧实现字面复刻）
+        run: npm run test:equivalence
+
+      - name: 播放接线契约
+        run: npm run test:wiring
+
       - name: 单元测试（vitest）
         run: npm run test
 
@@ -132,3 +140,4 @@ jobs:
           if (missing.length) { console.error('app.asar 缺少：' + missing.join(', ')); process.exit(1); }
           console.log('✓ app.asar 含 logo.png / build/icon.ico / desktop/splash.html（条目 ' + list.length + ' 条）');
           "
+

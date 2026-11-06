@@ -14,6 +14,7 @@ npm run dev              # Vite dev server only (3210; Weather Lab: http://127.0
 npm run lint             # Typecheck: tsc --noEmit (src/ only; no ESLint)
 npm run test             # vitest（test/ + HSE；maxWorkers=2 防 HSE 时序测试偶发超时）
 npm run test:wiring      # App 播放接线契约（modeIntegrationWiring + exploreModeWiring，秒级）
+npm run test:equivalence # 迁移等价性：旧实现字面复刻 vs 新 module（秒级）
 npm run test:desktop     # node --test 桌面/安全用例（hse / ipc / volume / download / health / trusted-ipc / update / profile）
 npm run check:ports      # 端口一致性闸门（必须 3210/3211，已接入 CI）
 npm run check:packaging  # 打包体积 / 依赖分区闸门（已接入 CI 与构建链）
@@ -99,6 +100,7 @@ HyperPlayer 共 **4 个界面模式**（简约 minimal / 传统 traditional / �
 - **No ESLint** — `npm run lint` 只是 `tsc --noEmit`；`src/` 是严格 TS。
 - 热路径用 `debugLog()`（`src/utils/debugLog.ts`）而不是 `console.log`；它由 `localStorage['hyperplayer:verbose-log']` 门控。
 - **Files must be UTF-8** — Windows 编码问题曾破坏中文 UI 文案（GBK 误读、正则字符类损坏）。
+- **提交前闸门（`.githooks/pre-commit`，由 `npm run prepare` 装 `core.hooksPath`）**：只跑 `lint` + `test:wiring` + `test:equivalence`（约 22 秒）。全量 `npm run test` 留给 CI 与 push 前。**迁移类改动必须先补 `test/migrationEquivalence.test.ts`**：把旧实现字面复刻成 `legacy*`，与新 module 在同一组 case 上对比——本轮双审抓到的回归几乎全属这一类。
 - **Windows 工具习惯**：shell 用 `powershell.exe`；`git status` 若显示整仓修改但 `git diff` 为空，先跑 `git update-index --refresh`；不要假设 `rg` 存在（用 `Select-String` / `Get-ChildItem`）。
 - **性能基线（已完成，勿回退）**：三视图/弹窗/列表行 memo + latest-ref 稳定回调；过渡进度 30fps 节流；评论/艺人列表 react-window 虚拟化；封面代理流式转发；后端 gzip；axios keepAlive；vite `manualChunks` 拆 vendor。
 - Ports: **3210** Vite / **3211** backend（127.0.0.1；CORS 仅 localhost:3210 / file:// / null origins）。
@@ -153,3 +155,5 @@ Uses the five canonical triage roles with their default label strings. See `docs
 ### Domain docs
 
 Single-context layout: `GLOSSARY.md` at the repo root plus `docs/adr/`. See `docs/agents/domain.md`.
+
+
