@@ -13,6 +13,7 @@ Desktop music player (Windows/Electron)，共 **3 个音源**：网易云 / QQ �
 - 不要假设有 `rg`（本机没有）：用 `Select-String` / `Get-ChildItem -Recurse -Include`。
 - `git status` 显示整仓 `M` 但 `git diff` 为空时，先 `git update-index --refresh`。
 - 启动后端/服务用 `Start-Process -WindowStyle Hidden`，不要弹可见窗口。
+- **GitHub 需要代理**：`github.com` 的 DNS 会落到被墙 IP（如 `20.205.243.166`），`git push` 报 `Recv failure: Connection was reset` / `port 443 连不上`。系统代理通常是 `127.0.0.1:7890`，但 git 不读系统设置，需显式给：`$env:HTTPS_PROXY='http://127.0.0.1:7890'`（或 `git -c http.proxy=http://127.0.0.1:7890 push`）。SSH 走 `ssh.github.com:443` 可连，但本机 key 未注册到 GitHub，只能用 HTTPS。
 
 ## Commands
 
@@ -163,3 +164,4 @@ Uses the five canonical triage roles with their default label strings. See `docs
 ### Domain docs
 
 Single-context layout: `GLOSSARY.md` at the repo root plus `docs/adr/`. See `docs/agents/domain.md`.
+
