@@ -21,6 +21,7 @@ import { registerHazardRoutes } from './server/hazard-api.mjs'
 import { registerLocationRoutes } from './server/location-api.mjs'
 import { registerBilibiliRoutes } from './server/bilibili-api.mjs'
 import { ByteLruCache, readResponseWithLimit } from './server/byte-lru-cache.mjs'
+import { TtlCache, cookieScopedKey } from './server/ttl-cache.mjs'
 import { isAuthorizedLocalRequest } from './server/local-service-auth.mjs'
 import { LOCAL_API_PROTOCOL_VERSION, LOCAL_API_SERVICE } from './server/local-api-health.mjs'
 import { registerNeteaseNativeExploreRoutes } from './server/netease-native-explore.mjs'
@@ -758,11 +759,25 @@ const QQ_HEADERS = {
 
 const QQ_PLAYLIST_DETAIL_CACHE_TTL = 5 * 60 * 1000
 const QQ_PLAYLIST_DETAIL_CACHE_MAX = 50
-const qqPlaylistDetailCache = new Map()
+const qqPlaylistDetailCache = new TtlCache({
+  ttlMs: QQ_PLAYLIST_DETAIL_CACHE_TTL,
+  maxEntries: QQ_PLAYLIST_DETAIL_CACHE_MAX,
+  touchOnGet: true,
+})
 const QQ_FEEDBACK_CONTEXT_TTL = 30 * 60 * 1000
 const QQ_FEEDBACK_CONTEXT_MAX = 1200
-const qqFeedbackContexts = new Map()
-const qqAppendContexts = new Map()
+// 上下文条目带 accountFingerprint 与可变 options：账本只管 TTL/容量，
+// 账号归属校验留在 get*Context 里（站点特有语义留在 adapter）。
+const qqFeedbackContexts = new TtlCache({
+  ttlMs: QQ_FEEDBACK_CONTEXT_TTL,
+  maxEntries: QQ_FEEDBACK_CONTEXT_MAX,
+  touchOnGet: false,
+})
+const qqAppendContexts = new TtlCache({
+  ttlMs: QQ_FEEDBACK_CONTEXT_TTL,
+  maxEntries: QQ_FEEDBACK_CONTEXT_MAX,
+  touchOnGet: false,
+})
 
 const QQ_EXPOSED_CARD_FIELDS = new Set([
   'abt', 'card_extra_info', 'group', 'cnt', 'cover', 'covertype', 'dynamicCover', 'dynamicCoverPlayType',
@@ -779,20 +794,13 @@ function rememberQQAppendContext(card, accountFingerprint) {
   const canRequestSimilar = Boolean(card?.miscellany?.FeedbackTextSimilar) && String(card?.miscellany?.supportLongPress || '') === '1'
   if (!card || typeof card !== 'object' || !canRequestSimilar) return ''
   const token = randomUUID()
-  qqAppendContexts.set(token, { card: qqExposedCard(card), accountFingerprint, expiresAt: Date.now() + QQ_FEEDBACK_CONTEXT_TTL })
-  while (qqAppendContexts.size > QQ_FEEDBACK_CONTEXT_MAX) {
-    const oldest = qqAppendContexts.keys().next().value
-    if (oldest) qqAppendContexts.delete(oldest)
-  }
+  qqAppendContexts.set(token, { card: qqExposedCard(card), accountFingerprint })
   return token
 }
 
 function getQQAppendContext(token, cookie) {
   const context = qqAppendContexts.get(String(token || ''))
-  if (!context || context.expiresAt <= Date.now()) {
-    if (context) qqAppendContexts.delete(String(token || ''))
-    return null
-  }
+  if (!context) return null
   return context.accountFingerprint === qqHash33(cookie).toString(36) ? context : null
 }
 
@@ -800,20 +808,13 @@ function rememberQQFeedbackContext(card, accountFingerprint) {
   const feedbackOpen = Number(card?.fb_switch?.IsOpen) === 1 || Boolean(card?.miscellany?.FeedbackTextDislike)
   if (!card || typeof card !== 'object' || !feedbackOpen) return ''
   const token = randomUUID()
-  if (qqFeedbackContexts.size >= QQ_FEEDBACK_CONTEXT_MAX) {
-    const oldest = qqFeedbackContexts.keys().next().value
-    if (oldest) qqFeedbackContexts.delete(oldest)
-  }
-  qqFeedbackContexts.set(token, { card, accountFingerprint, expiresAt: Date.now() + QQ_FEEDBACK_CONTEXT_TTL, options: new Map() })
+  qqFeedbackContexts.set(token, { card, accountFingerprint, options: new Map() })
   return token
 }
 
 function getQQFeedbackContext(token, cookie) {
   const context = qqFeedbackContexts.get(String(token || ''))
-  if (!context || context.expiresAt <= Date.now()) {
-    if (context) qqFeedbackContexts.delete(String(token || ''))
-    return null
-  }
+  if (!context) return null
   const accountFingerprint = qqHash33(cookie).toString(36)
   return context.accountFingerprint === accountFingerprint ? context : null
 }
@@ -824,14 +825,7 @@ async function fetchQQPlaylistDetail(id, songNum = 10000, cookie = '') {
   const accountFingerprint = requestCookie ? qqHash33(requestCookie).toString(36) : 'guest'
   const cacheKey = `${accountFingerprint}:${String(id)}:${String(songNum)}`
   const cachedDetail = qqPlaylistDetailCache.get(cacheKey)
-  if (cachedDetail) {
-    if (cachedDetail.expiresAt > Date.now()) {
-      qqPlaylistDetailCache.delete(cacheKey)
-      qqPlaylistDetailCache.set(cacheKey, cachedDetail)
-      return cachedDetail.value
-    }
-    qqPlaylistDetailCache.delete(cacheKey)
-  }
+  if (cachedDetail) return cachedDetail
 
   let legacyDetail = {}
   if (!cookie) {
@@ -925,14 +919,7 @@ async function fetchQQPlaylistDetail(id, songNum = 10000, cookie = '') {
     songnum: totalSongCount || uniqueSongs.length,
     total_song_num: totalSongCount || uniqueSongs.length
   }
-  if (qqPlaylistDetailCache.size >= QQ_PLAYLIST_DETAIL_CACHE_MAX) {
-    const oldestKey = qqPlaylistDetailCache.keys().next().value
-    if (oldestKey !== undefined) qqPlaylistDetailCache.delete(oldestKey)
-  }
-  qqPlaylistDetailCache.set(cacheKey, {
-    value: result,
-    expiresAt: Date.now() + QQ_PLAYLIST_DETAIL_CACHE_TTL
-  })
+  qqPlaylistDetailCache.set(cacheKey, result)
   return result
 }
 
@@ -1756,25 +1743,20 @@ async function callNeteaseAPIWithRetry(apiFunc, params, retries = 3, timeoutMs =
 
 // 专辑封面 URL 进程级缓存：避免每次搜索都对前 15 个专辑重复拉取详情（放大上游请求）。
 const NETEASE_ALBUM_COVER_CACHE_MAX = 1000
-const neteaseAlbumCoverCache = new Map()
+// 封面 URL 原实现无 TTL、只按容量淘汰；这里用 Infinity 精确保留该语义。
+const neteaseAlbumCoverCache = new TtlCache({
+  ttlMs: Infinity,
+  maxEntries: NETEASE_ALBUM_COVER_CACHE_MAX,
+  touchOnGet: true,
+})
 
 function getCachedNeteaseAlbumCover(albumId) {
-  const key = String(albumId)
-  const cached = neteaseAlbumCoverCache.get(key)
-  if (!cached) return ''
-  // 简单 LRU：命中时移到末尾，淘汰时删除最久未用的条目
-  neteaseAlbumCoverCache.delete(key)
-  neteaseAlbumCoverCache.set(key, cached)
-  return cached
+  return neteaseAlbumCoverCache.get(String(albumId)) || ''
 }
 
 function cacheNeteaseAlbumCover(albumId, url) {
   const key = String(albumId)
   if (!key || !url) return
-  if (neteaseAlbumCoverCache.size >= NETEASE_ALBUM_COVER_CACHE_MAX) {
-    const oldestKey = neteaseAlbumCoverCache.keys().next().value
-    if (oldestKey !== undefined) neteaseAlbumCoverCache.delete(oldestKey)
-  }
   neteaseAlbumCoverCache.set(key, url)
 }
 
@@ -2119,35 +2101,21 @@ function getQQFilename(songMid, quality) {
 
 const QQ_PLAYBACK_METADATA_TTL = 30 * 60 * 1000
 const QQ_PLAYBACK_METADATA_MAX_ENTRIES = 512
-const qqPlaybackMetadataCache = new Map()
+const qqPlaybackMetadataCache = new TtlCache({
+  ttlMs: QQ_PLAYBACK_METADATA_TTL,
+  maxEntries: QQ_PLAYBACK_METADATA_MAX_ENTRIES,
+  touchOnGet: true,
+})
+// 并发合并仍留在调用方：pending promise 与缓存条目生命周期不同。
 const qqPlaybackMetadataPending = new Map()
 
 function cacheQQPlaybackMetadata(songMid, metadata) {
-  const now = Date.now()
-  for (const [key, entry] of qqPlaybackMetadataCache) {
-    if (entry.expiresAt <= now) qqPlaybackMetadataCache.delete(key)
-  }
-  qqPlaybackMetadataCache.delete(songMid)
-  qqPlaybackMetadataCache.set(songMid, {
-    metadata,
-    expiresAt: now + QQ_PLAYBACK_METADATA_TTL,
-  })
-  while (qqPlaybackMetadataCache.size > QQ_PLAYBACK_METADATA_MAX_ENTRIES) {
-    const oldestKey = qqPlaybackMetadataCache.keys().next().value
-    if (oldestKey === undefined) break
-    qqPlaybackMetadataCache.delete(oldestKey)
-  }
+  qqPlaybackMetadataCache.set(songMid, metadata)
 }
 
 async function getQQPlaybackMetadata(songMid) {
-  const now = Date.now()
   const cached = qqPlaybackMetadataCache.get(songMid)
-  if (cached?.expiresAt > now) {
-    qqPlaybackMetadataCache.delete(songMid)
-    qqPlaybackMetadataCache.set(songMid, cached)
-    return cached.metadata
-  }
-  if (cached) qqPlaybackMetadataCache.delete(songMid)
+  if (cached) return cached
 
   const pending = qqPlaybackMetadataPending.get(songMid)
   if (pending) return pending
@@ -2572,36 +2540,21 @@ app.get('/api/netease/user/playlist', async (req, res) => {
 // 获取网易云音乐平台同步的最近播放内容。
 const NETEASE_RECENT_PLAYLIST_COUNT_TTL = 10 * 60 * 1000
 const NETEASE_RECENT_PLAYLIST_COUNT_CACHE_MAX = 500
-const neteaseRecentPlaylistCountCache = new Map()
+const neteaseRecentPlaylistCountCache = new TtlCache({
+  ttlMs: NETEASE_RECENT_PLAYLIST_COUNT_TTL,
+  maxEntries: NETEASE_RECENT_PLAYLIST_COUNT_CACHE_MAX,
+  // 原实现命中不调整顺序（纯 FIFO 淘汰），保持语义不变。
+  touchOnGet: false,
+})
 
 function getCachedNeteaseRecentPlaylistCount(id) {
-  const key = String(id)
-  const cached = neteaseRecentPlaylistCountCache.get(key)
-  if (!cached) return 0
-  if (cached.expiresAt <= Date.now()) {
-    neteaseRecentPlaylistCountCache.delete(key)
-    return 0
-  }
-  return Number(cached.count) || 0
+  return Number(neteaseRecentPlaylistCountCache.get(String(id))) || 0
 }
 
 function cacheNeteaseRecentPlaylistCount(id, count) {
   const normalizedCount = Number(count) || 0
   if (!id || normalizedCount <= 0) return
-  if (neteaseRecentPlaylistCountCache.size >= NETEASE_RECENT_PLAYLIST_COUNT_CACHE_MAX) {
-    const now = Date.now()
-    for (const [key, value] of neteaseRecentPlaylistCountCache) {
-      if (value.expiresAt <= now) neteaseRecentPlaylistCountCache.delete(key)
-    }
-    if (neteaseRecentPlaylistCountCache.size >= NETEASE_RECENT_PLAYLIST_COUNT_CACHE_MAX) {
-      const oldestKey = neteaseRecentPlaylistCountCache.keys().next().value
-      if (oldestKey !== undefined) neteaseRecentPlaylistCountCache.delete(oldestKey)
-    }
-  }
-  neteaseRecentPlaylistCountCache.set(String(id), {
-    count: normalizedCount,
-    expiresAt: Date.now() + NETEASE_RECENT_PLAYLIST_COUNT_TTL
-  })
+  neteaseRecentPlaylistCountCache.set(String(id), normalizedCount)
 }
 
 async function enrichNeteaseRecentPlaylistCounts(payload, cookie = '') {
@@ -7261,27 +7214,33 @@ async function fetchNeteasePersonalFmBatches(cookie, targetCount = 21, maxBatche
   }
 }
 
-const neteasePlaylistTrackIdCache = new Map()
-const neteaseSongDetailCache = new Map()
 const NETEASE_PLAYLIST_META_TTL = 5 * 60 * 1000
 const NETEASE_SONG_DETAIL_TTL = 20 * 60 * 1000
+const neteasePlaylistTrackIdCache = new TtlCache({
+  ttlMs: NETEASE_PLAYLIST_META_TTL,
+  maxEntries: 100,
+  // 原实现命中不调整顺序，保持语义不变。
+  touchOnGet: false,
+})
+// 原实现在超过 5000 条时整批收缩到 3500 条，避免每次写入都淘汰。
+const neteaseSongDetailCache = new TtlCache({
+  ttlMs: NETEASE_SONG_DETAIL_TTL,
+  maxEntries: 5000,
+  evictTo: 3500,
+  // 原实现命中不调整顺序，保持语义不变。
+  touchOnGet: false,
+})
 
 function setNeteaseSongDetailCache(song) {
   const key = String(song?.id || '')
   if (!key) return
-  neteaseSongDetailCache.set(key, { song, expiresAt: Date.now() + NETEASE_SONG_DETAIL_TTL })
-  if (neteaseSongDetailCache.size > 5000) {
-    for (const oldestKey of neteaseSongDetailCache.keys()) {
-      neteaseSongDetailCache.delete(oldestKey)
-      if (neteaseSongDetailCache.size <= 3500) break
-    }
-  }
+  neteaseSongDetailCache.set(key, song)
 }
 
 async function getNeteasePlaylistTrackIds(id, cookie = '') {
   const cacheKey = String(id)
-  const cached = neteasePlaylistTrackIdCache.get(cacheKey)
-  if (cached && cached.expiresAt > Date.now()) return cached.ids
+  const cachedIds = neteasePlaylistTrackIdCache.get(cacheKey)
+  if (cachedIds) return cachedIds
 
   let playlist = null
   try {
@@ -7323,13 +7282,7 @@ async function getNeteasePlaylistTrackIds(id, cookie = '') {
     .map(item => String(item?.id || ''))
     .filter(Boolean)
   if (ids.length > 0) {
-    neteasePlaylistTrackIdCache.set(cacheKey, {
-      ids,
-      expiresAt: Date.now() + NETEASE_PLAYLIST_META_TTL
-    })
-    while (neteasePlaylistTrackIdCache.size > 100) {
-      neteasePlaylistTrackIdCache.delete(neteasePlaylistTrackIdCache.keys().next().value)
-    }
+    neteasePlaylistTrackIdCache.set(cacheKey, ids)
   }
   return ids
 }
@@ -7391,7 +7344,7 @@ async function fetchNeteasePlaylistTrackPage(id, cookie = '', offset = 0, limit 
 
   for (const trackId of pageIds) {
     const cached = neteaseSongDetailCache.get(trackId)
-    if (cached && cached.expiresAt > Date.now()) songsById.set(trackId, cached.song)
+    if (cached) songsById.set(trackId, cached)
     else missingIds.push(trackId)
   }
 
@@ -8767,7 +8720,12 @@ async function getWallpaperEnginePathFromProcess() {
 // 解析结果按 customPath 做进程级缓存：每次请求 spawn 两个 PowerShell（进程查询 +
 // 注册表读取）开销大，且安装路径在运行期间不会变化；仅当 ?path= 参数变更时才重算。
 const WALLPAPER_ENGINE_PATH_CACHE_MAX = 20
-const wallpaperEnginePathCache = new Map()
+// 原实现是纯容量 FIFO（无 TTL、命中不调序）。
+const wallpaperEnginePathCache = new TtlCache({
+  ttlMs: Infinity,
+  maxEntries: WALLPAPER_ENGINE_PATH_CACHE_MAX,
+  touchOnGet: false,
+})
 
 async function resolveWallpaperEnginePaths(customPath = null) {
   const paths = []
@@ -8818,14 +8776,11 @@ async function resolveWallpaperEnginePaths(customPath = null) {
 // 带进程级缓存的路径解析入口：缓存 Promise 本身，并发请求共享同一次解析；
 // 缓存键包含 customPath，?path= 变更时自然重算。
 function getWallpaperEnginePaths(customPath = null) {
-  const cacheKey = String(customPath || '')
+  // 空 customPath 也要缓存（原实现用空串作键）；TtlCache 把空键视为无效，故用显式哨兵。
+  const cacheKey = String(customPath || '') || '<default>'
   const cached = wallpaperEnginePathCache.get(cacheKey)
   if (cached) return cached
   const resultPromise = resolveWallpaperEnginePaths(customPath)
-  if (wallpaperEnginePathCache.size >= WALLPAPER_ENGINE_PATH_CACHE_MAX) {
-    const oldestKey = wallpaperEnginePathCache.keys().next().value
-    if (oldestKey !== undefined) wallpaperEnginePathCache.delete(oldestKey)
-  }
   wallpaperEnginePathCache.set(cacheKey, resultPromise)
   return resultPromise
 }
@@ -10221,39 +10176,23 @@ app.get('/api/qq/user/profile', async (req, res) => {
 // 防泄漏，参考既有 qqPlaybackMetadataCache / neteaseSongDetailCache 模式。
 const RECOMMEND_CACHE_MAX = 300
 const RECOMMEND_CACHE_TTL = 10 * 60 * 1000
-const recommendCache = new Map()
+const recommendCache = new TtlCache({
+  ttlMs: RECOMMEND_CACHE_TTL,
+  maxEntries: RECOMMEND_CACHE_MAX,
+  touchOnGet: true,
+})
 
 function getRecommendCache(key) {
-  const cached = recommendCache.get(key)
-  if (!cached) return null
-  if (cached.expiresAt <= Date.now()) {
-    recommendCache.delete(key)
-    return null
-  }
-  // 简单 LRU：命中移到末尾，淘汰时删除最久未用的条目
-  recommendCache.delete(key)
-  recommendCache.set(key, cached)
-  return cached.value
+  return recommendCache.get(key)
 }
 
 function setRecommendCache(key, value) {
-  if (!key || value === undefined || value === null) return
-  recommendCache.set(key, { value, expiresAt: Date.now() + RECOMMEND_CACHE_TTL })
-  while (recommendCache.size > RECOMMEND_CACHE_MAX) {
-    const oldestKey = recommendCache.keys().next().value
-    if (oldestKey === undefined) break
-    recommendCache.delete(oldestKey)
-  }
+  recommendCache.set(key, value)
 }
 
 // 登录态相关的缓存键叠加 cookie 短哈希，避免不同账号数据互串
 function recommendCacheKeyWithCookie(prefix, id, cookie) {
-  let hash = 7
-  const cookieStr = String(cookie || '')
-  for (let i = 0; i < cookieStr.length; i++) {
-    hash = (hash * 31 + cookieStr.charCodeAt(i)) | 0
-  }
-  return `${prefix}:${String(id)}:${hash}`
+  return cookieScopedKey(prefix, id, cookie)
 }
 
 

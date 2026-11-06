@@ -99,3 +99,26 @@ consent、运行时能力门控、enabled 写入、生命周期队列 / 代际�
 `transitionSettings.ts` / `lyricModeSettings.ts` / `playbackDisplaySettings.ts` 的 store / snapshot / commit / subscribe 骨架是**三份近似实现**。**这是有意接受的重复**：三份的领域规则（互斥、迁移、钳制）差异大，过早抽公共层会把语义压平。
 
 再出现同类「单 host 快照 + 单次通知」需求时，抽 `createSettingsSnapshotStore`，并先补一组跨模块等价性测试。这是判断题，不是机械 lint 规则。
+
+## 进程内过期缓存（后端）
+
+`server/ttl-cache.mjs` 的 `TtlCache` 拥有后端进程内缓存的通用语义：TTL、条目上限、LRU 触达、写入前清过期、超限批量收缩（`evictTo`）、`ttlMs: Infinity` 的纯容量模式。
+
+`local-server.mjs` 里已收口的实例：
+
+| 缓存 | TTL | 上限 | LRU |
+|---|---|---|---|
+| `recommendCache` | 10 min | 300 | 是 |
+| `qqPlaylistDetailCache` | 5 min | 50 | 是 |
+| `qqPlaybackMetadataCache` | 30 min | 512 | 是 |
+| `neteaseAlbumCoverCache` | 无过期 | 1000 | 是 |
+| `neteaseRecentPlaylistCountCache` | 10 min | 500 | 否（FIFO，保持原语义） |
+| `neteasePlaylistTrackIdCache` | 5 min | 100 | 否 |
+| `neteaseSongDetailCache` | 20 min | 5000 → 3500 | 否 |
+| `qqFeedbackContexts` / `qqAppendContexts` | 30 min | 1200 | 否 |
+
+**站点特有语义留在 adapter**：账号指纹校验（`get*Context`）、并发合并（`qqPlaybackMetadataPending`）、cookie 折叠键（`cookieScopedKey`）。后端仍是单文件，不拆进程。
+
+新增进程内缓存时用 `TtlCache`，**不要再手写 `Map + expiresAt + while(size>max)`**。回归测试：`test/ttlCache.test.ts`。
+
+**已声明的豁免（下一轮候选）**：`server/bilibili-api.mjs` 的 `pruneCache` 三处、`server/netease-native-explore.mjs` 的 `createTimedCache` 三处、`server/location-api.mjs` 的 `reverseCache` — 它们的淘汰判据与主缓存不同（滚动窗口 / 带 pending 合并），迁移需要单独一轮确认，不在候选 11 范围内。
