@@ -10,6 +10,7 @@ import ArtistDetailModal from './ArtistDetailModal'
 import AlbumDetailModal from './AlbumDetailModal'
 import ScrollToTop from './ScrollToTop'
 import ScrollToCurrentSong from './ScrollToCurrentSong'
+import SearchSongList from './SearchSongList'
 import type { PlaybackOrigin, SongSelectHandler } from '../types/playbackNavigation'
 import SongContextMenu from './SongContextMenu'
 import { getUserPlaylists } from '../services/playlistService'
@@ -1163,7 +1164,7 @@ export default function SearchPanel({
         {/* 搜索结果：flex-1 + min-h-0 允许收缩到弹窗剩余高度，自身滚动（避免 h-full 解析成内容高度导致无滚动条） */}
         <div
           ref={scrollContainerRef}
-          className="flex-1 px-6 pb-6 pt-2 min-h-0 overflow-y-auto"
+          className="relative flex-1 px-6 pb-6 pt-2 min-h-0 overflow-y-auto"
           style={{
             scrollbarWidth: 'thin',
             scrollbarColor: playerTheme === 'dark' ? 'rgba(255,255,255,0.3) transparent' : 'rgba(0,0,0,0.3) transparent'
@@ -1335,7 +1336,7 @@ export default function SearchPanel({
               )}
               {/* 歌曲列表 */}
               <div className="space-y-2">
-                {displayedResults.map((song, index) => {
+                <SearchSongList songs={displayedResults} scrollContainerRef={scrollContainerRef}>{(song, index) => {
                   const isCurrentSong = isSameSong(song, currentSong)
                   return (
                 <motion.div
@@ -1414,7 +1415,7 @@ export default function SearchPanel({
                     {formatDuration(song.duration)}
                   </div>
                 </motion.div>
-                )})}
+                )}}</SearchSongList>
                 
                 {/* 加载更多按钮 */}
                 {displayedResults.length < allResults.length && (
