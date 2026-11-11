@@ -31,19 +31,19 @@
 
 ### 后续遗留项
 
-这两项来自候选 08 / 11 的落地说明。候选 12 尚未实现，候选 13 已完成；**按旧编号继续排，不要重新发明候选**。
+这两项来自候选 08 / 11 的落地说明，现均已完成。**保留旧编号，不要重新发明候选**。
 
 | 编号 | 项 | 来源 | 范围 |
 |---|---|---|---|
-| 12 | `musicApi` 短 TTL URL 缓存并入预载账本 | 候选 08 落地说明 | `songUrlCache` / `songUrlPending` / `songUrlInvalidationVersions` 与 `PreloadLedger` 目前是两套失效体系。注意 `musicApi` 那套是 5 分钟正缓存 + 25 秒负缓存，且键含音质 / VIP / cookie 指纹，合并前必须先补等价性用例（`test/migrationEquivalence.test.ts`）。风险：取歌链。 |
-| 13 | 后端剩余自定义过期缓存（已完成） | 候选 11 落地说明；本提交 | B站流 / 字幕 / 弹幕、网易探索首页 / 播客 / 红心数量与位置 `reverseCache` 均接入 `TtlCache`，保留清理边界、FIFO、旧值回退与 pending 合并。回归：`test/migrationEquivalence.test.ts` 的三组候选 13 用例、`test/ttlCache.test.ts`。 |
+| 12 | `musicApi` 短 TTL URL 缓存并入预载账本（已完成） | 候选 08 落地说明；本提交 | 取歌 URL 的条目、pending、单键失效、全局代际与刷新冷却统一由 `PreloadLedger` 管理；App 30 条预载与取歌 256 条 LRU 保持独立实例。保留 5 分钟正缓存 / 25 秒负缓存、音质 / VIP / cookie 指纹键。回归：`test/migrationEquivalence.test.ts` 的旧取歌实现原文对照、`test/songUrlCache.test.ts`、`test/preloadLedger.test.ts`。 |
+| 13 | 后端剩余自定义过期缓存（已完成） | 候选 11 落地说明；`6ca1d6d` | B站流 / 字幕 / 弹幕、网易探索首页 / 播客 / 红心数量与位置 `reverseCache` 均接入 `TtlCache`，保留清理边界、FIFO、旧值回退与 pending 合并。回归：`test/migrationEquivalence.test.ts` 的三组候选 13 用例、`test/ttlCache.test.ts`。 |
 
 ## 使用规则
 
 - `/implement 0X` 前先查本表；编号不存在时**停下来问**，不要临时发明一个候选。
 - 新报告落地后，把候选摘要追加到本文件，并保留报告文件名与日期。
 - 候选完成后补上 commit 与回归测试名，方便下一次审查跳过已完成项。
-- **已界定范围但未开工的项也要给编号**（当前 `12`），否则下次 `/implement 0X` 会卡在“编号不存在”。
+- **已界定范围但未开工的项也要给编号**，否则下次 `/implement 0X` 会卡在“编号不存在”。
 - 迁移类候选一律先补 `test/migrationEquivalence.test.ts` 的 `legacy*` 再动实现；`npm run test:equivalence` 是它的闸门。
 
 

@@ -95,6 +95,14 @@ consent、运行时能力门控、enabled 写入、生命周期队列 / 代际�
 - URL 与歌词是两个独立代际：音质 / 登录态变化清 URL，歌词策略变化清歌词；异步回来时代际不符的写入被丢弃。
 - 回归测试：`test/preloadLedger.test.ts`（TTL / 代际 / 歌词生命周期 / 策略键 / 清理与上限）。
 
+候选 12 将 `musicApi` 的取歌 URL 缓存纳入同一 `PreloadLedger` module。`musicApi` 只保留请求组装、响应解析、26 秒超时、日志、指纹键及惰性事件接线；通过 `resolveUrl()` / `invalidateUrl()` / `refreshUrlOnce()` / `clear()` 交给账本管理生命周期。
+
+- **实例作用域保持独立**：App 默认 30 条 URL / 歌词预载，手动 `prune()` 按最旧 URL 时间淘汰；取歌缓存使用 `maxEntries:256` 的独立实例，命中 LRU 触达、写前清过期，保留正结果 5 分钟与 null 结果 25 秒。不要把两种键混入同一实例，也不要对取歌实例调用 App 的 `prune()`。
+- **代际统一由账本拥有**：URL 请求沿用 `audioUrlGeneration`；全局清理后的旧请求通过 adapter 重新按当前设置取 URL，单键失效后的旧请求返回 null；旧请求 finally 只删除自己对应的 pending。歌词仍走独立代际。
+- 单次刷新按「平台 + 歌曲 + 失败 URL 指纹」合并，从请求完成时起冷却 15 秒；版本记录与冷却记录均有 256 条上限。请求异常不写入负缓存，明确的空 URL 结果才写入。
+- 缓存键继续由 `musicApi` 包含平台、id、音质、VIP、cookie 指纹与网易云跨平台回退设置，保留旧键名与格式；音质 / 登录态事件仍惰性注册并调用 `clearSongUrlCache()`。
+- 回归：`test/migrationEquivalence.test.ts` 的「取歌 URL 缓存迁移」保留旧实现原文并对照实际公开接口；`test/songUrlCache.test.ts` 覆盖取歌、失效、刷新、隔离与超时；`test/preloadLedger.test.ts` 覆盖账本策略及原有 App 行为。
+
 ## 播放页显示偏好
 
 `src/services/playbackDisplaySettings.ts` 拥有这组历史裸键的默认值、布尔格式、枚举校验、`upNextSeconds` 钳制（5–30 秒并取整）、历史事件、快照与订阅。

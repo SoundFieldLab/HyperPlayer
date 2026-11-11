@@ -20,6 +20,104 @@ function makeLedger(options: { ttlMs?: number; maxEntries?: number } = {}) {
 }
 
 describe('PreloadLedger URL 条目', () => {
+  it('共享音频代际失效也清除负缓存，歌词代际保持独立', async () => {
+    const { ledger } = makeLedger()
+    const request = { load: async () => null, retry: async () => null }
+    await ledger.resolveUrl('song', request)
+    const lyricsGeneration = ledger.lyricsGeneration
+    ledger.invalidateAudioUrls()
+    expect(await ledger.resolveUrl('song', { ...request, load: async () => 'https://audio/new' })).toBe('https://audio/new')
+    expect(ledger.lyricsGeneration).toBe(lyricsGeneration)
+  })
+
+  it('单次刷新共享并发，完成后冷却 15 秒，清空账本同时解除冷却', async () => {
+    const { ledger, advance } = makeLedger()
+    let loads = 0
+    const refresh = async () => { loads += 1; return 'https://audio/new' }
+    const first = ledger.refreshUrlOnce('failed', refresh)
+    const joined = ledger.refreshUrlOnce('failed', refresh)
+    expect(await Promise.all([first, joined])).toEqual(Array(2).fill('https://audio/new'))
+    advance(14_999)
+    expect(await ledger.refreshUrlOnce('failed', refresh)).toBeNull()
+    expect(loads).toBe(1)
+    advance(1)
+    expect(await ledger.refreshUrlOnce('failed', refresh)).toBe('https://audio/new')
+    ledger.clear()
+    expect(ledger.size).toBe(0)
+    expect(await ledger.refreshUrlOnce('failed', refresh)).toBe('https://audio/new')
+    expect(loads).toBe(3)
+  })
+
+  it('单曲失效返回 null；请求异常不写负缓存，仅报告一次错误', async () => {
+    const { ledger } = makeLedger()
+    let finish!: (url: string) => void
+    let errors = 0
+    const old = ledger.resolveUrl('song', {
+      load: () => new Promise<string>(resolve => { finish = resolve }),
+      retry: async () => 'https://should-not-retry',
+    })
+    ledger.invalidateUrl('song')
+    finish('https://audio/old')
+    expect(await old).toBeNull()
+    const failure = {
+      load: async (): Promise<string | null> => { throw new Error('网络失败') },
+      retry: async () => null,
+      onError: () => { errors += 1 },
+    }
+    expect(await ledger.resolveUrl('song', failure)).toBeNull()
+    expect(errors).toBe(1)
+    expect(await ledger.resolveUrl('song', { ...failure, load: async () => 'https://audio/new' })).toBe('https://audio/new')
+  })
+
+  it('请求合并并发；全局失效后旧结果改走当前请求，不删除新 pending', async () => {
+    const { ledger } = makeLedger()
+    let finishOld!: (url: string) => void
+    let finishNew!: (url: string) => void
+    let loads = 0
+    const request = {
+      load: () => { loads += 1; return new Promise<string>(resolve => { finishOld = resolve }) },
+      retry: (): Promise<string | null> => ledger.resolveUrl('song', next),
+    }
+    const next = {
+      load: () => { loads += 1; return new Promise<string>(resolve => { finishNew = resolve }) },
+      retry: async () => null,
+    }
+    const old = ledger.resolveUrl('song', request)
+    const joined = ledger.resolveUrl('song', request)
+    expect(loads).toBe(1)
+    ledger.invalidateAudioUrls()
+    const current = ledger.resolveUrl('song', next)
+    finishOld('https://audio/old')
+    await Promise.resolve()
+    const joinedNew = ledger.resolveUrl('song', next)
+    expect(loads).toBe(2)
+    finishNew('https://audio/new')
+    expect(await Promise.all([old, joined, current, joinedNew])).toEqual(Array(4).fill('https://audio/new'))
+  })
+
+  it('请求缓存区分 null 命中与未命中，正缓存五分钟、负缓存 25 秒', async () => {
+    const { ledger, advance } = makeLedger({ ttlMs: 300_000, maxEntries: 256 })
+    let calls = 0
+    let url: string | null = null
+    const request = {
+      load: async () => { calls += 1; return url },
+      retry: async (): Promise<string | null> => 'https://retry',
+    }
+    expect(await ledger.resolveUrl('song', request)).toBeNull()
+    url = 'https://audio/new'
+    advance(24_999)
+    expect(await ledger.resolveUrl('song', request)).toBeNull()
+    expect(calls).toBe(1)
+    advance(1)
+    expect(await ledger.resolveUrl('song', request)).toBe(url)
+    advance(299_999)
+    expect(await ledger.resolveUrl('song', request)).toBe(url)
+    expect(calls).toBe(2)
+    advance(1)
+    await ledger.resolveUrl('song', request)
+    expect(calls).toBe(3)
+  })
+
   it('TTL 内命中，过期后返回 null', () => {
     const { ledger, advance } = makeLedger({ ttlMs: 5_000 })
     ledger.setUrlIfCurrent('song', 'https://audio/1', ledger.audioUrlGeneration)

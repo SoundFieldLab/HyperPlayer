@@ -1,6 +1,7 @@
 import type { MusicPlatform } from './platforms'
 import type { EntitlementTier } from '../utils/musicEntitlements'
 import { getApiBase } from './apiConfig'
+import { PreloadLedger } from './preloadLedger'
 const API_BASE = getApiBase()
 
 import { parseTTML } from '../utils/ttmlParser'
@@ -31,25 +32,11 @@ const getPlatformCookie = (platform: MusicPlatform, explicitCookie?: string) => 
     : localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
 )
 
-const SONG_URL_CACHE_TTL = 5 * 60 * 1000
-const SONG_URL_NEGATIVE_CACHE_TTL = 25 * 1000
 const SONG_URL_FETCH_TIMEOUT = 26 * 1000
-const SONG_URL_CACHE_MAX_ENTRIES = 256
-const songUrlCache = new Map<string, { url: string | null; expiresAt: number }>()
-const songUrlPending = new Map<string, Promise<string | null>>()
-const songUrlRefreshPending = new Map<string, Promise<string | null>>()
-const songUrlRefreshUntil = new Map<string, number>()
-const songUrlInvalidationVersions = new Map<string, number>()
-let songUrlCacheGeneration = 0
+// 取歌请求与 App 预载使用独立账本实例，保留各自的容量与淘汰策略。
+const songUrlLedger = new PreloadLedger({ maxEntries: 256, now: () => Date.now() })
 
-export const clearSongUrlCache = () => {
-  songUrlCacheGeneration += 1
-  songUrlCache.clear()
-  songUrlPending.clear()
-  songUrlRefreshPending.clear()
-  songUrlRefreshUntil.clear()
-  songUrlInvalidationVersions.clear()
-}
+export const clearSongUrlCache = () => songUrlLedger.clear()
 
 // 模块加载时不再注册监听器（HMR/多实例会重复注册并累积）；
 // 改为惰性注册：首次调用 getSongUrl 时注册一次，事件触发时清缓存。
@@ -70,23 +57,6 @@ const fingerprint = (value: string) => {
     hash = Math.imul(hash, 16777619)
   }
   return (hash >>> 0).toString(36)
-}
-
-const cacheSongUrl = (key: string, url: string | null) => {
-  const now = Date.now()
-  for (const [cachedKey, entry] of songUrlCache) {
-    if (entry.expiresAt <= now) songUrlCache.delete(cachedKey)
-  }
-  songUrlCache.delete(key)
-  songUrlCache.set(key, {
-    url,
-    expiresAt: now + (url ? SONG_URL_CACHE_TTL : SONG_URL_NEGATIVE_CACHE_TTL),
-  })
-  while (songUrlCache.size > SONG_URL_CACHE_MAX_ENTRIES) {
-    const oldestKey = songUrlCache.keys().next().value
-    if (oldestKey === undefined) break
-    songUrlCache.delete(oldestKey)
-  }
 }
 
 const fetchSongUrlResponse = async (url: string): Promise<Response> => {
@@ -111,40 +81,15 @@ const buildSongUrlCacheKey = (id: number | string, platform: MusicPlatform) => {
 }
 
 export const invalidateSongUrl = (id: number | string, platform: MusicPlatform = 'netease') => {
-  const cacheKey = buildSongUrlCacheKey(id, platform)
-  songUrlCache.delete(cacheKey)
-  songUrlPending.delete(cacheKey)
-  const nextVersion = (songUrlInvalidationVersions.get(cacheKey) || 0) + 1
-  songUrlInvalidationVersions.delete(cacheKey)
-  songUrlInvalidationVersions.set(cacheKey, nextVersion)
-  while (songUrlInvalidationVersions.size > SONG_URL_CACHE_MAX_ENTRIES) {
-    const oldestKey = songUrlInvalidationVersions.keys().next().value
-    if (oldestKey === undefined) break
-    songUrlInvalidationVersions.delete(oldestKey)
-  }
+  songUrlLedger.invalidateUrl(buildSongUrlCacheKey(id, platform))
 }
 
 export async function refreshSongUrlOnce(id: number | string, platform: MusicPlatform, failedUrl: string): Promise<string | null> {
   const key = `${platform}:${id}:${fingerprint(failedUrl)}`
-  const now = Date.now()
-  const until = songUrlRefreshUntil.get(key) || 0
-  if (until > now) return null
-  const pending = songUrlRefreshPending.get(key)
-  if (pending) return pending
-  const promise = (async () => {
+  return songUrlLedger.refreshUrlOnce(key, async () => {
     invalidateSongUrl(id, platform)
     return getSongUrl(id, platform)
-  })().finally(() => {
-    songUrlRefreshPending.delete(key)
-    songUrlRefreshUntil.set(key, Date.now() + 15_000)
-    while (songUrlRefreshUntil.size > SONG_URL_CACHE_MAX_ENTRIES) {
-      const oldest = songUrlRefreshUntil.keys().next().value
-      if (oldest === undefined) break
-      songUrlRefreshUntil.delete(oldest)
-    }
   })
-  songUrlRefreshPending.set(key, promise)
-  return promise
 }
 
 export interface Song {
@@ -611,22 +556,8 @@ export async function getSongUrl(id: number | string, platform: MusicPlatform = 
   ensureSongUrlListenersRegistered()
   if (!String(id).trim()) return null
   const cacheKey = buildSongUrlCacheKey(id, platform)
-  const now = Date.now()
-  const cached = songUrlCache.get(cacheKey)
-  if (cached && cached.expiresAt > now) {
-    songUrlCache.delete(cacheKey)
-    songUrlCache.set(cacheKey, cached)
-    return cached.url
-  }
-  if (cached) songUrlCache.delete(cacheKey)
-
-  const pending = songUrlPending.get(cacheKey)
-  if (pending) return pending
-
-  const requestGeneration = songUrlCacheGeneration
-  const requestVersion = songUrlInvalidationVersions.get(cacheKey) || 0
-  const resolveCurrentRequest = async (): Promise<string | null> => {
-    try {
+  return songUrlLedger.resolveUrl(cacheKey, {
+    load: async () => {
       let apiUrl: string
       let readUrl: (data: any) => string | null
       if (platform === 'qq') {
@@ -649,40 +580,17 @@ export async function getSongUrl(id: number | string, platform: MusicPlatform = 
         throw new Error(data?.error || `Playback URL request failed (${response.status})`)
       }
 
-      if (requestGeneration !== songUrlCacheGeneration) {
-        return getSongUrl(id, platform)
-      }
-      if ((songUrlInvalidationVersions.get(cacheKey) || 0) !== requestVersion) {
-        return null
-      }
-
       const url = readUrl(data)
       if (url && platform === 'netease' && data.fallback) {
         console.info(`[API] Netease song ${id} is using fallback audio from ${data.source || 'automatic match'}`)
       }
-      cacheSongUrl(cacheKey, url)
       return url
-    } catch (error) {
-      if (requestGeneration !== songUrlCacheGeneration) {
-        return getSongUrl(id, platform)
-      }
-      if ((songUrlInvalidationVersions.get(cacheKey) || 0) !== requestVersion) {
-        return null
-      }
+    },
+    retry: () => getSongUrl(id, platform),
+    onError: error => {
       console.error(`[API] Failed to resolve ${platform} song ${id} playback URL:`, error)
-      return null
-    }
-  }
-
-  const request = resolveCurrentRequest()
-  songUrlPending.set(cacheKey, request)
-  try {
-    return await request
-  } finally {
-    if (songUrlPending.get(cacheKey) === request) {
-      songUrlPending.delete(cacheKey)
-    }
-  }
+    },
+  })
 }
 
 // Song details
