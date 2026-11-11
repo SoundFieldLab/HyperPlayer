@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { TtlCache } from './ttl-cache.mjs'
 
 // server/netease-native-explore.mjs
 
@@ -43,27 +44,10 @@ export function arrayResponseData(body) {
   return Array.isArray(body) ? body : body?.data ?? body
 }
 
-function createTimedCache(ttlMs, maxEntries = 24) {
-  const entries = new Map()
-  return {
-    get(key) {
-      const item = entries.get(key)
-      if (!item || item.expiresAt <= Date.now()) {
-        entries.delete(key)
-        return null
-      }
-      return item.value
-    },
-    set(key, value) {
-      entries.set(key, { value, expiresAt: Date.now() + ttlMs })
-      while (entries.size > maxEntries) entries.delete(entries.keys().next().value)
-    },
-  }
-}
-
-const homeCache = createTimedCache(90_000)
-const podcastCache = createTimedCache(3 * 60_000)
-const redCountCache = createTimedCache(RED_COUNT_CACHE_TTL_MS, 1_000)
+// 保持旧 FIFO：命中与重写均不调序，写入时不优先清理其他过期条目。
+const homeCache = new TtlCache({ ttlMs: 90_000, maxEntries: 24, touchOnGet: false, pruneOnSet: false })
+const podcastCache = new TtlCache({ ttlMs: 3 * 60_000, maxEntries: 24, touchOnGet: false, pruneOnSet: false })
+const redCountCache = new TtlCache({ ttlMs: RED_COUNT_CACHE_TTL_MS, maxEntries: 1_000, touchOnGet: false, pruneOnSet: false })
 
 async function callPrivate(getNeteaseApi, uri, data, cookie) {
   const api = getNeteaseApi()

@@ -97,6 +97,35 @@ describe('LRU 语义', () => {
 })
 
 describe('容量与批量收缩', () => {
+  it('写前淘汰模式保留位置缓存满额覆盖同键时也先淘汰的行为', () => {
+    const cache = new TtlCache({
+      ttlMs: 100, maxEntries: 2, touchOnGet: false, pruneOnSet: false, evictBeforeSet: true,
+    })
+    cache.set('a', 'A')
+    cache.set('b', 'B')
+    cache.set('b', 'new B')
+    expect(cache.size).toBe(1)
+    expect(cache.peek('a')).toBeNull()
+    expect(cache.peek('b')).toBe('new B')
+  })
+
+  it('关闭写前过期清理时，仍按 FIFO 淘汰而不优先清除过期项', () => {
+    const time = clock()
+    const cache = new TtlCache({
+      ttlMs: 100, maxEntries: 2, touchOnGet: false, pruneOnSet: false, now: time.now,
+    })
+    cache.set('a', 'old')
+    cache.set('b', 'B')
+    time.advance(90)
+    cache.set('a', 'fresh')
+    time.advance(11)
+    cache.set('c', 'C')
+
+    expect(cache.get('a')).toBeNull()
+    expect(cache.peek('b')).toBe('B')
+    expect(cache.get('c')).toBe('C')
+  })
+
   it('超过上限时整批收缩到 evictTo', () => {
     const cache = new TtlCache({ ttlMs: 60_000, maxEntries: 5, evictTo: 3 })
     for (const key of ['a', 'b', 'c', 'd', 'e']) cache.set(key, key)
@@ -140,6 +169,47 @@ describe('容量与批量收缩', () => {
 })
 
 describe('手动操作', () => {
+  it('isFresh 判断到期但保留旧值，刷新失败仍能多次回退', () => {
+    const time = clock()
+    const cache = new TtlCache({ ttlMs: 100, maxEntries: 2, now: time.now })
+    expect(cache.isFresh('missing')).toBe(false)
+    cache.set('a', 'A')
+    time.advance(99)
+    expect(cache.isFresh('a')).toBe(true)
+    time.advance(1)
+    expect(cache.isFresh('a')).toBe(false)
+    expect(cache.peek('a')).toBe('A')
+    expect(cache.size).toBe(1)
+    expect(cache.isFresh('a')).toBe(false)
+  })
+
+  it('严格清理只删除超过 TTL 的条目，保留恰好到期的条目', () => {
+    const time = clock()
+    const cache = new TtlCache({ ttlMs: 100, maxEntries: Infinity, now: time.now })
+    cache.set('a', 'A')
+    time.advance(100)
+    cache.prune({ inclusive: false })
+    expect(cache.peek('a')).toBe('A')
+    time.advance(1)
+    cache.prune({ inclusive: false })
+    expect(cache.peek('a')).toBeNull()
+  })
+
+  it('peek 保留过期值供失败回退，且不改变 FIFO/LRU 顺序', () => {
+    const time = clock()
+    const cache = new TtlCache({ ttlMs: 100, maxEntries: 2, now: time.now })
+    cache.set('a', 'A')
+    time.advance(101)
+    expect(cache.peek('a')).toBe('A')
+    expect(cache.size).toBe(1)
+    expect(cache.get('a')).toBeNull()
+    cache.set('a', 'A')
+    cache.set('b', 'B')
+    expect(cache.peek('a')).toBe('A')
+    cache.set('c', 'C')
+    expect(cache.peek('a')).toBeNull()
+  })
+
   it('delete 与 clear 生效', () => {
     const cache = new TtlCache({ ttlMs: 60_000, maxEntries: 4 })
     cache.set('a', 'A')

@@ -140,7 +140,18 @@ consent、运行时能力门控、enabled 写入、生命周期队列 / 代际�
 
 新增进程内缓存时用 `TtlCache`，**不要再手写 `Map + expiresAt + while(size>max)`**。回归测试：`test/ttlCache.test.ts`。
 
-**已声明的豁免（下一轮候选）**：`server/bilibili-api.mjs` 的 `pruneCache` 三处、`server/netease-native-explore.mjs` 的 `createTimedCache` 三处、`server/location-api.mjs` 的 `reverseCache` — 它们的淘汰判据与主缓存不同（滚动窗口 / 带 pending 合并），迁移需要单独一轮确认，不在候选 11 范围内。
+候选 13 补齐了以下服务的接入，按旧行为配置策略：
+
+| 缓存 | TTL / 上限 | 保留的淘汰与读取行为 |
+|---|---|---|
+| B站流 / 字幕 | 10 min / 无容量上限 | `peek()` 读取不判过期；仅原写入路径 `prune({ inclusive:false })`，严格超过 TTL 才清理；字幕 miss 重建不触发全表清理 |
+| B站弹幕 | 10 min / 无容量上限 | `isFresh()` 到点拒绝旧值但不删除；非空结果写后严格清理，确认空结果缓存但不全表清理；来源全失败不缓存 |
+| 网易探索首页 / 播客 / 红心数量 | 90 s / 24；3 min / 24；5 min / 1000 | FIFO，命中不调序、覆盖保持队位、到点过期；`pruneOnSet:false` 禁止写前优先扫描过期项 |
+| 反向定位 | 6 h / 200 | `peek()` + `isFresh()` 保留旧地址供失败回退；FIFO、不扫描过期项、`evictBeforeSet:true` 满额写入前先淘汰（覆盖同键也一样） |
+
+`peek()` 与 `isFresh()` 均不删除、不触达条目；位置请求合并仍由 `reversePending` 负责。并发等待者成功后仍各自写缓存，保留旧有容量淘汰行为。已有调用方默认策略不变。
+
+迁移证据与公开路由回归统一在 `test/migrationEquivalence.test.ts`（候选 13 的 B站 / 网易探索 / 位置作用域），通用策略回归在 `test/ttlCache.test.ts`。
 
 
 

@@ -1,6 +1,14 @@
+import { TtlCache } from './ttl-cache.mjs'
+
 const REVERSE_CACHE_TTL = 6 * 60 * 60 * 1000
 const REVERSE_CACHE_LIMIT = 200
-const reverseCache = new Map()
+const reverseCache = new TtlCache({
+  ttlMs: REVERSE_CACHE_TTL,
+  maxEntries: REVERSE_CACHE_LIMIT,
+  touchOnGet: false,
+  pruneOnSet: false,
+  evictBeforeSet: true,
+})
 const reversePending = new Map()
 
 const text = (...values) => {
@@ -185,10 +193,11 @@ export function registerLocationRoutes(app) {
     }
 
     const cacheKey = `${latitude.toFixed(4)},${longitude.toFixed(4)}`
-    const cached = reverseCache.get(cacheKey)
-    if (cached && Date.now() - cached.updatedAt < REVERSE_CACHE_TTL) {
+    // 保留本次请求的旧值，刷新失败时仍可回退；不能用 get 删除过期项。
+    const cached = reverseCache.peek(cacheKey)
+    if (cached && reverseCache.isFresh(cacheKey)) {
       res.setHeader('Cache-Control', 'private, max-age=3600')
-      return res.json({ success: true, ...cached.location, latitude, longitude, cached: true })
+      return res.json({ success: true, ...cached, latitude, longitude, cached: true })
     }
 
     let pending = reversePending.get(cacheKey)
@@ -200,13 +209,12 @@ export function registerLocationRoutes(app) {
 
     try {
       const location = await pending
-      if (reverseCache.size >= REVERSE_CACHE_LIMIT) reverseCache.delete(reverseCache.keys().next().value)
-      reverseCache.set(cacheKey, { location, updatedAt: Date.now() })
+      reverseCache.set(cacheKey, location)
       res.setHeader('Cache-Control', 'private, max-age=3600')
       return res.json({ success: true, ...location, latitude, longitude })
     } catch (error) {
       console.warn('[天气定位] 反向定位失败:', error?.message || error)
-      if (cached) return res.json({ success: true, ...cached.location, latitude, longitude, cached: true, stale: true })
+      if (cached) return res.json({ success: true, ...cached, latitude, longitude, cached: true, stale: true })
       return res.status(503).json({ success: false, error: '暂时无法解析当前位置的详细地址' })
     }
   })

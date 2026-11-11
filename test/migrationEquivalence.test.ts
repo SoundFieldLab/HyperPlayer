@@ -10,7 +10,7 @@
  * 再为它补一组 case。不要删掉已有的 legacy 复刻——它们是旧行为的可执行证据。
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runEquivalence } from './helpers/equivalence'
 import { TtlCache } from '../server/ttl-cache.mjs'
 import { DetailNavigationLedger } from '../src/services/detailNavigation'
@@ -384,3 +384,796 @@ describe('歌词合并阈值（新 module 行为钉住）', () => {
 })
 
 
+
+// 候选 13：保留旧服务实现的可执行证据，路由与时钟隔离在各自测试作用域。
+describe('bilibili 后端缓存迁移', () => {
+
+  const TTL = 10 * 60 * 1000
+  type Key = string | number
+
+  /** 旧 pruneCache 原片段，仅将 Date.now 换为注入时钟。 */
+  function legacyPruneCache<K, E extends { createdAt: number }>(map: Map<K, E>, ttl: number, clock: () => number) {
+    const now = clock()
+    for (const [key, entry] of map) {
+      if (now - entry.createdAt > ttl) map.delete(key)
+    }
+  }
+
+  // 三种旧条目分别保留；peek/fresh 只投影供现有断言观察，不统一存储模型。
+  function legacyStreamCache(clock: () => number) {
+    const streamCache = new Map<Key, { urls: string[]; sizes: number[]; videoId: number; audioId: number; createdAt: number }>()
+    return {
+      set(cacheKey: Key, url: string) {
+        const video = { baseUrl: url, base_url: '', size: 0, id: 80 }
+        const audio = { baseUrl: `${url}/audio`, base_url: '', size: 0, id: 30280 }
+        streamCache.set(cacheKey, {
+          urls: [video.baseUrl || video.base_url || '', audio.baseUrl || audio.base_url || ''],
+          sizes: [video.size || 0, audio.size || 0],
+          videoId: video.id,
+          audioId: audio.id,
+          createdAt: clock(),
+        })
+      },
+      peek(key: Key) {
+        const entry = key ? streamCache.get(key) : undefined
+        return entry ? entry.urls[0] : null
+      },
+      prune() { legacyPruneCache(streamCache, TTL, clock) },
+      size() { return streamCache.size },
+    }
+  }
+
+  function legacySubtitleCache(clock: () => number) {
+    const subtitleJsonCache = new Map<Key, { url: string; createdAt: number }>()
+    return {
+      set(subCacheKey: Key, subUrl: string) {
+        subtitleJsonCache.set(subCacheKey, { url: subUrl.startsWith('//') ? `https:${subUrl}` : subUrl, createdAt: clock() })
+      },
+      peek(key: Key) {
+        const entry = key ? subtitleJsonCache.get(key) : undefined
+        return entry ? entry.url : null
+      },
+      prune() { legacyPruneCache(subtitleJsonCache, TTL, clock) },
+      size() { return subtitleJsonCache.size },
+    }
+  }
+
+  function legacyDanmakuCache(clock: () => number) {
+    const danmakuCache = new Map<Key, { items: { text: string }[]; createdAt: number }>()
+    return {
+      set(cid: Key, text: string) {
+        const items = [{ text }]
+        danmakuCache.set(cid, { items, createdAt: clock() })
+      },
+      peek(cid: Key) { return danmakuCache.get(cid)?.items[0]?.text ?? null },
+      fresh(cid: Key) {
+        const cached = danmakuCache.get(cid)
+        if (cached && clock() - cached.createdAt < TTL) {
+          return cached.items[0]?.text ?? null
+        }
+        return null
+      },
+      prune() { legacyPruneCache(danmakuCache, TTL, clock) },
+      size() { return danmakuCache.size },
+    }
+  }
+
+  function migratedBilibiliCache(clock: () => number) {
+    const cache = new TtlCache({
+      ttlMs: TTL, maxEntries: Infinity, touchOnGet: false, pruneOnSet: false, now: clock,
+    })
+    return {
+      set(key: Key, value: string) { cache.set(key, value) },
+      peek(key: Key) { return cache.peek(key) },
+      fresh(key: Key) { return cache.isFresh(key) ? cache.peek(key) : null },
+      prune() { cache.prune({ inclusive: false }) },
+      size() { return cache.size },
+    }
+  }
+
+  describe('B站缓存迁移 legacy 等价性', () => {
+    it('流/字幕只在显式 prune 清理，严格大于 TTL 才淘汰，保留键类型与重写刷新', () => {
+      let now = 1000
+      const legacy = legacyStreamCache(() => now)
+      const current = migratedBilibiliCache(() => now)
+      for (const cache of [legacy, current]) {
+        cache.set(42, '数字键')
+        cache.set('42', '字符串键')
+      }
+      now += TTL
+      for (const cache of [legacy, current]) cache.prune()
+      expect(current.size()).toBe(legacy.size())
+      expect(current.peek(42)).toBe('数字键')
+      now += 1
+      expect(current.peek('42')).toBe(legacy.peek('42'))
+      for (const cache of [legacy, current]) cache.set(42, '刷新')
+      for (const cache of [legacy, current]) cache.prune()
+      expect(current.size()).toBe(legacy.size())
+      expect(current.peek(42)).toBe(legacy.peek(42))
+      expect(current.peek('42')).toBe(legacy.peek('42'))
+      expect(current.peek('42')).toBeNull()
+    })
+
+    it('无容量上限；读过期流/字幕和普通写入都不会暗中清理', () => {
+      let now = 1000
+      const legacy = legacySubtitleCache(() => now)
+      const current = migratedBilibiliCache(() => now)
+      for (const cache of [legacy, current]) {
+        for (let index = 1; index <= 5001; index += 1) cache.set(index, `流${index}`)
+      }
+      now += TTL + 1
+      for (const cache of [legacy, current]) cache.set('重建字幕', '新值')
+      expect(current.size()).toBe(legacy.size())
+      expect(current.size()).toBe(5002)
+      expect(current.peek(1)).toBe(legacy.peek(1))
+      for (const cache of [legacy, current]) cache.prune()
+      expect(current.size()).toBe(legacy.size())
+      expect(current.size()).toBe(1)
+    })
+
+    it('弹幕到点拒绝旧值但不删除，写入刷新或显式清理前保持原条目', () => {
+      let now = 1000
+      const legacy = legacyDanmakuCache(() => now)
+      const current = migratedBilibiliCache(() => now)
+      for (const cache of [legacy, current]) cache.set(42, '旧弹幕')
+      now += TTL - 1
+      expect(current.fresh(42)).toBe(legacy.fresh(42))
+      now += 1
+      expect(current.fresh(42)).toBe(legacy.fresh(42))
+      expect(current.fresh(42)).toBeNull()
+      expect(current.size()).toBe(legacy.size())
+      expect(current.peek(42)).toBe(legacy.peek(42))
+      for (const cache of [legacy, current]) cache.set(43, '确认空弹幕')
+      now += 1
+      expect(current.size()).toBe(legacy.size())
+      for (const cache of [legacy, current]) cache.prune()
+      expect(current.peek(42)).toBeNull()
+      expect(current.size()).toBe(legacy.size())
+    })
+  })
+
+  // 测试真实注册的路由；只替换外部 B站网络和时钟，不访问路由模块内部缓存。
+  type RouteResult = { status: number; body: any }
+  type Handler = (req: any, res: any) => Promise<unknown>
+  let now = 1000
+  let routes: Map<string, Handler>
+  let subtitleVersion = '旧'
+  let danmakuState: '有弹幕' | '空' | '失败' = '有弹幕'
+  let danmakuVersion = '旧弹幕'
+
+  async function request(path: string, query: Record<string, unknown> = {}): Promise<RouteResult> {
+    const result: RouteResult = { status: 200, body: undefined }
+    const res = {
+      status(code: number) { result.status = code; return res },
+      json(body: unknown) { result.body = body; return res },
+    }
+    await routes.get(`/api/bilibili/${path}`)!({ query, headers: {} }, res)
+    return result
+  }
+
+  describe('B站缓存迁移公开路由', () => {
+    beforeEach(async () => {
+      vi.resetModules()
+      now = 1000
+      subtitleVersion = '旧'
+      danmakuState = '有弹幕'
+      danmakuVersion = '旧弹幕'
+      vi.spyOn(Date, 'now').mockImplementation(() => now)
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+        const url = new URL(String(input))
+        if (url.pathname.endsWith('/finger/spi')) return Response.json({ data: { b_3: '匿名指纹' } })
+        if (url.pathname.endsWith('/nav')) return Response.json({ data: { wbi_img: {
+          img_url: `https://i.test/${'a'.repeat(32)}.png`, sub_url: `https://i.test/${'b'.repeat(32)}.png`,
+        } } })
+        if (url.pathname.endsWith('/playurl')) return Response.json({ code: 0, data: {
+          accept_quality: [80], dash: {
+            video: [{ id: 80, baseUrl: 'https://cdn.test/video' }],
+            audio: [{ id: 30280, baseUrl: 'https://cdn.test/audio' }],
+          },
+        } })
+        if (url.pathname.endsWith('/wbi/v2')) return Response.json({ code: 0, data: { subtitle: { subtitles: [{
+          lan: 'zh-CN', subtitle_url: `//cdn.test/subtitle/${subtitleVersion}`,
+        }] } } })
+        if (url.pathname.startsWith('/subtitle/')) return Response.json({ body: [{ content: decodeURI(url.pathname.split('/').pop()!) }] })
+        if (url.hostname === 'cdn.test') return new Response('', { status: url.pathname === '/audio' ? 416 : 403 })
+        if (url.pathname.endsWith('/seg.so') || url.pathname.endsWith('/list.so') || url.hostname === 'comment.bilibili.com') {
+          if (danmakuState === '失败') throw new Error('网络失败')
+          if (url.pathname.endsWith('/seg.so')) return new Response(new Uint8Array())
+          return new Response(danmakuState === '空' ? '<i></i>' : `<i><d p="1,1,25,16777215">${danmakuVersion}</d></i>`)
+        }
+        throw new Error(`未预期的外部请求：${url}`)
+      }))
+      const { registerBilibiliRoutes } = await import('../server/bilibili-api.mjs')
+      routes = new Map()
+      registerBilibiliRoutes({
+        get(path: string, handler: Handler) { routes.set(path, handler) },
+        post() {},
+        delete() {},
+      })
+    })
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    })
+
+    it('播放 key 在 TTL 到点仍可读，超时无写入仍可读，下一次 playurl 写入才淘汰', async () => {
+      const { body: { cacheKey } } = await request('playurl', { bvid: 'BV1', cid: 1 })
+      now += TTL
+      await request('playurl', { bvid: 'BV2', cid: 2 })
+      expect((await request('stream', { key: cacheKey })).status).toBe(403)
+      now += 1
+      expect((await request('stream', { key: cacheKey, type: 'audio' })).status).toBe(416)
+      await request('playurl', { bvid: 'BV3', cid: 3 })
+      expect((await request('stream', { key: cacheKey })).status).toBe(410)
+    })
+
+    it('字幕读取超时不失效，元数据写入严格越过 TTL 后才清理并触发旧 key 重建', async () => {
+      const { body: { subtitles: [{ cacheKey }] } } = await request('subtitles', { bvid: 'BV1', cid: 1 })
+      subtitleVersion = '新'
+      now += TTL
+      await request('subtitles', { bvid: 'BV2', cid: 2 })
+      expect((await request('subtitle', { key: cacheKey })).body).toEqual([{ content: '旧' }])
+      now += 1
+      expect((await request('subtitle', { key: cacheKey })).body).toEqual([{ content: '旧' }])
+      await request('subtitles', { bvid: 'BV3', cid: 3 })
+      expect((await request('subtitle', { key: cacheKey })).body).toEqual([{ content: '新' }])
+    })
+
+    it('字幕 miss 重建不顺便清理其他已过期 key，重写同 key 刷新 TTL', async () => {
+      const { body: { subtitles: [{ cacheKey }] } } = await request('subtitles', { bvid: 'BV1', cid: 1 })
+      now += TTL + 1
+      subtitleVersion = '重建'
+      expect((await request('subtitle', { key: 'bili_sub_BV2_2_zh-CN' })).body).toEqual([{ content: '重建' }])
+      expect((await request('subtitle', { key: cacheKey })).body).toEqual([{ content: '旧' }])
+      await request('subtitles', { bvid: 'BV1', cid: 1 })
+      now += TTL
+      await request('subtitles', { bvid: 'BV3', cid: 3 })
+      subtitleVersion = '再次变化'
+      expect((await request('subtitle', { key: cacheKey })).body).toEqual([{ content: '重建' }])
+    })
+
+    it('弹幕 cid 按数字归一，TTL 内复用，精确到点刷新（不延长读取寿命）', async () => {
+      const first = await request('danmaku', { cid: '001' })
+      expect(first.body.danmaku[0].text).toBe('旧弹幕')
+      danmakuVersion = '新弹幕'
+      now += TTL - 1
+      expect((await request('danmaku', { cid: 1 })).body).toEqual(first.body)
+      now += 1
+      expect((await request('danmaku', { cid: '1' })).body.danmaku[0].text).toBe('新弹幕')
+    })
+
+    it('确认无弹幕时缓存空列表，TTL 到点后重新获取', async () => {
+      danmakuState = '空'
+      expect((await request('danmaku', { cid: 1 })).body).toEqual({ code: 0, danmaku: [] })
+      danmakuState = '有弹幕'
+      now += TTL - 1
+      expect((await request('danmaku', { cid: 1 })).body.danmaku).toEqual([])
+      now += 1
+      expect((await request('danmaku', { cid: 1 })).body.danmaku[0].text).toBe('旧弹幕')
+    })
+
+    it('全部来源失败不缓存，失效条目也不回退；恢复后同 cid 可立即重试', async () => {
+      await request('danmaku', { cid: 1 })
+      now += TTL
+      danmakuState = '失败'
+      expect((await request('danmaku', { cid: 1 })).status).toBe(502)
+      expect((await request('danmaku', { cid: 2 })).status).toBe(502)
+      danmakuState = '有弹幕'
+      danmakuVersion = '恢复弹幕'
+      expect((await request('danmaku', { cid: 1 })).body.danmaku[0].text).toBe('恢复弹幕')
+      expect((await request('danmaku', { cid: 2 })).body.danmaku[0].text).toBe('恢复弹幕')
+    })
+  })
+
+})
+
+// 候选 13：保留旧服务实现的可执行证据，路由与时钟隔离在各自测试作用域。
+describe('netease 后端缓存迁移', () => {
+
+  /** 网易探索迁移前 createTimedCache 的字面复刻，保留写入时不扫过期的行为。 */
+  function legacyCreateTimedCache(ttlMs: number, maxEntries = 24) {
+    const entries = new Map()
+    return {
+      get(key: string) {
+        const item = entries.get(key)
+        if (!item || item.expiresAt <= Date.now()) {
+          entries.delete(key)
+          return null
+        }
+        return item.value
+      },
+      set(key: string, value: unknown) {
+        entries.set(key, { value, expiresAt: Date.now() + ttlMs })
+        while (entries.size > maxEntries) entries.delete(entries.keys().next().value)
+      },
+    }
+  }
+
+  const configurations = [
+    { name: '首页', ttlMs: 90_000, maxEntries: 24, path: '/api/netease/native/home' },
+    { name: '播客', ttlMs: 3 * 60_000, maxEntries: 24, path: '/api/netease/native/podcast-home' },
+    { name: '红心数量', ttlMs: 5 * 60_000, maxEntries: 1_000, path: '/api/netease/native/red-counts' },
+  ]
+
+  afterEach(() => vi.restoreAllMocks())
+
+  describe.each(configurations)('网易探索缓存等价性 · $name', ({ ttlMs, maxEntries }) => {
+    function pair() {
+      let now = 1_000
+      vi.spyOn(Date, 'now').mockImplementation(() => now)
+      const legacy = legacyCreateTimedCache(ttlMs, maxEntries)
+      const current = new TtlCache({ ttlMs, maxEntries, touchOnGet: false, pruneOnSet: false, now: () => Date.now() })
+      return { legacy, current, advance: (ms: number) => { now += ms } }
+    }
+
+    it('TTL 边界恰好过期，零值仍能命中', () => {
+      const { legacy, current, advance } = pair()
+      for (const cache of [legacy, current]) cache.set('1', 0)
+      advance(ttlMs - 1)
+      expect(current.get('1')).toBe(legacy.get('1'))
+      expect(current.get('1')).toBe(0)
+      advance(1)
+      expect(current.get('1')).toBe(legacy.get('1'))
+      expect(current.get('1')).toBeNull()
+    })
+
+    it('命中不移到队尾，超限只淘汰最早写入的键', () => {
+      const { legacy, current } = pair()
+      for (const cache of [legacy, current]) {
+        for (let index = 0; index < maxEntries; index += 1) cache.set(String(index), index)
+        cache.get('0')
+        cache.set('new', '新增')
+      }
+      for (const key of ['0', '1', 'new']) expect(current.get(key)).toBe(legacy.get(key))
+      expect(current.get('0')).toBeNull()
+      expect(current.get('1')).toBe(1)
+    })
+
+    it('重写刷新 TTL，但保留原键位置', () => {
+      const { legacy, current, advance } = pair()
+      for (const cache of [legacy, current]) {
+        for (let index = 0; index < maxEntries; index += 1) cache.set(String(index), index)
+      }
+      advance(ttlMs - 1)
+      for (const cache of [legacy, current]) cache.set('0', '刷新')
+      advance(1)
+      expect(current.get('0')).toBe(legacy.get('0'))
+      expect(current.get('0')).toBe('刷新')
+      for (const cache of [legacy, current]) cache.set('new', '新增')
+      expect(current.get('0')).toBe(legacy.get('0'))
+      expect(current.get('0')).toBeNull()
+    })
+
+    it('写入不扫描中间过期键，即使队首有效也按 FIFO 淘汰', () => {
+      const { legacy, current, advance } = pair()
+      for (const cache of [legacy, current]) {
+        for (let index = 0; index < maxEntries; index += 1) cache.set(String(index), index)
+      }
+      advance(ttlMs - 1)
+      for (const cache of [legacy, current]) cache.set('0', '刷新')
+      advance(1)
+      for (const cache of [legacy, current]) cache.set('new', '新增')
+      expect(current.get('0')).toBe(legacy.get('0'))
+      expect(current.get('0')).toBeNull()
+      expect(current.get('new')).toBe(legacy.get('new'))
+    })
+  })
+
+  type Query = Record<string, string>
+  type RouteResponse = { code: number; data?: { count?: number; version?: number }; counts?: Record<string, number> }
+  type Handler = (req: { query: Query }, res: object) => Promise<unknown>
+
+  async function routeHarness() {
+    // 模块拥有进程级缓存，每例独立载入，避免路由例之间共享账号与歌曲记录。
+    vi.resetModules()
+    const { registerNeteaseNativeExploreRoutes } = await import('../server/netease-native-explore.mjs')
+    const routes = new Map<string, Handler>()
+    let code = 200
+    let version = 0
+    const upstream = vi.fn(async () => ({ body: { code, data: { count: 0, version: ++version } } }))
+    registerNeteaseNativeExploreRoutes(
+      { get: (path: string, handler: Handler) => routes.set(path, handler) },
+      { getNeteaseApi: () => ({ api: upstream }) },
+    )
+    return {
+      upstream,
+      fail: () => { code = 500 },
+      succeed: () => { code = 200 },
+      async request(path: string, query: Query = {}) {
+        let body: RouteResponse | undefined
+        const res = {
+          setHeader() {},
+          status() { return this },
+          json(value: RouteResponse) { body = value; return value },
+        }
+        await routes.get(path)!({ query }, res)
+        return body!
+      },
+    }
+  }
+
+  describe.each(configurations)('网易探索公开路由 · $name', ({ name, path, ttlMs, maxEntries }) => {
+    const queryFor = (id: number): Query => name === '红心数量' ? { ids: String(id) } : { cookie: `MUSIC_U=account-${id}` }
+
+    it('保留真实 TTL，命中不续期，恰好到期重新请求', async () => {
+      let now = 1_000
+      vi.spyOn(Date, 'now').mockImplementation(() => now)
+      const { request, upstream } = await routeHarness()
+      const query = queryFor(1)
+      const first = await request(path, query)
+      now += ttlMs - 1
+      expect(await request(path, query)).toEqual(first)
+      expect(upstream).toHaveBeenCalledTimes(1)
+      now += 1
+      await request(path, query)
+      expect(upstream).toHaveBeenCalledTimes(2)
+    })
+
+    it('保留真实容量，命中不改变 FIFO 淘汰顺序', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(1_000)
+      const { request, upstream } = await routeHarness()
+      for (let index = 1; index <= maxEntries; index += 1) await request(path, queryFor(index))
+      await request(path, queryFor(1))
+      expect(upstream).toHaveBeenCalledTimes(maxEntries)
+      await request(path, queryFor(maxEntries + 1))
+      await request(path, queryFor(2))
+      expect(upstream).toHaveBeenCalledTimes(maxEntries + 1)
+      await request(path, queryFor(1))
+      expect(upstream).toHaveBeenCalledTimes(maxEntries + 2)
+    })
+
+    it('失败响应不缓存，恢复后可以立即重试', async () => {
+      const { request, upstream, fail, succeed } = await routeHarness()
+      fail()
+      await request(path, queryFor(1))
+      succeed()
+      await request(path, queryFor(1))
+      await request(path, queryFor(1))
+      expect(upstream).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('网易探索缓存路由作用域与刷新', () => {
+    it('首页写满后不优先清理中间过期项，刷新过的队首仍被 FIFO 淘汰', async () => {
+      let now = 1_000
+      vi.spyOn(Date, 'now').mockImplementation(() => now)
+      const { request, upstream } = await routeHarness()
+      const path = '/api/netease/native/home'
+      const first = { cookie: 'MUSIC_U=first' }
+      await request(path, first)
+      for (let index = 1; index < 24; index += 1) await request(path, { cookie: `MUSIC_U=fill-${index}` })
+      now += 89_999
+      await request(path, { ...first, refresh: '1' })
+      now += 1
+      await request(path, { cookie: 'MUSIC_U=overflow' })
+      await request(path, first)
+      expect(upstream).toHaveBeenCalledTimes(27)
+    })
+
+    it('首页按 cookie 和 cursor 隔离，强制刷新仍保留 FIFO 原位', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(1_000)
+      const { request, upstream } = await routeHarness()
+      const path = '/api/netease/native/home'
+      const first = { cookie: 'MUSIC_U=first', cursor: 'next' }
+      await request(path, first)
+      await request(path, { ...first, cursor: 'other' })
+      await request(path, { ...first, cookie: 'MUSIC_U=second' })
+      for (let index = 3; index < 24; index += 1) await request(path, { cookie: `MUSIC_U=fill-${index}` })
+      const refreshed = await request(path, { ...first, refresh: '1' })
+      expect(await request(path, first)).toEqual(refreshed)
+      expect(upstream).toHaveBeenCalledTimes(25)
+      await request(path, { cookie: 'MUSIC_U=overflow' })
+      await request(path, first)
+      expect(upstream).toHaveBeenCalledTimes(27)
+    })
+
+    it('播客按账号隔离，subParams 保持原有不参与缓存键的行为', async () => {
+      const { request, upstream } = await routeHarness()
+      const path = '/api/netease/native/podcast-home'
+      const first = await request(path, { cookie: 'MUSIC_U=first' })
+      await request(path, { cookie: 'MUSIC_U=second' })
+      expect(await request(path, { cookie: 'MUSIC_U=first', subParams: '{"page":2}' })).toEqual(first)
+      expect(upstream).toHaveBeenCalledTimes(2)
+    })
+
+    it('红心计数按歌曲跨账号复用，零值不会作为未命中', async () => {
+      const { request, upstream } = await routeHarness()
+      const path = '/api/netease/native/red-counts'
+      expect(await request(path, { ids: '1', cookie: 'MUSIC_U=first' })).toMatchObject({ counts: { 1: 0 } })
+      expect(await request(path, { ids: '1', cookie: 'MUSIC_U=second' })).toMatchObject({ counts: { 1: 0 } })
+      expect(upstream).toHaveBeenCalledTimes(1)
+    })
+  })
+
+})
+
+// 候选 13：保留旧服务实现的可执行证据，路由与时钟隔离在各自测试作用域。
+describe('location 后端缓存迁移', () => {
+
+  const TTL = 6 * 60 * 60 * 1000
+  type Location = Record<string, unknown>
+  type Query = { latitude?: number; longitude?: number; lat?: number; lon?: number }
+  type Response = { statusCode: number; headers: Record<string, string>; body?: Record<string, unknown> }
+  type Handler = (req: { query: Query }, res: ReturnType<typeof responder>) => Promise<unknown>
+
+  function responder(response: Response) {
+    return {
+      status(code: number) { response.statusCode = code; return this },
+      setHeader(name: string, value: string) { response.headers[name] = value },
+      json(body: Record<string, unknown>) { response.body = body; return body },
+    }
+  }
+
+  // 原 registerLocationRoutes 缓存与 pending 接线的字面复刻；只注入上游请求供确定性回放。
+  function legacyLocationRoute(requestReverseLocation: (latitude: number, longitude: number) => Promise<Location>) {
+    const REVERSE_CACHE_TTL = 6 * 60 * 60 * 1000
+    const REVERSE_CACHE_LIMIT = 200
+    const reverseCache = new Map()
+    const reversePending = new Map()
+    return async (req: { query: Query }, res: ReturnType<typeof responder>) => {
+      const latitude = Number(req.query.latitude ?? req.query.lat)
+      const longitude = Number(req.query.longitude ?? req.query.lon)
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+        return res.status(400).json({ success: false, error: '经纬度参数无效' })
+      }
+
+      const cacheKey = `${latitude.toFixed(4)},${longitude.toFixed(4)}`
+      const cached = reverseCache.get(cacheKey)
+      if (cached && Date.now() - cached.updatedAt < REVERSE_CACHE_TTL) {
+        res.setHeader('Cache-Control', 'private, max-age=3600')
+        return res.json({ success: true, ...cached.location, latitude, longitude, cached: true })
+      }
+
+      let pending = reversePending.get(cacheKey)
+      if (!pending) {
+        pending = requestReverseLocation(latitude, longitude)
+        reversePending.set(cacheKey, pending)
+        pending.finally(() => reversePending.delete(cacheKey)).catch(() => {})
+      }
+
+      try {
+        const location = await pending
+        if (reverseCache.size >= REVERSE_CACHE_LIMIT) reverseCache.delete(reverseCache.keys().next().value)
+        reverseCache.set(cacheKey, { location, updatedAt: Date.now() })
+        res.setHeader('Cache-Control', 'private, max-age=3600')
+        return res.json({ success: true, ...location, latitude, longitude })
+      } catch (error) {
+        console.warn('[天气定位] 反向定位失败:', error?.message || error)
+        if (cached) return res.json({ success: true, ...cached.location, latitude, longitude, cached: true, stale: true })
+        return res.status(503).json({ success: false, error: '暂时无法解析当前位置的详细地址' })
+      }
+    }
+  }
+
+  const location = (city: string): Location => ({
+    province: '', city, district: '', township: '', street: '', neighbourhood: '', country: '中国',
+    formattedAddress: city, displayName: city, address: {}, provider: 'bigdatacloud+photon',
+  })
+
+  async function harness(legacy: boolean) {
+    let now = 0
+    let city = '苏州市'
+    let fails = false
+    let batches = 0
+    let fetchCalls = 0
+    let gate: Promise<void> | undefined
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      fetchCalls += 1
+      const url = new URL(input)
+      if (url.hostname === 'api.bigdatacloud.net') batches += 1
+      const resultCity = city
+      const shouldFail = fails
+      await gate
+      if (shouldFail) throw new Error('上游不可用')
+      return {
+        ok: true,
+        json: async () => url.hostname === 'photon.komoot.io'
+          ? { features: [{ properties: { city: resultCity, country: '中国' } }] }
+          : { city: resultCity, countryName: '中国' },
+      }
+    }))
+    let handler: Handler
+    if (legacy) {
+      handler = legacyLocationRoute(async () => {
+        batches += 1
+        const resultCity = city
+        const shouldFail = fails
+        await gate
+        if (shouldFail) throw new Error('上游不可用')
+        return location(resultCity)
+      })
+    } else {
+      vi.resetModules()
+      const { registerLocationRoutes } = await import('../server/location-api.mjs')
+      registerLocationRoutes({ get(path: string, callback: Handler) {
+        expect(path).toBe('/api/location/reverse')
+        handler = callback
+      } })
+    }
+    return {
+      async request(query: Query = { latitude: 31, longitude: 120 }) {
+        const response: Response = { statusCode: 200, headers: {} }
+        await handler({ query }, responder(response))
+        return response
+      },
+      at(value: number) { now = value },
+      upstream(nextCity: string, shouldFail = false) { city = nextCity; fails = shouldFail },
+      hold() {
+        let release!: () => void
+        gate = new Promise<void>(resolve => { release = resolve })
+        return () => { gate = undefined; release() }
+      },
+      get batches() { return batches },
+      get fetchCalls() { return fetchCalls },
+    }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  type Harness = Awaited<ReturnType<typeof harness>>
+  async function equivalent(script: (api: Harness) => Promise<unknown>) {
+    const legacyResult = await script(await harness(true))
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    const currentResult = await script(await harness(false))
+    expect(currentResult).toEqual(legacyResult)
+    return currentResult
+  }
+
+  describe('位置反向解析缓存迁移（legacy 与实际路由公开边界）', () => {
+    it('四位坐标共用缓存但响应保留请求坐标；6 小时边界刷新，失败反复回退旧值', async () => {
+      await equivalent(async api => {
+        const first = await api.request({ lat: 31.12341, lon: 120.12341 })
+        expect(first.body).toMatchObject({ city: '苏州市' })
+        expect(first.body).not.toHaveProperty('cached')
+        api.at(TTL - 1)
+        const hit = await api.request({ latitude: 31.12342, longitude: 120.12342 })
+        expect(hit.body).toMatchObject({ cached: true, latitude: 31.12342, longitude: 120.12342 })
+        expect(api.batches).toBe(1)
+        api.at(TTL)
+        api.upstream('杭州市')
+        const refreshed = await api.request({ lat: 31.12341, lon: 120.12341 })
+        expect(refreshed.body).toMatchObject({ city: '杭州市' })
+        expect(refreshed.body).not.toHaveProperty('cached')
+        api.at(2 * TTL)
+        api.upstream('', true)
+        const stale = await api.request({ lat: 31.12341, lon: 120.12341 })
+        const staleAgain = await api.request({ lat: 31.12341, lon: 120.12341 })
+        expect(stale.body).toMatchObject({ city: '杭州市', cached: true, stale: true })
+        expect(stale.headers).toEqual({})
+        expect(staleAgain).toEqual(stale)
+        expect(api.batches).toBe(4)
+        return { first, hit, refreshed, stale, staleAgain, batches: api.batches }
+      })
+    })
+
+    it('无效坐标不访问上游；失败未命中返回 503 且后续可重试成功', async () => {
+      await equivalent(async api => {
+        const invalid = await api.request({ latitude: 91, longitude: 120 })
+        expect(invalid.statusCode).toBe(400)
+        expect(api.batches).toBe(0)
+        api.upstream('', true)
+        const failed = await api.request()
+        expect(failed).toMatchObject({ statusCode: 503, body: { success: false } })
+        api.upstream('苏州市')
+        const success = await api.request()
+        const hit = await api.request()
+        expect(hit.body).toMatchObject({ city: '苏州市', cached: true })
+        expect(api.batches).toBe(2)
+        return { invalid, failed, success, hit, batches: api.batches }
+      })
+    })
+
+    it('并发坐标归一后合并 pending，成功缓存且失败后清理 pending', async () => {
+      await equivalent(async api => {
+        const release = api.hold()
+        const first = api.request({ lat: 31.00001, lon: 120.00001 })
+        const second = api.request({ lat: 31.00002, lon: 120.00002 })
+        expect(api.batches).toBe(1)
+        release()
+        const initial = await Promise.all([first, second])
+        expect(initial[0].body).not.toHaveProperty('cached')
+        expect(initial[1].body).not.toHaveProperty('cached')
+        api.at(TTL)
+        api.upstream('', true)
+        const releaseFailure = api.hold()
+        const failedFirst = api.request()
+        const failedSecond = api.request()
+        expect(api.batches).toBe(2)
+        releaseFailure()
+        const stale = await Promise.all([failedFirst, failedSecond])
+        expect(stale[0].body).toMatchObject({ stale: true, city: '苏州市' })
+        api.upstream('杭州市')
+        const recovered = await api.request()
+        expect(recovered.body).toMatchObject({ city: '杭州市' })
+        expect(api.batches).toBe(3)
+        return { initial, stale, recovered, batches: api.batches }
+      })
+    })
+
+    it('TTL 从请求成功完成时起算，未满额刷新不会改变原 FIFO 队位', async () => {
+      await equivalent(async api => {
+        const release = api.hold()
+        const delayed = api.request({ lat: 10, lon: 0 })
+        api.at(TTL)
+        release()
+        await delayed
+        api.at(2 * TTL - 1)
+        const hit = await api.request({ lat: 10, lon: 0 })
+        expect(hit.body).toMatchObject({ cached: true })
+        expect(api.batches).toBe(1)
+        // 第二个键仍新鲜时刷新首项，随后填满并超额，首项仍应首先淘汰。
+        await api.request({ lat: 10, lon: 0.001 })
+        api.at(2 * TTL)
+        await api.request({ lat: 10, lon: 0 })
+        for (let index = 2; index <= 200; index += 1) await api.request({ lat: 10, lon: index / 1000 })
+        api.upstream('', true)
+        const evicted = await api.request({ lat: 10, lon: 0 })
+        const retained = await api.request({ lat: 10, lon: 0.001 })
+        expect(evicted.statusCode).toBe(503)
+        expect(retained.body).toMatchObject({ cached: true })
+        expect(api.batches).toBe(203)
+        return { hit, evicted, retained, batches: api.batches }
+      })
+    })
+
+    it('满 200 条时刷新非首项仍写前淘汰首项；不触达 FIFO，不清除其他 stale', async () => {
+      await equivalent(async api => {
+        for (let index = 0; index < 200; index += 1) await api.request({ lat: 10, lon: index / 1000 })
+        await api.request({ lat: 10, lon: 0 }) // 命中首项不能改变队位。
+        api.at(TTL)
+        api.upstream('杭州市')
+        const refreshed = await api.request({ lat: 10, lon: 0.1 })
+        api.upstream('', true)
+        const evicted = await api.request({ lat: 10, lon: 0 })
+        const stale = await api.request({ lat: 10, lon: 0.001 })
+        expect(evicted.statusCode).toBe(503)
+        expect(stale.body).toMatchObject({ stale: true, city: '苏州市' })
+        expect(api.batches).toBe(203)
+        return { refreshed, evicted, stale, batches: api.batches }
+      })
+    })
+
+    it('满额时并发刷新首项：每个成功等待者照旧写缓存并触发写前淘汰', async () => {
+      await equivalent(async api => {
+        for (let index = 0; index < 200; index += 1) await api.request({ lat: 10, lon: index / 1000 })
+        api.at(TTL)
+        const release = api.hold()
+        const first = api.request({ lat: 10, lon: 0 })
+        const second = api.request({ lat: 10, lon: 0 })
+        expect(api.batches).toBe(201)
+        release()
+        const refreshed = await Promise.all([first, second])
+        api.upstream('', true)
+        const evicted = await api.request({ lat: 10, lon: 0.001 })
+        const retained = await api.request({ lat: 10, lon: 0.002 })
+        const hit = await api.request({ lat: 10, lon: 0 })
+        expect(evicted.statusCode).toBe(503)
+        expect(retained.body).toMatchObject({ stale: true })
+        expect(hit.body).toMatchObject({ cached: true })
+        expect(api.batches).toBe(203)
+        return { refreshed, evicted, retained, hit, batches: api.batches }
+      })
+    })
+
+    it('实际路由成功走两个并行提供商，失败走完第三提供商且不缓存失败', async () => {
+      const api = await harness(false)
+      await api.request()
+      expect(api.fetchCalls).toBe(2)
+      api.at(TTL)
+      api.upstream('', true)
+      await api.request()
+      expect(api.fetchCalls).toBe(5)
+      await api.request()
+      expect(api.fetchCalls).toBe(8)
+    })
+  })
+
+})

@@ -13,24 +13,39 @@ export class TtlCache {
   /**
    * @param {object} options
    * @param {number} options.ttlMs 条目存活时间；传 `Infinity` 表示只按容量淘汰（无过期）
-   * @param {number} options.maxEntries 条目上限
+   * @param {number} options.maxEntries 条目上限；Infinity 表示不限制容量
    * @param {number} [options.evictTo] 超限时收缩到的条数；缺省为一次只淘汰一条
    * @param {boolean} [options.touchOnGet] 命中时是否移到末尾（LRU）；默认 true
+   * @param {boolean} [options.pruneOnSet] 接近容量上限时写前清过期；默认 true
+   * @param {boolean} [options.evictBeforeSet] 满额时写入前先淘汰一条（包括覆盖已有键）；默认 false
    * @param {() => number} [options.now] 可注入时钟，默认 Date.now
    */
-  constructor({ ttlMs, maxEntries, evictTo, touchOnGet = true, now = Date.now }) {
+  constructor({ ttlMs, maxEntries, evictTo, touchOnGet = true, pruneOnSet = true, evictBeforeSet = false, now = Date.now }) {
     if (!(ttlMs > 0)) throw new Error('TtlCache: ttlMs 必须为正数')
     if (!(maxEntries > 0)) throw new Error('TtlCache: maxEntries 必须为正数')
     this.ttlMs = ttlMs
     this.maxEntries = maxEntries
     this.evictTo = evictTo && evictTo > 0 && evictTo < maxEntries ? evictTo : null
     this.touchOnGet = touchOnGet
+    this.pruneOnSet = pruneOnSet
+    this.evictBeforeSet = evictBeforeSet
     this.now = now
     this.entries = new Map()
   }
 
   get size() {
     return this.entries.size
+  }
+
+  /** 原样读取（包括过期值），不删除、不改变顺序；供显式清理与失败回退使用。 */
+  peek(key) {
+    return this.entries.get(key)?.value ?? null
+  }
+
+  /** 只检查是否仍新鲜，不删除过期值、不改变顺序。 */
+  isFresh(key) {
+    const entry = this.entries.get(key)
+    return !!entry && entry.expiresAt > this.now()
   }
 
   /** 命中返回 value；过期、缺失或值本身不存在时返回 null。 */
@@ -54,7 +69,10 @@ export class TtlCache {
     const now = this.now()
     // 只在接近上限时才扫过期，避免逐条写入的热路径退化成 O(n²)
     //（neteaseSongDetailCache 会按歌单逐曲写入，最多一次几千条）。
-    if (this.entries.size + 1 > this.maxEntries) this.pruneExpired(now)
+    if (this.pruneOnSet && this.entries.size + 1 > this.maxEntries) this.pruneExpired(now)
+    if (this.evictBeforeSet && this.entries.size >= this.maxEntries) {
+      this.entries.delete(this.entries.keys().next().value)
+    }
     const existing = this.entries.get(key)
     if (existing && !this.touchOnGet) {
       // 非 LRU（FIFO）缓存：重写同一个键保持原位置，与原 `Map.set` 语义一致。
@@ -76,16 +94,16 @@ export class TtlCache {
     this.entries.clear()
   }
 
-  /** 清掉所有已过期条目。 */
-  prune() {
-    this.pruneExpired(this.now())
+  /** 清掉过期条目；inclusive:false 保留恰好到期的条目（兼容 B站写后清理）。 */
+  prune({ inclusive = true } = {}) {
+    this.pruneExpired(this.now(), inclusive)
   }
 
   /** @private */
-  pruneExpired(now) {
+  pruneExpired(now, inclusive = true) {
     if (this.ttlMs === Infinity) return
     for (const [key, entry] of this.entries) {
-      if (entry.expiresAt <= now) this.entries.delete(key)
+      if (inclusive ? entry.expiresAt <= now : entry.expiresAt < now) this.entries.delete(key)
     }
   }
 

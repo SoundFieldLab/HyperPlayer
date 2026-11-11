@@ -21,6 +21,7 @@
 import crypto from 'node:crypto'
 import { Readable } from 'stream'
 import { inflateRawSync, gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib'
+import { TtlCache } from './ttl-cache.mjs'
 
 const BILI_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
@@ -45,16 +46,17 @@ let bilibiliBuvid3 = ''
 let bilibiliBuvid4 = ''
 /** WBI 密钥缓存（1h） */
 let wbiCache = { imgKey: '', subKey: '', fetchedAt: 0 }
-/** playurl durl 缓存：cacheKey -> { urls, createdAt }（10min TTL） */
-const streamCache = new Map()
-/** 字幕 JSON 缓存：subCacheKey -> { url, createdAt }（10min TTL） */
-const subtitleJsonCache = new Map()
-/** 弹幕缓存：cid -> { items, createdAt }（10min TTL） */
-const danmakuCache = new Map()
-
 const STREAM_CACHE_TTL = 10 * 60 * 1000
 const WBI_CACHE_TTL = 60 * 60 * 1000
 const DANMAKU_CACHE_TTL = 10 * 60 * 1000
+
+// 旧缓存没有容量上限；流与字幕只在原有写入路径清理，读取允许使用尚未清理的旧值。
+/** playurl durl 缓存：cacheKey -> { urls, sizes, videoId, audioId }（10min TTL） */
+const streamCache = new TtlCache({ ttlMs: STREAM_CACHE_TTL, maxEntries: Infinity, touchOnGet: false, pruneOnSet: false })
+/** 字幕 JSON 缓存：subCacheKey -> { url }（10min TTL） */
+const subtitleJsonCache = new TtlCache({ ttlMs: STREAM_CACHE_TTL, maxEntries: Infinity, touchOnGet: false, pruneOnSet: false })
+/** 弹幕缓存：cid -> { items }（10min TTL） */
+const danmakuCache = new TtlCache({ ttlMs: DANMAKU_CACHE_TTL, maxEntries: Infinity, touchOnGet: false, pruneOnSet: false })
 
 // ===== 基础工具 =====
 
@@ -70,13 +72,6 @@ function md5Hex(text) {
 function resolveBiliCookie(cookie) {
   if (typeof cookie === 'string' && cookie.trim()) return cookie.trim()
   return bilibiliCookie
-}
-
-function pruneCache(map, ttl) {
-  const now = Date.now()
-  for (const [key, entry] of map) {
-    if (now - entry.createdAt > ttl) map.delete(key)
-  }
 }
 
 /** 带 UA/Referer/Cookie 的 B 站请求（12s 超时），返回 Response */
@@ -347,9 +342,8 @@ export function registerBilibiliRoutes(app) {
         sizes: [video.size || 0, audio.size || 0],
         videoId: video.id,
         audioId: audio.id,
-        createdAt: Date.now(),
       })
-      pruneCache(streamCache, STREAM_CACHE_TTL)
+      streamCache.prune({ inclusive: false })
       // 大会员专享：接受的画质整体 < 480p 视为受限（前端据此跳过该候选）
       const vipLimited = acceptQuality.length > 0 && acceptQuality.every((q) => q <= 32)
       res.json({
@@ -372,7 +366,7 @@ export function registerBilibiliRoutes(app) {
   app.get('/api/bilibili/stream', async (req, res) => {
     const key = String(req.query.key || '')
     const type = String(req.query.type || 'video') === 'audio' ? 1 : 0
-    const entry = key ? streamCache.get(key) : undefined
+    const entry = key ? streamCache.peek(key) : undefined
     if (!entry) return res.status(410).json({ error: '播放地址已过期，请重新获取' })
     const url = entry.urls[type]
     if (!url) return res.status(404).json({ error: '视频分片不存在' })
@@ -435,8 +429,8 @@ export function registerBilibiliRoutes(app) {
         const subCacheKey = `bili_sub_${bvid}_${cid}_${s.lan || 'xx'}`
         // B 站返回协议相对 URL（//aisubtitle.hdslb.com/...），Node fetch 需补 https: 否则解析失败
         const subUrl = String(s.subtitle_url || '')
-        subtitleJsonCache.set(subCacheKey, { url: subUrl.startsWith('//') ? `https:${subUrl}` : subUrl, createdAt: Date.now() })
-        pruneCache(subtitleJsonCache, STREAM_CACHE_TTL)
+        subtitleJsonCache.set(subCacheKey, { url: subUrl.startsWith('//') ? `https:${subUrl}` : subUrl })
+        subtitleJsonCache.prune({ inclusive: false })
         return {
           lan: s.lan || '',
           lanDoc: s.lan_doc || '',
@@ -453,7 +447,7 @@ export function registerBilibiliRoutes(app) {
   // 字幕 JSON 代理（字幕文件在 hdslb 域，需 Referer）
   app.get('/api/bilibili/subtitle', async (req, res) => {
     const key = String(req.query.key || '')
-    let entry = key ? subtitleJsonCache.get(key) : undefined
+    let entry = key ? subtitleJsonCache.peek(key) : undefined
     // 缓存 miss（常见于服务端热重启）→ 从稳定 key 反查 bvid/cid/lan 重建字幕 URL，避免 410 静默失效
     if (!entry && key) {
       const match = key.match(/^bili_sub_([A-Za-z0-9]+)_(\d+)_(.+)$/)
@@ -466,7 +460,7 @@ export function registerBilibiliRoutes(app) {
           const s = (meta.data?.subtitle?.subtitles || []).find((x) => String(x.lan || '') === lan)
           if (s) {
             const subUrl = String(s.subtitle_url || '')
-            entry = { url: subUrl.startsWith('//') ? `https:${subUrl}` : subUrl, createdAt: Date.now() }
+            entry = { url: subUrl.startsWith('//') ? `https:${subUrl}` : subUrl }
             subtitleJsonCache.set(key, entry)
           }
         } catch {
@@ -634,8 +628,8 @@ export function registerBilibiliRoutes(app) {
   app.get('/api/bilibili/danmaku', async (req, res) => {
     const cid = Number(req.query.cid)
     if (!cid) return res.status(400).json({ code: -1, error: 'cid 必填' })
-    const cached = danmakuCache.get(cid)
-    if (cached && Date.now() - cached.createdAt < DANMAKU_CACHE_TTL) {
+    const cached = danmakuCache.isFresh(cid) ? danmakuCache.peek(cid) : null
+    if (cached) {
       return res.json({ code: 0, danmaku: cached.items })
     }
     try {
@@ -674,13 +668,13 @@ export function registerBilibiliRoutes(app) {
         }
       }
       if (items.length > 0) {
-        danmakuCache.set(cid, { items, createdAt: Date.now() })
-        pruneCache(danmakuCache, DANMAKU_CACHE_TTL)
+        danmakuCache.set(cid, { items })
+        danmakuCache.prune({ inclusive: false })
         return res.json({ code: 0, danmaku: items })
       }
       if (fetchedOk) {
         // 数据源确认无弹幕：返回空列表并缓存（视频确实无弹幕，或全部为高级弹幕命令）
-        danmakuCache.set(cid, { items: [], createdAt: Date.now() })
+        danmakuCache.set(cid, { items: [] })
         return res.json({ code: 0, danmaku: [] })
       }
       // 全部数据源传输失败：不缓存，返回非 0 让渲染端稍后重试
