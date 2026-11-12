@@ -40,6 +40,8 @@ npm run test:installer   # 安装器 UI 资产 + 测试
 npm run gen:installer-art # 生成 NSIS 安装器美术资产
 npm run preview:setup    # 预览自定义安装器
 npm run benchmark:mv     # B站 MV 基准脚本
+npm run benchmark:loading -- --plan # 按需加载基线计划；实际运行需独立空闲3210/3211与外部Playwright
+npm run test:loading     # 独立加载观测工具的Node边界测试
 npm run version:patch|minor|major|pre  # 版本号更迭（自动 commit/tag/push）
 npm run version:dry      # 预览版本更迭（不落地）
 npm run start            # electron .（直接起已构建产物）
@@ -150,6 +152,7 @@ HyperPlayer 共 **4 个界面模式**（简约 minimal / 传统 traditional / �
 - `docs/功能清单3.0.md` — 功能清单（12 个功能域，按代码实测；与源码冲突时以源码为准）。
 - `docs/性能优化计划.md` — 性能优化计划（已达标 / 可优化 / 不采纳 + 性能红线；做性能改动前先读）。
 - `docs/性能优化计划2.0.md` — Electron 44 升级 + 启动优化合并报告（内核版本以文首勘误块为准）。
+- `docs/performance-loading-baseline.md` — 调整加载条数、后台预取或媒体准备前，按此口径复跑网络／流畅度基线；区分SDK fixture、真实HTTP与未知字节。
 
 ## Agent skills
 
