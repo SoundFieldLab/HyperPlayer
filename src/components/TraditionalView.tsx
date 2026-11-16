@@ -18,7 +18,7 @@ import { getProxiedImageUrl, getUserFollows, getUserFolloweds, getQQFollows, get
 import type { MusicPlatform } from '../services/platforms'
 import { getVisiblePlatforms, getPlatformCapabilities, getPlatformCookie, getPlatformFavoriteLabels, platformLabel, PLATFORM_ORDER_EVENT, PLATFORM_VISIBILITY_EVENT } from '../services/platforms'
 import { isPlaylistOwner, isSpecialPlaylist } from '../services/playlistOwnership'
-import { fetchExploreHome, fetchExplorePlaylist, fetchExploreChart, type ExplorePayload, type ExplorePlaylist, type ExploreChart } from '../services/exploreApi'
+import { fetchExploreHome, fetchExploreChart, type ExplorePayload, type ExplorePlaylist, type ExploreChart } from '../services/exploreApi'
 import { createPlaylist, deletePlaylist, getUserPlaylists, invalidateUserPlaylistsCache, removeSongFromPlaylist, subscribePlaylist, updatePlaylist } from '../services/playlistService'
 import { useAudioAnalyzerSnapshot, type AudioAnalyzerStore } from '../hooks/useAudioAnalyzer'
 import ModeSelectionPanel, { MODE_SELECTION_CLOSE_MS } from './ModeSelectionPanel'
@@ -36,6 +36,7 @@ import { preloadOnIdle } from '../utils/lazyPreload'
 import { rafThrottle } from '../utils/rafThrottle'
 import type { PlaybackTimeStore } from '../audio/playbackTimeStore'
 import type { PlaybackOrigin, SongSelectHandler, ViewMode } from '../types/playbackNavigation'
+import { usePlaylistPaging, type PlaylistPagingSnapshot } from '../hooks/usePlaylistPaging'
 
 // 主题色可读性校正（本地内联实现，避免悬空依赖）
 interface TraditionalRgbColor { r: number; g: number; b: number }
@@ -584,7 +585,7 @@ function TraditionalView({
   const [playlistLoading, setPlaylistLoading] = useState(false)
   const [playlistError, setPlaylistError] = useState('')
   const playlistRequestRef = useRef(0)
-  const playlistAbortRef = useRef<AbortController | null>(null)
+  const playlistPaging = usePlaylistPaging()
   const [userPlaylists, setUserPlaylists] = useState<any[]>([])
   const [preferences, setPreferences] = useState<TraditionalPreferences>(readPreferences)
   const pendingPreferencesRef = useRef<TraditionalPreferences | null>(null)
@@ -782,18 +783,15 @@ function TraditionalView({
 
   const invalidatePlaylistRequest = useCallback(() => {
     playlistRequestRef.current += 1
-    playlistAbortRef.current?.abort()
-    playlistAbortRef.current = null
+    playlistPaging.cancelAll()
     setPlaylistLoading(false)
-  }, [])
+  }, [playlistPaging.cancelAll])
   useEffect(() => {
     if (currentPage.name !== 'playlist') invalidatePlaylistRequest()
   }, [currentPage.name, invalidatePlaylistRequest])
   useEffect(() => () => invalidatePlaylistRequest(), [invalidatePlaylistRequest])
-  const openPlaylist = useCallback(async (playlist: ExplorePlaylist | any, replaceCurrent = false) => {
-    playlistAbortRef.current?.abort()
-    const controller = new AbortController()
-    playlistAbortRef.current = controller
+  const openPlaylist = useCallback(async (playlist: ExplorePlaylist | any, replaceCurrent = false, forceRefresh = true) => {
+    playlistPaging.cancelAll()
     const requestId = ++playlistRequestRef.current
     const targetHistoryIndex = replaceCurrent ? historyIndexRef.current : historyIndexRef.current + 1
     setPlaylistLoading(true)
@@ -807,35 +805,69 @@ function TraditionalView({
     } else {
       navigate({ name: 'playlist', playlist: playlist || null, songs: [] })
     }
-    const applyPlaylist = (nextPlaylist: any, songs: Song[]) => {
+    try {
+      const songs = await playlistPaging.open(playlist.id, playlist.platform || platform, { forceRefresh })
       if (requestId !== playlistRequestRef.current) return
       setHistory(prev => {
         const next = [...prev]
         const target = next[targetHistoryIndex]
-        if (target?.name === 'playlist') next[targetHistoryIndex] = { name: 'playlist', playlist: nextPlaylist, songs }
+        if (target?.name === 'playlist') next[targetHistoryIndex] = {
+          name: 'playlist',
+          playlist: playlistPaging.playlist ? { ...target.playlist, ...playlistPaging.playlist } : target.playlist,
+          songs,
+        }
         return next
       })
-    }
-    try {
-      const result = await fetchExplorePlaylist({ ...playlist, platform: playlist.platform || platform }, controller.signal)
-      applyPlaylist(result.playlist || playlist, result.songs || [])
     } catch (error) {
-      if (controller.signal.aborted) return
       if (requestId === playlistRequestRef.current) setPlaylistError(error instanceof Error ? error.message : '歌单加载失败，请重试')
     } finally {
-      if (requestId === playlistRequestRef.current && playlistAbortRef.current === controller) {
-        playlistAbortRef.current = null
-        setPlaylistLoading(false)
-      }
+      if (requestId === playlistRequestRef.current) setPlaylistLoading(false)
     }
-  }, [platform, navigate])
+  }, [navigate, platform, playlistPaging])
+
+  useEffect(() => {
+    if (currentPage.name !== 'playlist') return
+    setPlaylistLoading(playlistPaging.loadingInitial)
+    setPlaylistError(playlistPaging.initialError)
+    setHistory(previous => {
+      const targetIndex = historyIndexRef.current
+      const target = previous[targetIndex]
+      if (target?.name !== 'playlist') return previous
+      const nextPlaylist = playlistPaging.playlist
+        ? { ...target.playlist, ...playlistPaging.playlist }
+        : target.playlist
+      if (target.songs === playlistPaging.songs && target.playlist === nextPlaylist) return previous
+      const next = [...previous]
+      next[targetIndex] = { name: 'playlist', playlist: nextPlaylist, songs: playlistPaging.songs }
+      return next
+    })
+  }, [
+    currentPage.name,
+    playlistPaging.initialError,
+    playlistPaging.loadingInitial,
+    playlistPaging.playlist,
+    playlistPaging.songs,
+  ])
 
   useEffect(() => {
     if (!restorePlaybackOrigin || !restorePlaybackOrigin.surface.startsWith('traditional-')) return
     const originPlatform = restorePlaybackOrigin.platform || platform
     if (originPlatform !== platform) setPlatform(originPlatform)
     if (restorePlaybackOrigin.surface === 'traditional-playlist' && restorePlaybackOrigin.playlist) {
-      void openPlaylist({ ...(restorePlaybackOrigin.playlist as ExplorePlaylist), platform: originPlatform })
+      const savedPaging = restorePlaybackOrigin.detail as PlaylistPagingSnapshot | undefined
+      const restoredSongs = savedPaging?.songs || restorePlaybackOrigin.songs || []
+      playlistPaging.restore({
+        songs: restoredSongs,
+        playlist: restorePlaybackOrigin.playlist,
+        nextOffset: savedPaging?.nextOffset ?? restoredSongs.length,
+        hasMore: savedPaging?.hasMore ?? restoredSongs.length < Number((restorePlaybackOrigin.playlist as any)?.trackCount || restoredSongs.length),
+        total: savedPaging?.total ?? Number((restorePlaybackOrigin.playlist as any)?.trackCount || restoredSongs.length),
+      })
+      navigate({
+        name: 'playlist',
+        playlist: restorePlaybackOrigin.playlist,
+        songs: restoredSongs,
+      })
     } else if (restorePlaybackOrigin.surface === 'traditional-search') navigate({ name: 'search' })
     else if (restorePlaybackOrigin.surface === 'traditional-recent') navigate({ name: 'recent' })
     else if (restorePlaybackOrigin.surface === 'traditional-library') navigate({ name: 'library' })
@@ -853,7 +885,7 @@ function TraditionalView({
         goBack()
         return
       }
-      void openPlaylist(currentPage.playlist, true)
+      void openPlaylist(currentPage.playlist, true, true)
     }
     window.addEventListener('playlist-content-changed', refreshOpenPlaylist)
     return () => window.removeEventListener('playlist-content-changed', refreshOpenPlaylist)
@@ -869,6 +901,32 @@ function TraditionalView({
 
   const ownsPlaylist = useCallback((playlist: any): boolean => isPlaylistOwner(playlist, { neteaseUserId, qqUserId }), [neteaseUserId, qqUserId])
 
+  const handlePlayAllFromDetail = useCallback(async () => {
+    if (currentPage.name !== 'playlist') return
+    try {
+      const completeSongs = playlistPaging.hasMore
+        ? await playlistPaging.loadAll()
+        : playlistPaging.songs
+      if (completeSongs.length === 0) return
+      onSongSelect(completeSongs[0], completeSongs, {
+        mode: 'traditional',
+        surface: 'traditional-playlist',
+        platform: completeSongs[0].platform || platform,
+        playlist: currentPage.playlist,
+        songs: completeSongs,
+        detail: {
+          songs: completeSongs,
+          playlist: currentPage.playlist,
+          nextOffset: completeSongs.length,
+          hasMore: false,
+          total: completeSongs.length,
+        } satisfies PlaylistPagingSnapshot,
+      })
+    } catch {
+      // 分页错误已经在详情面板中提供重试与取消。
+    }
+  }, [currentPage, onSongSelect, platform, playlistPaging])
+
   const handleRemoveFromCurrentPlaylist = useCallback(async (song: Song, playlistId: string) => {
     if (currentPage.name !== 'playlist' || !ownsPlaylist(currentPage.playlist)) return
     const targetPlatform = (currentPage.playlist?.platform || platform) as MusicPlatform
@@ -876,12 +934,13 @@ function TraditionalView({
     const userId = targetPlatform === 'netease' ? neteaseUserId : targetPlatform === 'qq' ? qqUserId : ''
     try {
       await removeSongFromPlaylist(playlistId, String(song.id), userId || '', targetPlatform, { songMid: song.mid, songType: song.songType })
+      playlistPaging.removeSong(song)
       window.dispatchEvent(new CustomEvent('playlist-content-changed', { detail: { platform: targetPlatform, type: 'playlist-tracks', playlistId, songId: song.mid || song.id } }))
       window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '已从歌单移除', type: 'success' } }))
     } catch (error) {
       window.dispatchEvent(new CustomEvent('showToast', { detail: { message: error instanceof Error ? error.message : '从歌单移除失败', type: 'error' } }))
     }
-  }, [currentPage, neteaseUserId, ownsPlaylist, platform, qqUserId])
+  }, [currentPage, neteaseUserId, ownsPlaylist, platform, playlistPaging.removeSong, qqUserId])
 
   const handleSubscribePlaylist = useCallback(async (playlist: any, subscribe: boolean) => {
     const targetPlatform = (playlist?.platform || platform) as MusicPlatform
@@ -1181,7 +1240,44 @@ function TraditionalView({
           ) : currentPage.name === 'profile' ? (
             <TraditionalProfile platform={platform} accent={accent} isDark={isDark} loggedIn={loggedIn} username={username} avatar={avatar} selfUserId={platform === 'netease' ? (neteaseUserId || '') : platform === 'qq' ? (qqUserId || '') : ''} targetUserId={currentPage.userId} targetNickname={currentPage.nickname} targetAvatar={currentPage.avatarUrl} userPlaylists={userPlaylists} onBack={goBack} onOpenPlaylist={openPlaylist} onOpenLiked={openLikedSongs} onOpenUserProfile={(userId, nickname, avatarUrl) => navigate({ name: 'profile', userId, nickname, avatarUrl })} onOpenArtist={openArtistDetail} onLoginClick={() => onLoginClick(platform)} />
           ) : currentPage.name === 'playlist' ? (
-            <TraditionalPlaylistDetail playlist={currentPage.playlist} songs={currentPage.songs} loading={playlistLoading} error={playlistError} onRetry={() => void openPlaylist(currentPage.playlist, true)} currentSong={currentSong} playerTheme={playerTheme} accentColor={accent} onClose={goBack} isOwner={ownsPlaylist(currentPage.playlist)} onSongSelect={(song, songs) => onSongSelect(song, songs, { mode: 'traditional', surface: 'traditional-playlist', platform: song.platform || platform, playlist: currentPage.playlist, songs })} onOpenArtist={openArtistDetail} onOpenAlbum={openAlbumDetail} onPlayNext={onPlayNext} onAddToFavorites={onAddToFavorites} onRemoveFromFavorites={onRemoveFromFavorites} onAddToPlaylist={onAddToPlaylist} onRemoveFromPlaylist={ownsPlaylist(currentPage.playlist) && getPlatformCapabilities((currentPage.playlist?.platform || platform) as MusicPlatform).removeTracksFromPlaylist ? handleRemoveFromCurrentPlaylist : undefined} onViewComments={openCommentsFor} onCopyInfo={onCopyInfo} userPlaylists={userPlaylists} ownUserName={loggedIn ? username : ''} ownUserAvatar={avatar} ownUserId={platform === 'netease' ? (neteaseUserId || '') : platform === 'qq' ? (qqUserId || '') : ''} onOpenUserProfile={(targetPlatform, userId, nickname, avatarUrl) => { if (targetPlatform === platform) navigate({ name: 'profile', userId, nickname, avatarUrl }) }} />
+            <TraditionalPlaylistDetail
+              playlist={currentPage.playlist}
+              songs={currentPage.songs}
+              loading={playlistLoading}
+              error={playlistError}
+              onRetry={() => void openPlaylist(currentPage.playlist, true, true)}
+              onPlayAll={() => void handlePlayAllFromDetail()}
+              paging={playlistPaging}
+              currentSong={currentSong}
+              playerTheme={playerTheme}
+              accentColor={accent}
+              onClose={goBack}
+              isOwner={ownsPlaylist(currentPage.playlist)}
+              onSongSelect={(song, songs) => onSongSelect(song, songs, {
+                mode: 'traditional',
+                surface: 'traditional-playlist',
+                platform: song.platform || platform,
+                playlist: currentPage.playlist,
+                songs,
+                detail: playlistPaging.snapshot,
+              })}
+              onOpenArtist={openArtistDetail}
+              onOpenAlbum={openAlbumDetail}
+              onPlayNext={onPlayNext}
+              onAddToFavorites={onAddToFavorites}
+              onRemoveFromFavorites={onRemoveFromFavorites}
+              onAddToPlaylist={onAddToPlaylist}
+              onRemoveFromPlaylist={ownsPlaylist(currentPage.playlist) && getPlatformCapabilities((currentPage.playlist?.platform || platform) as MusicPlatform).removeTracksFromPlaylist ? handleRemoveFromCurrentPlaylist : undefined}
+              onViewComments={openCommentsFor}
+              onCopyInfo={onCopyInfo}
+              userPlaylists={userPlaylists}
+              ownUserName={loggedIn ? username : ''}
+              ownUserAvatar={avatar}
+              ownUserId={platform === 'netease' ? (neteaseUserId || '') : platform === 'qq' ? (qqUserId || '') : ''}
+              onOpenUserProfile={(targetPlatform, userId, nickname, avatarUrl) => {
+                if (targetPlatform === platform) navigate({ name: 'profile', userId, nickname, avatarUrl })
+              }}
+            />
           ) : currentPage.name === 'comments' ? (
             <TraditionalComments song={currentPage.song} accent={accent} isDark={isDark} onClose={goBack} />
           ) : currentPage.name === 'artist' ? (

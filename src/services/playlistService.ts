@@ -5,11 +5,14 @@ import type { MusicPlatform } from './platforms'
 
 import { indexedDBCache } from './indexedDBCache'
 import { isQQFallbackDisplayName } from '../utils/qqUser'
+import type { Song } from './musicApi'
 
 export interface PlaylistOptions {
   forceRefresh?: boolean
   skipCache?: boolean
 }
+
+export const PLAYLIST_PAGE_SIZE = 50
 
 const API_BASE = 'http://localhost:3211/api'
 const userPlaylistsCache = new Map<string, any[]>()
@@ -447,9 +450,10 @@ export async function getPlaylistDetail(
 ): Promise<any> {
   console.log(`🌐 从服务器获取歌单详情: ${playlistId}`)
   const devMode = localStorage.getItem('developerMode') === 'true'
+  const refresh = options.forceRefresh ? '&refresh=1' : ''
   const url = platform === 'netease'
-    ? `http://localhost:3211/api/netease/playlist/detail?id=${encodeURIComponent(playlistId)}&cookie=${encodeURIComponent(localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || '')}`
-    : `http://localhost:3211/api/qq/playlist/detail?id=${playlistId}&devMode=${devMode}&cookie=${encodeURIComponent(localStorage.getItem('qq_cookie') || localStorage.getItem('qqCookie') || '')}`
+    ? `http://localhost:3211/api/netease/playlist/detail?id=${encodeURIComponent(playlistId)}${refresh}&cookie=${encodeURIComponent(localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || '')}`
+    : `http://localhost:3211/api/qq/playlist/detail?id=${playlistId}&devMode=${devMode}${refresh}&cookie=${encodeURIComponent(localStorage.getItem('qq_cookie') || localStorage.getItem('qqCookie') || '')}`
   
   const maxRetries = 3
   const retryDelay = 1000 // 1秒
@@ -494,6 +498,120 @@ export interface NeteasePlaylistTrackPage {
   nextOffset: number
   more: boolean
   total: number
+}
+
+export interface PlaylistTrackPage {
+  playlist: any
+  songs: Song[]
+  offset: number
+  limit: number
+  nextOffset: number
+  more: boolean
+  total: number
+}
+
+export interface PlaylistPageOptions {
+  signal?: AbortSignal
+  forceRefresh?: boolean
+}
+
+export function mapPlaylistTracksToSongs(tracks: any[], platform: MusicPlatform): Song[] {
+  if (!Array.isArray(tracks)) return []
+
+  if (platform === 'netease') {
+    return tracks.map((track: any) => ({
+      id: track.id,
+      name: track.name,
+      artists: track.ar || track.artists || [],
+      album: track.al || track.album || {},
+      duration: track.dt || track.duration || 0,
+      platform: 'netease',
+      vip: track.vip || false,
+      fee: track.fee || 0
+    }))
+  }
+
+  return tracks.map((track: any) => ({
+    id: track.songid || track.id,
+    mid: track.songmid || track.mid || track.songMid,
+    name: track.songname || track.name || track.songName,
+    artists: track.singer || track.artists || [],
+    album: {
+      ...(track.album || {}),
+      name: track.albumname || track.album?.name || '',
+      picUrl: track.albumpic || track.album?.picUrl || (
+        track.albummid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${track.albummid}.jpg` : ''
+      )
+    },
+    duration: Number(track.duration) || Number(track.interval || 0) * 1000,
+    platform: 'qq',
+    songType: track.songType ?? track.type,
+    vip: track.pay?.payplay === 1 || track.vip === true
+  }))
+}
+
+/**
+ * 读取一页歌单详情。前端展示只消费这个入口；完整队列由显式播放全部/随机操作另行补齐。
+ * 平台页大小由后端尊重，不以“先全量下载再 slice”冒充分页。
+ */
+export async function getPlaylistTrackPage(
+  playlistId: string | number,
+  platform: MusicPlatform,
+  offset = 0,
+  limit = PLAYLIST_PAGE_SIZE,
+  options: PlaylistPageOptions = {}
+): Promise<PlaylistTrackPage> {
+  const safeOffset = Math.max(0, Math.floor(Number(offset) || 0))
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || PLAYLIST_PAGE_SIZE)))
+  const cookie = getPlatformCookie(platform)
+  const params = new URLSearchParams({
+    id: String(playlistId),
+    offset: String(safeOffset),
+    limit: String(safeLimit),
+    cookie,
+  })
+  if (options.forceRefresh) params.set('refresh', '1')
+  if (platform === 'qq' && localStorage.getItem('developerMode') === 'true') params.set('devMode', 'true')
+
+  const response = await fetch(`${API_BASE}/${platform}/playlist/detail?${params.toString()}`, {
+    signal: options.signal,
+    cache: 'no-store',
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok || data.error || data.errMsg) {
+    throw new Error(data.error || data.errMsg || `读取${platform === 'qq' ? 'QQ' : '网易云'}歌单失败（HTTP ${response.status}）`)
+  }
+
+  const playlist = data.playlist || {}
+  const rawTracks = platform === 'qq'
+    ? (Array.isArray(data.songlist) ? data.songlist : (Array.isArray(playlist.tracks) ? playlist.tracks : []))
+    : (Array.isArray(playlist.tracks) ? playlist.tracks : (Array.isArray(data.songs) ? data.songs : []))
+  const total = Math.max(0, Number(
+    data.total ?? data.songnum ?? data.total_song_num ?? playlist.trackCount ?? playlist.track_count ?? rawTracks.length
+  ) || 0)
+  const pageOffset = Math.max(0, Number(data.offset ?? safeOffset) || 0)
+  const pageLimit = Math.max(1, Number(data.limit ?? safeLimit) || safeLimit)
+  const fallbackNextOffset = pageOffset + rawTracks.length
+  const parsedNextOffset = Number(data.nextOffset)
+  const nextOffset = data.nextOffset !== undefined && Number.isFinite(parsedNextOffset)
+    ? parsedNextOffset
+    : fallbackNextOffset
+  if (data.more === true && nextOffset <= pageOffset) {
+    throw new Error('歌单分页页码未前进，请重试')
+  }
+  const more = typeof data.more === 'boolean'
+    ? data.more && nextOffset > pageOffset
+    : nextOffset < total && rawTracks.length > 0
+
+  return {
+    playlist: { ...playlist, id: playlist.id ?? playlistId, trackCount: total || playlist.trackCount, platform },
+    songs: mapPlaylistTracksToSongs(rawTracks, platform),
+    offset: pageOffset,
+    limit: pageLimit,
+    nextOffset,
+    more,
+    total,
+  }
 }
 
 export async function getNeteasePlaylistTrackPage(

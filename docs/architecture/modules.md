@@ -15,6 +15,7 @@
 | 新增 ipcMain.handle | [IPC 注册 / capability](#ipc-注册--capability) | `npm run test:desktop` |
 | 歌词源选择 / 合并 | [歌词源仲裁](#歌词源仲裁) | `test/lyricsSelection.test.ts`、`test/migrationEquivalence.test.ts` 歌词段 |
 | 预载 / 缓存歌词与 URL | [预载账本](#预载账本) | `test/preloadLedger.test.ts` |
+| 歌单详情分页 / 完整播放准备 | [歌单详情分页](../performance-playlist-paging.md) | `test/playlistPaging.test.tsx`、`npm run test:wiring` |
 | 播放页开关 / 主题 | [播放页显示偏好](#播放页显示偏好) | `test/playbackDisplaySettings.test.ts`、`test/migrationEquivalence.test.ts` 秒数段 |
 | 详情弹窗返回 / 关闭 | [详情导航栈](#详情导航栈) | `test/detailNavigation.test.ts`、`test/migrationEquivalence.test.ts` 歌曲身份段 |
 | 后端进程内缓存 | [进程内过期缓存（后端）](#进程内过期缓存后端) | `test/ttlCache.test.ts`、`test/migrationEquivalence.test.ts` 缓存段 |

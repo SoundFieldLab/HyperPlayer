@@ -34,6 +34,15 @@ vi.mock('../src/services/exploreApi', () => ({
 }))
 
 vi.mock('../src/services/playlistService', () => ({
+  getPlaylistTrackPage: vi.fn(async (playlistId: string) => ({
+    playlist: { id: playlistId, trackCount: 1, platform: 'netease' },
+    songs: [{ id: 2, name: '歌单歌曲', artists: [{ name: '歌手B' }], album: { name: '专辑B', picUrl: '' }, duration: 180000, platform: 'netease' }],
+    offset: 0,
+    limit: 50,
+    nextOffset: 1,
+    more: false,
+    total: 1,
+  })),
   getUserPlaylists: vi.fn(async () => [
     { id: 'like1', name: '我喜欢的音乐', isLike: true, coverImgUrl: 'https://x/x.png', platform: 'netease' },
     { id: 'm1', name: '我的歌单一', coverImgUrl: 'https://x/x.png', platform: 'netease' },

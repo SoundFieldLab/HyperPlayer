@@ -1,7 +1,7 @@
 import type { MusicPlatform } from '../services/platforms'
 import { useState, useEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent } from 'react'
 import { motion } from 'framer-motion'
-import { Play, Clock } from 'lucide-react'
+import { Play, Clock, Loader2 } from 'lucide-react'
 import { Song, resolveSongAlbumIdentifier, isSameSong } from '../services/musicApi'
 import { debugLog } from '../utils/debugLog'
 import { rafThrottle } from '../utils/rafThrottle'
@@ -9,6 +9,7 @@ import ScrollToTop from './ScrollToTop'
 import ScrollToCurrentSong from './ScrollToCurrentSong'
 import SongContextMenu from './SongContextMenu'
 import DeleteSongModal from './DeleteSongModal'
+import type { PlaylistPagingControls } from '../hooks/usePlaylistPaging'
 
 // 3D网格歌单视图组件 - 简化版本，移除拖拽功能
 interface PlaylistGrid3DProps {
@@ -32,6 +33,7 @@ interface PlaylistGrid3DProps {
   userPlaylists?: any[]
   currentPlaylistId?: string
   isCurrentPlaylistLiked?: boolean
+  paging?: PlaylistPagingControls
 }
 
 // 单个歌曲卡片组件
@@ -162,6 +164,7 @@ export default function PlaylistGrid3D({
   userPlaylists = [],
   currentPlaylistId,
   isCurrentPlaylistLiked = false,
+  paging,
 }: PlaylistGrid3DProps) {
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null)
   const [containerSize, setContainerSize] = useState({ width: 1000, height: 600 }) // 使用更合理的默认值
@@ -338,6 +341,12 @@ export default function PlaylistGrid3D({
     }
   }, [songs, cardsPerRow, scrollTop, containerSize.height, CARD_HEIGHT, CARD_GAP_Y])
 
+  useEffect(() => {
+    if (!paging?.hasMore || paging.loadingMore || paging.moreError) return
+    const distanceToEnd = totalHeight - (scrollTop + containerSize.height)
+    if (distanceToEnd < 700) void paging.loadMore()
+  }, [paging, scrollTop, containerSize.height, totalHeight])
+
   // 监听滚动
   useEffect(() => {
     const container = scrollContainerRef.current
@@ -348,6 +357,7 @@ export default function PlaylistGrid3D({
 
     const handleScroll = () => {
       setScrollTop(container.scrollTop)
+      paging?.setScrollTop(container.scrollTop)
       debugLog(`📜 [PlaylistGrid3D] 滚动事件触发，当前位置: ${container.scrollTop}px`)
     }
 
@@ -357,6 +367,14 @@ export default function PlaylistGrid3D({
       debugLog('🗑️ [PlaylistGrid3D] 移除滚动监听')
       container.removeEventListener('scroll', handleScroll)
     }
+  }, [containerElement, paging?.setScrollTop])
+
+  useEffect(() => {
+    if (!containerElement || !paging?.scrollTop) return
+    const frame = window.requestAnimationFrame(() => {
+      containerElement.scrollTo({ top: paging.scrollTop })
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [containerElement])
 
   const handlePlaySong = (song: Song) => {
@@ -502,6 +520,25 @@ export default function PlaylistGrid3D({
         cardHeight={CARD_HEIGHT}
         cardGapY={CARD_GAP_Y}
       />
+
+      {paging && (
+        <div className="pointer-events-none absolute bottom-5 left-1/2 z-30 -translate-x-1/2">
+          <div className="pointer-events-auto flex min-h-10 items-center gap-3 rounded-full border border-white/15 bg-black/70 px-4 py-2 text-xs text-white/70 shadow-xl backdrop-blur-xl">
+            {paging.moreError ? (
+              <>
+                <span role="alert">{paging.moreError}</span>
+                <button type="button" onClick={() => void paging.retryMore()} className="rounded-full border border-white/15 px-3 py-1 text-white hover:bg-white/10">重试</button>
+              </>
+            ) : paging.loadingMore ? (
+              <span className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" />继续加载…</span>
+            ) : paging.hasMore ? (
+              <button type="button" onClick={() => void paging.loadMore()} className="rounded-full border border-white/15 px-3 py-1 text-white hover:bg-white/10">加载更多</button>
+            ) : (
+              <span>已加载全部 {songs.length} 首</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {contextMenu.song && (
         <SongContextMenu

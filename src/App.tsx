@@ -61,7 +61,8 @@ import { autoMixAnalysisService } from './services/autoMixAnalysisService'
 import { getAudioEngineVersion, setAudioEngineVersion, type AudioEngineVersion } from './services/audioEngineVersion'
 import { getEngineAdapter, getAvailableEngines, getAvailableEngineIds, warmHSEEngineModule, type IAudioEngineAdapter } from './services/audio-engine'
 import { sequenceTracksHam2, type SequencingEntry } from './services/playlistSequencing'
-import { likeSong, addSongToPlaylist, getUserPlaylists, updateCachedUserPlaylists, getPlaylistDetail } from './services/playlistService'
+import { likeSong, addSongToPlaylist, getUserPlaylists, updateCachedUserPlaylists } from './services/playlistService'
+import { usePlaylistPaging, type PlaylistPagingSnapshot } from './hooks/usePlaylistPaging'
 import { fetchExploreRecommendationBatch } from './services/exploreApi'
 import { scheduleBackgroundPrefetch } from './services/backgroundPrefetch'
 import { getDesktopSpectrumConsumerCount, subscribeDesktopSpectrumConsumers } from './services/desktopSpectrum'
@@ -684,7 +685,7 @@ function App() {
   const [similarSongsSource, setSimilarSongsSource] = useState<Song | null>(null)
   // 歌曲详情「也爱歌单」应用内打开
   const [detailPlaylist, setDetailPlaylist] = useState<{ playlist: any; songs: Song[] } | null>(null)
-  const [detailPlaylistLoading, setDetailPlaylistLoading] = useState(false)
+  const detailPlaylistPaging = usePlaylistPaging()
   // 音效引擎版本（v1 远程原版 / v2 本地增强版 / v3 纯 TS DSP 内核），默认 v1；切换见 switchAudioEngine
   const [audioEngineVersion, setAudioEngineVersionState] = useState<AudioEngineVersion>(() => getAudioEngineVersion(getAvailableEngineIds()))
   // 引擎导出进行中状态（由 adapter.onExportingChange 事件驱动，供调音室导出按钮禁用/文案）
@@ -2594,18 +2595,45 @@ function App() {
 
   // 歌曲详情「也爱歌单」→ 应用内打开歌单详情
   const handleOpenPlaylistFromDetail = async (playlistId: string, platform: MusicPlatform) => {
-    setDetailPlaylistLoading(true)
+    setDetailPlaylist({ playlist: { id: playlistId, platform, name: '歌单' }, songs: [] })
+    await detailPlaylistPaging.open(playlistId, platform, { forceRefresh: true })
+  }
+
+  const handlePlayAllFromDetail = async () => {
+    if (!detailPlaylist?.playlist) return
     try {
-      const data = await getPlaylistDetail(playlistId, platform)
-      const songs = data?.songs || data?.songlist || data?.playlist?.tracks || data?.tracks || []
-      setDetailPlaylist({ playlist: data?.playlist || { id: playlistId, platform, name: '歌单' }, songs })
-    } catch {
+      const completeSongs = detailPlaylistPaging.hasMore
+        ? await detailPlaylistPaging.loadAll()
+        : detailPlaylistPaging.songs
+      if (completeSongs.length === 0) return
+      const completeDetail = {
+        songs: completeSongs,
+        playlist: detailPlaylist.playlist,
+        nextOffset: completeSongs.length,
+        hasMore: false,
+        total: completeSongs.length,
+      } satisfies PlaylistPagingSnapshot
       setDetailPlaylist(null)
-      addToast('歌单加载失败，请稍后重试', 'error')
-    } finally {
-      setDetailPlaylistLoading(false)
+      void handleSongSelect(completeSongs[0], completeSongs, {
+        surface: 'home-playlist',
+        playlist: detailPlaylist.playlist,
+        songs: completeSongs,
+        detail: completeDetail,
+      })
+    } catch {
+      // 详情面板保留错误状态和重试入口。
     }
   }
+
+  useEffect(() => {
+    if (!detailPlaylist) return
+    setDetailPlaylist(previous => previous ? {
+      playlist: detailPlaylistPaging.playlist
+        ? { ...previous.playlist, ...detailPlaylistPaging.playlist }
+        : previous.playlist,
+      songs: detailPlaylistPaging.songs,
+    } : previous)
+  }, [detailPlaylistPaging.playlist, detailPlaylistPaging.songs])
 
   // 处理歌曲选择
   const handleSongSelect = async (song: Song, playlistFromSource?: Song[], origin?: PlaybackOrigin) => {
@@ -4952,9 +4980,16 @@ function App() {
               overlayZ={95}
               playerTheme={playerTheme}
               playlist={detailPlaylist.playlist}
-              songs={detailPlaylist.songs}
-              loading={detailPlaylistLoading}
-              onClose={() => setDetailPlaylist(null)}
+              songs={detailPlaylistPaging.songs}
+              loading={detailPlaylistPaging.loadingInitial}
+              error={detailPlaylistPaging.initialError}
+              onRetry={() => void detailPlaylistPaging.retryInitial()}
+              onPlayAll={() => void handlePlayAllFromDetail()}
+              paging={detailPlaylistPaging}
+              onClose={() => {
+                detailPlaylistPaging.cancelAll()
+                setDetailPlaylist(null)
+              }}
               onSongSelect={(song, songs) => {
                 // 选歌后关闭歌单详情面板（避免盖在播放页上），并记录歌单来源，
                 // home 返回时经 HomeView 恢复同一歌单并自动定位当前歌曲
@@ -4963,6 +4998,7 @@ function App() {
                   surface: 'home-playlist',
                   playlist: detailPlaylist.playlist,
                   songs,
+                  detail: detailPlaylistPaging.snapshot,
                 })
               }}
               currentPlatform={detailPlaylist.playlist.platform || 'netease'}

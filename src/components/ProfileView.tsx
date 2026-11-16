@@ -24,6 +24,7 @@ import { getPlatformCapabilities, platformLabel } from '../services/platforms'
 import { getPlatformRemainingDays } from '../services/loginExpiry'
 import { detectQQMusicVip } from '../utils/musicEntitlements'
 import { debugLog } from '../utils/debugLog'
+import { usePlaylistPaging } from '../hooks/usePlaylistPaging'
 
 interface Playlist {
   id: string | number
@@ -799,38 +800,15 @@ function ProfileView({
 
   const handlePlayPlaylist = async (playlist: Playlist, event: React.MouseEvent) => {
     event.stopPropagation()
+    setManagementPlaylist(playlist)
+    setSelectedPlaylist(playlist)
+    setShowPlaylistDetail(true)
+    setLoadingPlaylistSongs(true)
+    setPlaylistSongs([])
     try {
-      const response = await fetch(
-        platform === 'qq'
-          ? `http://localhost:3211/api/qq/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`
-          : `http://localhost:3211/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`
-      )
-      const data = await response.json()
-      if (!response.ok || data.error) throw new Error(data.error || '读取歌单失败')
-      const tracks = platform === 'qq'
-        ? data.songlist || data.data?.songlist || []
-        : data.playlist?.tracks || []
-      const songs: Song[] = tracks.map((track: any) => platform === 'qq' ? ({
-        id: track.songid || track.id,
-        mid: track.songmid || track.mid,
-        name: track.songname || track.name,
-        artists: track.singer || [],
-        album: {
-          name: track.albumname || track.album?.name || '',
-          picUrl: track.albumpic || (track.albummid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${track.albummid}.jpg` : '')
-        },
-        duration: Number(track.interval || 0) * 1000 || Number(track.duration || 0),
-        platform: 'qq'
-      }) : ({
-        id: track.id,
-        name: track.name,
-        artists: track.ar || track.artists || [],
-        album: track.al || track.album || {},
-        duration: track.dt || track.duration || 0,
-        platform: 'netease',
-        vip: track.vip || false,
-        fee: track.fee || 0
-      }))
+      const firstPageSongs = await playlistPaging.open(playlist.id, playlist.platform || platform, { forceRefresh: true })
+      if (firstPageSongs.length === 0) return
+      const songs = await playlistPaging.loadAll()
       if (songs.length > 0) handleSongSelection(songs[0], songs)
       else showPlaylistToast('歌单中暂无可播放歌曲', 'info')
     } catch (error) {
@@ -857,6 +835,7 @@ function ProfileView({
       setPlaylistSongs(previous => previous.filter(item => !(
         isSameSong(item, song)
       )))
+      playlistPaging.removeSong(song)
       const updateTrackCount = (playlist: Playlist | null) => playlist ? {
         ...playlist,
         trackCount: Math.max(0, Number(playlist.trackCount || 0) - 1)
@@ -881,6 +860,7 @@ function ProfileView({
     setPlaylistSongs(previous => previous.filter(item => !(
       isSameSong(item, song)
     )))
+    playlistPaging.removeSong(song)
     const updateTrackCount = (playlist: Playlist | null) => playlist ? {
       ...playlist,
       trackCount: Math.max(0, Number(playlist.trackCount || 0) - 1)
@@ -894,6 +874,26 @@ function ProfileView({
   const [selectedPlaylist, setSelectedPlaylist] = useState<any>(null)
   const [playlistSongs, setPlaylistSongs] = useState<Song[]>([])
   const [loadingPlaylistSongs, setLoadingPlaylistSongs] = useState(false)
+  const playlistPaging = usePlaylistPaging()
+
+  useEffect(() => {
+    setPlaylistSongs(playlistPaging.songs)
+    setLoadingPlaylistSongs(playlistPaging.loadingInitial)
+  }, [playlistPaging.loadingInitial, playlistPaging.songs])
+
+  useEffect(() => {
+    if (!playlistPaging.playlist) return
+    setSelectedPlaylist((previous: Playlist | null) => previous ? {
+      ...previous,
+      ...playlistPaging.playlist,
+      platform: playlistPaging.playlist.platform || previous.platform,
+    } : previous)
+    setManagementPlaylist((previous: Playlist | null) => previous ? {
+      ...previous,
+      ...playlistPaging.playlist,
+      platform: playlistPaging.playlist.platform || previous.platform,
+    } : previous)
+  }, [playlistPaging.playlist])
 
   const handleSongSelection = (song: Song, songs?: Song[]) => {
     setShowPlaylistDetail(false)
@@ -909,97 +909,17 @@ function ProfileView({
     setShowPlaylistDetail(true)
     setLoadingPlaylistSongs(true)
     setPlaylistSongs([])
-    
+    await playlistPaging.open(playlist.id, playlist.platform || platform, { forceRefresh: true })
+  }
+
+  const handlePlayAllFromDetail = async () => {
     try {
-      let response, data
-      
-      if (platform === 'netease') {
-        response = await fetch(`http://localhost:3211/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(cookie)}`)
-        data = await response.json()
-        if (!response.ok || data.error) throw new Error(data.error || '读取网易云歌单失败')
-        if (data.playlist) {
-          const detailedPlaylist = { ...playlist, ...data.playlist, platform: 'netease' }
-          setSelectedPlaylist(detailedPlaylist)
-          setManagementPlaylist(detailedPlaylist)
-        }
-        
-        if (data.playlist && data.playlist.tracks) {
-          const songs: Song[] = data.playlist.tracks.map((track: any) => ({
-            id: track.id,
-            name: track.name,
-            artists: track.ar || track.artists || [],
-            album: track.al || track.album || {},
-            duration: track.dt || track.duration || 0,
-            platform: 'netease'
-          }))
-          
-          setPlaylistSongs(songs)
-        }
-      } else if (platform === 'qq') {
-        debugLog('📤 正在获取QQ音乐歌单详情，ID:', playlist.id)
-        response = await fetch(`http://localhost:3211/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`)
-        data = await response.json()
-        
-        debugLog('📥 QQ音乐歌单详情:', data)
-        if (data.playlist) {
-          const keepCustomLikeAppearance = Boolean(playlist.isLike)
-          const detailedPlaylist = {
-            ...playlist,
-            ...data.playlist,
-            name: keepCustomLikeAppearance ? playlist.name : (data.playlist.name || playlist.name),
-            coverImgUrl: keepCustomLikeAppearance ? playlist.coverImgUrl : (data.playlist.coverImgUrl || playlist.coverImgUrl),
-            dirId: playlist.dirId,
-            userId: playlist.userId,
-            isLike: playlist.isLike,
-            isCollected: playlist.isCollected,
-            platform: 'qq' as const
-          }
-          setSelectedPlaylist(detailedPlaylist)
-          setManagementPlaylist(detailedPlaylist)
-        }
-        
-        // QQ音乐歌单详情直接返回songlist字段
-        if (data.songlist && Array.isArray(data.songlist)) {
-          const songs: Song[] = data.songlist.map((track: any) => ({
-            id: track.songid || track.id,
-            mid: track.songmid || track.mid,
-            name: track.songname || track.name,
-            artists: track.singer || [],
-            album: {
-              name: track.albumname || track.album?.name || '',
-              picUrl: track.albumpic || (track.albummid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${track.albummid}.jpg` : '')
-            },
-            duration: Number(track.interval || 0) * 1000 || Number(track.duration || 0),
-            platform: 'qq'
-          }))
-          
-          debugLog('✅ 解析到', songs.length, '首歌曲')
-          setPlaylistSongs(songs)
-        } else if (data.data && data.data.songlist) {
-          // 备用：检查是否在data.songlist里
-          const songs: Song[] = data.data.songlist.map((track: any) => ({
-            id: track.songid || track.id,
-            mid: track.songmid || track.mid,
-            name: track.songname || track.name,
-            artists: track.singer || [],
-            album: {
-              name: track.albumname || track.album?.name || '',
-              picUrl: track.albumpic || (track.albummid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${track.albummid}.jpg` : '')
-            },
-            duration: Number(track.interval || 0) * 1000 || Number(track.duration || 0),
-            platform: 'qq'
-          }))
-          
-          debugLog('✅ 解析到', songs.length, '首歌曲')
-          setPlaylistSongs(songs)
-        } else {
-          console.warn('⚠️ 未找到songlist字段')
-        }
-      }
-    } catch (error) {
-      console.error('❌ 获取歌单详情失败:', error)
-    } finally {
-      setLoadingPlaylistSongs(false)
+      const completeSongs = playlistPaging.hasMore
+        ? await playlistPaging.loadAll()
+        : playlistPaging.songs
+      if (completeSongs.length > 0) handleSongSelection(completeSongs[0], completeSongs)
+    } catch {
+      // 详情面板保留重试和取消入口。
     }
   }
 
@@ -2562,7 +2482,14 @@ function ProfileView({
         playlist={selectedPlaylist}
         songs={playlistSongs}
         loading={loadingPlaylistSongs}
-        onClose={() => setShowPlaylistDetail(false)}
+        error={playlistPaging.initialError}
+        onRetry={() => void playlistPaging.retryInitial()}
+        onPlayAll={() => void handlePlayAllFromDetail()}
+        paging={playlistPaging}
+        onClose={() => {
+          playlistPaging.cancelAll()
+          setShowPlaylistDetail(false)
+        }}
         onSongSelect={handleSongSelection}
         neteaseVip={platform === 'netease' ? (userDetail?.vipType || 0) > 0 : false}
         qqVip={platform === 'qq' ? (userDetail?.vipType || 0) > 0 : false}

@@ -43,6 +43,23 @@ describe('mode integration wiring', () => {
     expect(app).toContain('traditionalSpectrumVisible && traditionalRightColumnVisible')
   })
 
+  it('routes playlist detail paging through one shared bounded session', () => {
+    const service = source('services/playlistService.ts')
+    const hook = source('hooks/usePlaylistPaging.ts')
+    const home = source('components/HomeView.tsx')
+    expect(service).toContain('export const PLAYLIST_PAGE_SIZE = 50')
+    expect(service).toContain('offset: String(safeOffset)')
+    expect(service).toContain('limit: String(safeLimit)')
+    expect(hook).toContain('requestRef.current || session.nextOffset <= 0')
+    expect(hook).toContain('appendUniqueSongs')
+    expect(home).toContain('const playlistPaging = usePlaylistPaging()')
+    expect(home).not.toContain('schedulePlaylistHoverPrefetch')
+    expect(home).not.toContain('playlistHoverTimersRef')
+    for (const mode of ['ExploreView.tsx', 'TraditionalView.tsx', 'DesktopView.tsx']) {
+      expect(source(`components/${mode}`)).toContain('usePlaylistPaging()')
+    }
+  })
+
   it('keeps playback surfaces on cover-derived color instead of settings accent', () => {
     const app = source('App.tsx')
     const immersive = source('components/ImmersiveControls.tsx')
@@ -74,7 +91,7 @@ describe('mode integration wiring', () => {
     const view = source('components/ExploreView.tsx')
     expect(view).toContain("surface: 'explore-detail'")
     expect(view).toContain("restorePlaybackOrigin?.surface !== 'explore-detail'")
-    expect(view).toContain('setDetail(restorePlaybackOrigin.detail as ExploreDetail)')
+    expect(view).toContain('playlistPaging.restore(savedPaging)')
     expect(view).toContain("surface: 'explore-fm'")
   })
 
@@ -90,7 +107,7 @@ describe('mode integration wiring', () => {
   it('guards Traditional async and audio lifecycle teardown', () => {
     const view = source('components/TraditionalView.tsx')
     const player = source('hooks/useAudioPlayer.ts')
-    expect(view).toContain('playlistAbortRef.current?.abort()')
+    expect(view).toContain('playlistPaging.cancelAll()')
     expect(view).toContain('platform: originPlatform')
     expect(view).toContain("document.addEventListener('visibilitychange', onVisibilityChange)")
     expect(view).toContain("prefers-reduced-motion: reduce")

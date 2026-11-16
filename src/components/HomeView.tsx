@@ -2,12 +2,12 @@ import { memo, useState, useEffect, useRef } from 'react'
 import { PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } from '../services/platformSync'
 import { motion, AnimatePresence, animate, useMotionValue } from 'framer-motion'
 import { Play, Music, TrendingUp, Flame, Clock, LogOut, Crown, User, Heart, Search, Settings, History, Speaker } from 'lucide-react'
-import { Song, getProxiedImageUrl, resolveSongAlbumIdentifier, getSongUrl, isSameSong } from '../services/musicApi'
+import { Song, getProxiedImageUrl, resolveSongAlbumIdentifier, isSameSong } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
 import { getVisiblePlatforms, PLATFORM_VISIBILITY_EVENT, PLATFORM_ORDER_EVENT } from '../services/platforms'
 import PlaylistDetailPanel from './PlaylistDetailPanel'
 import ModeSelectionPanel, { MODE_SELECTION_CLOSE_MS, MODE_SELECTION_PANEL_HEIGHT } from './ModeSelectionPanel'
-import { getCachedUserPlaylists, getUserPlaylists, streamNeteasePlaylistTracks } from '../services/playlistService'
+import { getCachedUserPlaylists, getPlaylistTrackPage, getUserPlaylists } from '../services/playlistService'
 import CachedImage from './CachedImage'
 import { imageCache } from '../utils/imageCache'
 import { debugLog } from '../utils/debugLog'
@@ -21,7 +21,8 @@ import EditPlaylistModal from './EditPlaylistModal'
 import DeletePlaylistModal from './DeletePlaylistModal'
 import PluginShortcuts from './PluginShortcuts'
 import type { PlaybackOrigin, SongSelectHandler } from '../types/playbackNavigation'
-import { fetchExploreChart, fetchExploreHome, fetchExplorePlaylist } from '../services/exploreApi'
+import { usePlaylistPaging, type PlaylistPagingSnapshot } from '../hooks/usePlaylistPaging'
+import { fetchExploreChart, fetchExploreHome } from '../services/exploreApi'
 import {
   getDefaultHomeModules,
   HOME_MODULE_BY_ID,
@@ -395,6 +396,21 @@ function HomeView({
   const [showPlaylistDetail, setShowPlaylistDetail] = useState(false)
   const [playlistSongs, setPlaylistSongs] = useState<Song[]>([])
   const [loadingPlaylistSongs, setLoadingPlaylistSongs] = useState(false)
+  const playlistPaging = usePlaylistPaging()
+
+  useEffect(() => {
+    setPlaylistSongs(playlistPaging.songs)
+    setLoadingPlaylistSongs(playlistPaging.loadingInitial)
+  }, [playlistPaging.loadingInitial, playlistPaging.songs])
+
+  useEffect(() => {
+    if (!playlistPaging.playlist) return
+    setSelectedPlaylist((current: any) => current ? {
+      ...current,
+      ...playlistPaging.playlist,
+      platform: playlistPaging.playlist.platform || current.platform,
+    } : current)
+  }, [playlistPaging.playlist])
   
   // 壁纸背景
   const [currentWallpaper, setCurrentWallpaper] = useState<WallpaperFile | null>(null)
@@ -429,36 +445,10 @@ function HomeView({
   
   // 个人中心面板状态
   
-  // 歌单播放缓存 - 预加载详情与首曲 URL，减少点击延迟
-  const playlistPlaybackCacheRef = useRef<Map<string, { songs: Song[]; timestamp: number }>>(new Map())
-  const playlistPlaybackPendingRef = useRef<Map<string, Promise<Song[]>>>(new Map())
-  const PLAYLIST_PLAYBACK_CACHE_TTL = 5 * 60 * 1000
-  const PLAYLIST_PLAYBACK_CACHE_MAX_ENTRIES = 4
-  const playlistHoverTimersRef = useRef<Map<string, number>>(new Map())
-
-  const setPlaylistPlaybackCache = (cacheKey: string, songs: Song[]) => {
-    const cache = playlistPlaybackCacheRef.current
-    cache.set(cacheKey, { songs, timestamp: Date.now() })
-    // 浏览大量歌单时缓存只增不减，会积压整份曲目列表。按最旧时间戳淘汰。
-    while (cache.size > PLAYLIST_PLAYBACK_CACHE_MAX_ENTRIES) {
-      let oldestKey: string | null = null
-      let oldestTime = Number.POSITIVE_INFINITY
-      for (const [key, value] of cache) {
-        if (value.timestamp < oldestTime) {
-          oldestTime = value.timestamp
-          oldestKey = key
-        }
-      }
-      if (oldestKey === null) break
-      cache.delete(oldestKey)
-    }
-  }
-  
   // AbortController instances used to clean up pending requests
   const activeRequestsRef = useRef<Set<AbortController>>(new Set())
   const refreshHomeModuleControllerRef = useRef<AbortController | null>(null)
   const playlistLoadIdRef = useRef(0)
-  const playlistDetailControllerRef = useRef<AbortController | null>(null)
   const playlistDetailRequestIdRef = useRef(0)
   const playlistDetailCleanupTimerRef = useRef<number | null>(null)
   
@@ -505,7 +495,6 @@ function HomeView({
         }
       })
       activeRequestsRef.current.clear()
-      playlistDetailControllerRef.current = null
       if (playlistDetailCleanupTimerRef.current !== null) {
         window.clearTimeout(playlistDetailCleanupTimerRef.current)
         playlistDetailCleanupTimerRef.current = null
@@ -592,140 +581,9 @@ function HomeView({
     }
   }, [moduleLoading, moduleSongs, modulePlaylists])
 
-  const getPlaylistPlaybackCacheKey = (playlist: any) => {
-    const playlistPlatform = (playlist.platform || platform) as MusicPlatform
-    const accountId = playlistPlatform === 'qq' ? (qqUserId || 'guest') : (neteaseUserId || 'guest')
-    return `${playlistPlatform}:${accountId}:${authRevision}:${playlist.id}`
-  }
-
-  const mapPlaylistTracksToSongs = (tracks: any[], playlistPlatform: 'netease' | 'qq'): Song[] => {
-    if (!Array.isArray(tracks)) return []
-
-    if (playlistPlatform === 'netease') {
-      return tracks.map((track: any) => ({
-        id: track.id,
-        name: track.name,
-        artists: track.ar || track.artists || [],
-        album: track.al || track.album || {},
-        duration: track.dt || track.duration || 0,
-        platform: 'netease',
-        vip: track.vip || false,
-        fee: track.fee || 0
-      }))
-    }
-
-    return tracks.map((track: any) => ({
-      id: track.songid || track.id,
-      mid: track.songmid || track.mid,
-      name: track.songname || track.name,
-      artists: track.singer || [],
-      album: {
-        name: track.albumname || track.album?.name || '',
-        picUrl: track.albumpic || (track.albummid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${track.albummid}.jpg` : '')
-      },
-      duration: Number(track.interval || 0) * 1000 || Number(track.duration || 0),
-      platform: 'qq',
-      vip: track.pay?.payplay === 1 || false
-    }))
-  }
-
-  const resolvePlaylistSongsForPlayback = async (playlist: any): Promise<Song[]> => {
-    const playlistPlatform = playlist.platform || platform
-    const cacheKey = getPlaylistPlaybackCacheKey(playlist)
-    const cached = playlistPlaybackCacheRef.current.get(cacheKey)
-    const now = Date.now()
-    if (cached && (now - cached.timestamp) < PLAYLIST_PLAYBACK_CACHE_TTL) {
-      return cached.songs
-    }
-
-    const pending = playlistPlaybackPendingRef.current.get(cacheKey)
-    if (pending) {
-      return pending
-    }
-
-    const request = (async () => {
-      let data: any
-
-      if (playlistPlatform === 'netease') {
-        const neteaseCookie = localStorage.getItem('netease_cookie') || localStorage.getItem('neteaseCookie') || ''
-        const response = await fetch(`http://localhost:3211/api/netease/playlist/detail?id=${encodeURIComponent(playlist.id)}&cookie=${encodeURIComponent(neteaseCookie)}`)
-        data = await response.json()
-        if (!response.ok || data.error) throw new Error(data.error || '读取网易云歌单失败')
-        const songs = mapPlaylistTracksToSongs(data.playlist?.tracks || [], 'netease')
-        if (songs.length > 0) {
-          setPlaylistPlaybackCache(cacheKey, songs)
-        }
-        const firstSong = songs[0]
-        if (firstSong) {
-          void getSongUrl(firstSong.platform === 'qq' ? (firstSong.mid || firstSong.id) : firstSong.id, firstSong.platform || 'netease').catch(() => null)
-        }
-        return songs
-      }
-
-      const cookie = localStorage.getItem('qq_cookie') || ''
-      const response = await fetch(`http://localhost:3211/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`)
-      data = await response.json()
-      if (!response.ok || data.error) throw new Error(data.error || '读取QQ歌单失败')
-      const songs = mapPlaylistTracksToSongs(data.songlist || data.data?.songlist || [], 'qq')
-      if (songs.length > 0) {
-        setPlaylistPlaybackCache(cacheKey, songs)
-      }
-      const firstSong = songs[0]
-      if (firstSong) {
-        void getSongUrl(firstSong.platform === 'qq' ? (firstSong.mid || firstSong.id) : firstSong.id, firstSong.platform || 'qq').catch(() => null)
-      }
-      return songs
-    })()
-
-    playlistPlaybackPendingRef.current.set(cacheKey, request)
-    try {
-      return await request
-    } finally {
-      if (playlistPlaybackPendingRef.current.get(cacheKey) === request) {
-        playlistPlaybackPendingRef.current.delete(cacheKey)
-      }
-    }
-  }
-
-  const prefetchPlaylistPlayback = (playlist: any) => {
-    if ((playlist.platform || platform) === 'netease' && Number(playlist.trackCount || 0) > 200) return
-    void resolvePlaylistSongsForPlayback(playlist).catch((error) => {
-      console.debug('[playlist playback prefetch] failed:', error)
-    })
-  }
-
-  const schedulePlaylistHoverPrefetch = (playlist: any) => {
-    const key = getPlaylistPlaybackCacheKey(playlist)
-    if (playlistHoverTimersRef.current.has(key)) return
-    const timer = window.setTimeout(() => {
-      playlistHoverTimersRef.current.delete(key)
-      prefetchPlaylistPlayback(playlist)
-    }, 650)
-    playlistHoverTimersRef.current.set(key, timer)
-  }
-
-  const cancelPlaylistHoverPrefetch = (playlist: any) => {
-    const key = getPlaylistPlaybackCacheKey(playlist)
-    const timer = playlistHoverTimersRef.current.get(key)
-    if (timer !== undefined) {
-      window.clearTimeout(timer)
-      playlistHoverTimersRef.current.delete(key)
-    }
-  }
-
-  useEffect(() => () => {
-    playlistHoverTimersRef.current.forEach(timer => window.clearTimeout(timer))
-    playlistHoverTimersRef.current.clear()
-  }, [])
-
   const cancelPlaylistDetailRequest = () => {
     playlistDetailRequestIdRef.current += 1
-    const controller = playlistDetailControllerRef.current
-    if (controller) {
-      controller.abort()
-      activeRequestsRef.current.delete(controller)
-      playlistDetailControllerRef.current = null
-    }
+    playlistPaging.cancelAll()
   }
 
   const closePlaylistDetail = () => {
@@ -751,145 +609,35 @@ function HomeView({
     }
     cancelPlaylistDetailRequest()
 
-    const requestId = playlistDetailRequestIdRef.current
-    const abortController = new AbortController()
-    playlistDetailControllerRef.current = abortController
-    activeRequestsRef.current.add(abortController)
-
     setSelectedPlaylist(playlist)
     setShowPlaylistDetail(true)
     setLoadingPlaylistSongs(true)
     setPlaylistSongs([])
+    await playlistPaging.open(playlist.id, playlist.platform || platform, { forceRefresh: true })
+  }
 
-    const waitForRetry = (delay: number) => new Promise<void>((resolve, reject) => {
-      if (abortController.signal.aborted) {
-        reject(new DOMException('The operation was aborted.', 'AbortError'))
-        return
-      }
-      const timer = window.setTimeout(() => {
-        abortController.signal.removeEventListener('abort', handleAbort)
-        resolve()
-      }, delay)
-      const handleAbort = () => {
-        window.clearTimeout(timer)
-        reject(new DOMException('The operation was aborted.', 'AbortError'))
-      }
-      abortController.signal.addEventListener('abort', handleAbort, { once: true })
-    })
-
-    // 请求失败时进行有限次数重试。
-    const fetchWithRetry = async (url: string, maxRetries = 3): Promise<any> => {
-      let lastError: unknown = null
-
-      for (let i = 0; i < maxRetries; i++) {
-        try {
-          debugLog(`[API request] attempt ${i + 1}/${maxRetries}`)
-          const response = await fetch(url, {
-            signal: abortController.signal,
-            cache: 'no-store',
-          })
-
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`)
-          }
-
-          const data = await response.json()
-          if (data.error) {
-            throw new Error(data.error)
-          }
-          return data
-        } catch (error) {
-          if ((error as Error).name === 'AbortError') {
-            throw error
-          }
-
-          lastError = error
-          console.warn(`[API request] attempt ${i + 1} failed:`, error)
-          if (i < maxRetries - 1) {
-            await waitForRetry(500 * (i + 1))
-          }
-        }
-      }
-
-      throw lastError
-    }
-
-    const isCurrentRequest = () => (
-      playlistDetailRequestIdRef.current === requestId &&
-      playlistDetailControllerRef.current === abortController &&
-      !abortController.signal.aborted
-    )
-
+  const handlePlayAllFromDetail = async () => {
     try {
-      const playlistPlatform = playlist.platform || platform
-
-      if (playlistPlatform === 'netease') {
-        await streamNeteasePlaylistTracks(playlist.id, {
-          signal: abortController.signal,
-          firstPageSize: 120,
-          pageSize: 200,
-          onPage: (page, firstPage) => {
-            if (!isCurrentRequest()) return
-            const pageSongs = mapPlaylistTracksToSongs(page.tracks, 'netease')
-            setSelectedPlaylist((current: any) => ({ ...(current || playlist), ...page.playlist, trackCount: page.total, platform: 'netease' }))
-            setPlaylistSongs(current => {
-              if (firstPage) return pageSongs
-              const seen = new Set(current.map(song => String(song.id)))
-              return [...current, ...pageSongs.filter(song => !seen.has(String(song.id)))]
-            })
-            if (firstPage) setLoadingPlaylistSongs(false)
-          },
-        })
-      } else if (playlistPlatform === 'qq') {
-        const cookie = localStorage.getItem('qq_cookie') || ''
-        const data = await fetchWithRetry(`http://localhost:3211/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`)
-        if (!isCurrentRequest()) return
-
-        if (data.playlist) {
-          const keepCustomLikeAppearance = Boolean(playlist.isLike)
-          setSelectedPlaylist({
-            ...playlist,
-            ...data.playlist,
-            name: keepCustomLikeAppearance ? playlist.name : (data.playlist.name || playlist.name),
-            coverImgUrl: keepCustomLikeAppearance ? playlist.coverImgUrl : (data.playlist.coverImgUrl || playlist.coverImgUrl),
-            dirId: playlist.dirId,
-            userId: playlist.userId,
-            isLike: playlist.isLike,
-            isCollected: playlist.isCollected,
-            platform: 'qq'
-          })
-        }
-        if (data.songlist && Array.isArray(data.songlist)) {
-          const songs: Song[] = data.songlist.map((track: any) => ({
-            id: track.songid || track.id,
-            mid: track.songmid || track.mid,
-            name: track.songname || track.name,
-            artists: track.singer || [],
-            album: {
-              name: track.albumname || track.album?.name || '',
-              picUrl: track.albumpic || (track.albummid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${track.albummid}.jpg` : '')
-            },
-            duration: Number(track.interval || 0) * 1000 || Number(track.duration || 0),
-            platform: 'qq',
-            vip: track.pay?.payplay === 1 || false
-          }))
-          setPlaylistSongs(songs)
-        } else {
-          console.warn('[QQ Music] songlist field was not found')
-        }
-      }
-    } catch (error) {
-      if ((error as Error).name !== 'AbortError' && isCurrentRequest()) {
-        console.error('[playlist details] load failed:', error)
-      }
-    } finally {
-      activeRequestsRef.current.delete(abortController)
-      if (playlistDetailControllerRef.current === abortController) {
-        playlistDetailControllerRef.current = null
-      }
-      if (playlistDetailRequestIdRef.current === requestId) {
-        setLoadingPlaylistSongs(false)
-      }
+      const completeSongs = playlistPaging.hasMore
+        ? await playlistPaging.loadAll()
+        : playlistPaging.songs
+      if (completeSongs.length === 0) return
+      setPlaylistSongs(completeSongs)
+      closePlaylistDetail()
+      onSongSelect(completeSongs[0], completeSongs, {
+        surface: 'home-playlist',
+        playlist: selectedPlaylist,
+        songs: completeSongs,
+        detail: {
+          songs: completeSongs,
+          playlist: selectedPlaylist,
+          nextOffset: completeSongs.length,
+          hasMore: false,
+          total: completeSongs.length,
+        } satisfies PlaylistPagingSnapshot,
+      })
+    } catch {
+      // 错误文本由分页状态展示，保持详情页以便重试或取消。
     }
   }
 
@@ -902,7 +650,26 @@ function HomeView({
     cancelPlaylistDetailRequest()
     setLoadingPlaylistSongs(false)
     setSelectedPlaylist(restorePlaybackOrigin.playlist)
-    setPlaylistSongs(restorePlaybackOrigin.songs || [])
+    const savedPaging = restorePlaybackOrigin.detail as PlaylistPagingSnapshot | undefined
+    if (savedPaging?.songs) {
+      const restored = {
+        ...savedPaging,
+        playlist: restorePlaybackOrigin.playlist,
+      }
+      playlistPaging.restore(restored)
+      setPlaylistSongs(restored.songs)
+    } else {
+      const restoredSongs = restorePlaybackOrigin.songs || []
+      const restored = {
+        songs: restoredSongs,
+        playlist: restorePlaybackOrigin.playlist,
+        nextOffset: restoredSongs.length,
+        hasMore: restoredSongs.length < Number((restorePlaybackOrigin.playlist as any)?.trackCount || restoredSongs.length),
+        total: Number((restorePlaybackOrigin.playlist as any)?.trackCount || restoredSongs.length),
+      } satisfies PlaylistPagingSnapshot
+      playlistPaging.restore(restored)
+      setPlaylistSongs(restoredSongs)
+    }
     setShowPlaylistDetail(true)
   }, [restorePlaybackOrigin?.revision])
   const showPlaylistToast = (message: string, type: 'success' | 'error' | 'info') => {
@@ -1107,7 +874,7 @@ function HomeView({
         ? String(selectedPlaylist.dirId || selectedPlaylist.id)
         : ''
       if (selectedPlaylist && selectedMutationId === playlistId) {
-        playlistPlaybackCacheRef.current.delete(getPlaylistPlaybackCacheKey(selectedPlaylist))
+        playlistPaging.removeSong(song)
         setPlaylistSongs(previous => previous.filter(item => !(
           isSameSong(item, song)
         )))
@@ -1132,6 +899,7 @@ function HomeView({
     setPlaylistSongs(previous => previous.filter(item => !(
       isSameSong(item, song)
     )))
+    playlistPaging.removeSong(song)
     setSelectedPlaylist((previous: any) => previous ? {
       ...previous,
       trackCount: Math.max(0, Number(previous.trackCount || 0) - 1)
@@ -1169,13 +937,34 @@ function HomeView({
     e.stopPropagation() // Avoid opening playlist details
     e.preventDefault()
 
+    if (playlistDetailCleanupTimerRef.current !== null) {
+      window.clearTimeout(playlistDetailCleanupTimerRef.current)
+      playlistDetailCleanupTimerRef.current = null
+    }
+    setSelectedPlaylist(playlist)
+    setShowPlaylistDetail(true)
+    setLoadingPlaylistSongs(true)
+    setPlaylistSongs([])
     try {
-      const songs = await resolvePlaylistSongsForPlayback(playlist)
-      if (songs.length > 0) {
-        onSongSelect(songs[0], songs)
-      }
+      const firstPageSongs = await playlistPaging.open(playlist.id, playlist.platform || platform, { forceRefresh: true })
+      if (firstPageSongs.length === 0) return
+      const completeSongs = await playlistPaging.loadAll()
+      if (completeSongs.length === 0) return
+      closePlaylistDetail()
+      onSongSelect(completeSongs[0], completeSongs, {
+        surface: 'home-playlist',
+        playlist,
+        songs: completeSongs,
+        detail: {
+          songs: completeSongs,
+          playlist,
+          nextOffset: completeSongs.length,
+          hasMore: false,
+          total: completeSongs.length,
+        } satisfies PlaylistPagingSnapshot,
+      })
     } catch (error) {
-      console.error('Play playlist failed:', error)
+      debugLog('[playlist play all] preparation failed:', error)
     }
   }
 
@@ -1214,21 +1003,6 @@ function HomeView({
     return () => window.removeEventListener('playlist-content-changed', handlePlaylistContentChanged)
   }, [platform])
 
-  // 预加载首页可见歌单的播放队列与首曲，减少点击等待
-  useEffect(() => {
-    if (!userPlaylists.length) return
-
-    // Warm only the first small playlist after idle; full playlists can contain hundreds of tracks.
-    const targets = userPlaylists.slice(0, 1).filter(playlist => Number(playlist.trackCount || 0) <= 100)
-    const timers = targets.map(playlist => window.setTimeout(() => {
-      prefetchPlaylistPlayback(playlist)
-    }, 1200))
-
-    return () => {
-      timers.forEach(timer => window.clearTimeout(timer))
-    }
-  }, [userPlaylists, platform])
-  
   // Watch for home module configuration changes
   useEffect(() => {
     const handleModulesChange = () => {
@@ -1349,9 +1123,9 @@ function HomeView({
         const radar = payload.playlists.find(item => /雷达|私人/.test(item.name)) ||
           payload.playlists.find(item => item.source === 'personalized')
         if (radar) {
-          const detail = await fetchExplorePlaylist(radar, signal)
+          const page = await getPlaylistTrackPage(radar.id, 'netease', 0, 50, { signal })
           if (signal?.aborted) return
-          songs = detail.songs.slice(0, 50)
+          songs = page.songs
         }
         break
       }
@@ -2351,8 +2125,6 @@ function HomeView({
                       delay: Math.min(index, 8) * 0.03
                     }}
                     whileHover={{ scale: 1.02, transition: { duration: 0.2 } }}
-                    onMouseEnter={() => schedulePlaylistHoverPrefetch(playlist)}
-                    onMouseLeave={() => cancelPlaylistHoverPrefetch(playlist)}
                     onClick={() => handlePlaylistClick(playlist)}
                     onContextMenu={(e) => handlePlaylistContextMenu(playlist, e)}
                     style={{
@@ -2679,6 +2451,10 @@ function HomeView({
         playlist={selectedPlaylist}
         songs={playlistSongs}
         loading={loadingPlaylistSongs}
+        error={playlistPaging.initialError}
+        onRetry={() => void playlistPaging.retryInitial()}
+        onPlayAll={() => void handlePlayAllFromDetail()}
+        paging={playlistPaging}
         onClose={closePlaylistDetail}
         onSongSelect={(song, songs) => {
           // 选歌后关闭歌单详情覆盖层，否则播放页出现后歌单界面还叠在上面
@@ -2687,6 +2463,7 @@ function HomeView({
             surface: 'home-playlist',
             playlist: selectedPlaylist,
             songs,
+            detail: playlistPaging.snapshot,
           })
         }}
         neteaseVip={neteaseVip}

@@ -37,7 +37,6 @@ import {
   fetchExploreChannel,
   fetchExploreChart,
   fetchExploreHome,
-  fetchExplorePlaylist,
   getExploreCookie,
   type ExploreChannel,
   type ExploreChart,
@@ -65,6 +64,7 @@ import { getUserPlaylists, subscribePlaylist } from '../services/playlistService
 import { isPlaylistOwner } from '../services/playlistOwnership'
 import type { PlaybackOrigin, SongSelectHandler } from '../types/playbackNavigation'
 import type { MirrorActionId } from '../services/globalSettingsRegistry'
+import { usePlaylistPaging, type PlaylistPagingSnapshot } from '../hooks/usePlaylistPaging'
 import { preloadOnIdle } from '../utils/lazyPreload'
 import ScrollToTop from './ScrollToTop'
 import QQExplorePage from '../features/qqExplore/QQExplorePage'
@@ -559,8 +559,10 @@ function ExploreView({
   const [detailError, setDetailError] = useState('')
   const detailRequestRef = useRef(0)
   const detailControllerRef = useRef<AbortController | null>(null)
+  const detailUsesPagingRef = useRef(false)
   const detailRetryRef = useRef<(() => void) | null>(null)
   const detailCleanupTimerRef = useRef<number | null>(null)
+  const playlistPaging = usePlaylistPaging()
   const [userPlaylists, setUserPlaylists] = useState<any[]>([])
   const [songContextMenu, setSongContextMenu] = useState<{
     show: boolean
@@ -578,6 +580,97 @@ function ExploreView({
   const [neteaseFeedMvId, setNeteaseFeedMvId] = useState<string | null>(null)
   const [fmLoading, setFmLoading] = useState(false)
 
+  const openPlaylistDetail = useCallback(async (
+    playlist: ExplorePlaylist,
+    autoplay = false,
+    forceRefresh = true,
+  ) => {
+    if (detailCleanupTimerRef.current !== null) {
+      window.clearTimeout(detailCleanupTimerRef.current)
+      detailCleanupTimerRef.current = null
+    }
+    detailUsesPagingRef.current = true
+    detailControllerRef.current?.abort()
+    const controller = new AbortController()
+    detailControllerRef.current = controller
+    const requestId = ++detailRequestRef.current
+    const fallback: ExploreDetail['playlist'] = {
+      id: playlist.id,
+      name: playlist.name,
+      coverImgUrl: playlist.coverUrl,
+      trackCount: playlist.trackCount || 0,
+      description: playlist.description,
+      playCount: playlist.playCount,
+      platform: playlist.platform,
+    }
+    detailRetryRef.current = () => { void openPlaylistDetail(playlist, false, true) }
+    setDetail({ playlist: fallback, songs: [] })
+    setDetailOpen(!autoplay)
+    setDetailLoading(true)
+    setDetailError('')
+    try {
+      const firstPageSongs = await playlistPaging.open(playlist.id, playlist.platform, { forceRefresh })
+      if (requestId !== detailRequestRef.current || controller.signal.aborted) return
+      if (firstPageSongs.length === 0) return
+      if (!autoplay) return
+      const completeSongs = playlistPaging.hasMore
+        ? await playlistPaging.loadAll()
+        : firstPageSongs
+      if (requestId !== detailRequestRef.current || controller.signal.aborted || completeSongs.length === 0) return
+      const completeDetail: ExploreDetail & { paging?: PlaylistPagingSnapshot } = {
+        playlist: playlistPaging.playlist
+          ? { ...fallback, ...playlistPaging.playlist }
+          : fallback,
+        songs: completeSongs,
+        paging: {
+          songs: completeSongs,
+          playlist: fallback,
+          nextOffset: completeSongs.length,
+          hasMore: false,
+          total: completeSongs.length,
+        },
+      }
+      onSongSelect(completeSongs[0], completeSongs, {
+        mode: 'explore',
+        surface: 'explore-detail',
+        platform: playlist.platform,
+        songs: completeSongs,
+        detail: completeDetail,
+      })
+      setDetailOpen(false)
+    } catch (requestError) {
+      if (requestId !== detailRequestRef.current || controller.signal.aborted) return
+      if (requestError instanceof Error && requestError.name === 'AbortError') return
+      const message = requestError instanceof Error ? requestError.message : '完整歌单准备失败，请重试'
+      setDetailError(message)
+      if (autoplay) setError(message)
+    } finally {
+      if (requestId === detailRequestRef.current) {
+        detailControllerRef.current = null
+        setDetailLoading(playlistPaging.loadingAll)
+      }
+    }
+  }, [onSongSelect, playlistPaging])
+
+  useEffect(() => {
+    if (!detailUsesPagingRef.current) return
+    setDetailLoading(playlistPaging.loadingInitial || playlistPaging.loadingAll)
+    setDetailError(playlistPaging.initialError || playlistPaging.allError)
+    setDetail(previous => previous ? {
+      playlist: playlistPaging.playlist
+        ? { ...previous.playlist, ...playlistPaging.playlist }
+        : previous.playlist,
+      songs: playlistPaging.songs,
+    } : previous)
+  }, [
+    playlistPaging.allError,
+    playlistPaging.initialError,
+    playlistPaging.loadingAll,
+    playlistPaging.loadingInitial,
+    playlistPaging.playlist,
+    playlistPaging.songs,
+  ])
+
   // 处理 Banner 点击（解析网易云 url 打开歌单/歌曲）
   // useCallback 稳定引用：供 ExploreBanner memo 比较，避免父级每次重渲染传入新函数。
   const handleBannerClick = useCallback((banner: ExploreBannerItem) => {
@@ -585,35 +678,20 @@ function ExploreView({
     const playlistMatch = url.match(/playlist\?id=(\d+)/)
     const songMatch = url.match(/song\?id=(\d+)/)
     if (playlistMatch) {
-      detailControllerRef.current?.abort()
-      const controller = new AbortController()
-      detailControllerRef.current = controller
-      const requestId = ++detailRequestRef.current
-      setDetailLoading(true)
-      setDetailError('')
-      void fetchExplorePlaylist({ id: playlistMatch[1], platform: 'netease' } as ExplorePlaylist).then((detail) => {
-        if (requestId !== detailRequestRef.current || controller.signal.aborted) return
-        if (!detail) throw new Error('歌单加载失败')
-        setDetail(detail)
-        setDetailOpen(true)
-      }).catch(error => {
-        if (requestId !== detailRequestRef.current || controller.signal.aborted) return
-        setDetailError(error instanceof Error ? error.message : '歌单加载失败')
-      }).finally(() => {
-        if (requestId === detailRequestRef.current) setDetailLoading(false)
-      })
+      void openPlaylistDetail({ id: playlistMatch[1], name: '歌单', coverUrl: '', platform: 'netease' })
     } else if (songMatch) {
       void fetchExploreHome('netease').then(() => {
         window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: '打开歌曲详情请使用搜索', type: 'info' } }))
       })
     }
-  }, [])
+  }, [openPlaylistDetail])
 
   // 关闭探索歌单详情覆盖层（选歌播放/点关闭共用，保证不残留叠在播放页上）
   const closeExploreDetail = useCallback(() => {
     detailRequestRef.current += 1
     detailControllerRef.current?.abort()
     detailControllerRef.current = null
+    if (detailUsesPagingRef.current) playlistPaging.cancelAll()
     detailRetryRef.current = null
     setDetailOpen(false)
     setDetailError('')
@@ -621,9 +699,10 @@ function ExploreView({
     detailCleanupTimerRef.current = window.setTimeout(() => {
       setDetail(null)
       setDetailLoading(false)
+      detailUsesPagingRef.current = false
       detailCleanupTimerRef.current = null
     }, 450)
-  }, [])
+  }, [playlistPaging.cancelAll])
 
   // 网易云私人 FM：个性化电台推荐播放
   const handlePlayFM = async () => {
@@ -680,11 +759,23 @@ function ExploreView({
 
   useEffect(() => {
     if (restorePlaybackOrigin?.surface !== 'explore-detail' || !restorePlaybackOrigin.detail) return
-    setDetail(restorePlaybackOrigin.detail as ExploreDetail)
+    const restoredDetail = restorePlaybackOrigin.detail as ExploreDetail & { paging?: PlaylistPagingSnapshot }
+    const savedPaging = restoredDetail.paging
+    if (savedPaging) {
+      playlistPaging.restore(savedPaging)
+      detailUsesPagingRef.current = true
+      setDetail({
+        playlist: restoredDetail.playlist,
+        songs: savedPaging.songs,
+      })
+    } else {
+      detailUsesPagingRef.current = false
+      setDetail(restoredDetail)
+    }
     setDetailError('')
     setDetailLoading(false)
     setDetailOpen(true)
-  }, [restorePlaybackOrigin?.revision])
+  }, [playlistPaging.restore, restorePlaybackOrigin?.revision])
   const [modeTriggerHovered, setModeTriggerHovered] = useState(false)
   const topBarActive = modeTriggerHovered
 
@@ -949,6 +1040,12 @@ function ExploreView({
     loader: (signal: AbortSignal) => Promise<ExploreDetail>,
     autoplay = false,
   ) => {
+    if (detailCleanupTimerRef.current !== null) {
+      window.clearTimeout(detailCleanupTimerRef.current)
+      detailCleanupTimerRef.current = null
+    }
+    if (detailUsesPagingRef.current) playlistPaging.reset()
+    detailUsesPagingRef.current = false
     detailRetryRef.current = () => { void openDetail(fallback, loader, autoplay) }
     detailControllerRef.current?.abort()
     const controller = new AbortController()
@@ -970,6 +1067,7 @@ function ExploreView({
       }
     } catch (requestError) {
       if (requestId !== detailRequestRef.current || controller.signal.aborted) return
+      if (requestError instanceof Error && requestError.name === 'AbortError') return
       const message = requestError instanceof Error ? requestError.message : '内容加载失败'
       setDetailError(message)
       if (autoplay) setError(message)
@@ -979,7 +1077,7 @@ function ExploreView({
         setDetailLoading(false)
       }
     }
-  }, [onSongSelect])
+  }, [onSongSelect, playlistPaging.reset])
 
   useEffect(() => () => {
     detailRequestRef.current += 1
@@ -988,14 +1086,40 @@ function ExploreView({
     if (detailCleanupTimerRef.current !== null) window.clearTimeout(detailCleanupTimerRef.current)
   }, [])
 
-  const handlePlaylist = (playlist: ExplorePlaylist, autoplay = false) => openDetail({
-    id: playlist.id,
-    name: playlist.name,
-    coverImgUrl: playlist.coverUrl,
-    trackCount: playlist.trackCount || 0,
-    description: playlist.description,
-    platform: playlist.platform,
-  }, signal => fetchExplorePlaylist(playlist, signal), autoplay)
+  const handlePlaylist = (playlist: ExplorePlaylist, autoplay = false) => {
+    void openPlaylistDetail(playlist, autoplay)
+  }
+
+  const handlePlayAllFromDetail = async () => {
+    if (!detail?.playlist) return
+    try {
+      const completeSongs = playlistPaging.hasMore
+        ? await playlistPaging.loadAll()
+        : playlistPaging.songs
+      if (completeSongs.length === 0) return
+      const completeDetail: ExploreDetail & { paging?: PlaylistPagingSnapshot } = {
+        playlist: playlistPaging.playlist
+          ? { ...detail.playlist, ...playlistPaging.playlist }
+          : detail.playlist,
+        songs: completeSongs,
+        paging: {
+          songs: completeSongs,
+          playlist: detail.playlist,
+          nextOffset: completeSongs.length,
+          hasMore: false,
+          total: completeSongs.length,
+        },
+      }
+      closeExploreDetail()
+      onSongSelect(completeSongs[0], completeSongs, {
+        surface: 'explore-detail',
+        detail: completeDetail,
+        songs: completeSongs,
+      })
+    } catch {
+      // 页面内保留错误状态，用户可重试或取消。
+    }
+  }
 
   const handleChart = (chart: ExploreChart, autoplay = false) => openDetail({
     id: chart.id,
@@ -2041,9 +2165,14 @@ function ExploreView({
       </Suspense>
 
       {detailLoading && !detailOpen && (
-        <div className="pointer-events-none fixed bottom-7 left-1/2 z-[200] flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/[0.1] bg-black/65 px-4 py-2 text-xs text-white/68 shadow-xl backdrop-blur-xl">
+        <div className="fixed bottom-7 left-1/2 z-[200] flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/[0.1] bg-black/65 px-4 py-2 text-xs text-white/68 shadow-xl backdrop-blur-xl">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          正在准备播放…
+          {playlistPaging.loadingAll
+            ? `正在准备完整歌单 ${playlistPaging.allProgress.loaded}/${playlistPaging.allProgress.total || detail?.playlist.trackCount || '?'}`
+            : '正在准备播放…'}
+          {playlistPaging.loadingAll && (
+            <button type="button" onClick={playlistPaging.cancelAll} className="ml-1 rounded-full border border-white/15 px-2 py-0.5 text-white/80 hover:bg-white/10">取消</button>
+          )}
         </div>
       )}
 
@@ -2055,13 +2184,15 @@ function ExploreView({
         loading={detailLoading}
         error={detailError}
         onRetry={() => detailRetryRef.current?.()}
+        onPlayAll={() => void handlePlayAllFromDetail()}
+        paging={playlistPaging}
         onClose={closeExploreDetail}
         onSongSelect={(song, songs) => {
           // 选歌后关闭歌单详情覆盖层，否则播放页出现后歌单界面还叠在上面
           closeExploreDetail()
           onSongSelect(song, songs, {
             surface: 'explore-detail',
-            detail: detail || undefined,
+            detail: detail ? { ...detail, songs, paging: playlistPaging.snapshot } : undefined,
             songs,
           })
         }}

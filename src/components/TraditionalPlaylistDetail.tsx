@@ -1,11 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Clock3, Headphones, Heart, Play, Share2 } from 'lucide-react'
+import { Clock3, Headphones, Heart, Loader2, Play, Share2 } from 'lucide-react'
 import type { Song } from '../services/musicApi'
 import { getProxiedImageUrl, isSameSong } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
 import { getPlatformCapabilities } from '../services/platforms'
 import { subscribePlaylist } from '../services/playlistService'
 import SongContextMenu from './SongContextMenu'
+import { PLAYLIST_SESSION_RESET_EVENT, type PlaylistPagingControls } from '../hooks/usePlaylistPaging'
+import ScrollToCurrentSong from './ScrollToCurrentSong'
 
 type Playlist = {
   id: number | string
@@ -33,6 +35,8 @@ interface TraditionalPlaylistDetailProps {
   loading: boolean
   error?: string
   onRetry?: () => void
+  onPlayAll?: () => void
+  paging?: PlaylistPagingControls
   currentSong: Song | null
   playerTheme: 'light' | 'dark'
   accentColor: string
@@ -76,7 +80,7 @@ const DetailCover = ({ src, alt, className }: { src?: string; alt: string; class
 }
 
 function TraditionalPlaylistDetail({
-  playlist, songs, loading, error = '', onRetry, currentSong, playerTheme, accentColor, onClose, onSongSelect,
+  playlist, songs, loading, error = '', onRetry, onPlayAll, paging, currentSong, playerTheme, accentColor, onClose, onSongSelect,
   onOpenArtist, onOpenAlbum, onPlayNext, onAddToFavorites, onRemoveFromFavorites, onAddToPlaylist, onRemoveFromPlaylist,
   onViewComments, onCopyInfo, userPlaylists = [], ownUserName, ownUserAvatar, ownUserId, isOwner = false, onOpenUserProfile,
 }: TraditionalPlaylistDetailProps) {
@@ -116,8 +120,9 @@ function TraditionalPlaylistDetail({
   }, [])
   const handleListScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     const container = event.currentTarget
+    paging?.setScrollTop(container.scrollTop)
     commitViewport(container.scrollTop, container.clientHeight)
-  }, [commitViewport])
+  }, [commitViewport, paging?.setScrollTop])
   const viewportHeight = viewport.height || (typeof window === 'undefined' ? 640 : Math.max(320, window.innerHeight * 0.7))
   const visibleStart = Math.max(0, Math.floor(viewport.scrollTop / DETAIL_ROW_HEIGHT) - DETAIL_OVERSCAN)
   const visibleEnd = Math.min(songs.length, Math.ceil((viewport.scrollTop + viewportHeight) / DETAIL_ROW_HEIGHT) + DETAIL_OVERSCAN)
@@ -128,11 +133,30 @@ function TraditionalPlaylistDetail({
   const virtualListHeight = songs.length * DETAIL_ROW_HEIGHT
   useEffect(() => () => { if (viewportFrameRef.current !== null) window.cancelAnimationFrame(viewportFrameRef.current) }, [])
 
+  useEffect(() => {
+    if (!paging?.scrollTop) return
+    const frame = window.requestAnimationFrame(() => {
+      listScrollRef.current?.scrollTo({ top: paging.scrollTop })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [playlist?.id])
+
+  useEffect(() => {
+    if (!paging?.hasMore || paging.loadingMore || paging.moreError) return
+    const distanceToEnd = virtualListHeight - (viewport.scrollTop + viewportHeight)
+    if (distanceToEnd < 620) void paging.loadMore()
+  }, [paging, viewport.scrollTop, viewportHeight, virtualListHeight])
+
   useEffect(() => { setCollected(Boolean(playlist?.isCollected)) }, [playlist?.id, playlist?.isCollected])
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  useEffect(() => {
+    window.addEventListener(PLAYLIST_SESSION_RESET_EVENT, onClose)
+    return () => window.removeEventListener(PLAYLIST_SESSION_RESET_EVENT, onClose)
   }, [onClose])
 
   const toggleCollection = async () => {
@@ -156,7 +180,7 @@ function TraditionalPlaylistDetail({
     window.dispatchEvent(new CustomEvent('showToast', { detail: { message: '歌单链接已复制', type: 'success' } }))
   }
 
-  return <div className="flex h-full min-h-0 flex-col">
+  return <div className="relative flex h-full min-h-0 flex-col">
     <main ref={listScrollRef} onScroll={handleListScroll} className="min-h-0 flex-1 overflow-y-auto px-6 py-6 lg:px-10">
       {loading ? <div className="flex h-72 items-center justify-center"><div className={`text-sm ${muted}`}>正在加载歌单...</div></div> : error ? (
         <div className={`flex h-72 flex-col items-center justify-center gap-3 text-sm ${muted}`}>
@@ -185,10 +209,37 @@ function TraditionalPlaylistDetail({
                 )}
                 {createdDate && <span className={`text-xs ${muted}`}>{createdDate} 创建</span>}
                 {(playlist?.tags || []).slice(0, 4).map(tag => <span key={String(tag)}>#{tag}</span>)}
+                {currentSong && !songs.some(song => isSameSong(song, currentSong)) && paging?.hasMore && (
+                  <button
+                    type="button"
+                    disabled={paging.loadingMore || paging.loadingAll}
+                    onClick={() => void paging.locateSong(currentSong).catch(() => undefined)}
+                    className={`rounded-full border px-2.5 py-1 text-xs transition disabled:opacity-50 ${dark ? 'border-white/15 hover:bg-white/10' : 'border-slate-200 hover:bg-slate-100'}`}
+                  >
+                    {paging.loadingMore || paging.loadingAll ? '正在定位…' : '定位当前歌曲'}
+                  </button>
+                )}
               </div>
               <p className={`mt-2 max-w-3xl text-xs leading-5 ${muted}`}>{playlist?.description || playlist?.desc || `${songs.length || playlist?.trackCount || 0} 首歌曲 · ${Math.floor(totalDuration / 60000)} 分钟`}</p>
               <div className="mt-5 flex flex-wrap items-center gap-3">
-                <button type="button" disabled={songs.length === 0} onClick={() => songs[0] && onSongSelect(songs[0], songs)} className="flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-medium text-white disabled:opacity-45" style={{ background: accentColor }}><Play className="h-4 w-4 fill-current" />播放</button>
+                <button
+                  type="button"
+                  disabled={songs.length === 0 || paging?.loadingAll}
+                  onClick={() => {
+                    if (onPlayAll) onPlayAll()
+                    else if (songs[0]) onSongSelect(songs[0], songs)
+                  }}
+                  className="flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-medium text-white disabled:cursor-wait disabled:opacity-45"
+                  style={{ background: accentColor }}
+                >
+                  {paging?.loadingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-current" />}
+                  {paging?.loadingAll
+                    ? `准备完整歌单 ${paging.allProgress.loaded}/${paging.allProgress.total || playlist?.trackCount || '?'}`
+                    : paging?.allError ? '重试播放' : '播放'}
+                </button>
+                {paging?.loadingAll && (
+                  <button type="button" onClick={paging.cancelAll} className={`rounded-full border px-4 py-2.5 text-sm ${dark ? 'border-white/15 bg-white/5 hover:bg-white/10' : 'border-slate-200 bg-white/70 hover:bg-slate-100'}`}>取消</button>
+                )}
                 {canSubscribePlaylist && <button type="button" onClick={() => void toggleCollection()} className={`flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm transition ${dark ? 'border-white/15 bg-white/5 hover:bg-white/10' : 'border-slate-200 bg-white/70 hover:bg-slate-100'}`}><Heart className={`h-4 w-4 ${collected ? 'fill-current' : ''}`} style={{ color: collected ? accentColor : undefined }} />{collected ? '已收藏' : '收藏'}</button>}
                 {canShare && <button type="button" onClick={share} className={`flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm transition ${dark ? 'border-white/15 bg-white/5 hover:bg-white/10' : 'border-slate-200 bg-white/70 hover:bg-slate-100'}`}><Share2 className="h-4 w-4" />分享</button>}
               </div>
@@ -243,10 +294,39 @@ function TraditionalPlaylistDetail({
                 })}
               </div>
             )}
+            {paging && songs.length > 0 && (
+              <div className={`mt-4 flex min-h-12 flex-col items-center justify-center gap-2 text-xs ${muted}`}>
+                {paging.moreError ? (
+                  <>
+                    <span role="alert">{paging.moreError}</span>
+                    <button type="button" onClick={() => void paging.retryMore()} className={`rounded-full border px-4 py-1.5 ${dark ? 'border-white/15 hover:bg-white/10' : 'border-slate-200 hover:bg-slate-100'}`}>重试加载</button>
+                  </>
+                ) : paging.loadingMore ? (
+                  <span className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" />继续加载…</span>
+                ) : paging.hasMore ? (
+                  <button type="button" onClick={() => void paging.loadMore()} className={`rounded-full border px-4 py-1.5 ${dark ? 'border-white/15 hover:bg-white/10' : 'border-slate-200 hover:bg-slate-100'}`}>加载更多</button>
+                ) : (
+                  <span>已加载全部 {songs.length} 首</span>
+                )}
+              </div>
+            )}
           </section>
         </>
       )}
     </main>
+    <ScrollToCurrentSong
+      containerRef={listScrollRef}
+      currentSongIndex={songs.findIndex(song => currentSong ? isSameSong(song, currentSong) : false)}
+      threshold={200}
+      playerTheme={playerTheme}
+      position="absolute"
+      offsetRight={18}
+      offsetBottom={18}
+      cardHeight={DETAIL_ROW_HEIGHT}
+      cardGapY={0}
+      contentPaddingTop={24}
+      autoScroll
+    />
     <SongContextMenu show={menu.show} x={menu.x} y={menu.y} song={menu.song} onClose={() => setMenu({ show: false, x: 0, y: 0, song: null })} onPlayNow={song => onSongSelect(song, songs)} onPlayNext={onPlayNext} onAddToFavorites={onAddToFavorites} onRemoveFromFavorites={onRemoveFromFavorites} onAddToPlaylist={onAddToPlaylist} onRemoveFromPlaylist={onRemoveFromPlaylist ? song => { void onRemoveFromPlaylist(song, playlistId) } : undefined} currentPlaylistId={playlistId} onViewComments={onViewComments} onViewAlbum={song => { const albumId = song.album?.mid || song.album?.id; if (albumId) onOpenAlbum?.(String(albumId), song.platform || platform) }} onViewArtist={song => { const artist = song.artists?.[0]; const artistId = artist?.mid || artist?.id; if (artistId) onOpenArtist?.(String(artistId), song.platform || platform) }} onCopyInfo={onCopyInfo} userPlaylists={userPlaylists} platform={platform} playerTheme={playerTheme} />
   </div>
 }

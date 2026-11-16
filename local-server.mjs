@@ -819,11 +819,74 @@ function getQQFeedbackContext(token, cookie) {
   return context.accountFingerprint === accountFingerprint ? context : null
 }
 
-async function fetchQQPlaylistDetail(id, songNum = 10000, cookie = '') {
+function clearQQPlaylistPageCache(id, accountFingerprint) {
+  const prefix = `${accountFingerprint}:${String(id)}:page:`
+  for (const key of qqPlaylistDetailCache.entries.keys()) {
+    if (key.startsWith(prefix)) qqPlaylistDetailCache.delete(key)
+  }
+}
+
+async function fetchQQPlaylistPage(id, offset = 0, limit = 50, cookie = '', forceRefresh = false) {
+  const requestCookie = cookie || qqMusicCookie
+  const accountFingerprint = requestCookie ? qqHash33(requestCookie).toString(36) : 'guest'
+  const safeOffset = Math.max(0, Number(offset) || 0)
+  const safeLimit = Math.max(1, Math.min(100, Number(limit) || 50))
+  const cacheKey = `${accountFingerprint}:${String(id)}:page:${safeOffset}:${safeLimit}`
+  if (forceRefresh) clearQQPlaylistPageCache(id, accountFingerprint)
+  const cachedPage = qqPlaylistDetailCache.get(cacheKey)
+  if (cachedPage) return cachedPage
+
+  const payload = {
+    req_0: {
+      module: 'music.srfDissInfo.aiDissInfo',
+      method: 'uniform_get_Dissinfo',
+      param: {
+        disstid: Number(id),
+        enc_host_uin: '',
+        tag: 1,
+        userinfo: 1,
+        song_begin: safeOffset,
+        song_num: safeLimit
+      }
+    }
+  }
+  const response = await axios.get(QQ_MUSICU_URL, {
+    params: { format: 'json', data: JSON.stringify(payload) },
+    headers: {
+      ...QQ_HEADERS,
+      ...(requestCookie ? { Cookie: requestCookie } : {})
+    },
+    timeout: 15000
+  })
+  const page = response.data?.req_0?.data
+  if (Number(page?.code) !== 0 || !page?.dirinfo) {
+    throw new Error(page?.msg || page?.message || 'QQ 音乐歌单分页返回无效数据')
+  }
+
+  const pageSongs = Array.isArray(page.songlist) ? page.songlist : []
+  const total = Math.max(0, Number(page.total_song_num || page.dirinfo.songnum || pageSongs.length) || 0)
+  const effectiveLimit = pageSongs.length || safeLimit
+  const nextOffset = safeOffset + pageSongs.length
+  const result = {
+    ...page.dirinfo,
+    songlist: pageSongs,
+    songnum: total,
+    total_song_num: total,
+    offset: safeOffset,
+    limit: effectiveLimit,
+    nextOffset,
+    more: pageSongs.length > 0 && nextOffset < total
+  }
+  qqPlaylistDetailCache.set(cacheKey, result)
+  return result
+}
+
+async function fetchQQPlaylistDetail(id, songNum = 10000, cookie = '', forceRefresh = false) {
   // 私有歌单详情按账号隔离缓存；公共调用保留 guest 维度。
   const requestCookie = cookie || qqMusicCookie
   const accountFingerprint = requestCookie ? qqHash33(requestCookie).toString(36) : 'guest'
   const cacheKey = `${accountFingerprint}:${String(id)}:${String(songNum)}`
+  if (forceRefresh) qqPlaylistDetailCache.delete(cacheKey)
   const cachedDetail = qqPlaylistDetailCache.get(cacheKey)
   if (cachedDetail) return cachedDetail
 
@@ -2805,7 +2868,7 @@ app.get('/api/netease/user/detail', async (req, res) => {
 // 获取歌单详情
 app.get('/api/netease/playlist/detail', async (req, res) => {
   try {
-    const { id, limit, offset, cookie } = req.query
+    const { id, limit, offset, cookie, refresh } = req.query
     if (!id) {
       return res.status(400).json({ error: '请提供歌单ID' })
     }
@@ -2814,6 +2877,8 @@ app.get('/api/netease/playlist/detail', async (req, res) => {
     }
     
     const hasPaging = limit !== undefined || offset !== undefined
+    const forceRefresh = refresh === '1' || refresh === 'true'
+    if (forceRefresh) invalidateNeteasePlaylistTrackIds(id, cookie)
     const songLimit = limit ? Math.max(1, Math.min(parseInt(limit), 500)) : 10000
     const songOffset = offset ? Math.max(0, parseInt(offset)) : 0
     
@@ -7238,7 +7303,7 @@ function setNeteaseSongDetailCache(song) {
 }
 
 async function getNeteasePlaylistTrackIds(id, cookie = '') {
-  const cacheKey = String(id)
+  const cacheKey = cookieScopedKey('netease-playlist-track-ids', id, cookie)
   const cachedIds = neteasePlaylistTrackIdCache.get(cacheKey)
   if (cachedIds) return cachedIds
 
@@ -7285,6 +7350,10 @@ async function getNeteasePlaylistTrackIds(id, cookie = '') {
     neteasePlaylistTrackIdCache.set(cacheKey, ids)
   }
   return ids
+}
+
+function invalidateNeteasePlaylistTrackIds(id, cookie = '') {
+  neteasePlaylistTrackIdCache.delete(cookieScopedKey('netease-playlist-track-ids', id, cookie))
 }
 
 async function fetchNeteaseSongDetailBatches(ids, cookie = '') {
@@ -7369,7 +7438,8 @@ async function fetchNeteasePlaylistTrackPage(id, cookie = '', offset = 0, limit 
     tracks: pageIds.map(trackId => songsById.get(trackId)).filter(Boolean),
     total: orderedIds.length,
     offset: safeOffset,
-    limit: safeLimit,
+    limit: pageIds.length,
+    requestedLimit: safeLimit,
     nextOffset,
     more: nextOffset < orderedIds.length
   }
@@ -8260,14 +8330,20 @@ app.get('/api/qq/user/collect', async (req, res) => {
 // 获取QQ音乐歌单详情
 app.get('/api/qq/playlist/detail', async (req, res) => {
   try {
-    const { id, cookie, songNum = 10000, source = '' } = req.query
+    const { id, cookie, songNum = 10000, source = '', offset, limit, refresh } = req.query
     const devMode = req.query.devMode === 'true'
     if (!id) {
       return res.status(400).json({ result: 500, errMsg: '请提供歌单ID' })
     }
-    const hasLogin = Boolean(resolveRequestCookie(cookie))
+    const requestCookie = resolveRequestCookie(cookie)
+    const hasLogin = Boolean(requestCookie)
+    const hasPaging = offset !== undefined || limit !== undefined
+    const forceRefresh = refresh === '1' || refresh === 'true'
+    if (forceRefresh) {
+      clearQQPlaylistPageCache(id, requestCookie ? qqHash33(requestCookie).toString(36) : 'guest')
+    }
     const skillKey = getQQMusicSkillKey(req)
-    if (source === 'qqmusic-skills' && hasLogin && skillKey) {
+    if (source === 'qqmusic-skills' && !hasPaging && hasLogin && skillKey) {
       const skillPlaylist = await requestQQMusicSkillPages(
         '/playlists/detail',
         { dissId: Number(id) },
@@ -8305,7 +8381,20 @@ app.get('/api/qq/playlist/detail', async (req, res) => {
       })
     }
     // 使用qq-music-api获取歌单详情
-    const result = await fetchQQPlaylistDetail(id, Math.max(1, Math.min(Number(songNum) || 10000, 10000)))
+    const result = hasPaging
+      ? await fetchQQPlaylistPage(
+          id,
+          Math.max(0, Number(offset) || 0),
+          Math.max(1, Math.min(Number(limit) || 50, 100)),
+          requestCookie,
+          forceRefresh
+        )
+      : await fetchQQPlaylistDetail(
+          id,
+          Math.max(1, Math.min(Number(songNum) || 10000, 10000)),
+          requestCookie,
+          forceRefresh
+        )
     
     // songlist 在 result 根级别，不是在 result.data 下
     if (devMode) console.log('[QQ音乐歌单详情] API返回结果 (歌曲数):', result?.songlist?.length || 0)

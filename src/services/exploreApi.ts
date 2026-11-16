@@ -442,8 +442,8 @@ export async function fetchExplorePlaylist(playlist: ExplorePlaylist, signal?: A
   const cookie = getExploreCookie(playlist.platform)
   const data = await fetchExploreJson(`/${playlist.platform}/playlist/detail`, {
     id: playlist.id,
-    songNum: playlist.platform === 'qq' ? '10000' : undefined,
-    limit: playlist.platform === 'netease' ? '10000' : undefined,
+    songNum: playlist.platform === 'qq' ? '50' : undefined,
+    limit: playlist.platform === 'netease' ? '50' : undefined,
     source: playlist.source,
     cookie
   }, signal)

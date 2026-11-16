@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, Music, Play, Clock, Crown, Heart, Info, Radio } from 'lucide-react'
+import { ChevronDown, Music, Play, Clock, Crown, Heart, Info, Loader2, Radio } from 'lucide-react'
 import { Song, getProxiedImageUrl, resolveSongAlbumIdentifier, isSameSong } from '../services/musicApi'
 import { getPlatformCapabilities } from '../services/platforms'
 import type { MusicPlatform } from '../services/platforms'
@@ -12,6 +12,7 @@ import ScrollToTop from './ScrollToTop'
 import ScrollToCurrentSong from './ScrollToCurrentSong'
 import CommentModal from './CommentModal'
 import DeleteSongModal from './DeleteSongModal'
+import { PLAYLIST_SESSION_RESET_EVENT, type PlaylistPagingControls } from '../hooks/usePlaylistPaging'
 
 const DETAIL_ROW_HEIGHT = 60
 const DETAIL_CARD_HEIGHT = 56
@@ -41,6 +42,8 @@ interface PlaylistDetailPanelProps {
   loading: boolean
   error?: string
   onRetry?: () => void
+  onPlayAll?: () => void
+  paging?: PlaylistPagingControls
   onClose: () => void
   onSongSelect: (song: Song, playlist: Song[]) => void
   neteaseVip?: boolean
@@ -71,6 +74,8 @@ function PlaylistDetailPanel({
   loading,
   error = '',
   onRetry,
+  onPlayAll,
+  paging,
   onClose,
   onSongSelect,
   neteaseVip = false,
@@ -96,6 +101,12 @@ function PlaylistDetailPanel({
   const [subscribing, setSubscribing] = useState(false)
   const [collected, setCollected] = useState(Boolean(playlist?.isCollected))
   const [smartLoading, setSmartLoading] = useState(false)
+
+  useEffect(() => {
+    const closeInvalidSession = () => onClose()
+    window.addEventListener(PLAYLIST_SESSION_RESET_EVENT, closeInvalidSession)
+    return () => window.removeEventListener(PLAYLIST_SESSION_RESET_EVENT, closeInvalidSession)
+  }, [onClose])
 
   // 网易云智能播放（playmode/intelligence）：按当前歌单/歌曲生成智能续播列表。
   // 接口返回"分组"结构（每组 { id, songs: [曲目] }），必须展开各组 songs 再映射，
@@ -211,6 +222,7 @@ function PlaylistDetailPanel({
 
   const handleListScroll = (event: UIEvent<HTMLDivElement>) => {
     const container = event.currentTarget
+    paging?.setScrollTop(container.scrollTop)
     commitViewport(container.scrollTop, container.clientHeight)
   }
 
@@ -225,6 +237,18 @@ function PlaylistDetailPanel({
     [songs, visibleStart, visibleEnd]
   )
   const virtualListHeight = songs.length * DETAIL_ROW_HEIGHT
+
+  useEffect(() => {
+    if (!show || !paging?.hasMore || paging.loadingMore || paging.moreError) return
+    const distanceToEnd = virtualListHeight - (viewport.scrollTop + viewportHeight)
+    if (distanceToEnd < 600) void paging.loadMore()
+  }, [
+    paging,
+    show,
+    viewport.scrollTop,
+    viewportHeight,
+    virtualListHeight,
+  ])
 
   const handleConfirmRemoval = async () => {
     if (!pendingRemoval || !playlist) return
@@ -300,6 +324,14 @@ function PlaylistDetailPanel({
     observer.observe(container)
     return () => observer.disconnect()
   }, [commitViewport, show])
+
+  useEffect(() => {
+    if (!show || !paging?.scrollTop) return
+    const frame = window.requestAnimationFrame(() => {
+      scrollContainerRef.current?.scrollTo({ top: paging.scrollTop })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [playlist?.id, show])
 
   useEffect(() => () => {
     if (viewportFrameRef.current !== null) window.cancelAnimationFrame(viewportFrameRef.current)
@@ -585,6 +617,19 @@ function PlaylistDetailPanel({
                           总时长 {totalDurationMinutes} 分钟
                         </span>
                       )}
+                      {currentSong && !songs.some(song => isSameSong(song, currentSong)) && paging?.hasMore && (
+                        <button
+                          type="button"
+                          disabled={paging.loadingMore || paging.loadingAll}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            void paging.locateSong(currentSong).catch(() => undefined)
+                          }}
+                          className="rounded-full border border-current/20 px-2.5 py-1 text-current transition hover:bg-current/10 disabled:opacity-50"
+                        >
+                          {paging.loadingMore || paging.loadingAll ? '正在定位…' : '定位当前歌曲'}
+                        </button>
+                      )}
                     </div>
 
                     {/* 播放全部 + 收藏 */}
@@ -593,20 +638,36 @@ function PlaylistDetailPanel({
                         <motion.button
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
+                          disabled={paging?.loadingAll}
                           onClick={(e) => {
                             e.stopPropagation()
-                            onSongSelect(songs[0], songs)
+                            if (onPlayAll) onPlayAll()
+                            else onSongSelect(songs[0], songs)
                           }}
-                          className="px-4 py-1.5 text-white rounded-full font-medium transition-all flex items-center gap-1.5 text-sm"
+                          className="px-4 py-1.5 text-white rounded-full font-medium transition-all flex items-center gap-1.5 text-sm disabled:cursor-wait disabled:opacity-60"
                           style={{
                             backgroundColor: `${accentColor}e6`,
                           }}
                           onMouseEnter={(e) => e.currentTarget.style.backgroundColor = accentColor}
                           onMouseLeave={(e) => e.currentTarget.style.backgroundColor = `${accentColor}e6`}
                         >
-                          <Play className="w-3.5 h-3.5" fill="currentColor" />
-                          播放全部
+                          {paging?.loadingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" fill="currentColor" />}
+                          {paging?.loadingAll
+                            ? `准备完整歌单 ${paging.allProgress.loaded}/${paging.allProgress.total || playlist.trackCount || '?'}`
+                            : paging?.allError ? '重试播放全部' : '播放全部'}
                         </motion.button>
+                      )}
+                      {paging?.loadingAll && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            paging.cancelAll()
+                          }}
+                          className={`px-3 py-1.5 rounded-full text-xs ${playerTheme === 'dark' ? 'border border-white/15 text-white/70 hover:bg-white/10' : 'border border-black/15 text-black/60 hover:bg-black/5'}`}
+                        >
+                          取消
+                        </button>
                       )}
                       {/* 智能播放：仅网易云（无其他平台接口） */}
                       {(playlist.platform === 'netease' || currentPlatform === 'netease') && songs.length > 0 && (
@@ -843,6 +904,34 @@ function PlaylistDetailPanel({
                         </div>
                         )
                       })}
+                    </div>
+                  )}
+                  {paging && songs.length > 0 && (
+                    <div className={`mt-4 flex min-h-12 flex-col items-center justify-center gap-2 text-xs ${playerTheme === 'dark' ? 'text-white/55' : 'text-black/50'}`}>
+                      {paging.moreError ? (
+                        <>
+                          <span role="alert">{paging.moreError}</span>
+                          <button
+                            type="button"
+                            onClick={() => void paging.retryMore()}
+                            className={`rounded-full border px-4 py-1.5 ${playerTheme === 'dark' ? 'border-white/15 hover:bg-white/10' : 'border-black/15 hover:bg-black/5'}`}
+                          >
+                            重试加载
+                          </button>
+                        </>
+                      ) : paging.loadingMore ? (
+                        <span className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" />继续加载…</span>
+                      ) : paging.hasMore ? (
+                        <button
+                          type="button"
+                          onClick={() => void paging.loadMore()}
+                          className={`rounded-full border px-4 py-1.5 ${playerTheme === 'dark' ? 'border-white/15 hover:bg-white/10' : 'border-black/15 hover:bg-black/5'}`}
+                        >
+                          加载更多
+                        </button>
+                      ) : (
+                        <span>已加载全部 {songs.length} 首</span>
+                      )}
                     </div>
                   )}
                 </div>

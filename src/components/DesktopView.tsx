@@ -5,7 +5,7 @@
 import { PLATFORM_CHANGED_EVENT, readSyncedPlatform, syncPlatformAcrossViews } from '../services/platformSync'
 import { lazy, Suspense, memo, useState, useEffect, useRef, useMemo, useCallback, useSyncExternalStore } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, Search, Settings, X, Play, Clock, Volume2, VolumeX, LogIn, Captions, Heart, Speaker } from 'lucide-react'
+import { ChevronDown, Search, Settings, X, Play, Clock, Volume2, VolumeX, LogIn, Captions, Heart, Loader2, Speaker } from 'lucide-react'
 import PluginShortcuts from './PluginShortcuts'
 import PlaylistCarousel3D from './PlaylistCarousel3D'
 import PlaylistContextMenu from './PlaylistContextMenu'
@@ -20,8 +20,9 @@ import { Song, LyricLine, isSameSong } from '../services/musicApi'
 import type { MusicPlatform } from '../services/platforms'
 import { getPlatformCapabilities, getVisiblePlatforms, getPlatformVisualMetadata, PLATFORM_ORDER_EVENT, PLATFORM_VISIBILITY_EVENT } from '../services/platforms'
 import { desktopWallpaperManager, DesktopLiveWallpaperSource, toWallpaperUrl } from '../services/desktopWallpaperManager'
-import { deletePlaylist, getUserPlaylists, removeSongFromPlaylist, streamNeteasePlaylistTracks, subscribePlaylist, updatePlaylist } from '../services/playlistService'
+import { deletePlaylist, getUserPlaylists, removeSongFromPlaylist, subscribePlaylist, updatePlaylist } from '../services/playlistService'
 import { useColorThief } from '../hooks/useColorThief'
+import { PLAYLIST_SESSION_RESET_EVENT, usePlaylistPaging, type PlaylistPagingSnapshot } from '../hooks/usePlaylistPaging'
 import {
   DESKTOP_CUSTOMIZATION_EVENT,
   DesktopCustomizationSettings,
@@ -280,8 +281,23 @@ function DesktopView({
   const [playlistMutationBusy, setPlaylistMutationBusy] = useState(false)
   const [playlistSongs, setPlaylistSongs] = useState<Song[]>([])
   const [loadingPlaylistSongs, setLoadingPlaylistSongs] = useState(false)
+  const playlistPaging = usePlaylistPaging()
+
+  useEffect(() => {
+    setPlaylistSongs(playlistPaging.songs)
+    setLoadingPlaylistSongs(playlistPaging.loadingInitial)
+    setPlaylistDetailError(playlistPaging.initialError || null)
+  }, [playlistPaging.initialError, playlistPaging.loadingInitial, playlistPaging.songs])
+
+  useEffect(() => {
+    if (!playlistPaging.playlist) return
+    setSelectedPlaylist(previous => previous ? {
+      ...previous,
+      ...playlistPaging.playlist,
+      platform: playlistPaging.playlist.platform || previous.platform,
+    } : previous)
+  }, [playlistPaging.playlist])
   const [playlistDetailError, setPlaylistDetailError] = useState<string | null>(null)
-  const playlistLoadControllerRef = useRef<AbortController | null>(null)
   const [showDesktopMiniPlayer, setShowDesktopMiniPlayer] = useState(false) // 桌面迷你播放器
 
   useEffect(() => {
@@ -291,7 +307,16 @@ function DesktopView({
     }
     if (restorePlaybackOrigin?.surface !== 'desktop-playlist' || !restorePlaybackOrigin.playlist) return
     setSelectedPlaylist(restorePlaybackOrigin.playlist as Playlist)
-    setPlaylistSongs(restorePlaybackOrigin.songs || [])
+    const savedPaging = restorePlaybackOrigin.detail as PlaylistPagingSnapshot | undefined
+    const restoredSongs = savedPaging?.songs || restorePlaybackOrigin.songs || []
+    playlistPaging.restore({
+      songs: restoredSongs,
+      playlist: restorePlaybackOrigin.playlist,
+      nextOffset: savedPaging?.nextOffset ?? restoredSongs.length,
+      hasMore: savedPaging?.hasMore ?? restoredSongs.length < Number((restorePlaybackOrigin.playlist as any)?.trackCount || restoredSongs.length),
+      total: savedPaging?.total ?? Number((restorePlaybackOrigin.playlist as any)?.trackCount || restoredSongs.length),
+    })
+    setPlaylistSongs(restoredSongs)
     setLoadingPlaylistSongs(false)
     setShowPlaylistDetail(true)
     setShowPlaylistCarousel(true)
@@ -854,11 +879,15 @@ function DesktopView({
   }
 
   const closePlaylistDetail = useCallback(() => {
-    playlistLoadControllerRef.current?.abort()
-    playlistLoadControllerRef.current = null
+    playlistPaging.cancelAll()
     setLoadingPlaylistSongs(false)
     setShowPlaylistDetail(false)
-  }, [])
+  }, [playlistPaging.cancelAll])
+
+  useEffect(() => {
+    window.addEventListener(PLAYLIST_SESSION_RESET_EVENT, closePlaylistDetail)
+    return () => window.removeEventListener(PLAYLIST_SESSION_RESET_EVENT, closePlaylistDetail)
+  }, [closePlaylistDetail])
 
   const closePlaylistCarousel = useCallback(() => {
     if (hideCarouselTimerRef.current) {
@@ -929,7 +958,6 @@ function DesktopView({
       }
       transientTimersRef.current.forEach(timer => window.clearTimeout(timer))
       transientTimersRef.current.clear()
-      playlistLoadControllerRef.current?.abort()
     }
   }, [])
 
@@ -981,11 +1009,11 @@ function DesktopView({
 
   // 选择歌单
   const handlePlaylistSelect = useCallback(async (playlist: Playlist) => {
-    playlistLoadControllerRef.current?.abort()
     const playlistPlatform = playlist.platform || currentPlatform
     setPlaylistDetailError(null)
     // 最近播放：直接使用已加载的最近播放歌曲，不走歌单接口
     if (playlist.isRecent || String(playlist.id) === '__recent__') {
+      playlistPaging.reset()
       const recentSongsList = recentSongsRef.current
       setSelectedPlaylist({
         ...playlist,
@@ -1002,8 +1030,7 @@ function DesktopView({
       }
       return
     }
-    const playlistLoadController = new AbortController()
-    playlistLoadControllerRef.current = playlistLoadController
+    playlistPaging.cancelAll()
     setSelectedPlaylist(playlist)
     setShowPlaylistDetail(true)
     setLoadingPlaylistSongs(true)
@@ -1016,81 +1043,16 @@ function DesktopView({
       hideCarouselTimerRef.current = null
     }
     
-    try {
-      if (playlistPlatform === 'netease') {
-        await streamNeteasePlaylistTracks(playlist.id, {
-          signal: playlistLoadController.signal,
-          firstPageSize: 120,
-          pageSize: 200,
-          onPage: (page, firstPage) => {
-            if (playlistLoadController.signal.aborted || playlistLoadControllerRef.current !== playlistLoadController) return
-            const pageSongs: Song[] = page.tracks.map((track: any) => ({
-              id: track.id,
-              name: track.name,
-              artists: track.ar || track.artists || [],
-              album: track.al || track.album || {},
-              duration: track.dt || track.duration || 0,
-              platform: 'netease',
-              vip: track.vip || false,
-              fee: track.fee || 0
-            }))
-            setSelectedPlaylist(current => current ? { ...current, trackCount: page.total } : current)
-            setPlaylistSongs(current => {
-              if (firstPage) return pageSongs
-              const seen = new Set(current.map(song => String(song.id)))
-              return [...current, ...pageSongs.filter(song => !seen.has(String(song.id)))]
-            })
-            if (firstPage) setLoadingPlaylistSongs(false)
-          },
-        })
-      } else if (playlistPlatform === 'qq') {
-        const cookie = localStorage.getItem('qq_cookie') || ''
-        const response = await fetch(`http://localhost:3211/api/qq/playlist/detail?id=${playlist.id}&cookie=${encodeURIComponent(cookie)}`, {
-          signal: playlistLoadController.signal,
-          cache: 'no-store',
-        })
-        if (!response.ok) throw new Error(`QQ 歌单加载失败 (${response.status})`)
-        const data = await response.json()
-        if (playlistLoadController.signal.aborted || playlistLoadControllerRef.current !== playlistLoadController) return
-        if (data.songlist) {
-        debugLog(`📝 [DesktopView] QQ音乐歌单包含 ${data.songlist.length} 首歌曲`)
-        const songs: Song[] = data.songlist.map((track: any) => ({
-          id: track.songid || track.id,
-          mid: track.songmid || track.mid,
-          name: track.songname || track.name,
-          artists: track.singer || [],
-          album: {
-            name: track.albumname || track.album?.name || '',
-            picUrl: track.albumpic || (track.albummid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${track.albummid}.jpg` : '')
-          },
-          // 本地服务已将 QQ 歌曲时长统一为毫秒；兼容旧接口的秒制 interval。
-          duration: Number(track.duration) || Number(track.interval || 0) * 1000,
-          platform: 'qq',
-          vip: track.pay?.payplay === 1 || false
-        }))
-        debugLog(`✅ [DesktopView] 设置了 ${songs.length} 首歌曲到 playlistSongs`)
-        setPlaylistSongs(songs)
-        }
-      }
-    } catch (error) {
-      if ((error as Error).name !== 'AbortError' && playlistLoadControllerRef.current === playlistLoadController) {
-        console.error('加载歌单详情失败:', error)
-        setPlaylistDetailError(error instanceof Error ? error.message : '歌单详情加载失败，请重试')
-      }
-    } finally {
-      if (playlistLoadControllerRef.current === playlistLoadController) {
-        playlistLoadControllerRef.current = null
-        setLoadingPlaylistSongs(false)
-      }
-    }
-  }, [currentPlatform])
+    await playlistPaging.open(playlist.id, playlistPlatform, { forceRefresh: true })
+  }, [currentPlatform, playlistPaging])
 
   const retryPlaylistDetail = useCallback(() => {
-    if (selectedPlaylist) void handlePlaylistSelect(selectedPlaylist)
-  }, [handlePlaylistSelect, selectedPlaylist])
+    if (selectedPlaylist) void playlistPaging.retryInitial()
+  }, [playlistPaging.retryInitial, selectedPlaylist])
 
   const removeSongFromVisiblePlaylist = (song: Song) => {
     setPlaylistSongs(previous => previous.filter(item => !isSameSong(item, song)))
+    playlistPaging.removeSong(song)
     setSelectedPlaylist(previous => previous ? {
       ...previous,
       trackCount: Math.max(0, Number(previous.trackCount || 0) - 1),
@@ -1166,6 +1128,7 @@ function DesktopView({
       surface: 'desktop-playlist',
       playlist: selectedPlaylist,
       songs: playlistSongs,
+      detail: playlistPaging.snapshot,
     })
     closePlaylistDetail() // 关闭歌单详情弹窗并取消未完成的分页请求
     setShowDesktopMiniPlayer(true) // 显示桌面迷你播放器
@@ -1178,21 +1141,33 @@ function DesktopView({
   }
 
   // 播放全部
-  const handlePlayAll = () => {
-    if (playlistSongs.length > 0) {
-      onSongSelect(playlistSongs[0], playlistSongs, {
+  const handlePlayAll = async () => {
+    try {
+      const completeSongs = playlistPaging.hasMore
+        ? await playlistPaging.loadAll()
+        : playlistPaging.songs
+      if (completeSongs.length === 0) return
+      onSongSelect(completeSongs[0], completeSongs, {
         surface: 'desktop-playlist',
         playlist: selectedPlaylist,
-        songs: playlistSongs,
+        songs: completeSongs,
+        detail: {
+          songs: completeSongs,
+          playlist: selectedPlaylist,
+          nextOffset: completeSongs.length,
+          hasMore: false,
+          total: completeSongs.length,
+        } satisfies PlaylistPagingSnapshot,
       })
       closePlaylistDetail()
       setShowDesktopMiniPlayer(true)
-      
-      // 4秒后隐藏歌单栏
+
       hideCarouselTimerRef.current = scheduleTransientTimer(() => {
         hideCarouselTimerRef.current = null
         setShowPlaylistCarousel(false)
       }, 4000)
+    } catch {
+      // 滚动网格会持续显示失败状态并提供重试。
     }
   }
   
@@ -2049,17 +2024,32 @@ function DesktopView({
                         ? `已加载 ${playlistSongs.length} / ${selectedPlaylist.trackCount} 首`
                         : `${selectedPlaylist.trackCount || playlistSongs.length} 首歌曲`}
                     </p>
+                    {currentSong && !playlistSongs.some(song => isSameSong(song, currentSong)) && playlistPaging.hasMore && (
+                      <button
+                        type="button"
+                        disabled={playlistPaging.loadingMore || playlistPaging.loadingAll}
+                        onClick={() => void playlistPaging.locateSong(currentSong).catch(() => undefined)}
+                        className="mt-2 w-fit rounded-full border border-white/15 px-3 py-1 text-xs text-white/70 transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        {playlistPaging.loadingMore || playlistPaging.loadingAll ? '正在定位…' : '定位当前歌曲'}
+                      </button>
+                    )}
                   </div>
                   
                   {/* 播放全部按钮 */}
                   <button
-                    onClick={handlePlayAll}
-                    disabled={playlistSongs.length === 0}
+                    onClick={() => void handlePlayAll()}
+                    disabled={playlistSongs.length === 0 || playlistPaging.loadingAll}
                     className="px-6 py-2.5 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white rounded-full font-medium transition-all shadow-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                   >
-                    <Play className="w-4 h-4" fill="currentColor" />
-                    播放全部
+                    {playlistPaging.loadingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" fill="currentColor" />}
+                    {playlistPaging.loadingAll
+                      ? `准备完整歌单 ${playlistPaging.allProgress.loaded}/${playlistPaging.allProgress.total || selectedPlaylist.trackCount || '?'}`
+                      : playlistPaging.allError ? '重试播放全部' : '播放全部'}
                   </button>
+                  {playlistPaging.loadingAll && (
+                    <button type="button" onClick={playlistPaging.cancelAll} className="rounded-full border border-white/20 bg-white/10 px-4 py-2.5 text-sm text-white hover:bg-white/20">取消</button>
+                  )}
                 </div>
               </div>
               
@@ -2098,6 +2088,7 @@ function DesktopView({
                   userPlaylists={playlists}
                   currentPlaylistId={String(selectedPlaylist.dirId || selectedPlaylist.id)}
                   isCurrentPlaylistLiked={Boolean(selectedPlaylist.isLike)}
+                  paging={selectedPlaylist.isRecent ? undefined : playlistPaging}
                 />
                 </Suspense>
                 )}
